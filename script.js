@@ -3542,10 +3542,18 @@ function toDate(value, strategy = {}) {
     return null;
   }
 
-  if (!/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(raw)) return null;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return buildUtcDate(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, parsed.getUTCDate());
+  // Parse English calendar dates explicitly: Date(string) applies the host
+  // timezone and can silently roll an invalid day into the following month.
+  const monthFirst = raw.match(/^([a-z]+)[\s/-]+(\d{1,2})(?:,\s*|[\s/-]+)(\d{4})$/i);
+  const dayFirst = raw.match(/^(\d{1,2})[\s/-]+([a-z]+)(?:,\s*|[\s/-]+)(\d{4})$/i);
+  const englishYearFirst = raw.match(/^(\d{4})[\s/-]+([a-z]+)[\s/-]+(\d{1,2})$/i);
+  if (!monthFirst && !dayFirst && !englishYearFirst) return null;
+  const monthName = (monthFirst ? monthFirst[1] : (dayFirst || englishYearFirst)[2]).toLowerCase();
+  const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  const month = months.findIndex((name) => monthName === name || monthName === name.slice(0, 3) || (name === "september" && monthName === "sept")) + 1;
+  const year = Number(englishYearFirst ? englishYearFirst[1] : (monthFirst || dayFirst)[3]);
+  const day = Number(monthFirst ? monthFirst[2] : dayFirst ? dayFirst[1] : englishYearFirst[3]);
+  return buildUtcDate(year, month, day);
 }
 
 function buildUtcDate(year, month, day) {
@@ -3936,7 +3944,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "V2.1",
+    version: "v2.1.2",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -4062,6 +4070,7 @@ function buildReportCustomAnalysis() {
     count: item.count,
     sum: formatFieldNumber(current.metricField, item.sum),
     average: formatFieldNumber(current.metricField, item.avg),
+    median: formatFieldNumber(current.metricField, item.median),
     minimum: formatFieldNumber(current.metricField, item.min),
     maximum: formatFieldNumber(current.metricField, item.max)
   }));
@@ -4102,7 +4111,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "V2.1",
+    version: reportData.version || "v2.1.2",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     analysisTime: reportData.analysisTime || "—",
@@ -4181,8 +4190,8 @@ function buildHtmlReport(reportData, chartImages = []) {
       ${reportData.customAnalysis.dateField ? `　<strong>日期字段：</strong>${escapeHtml(reportData.customAnalysis.dateField)}` : ""}</p>
       ${reportData.customAnalysis.trendSummary ? `<p>${escapeHtml(reportData.customAnalysis.trendSummary)}</p>` : ""}
       ${buildHtmlReportTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "最小值", "最大值"],
-        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.minimum, row.maximum]),
+        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
+        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum]),
         "当前没有可导出的自定义分组分析结果。"
       )}
     `
@@ -4460,8 +4469,8 @@ function buildMarkdownReport(reportData) {
       ...(reportData.customAnalysis.trendSummary ? [`- ${escapeMarkdownText(reportData.customAnalysis.trendSummary)}`] : []),
       "",
       buildMarkdownTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "最小值", "最大值"],
-        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.minimum, row.maximum])
+        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
+        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum])
       )
     );
   } else {
@@ -4488,16 +4497,25 @@ function buildMarkdownTable(headers, rows) {
 }
 
 function escapeMarkdownCell(value) {
+  // Escape ASCII punctuation so table data cannot become inline Markdown,
+  // autolinks or raw HTML. Add only our own line-break markup afterwards.
+  return String(value ?? "")
+    .replace(/[!-/:-@\[-`{-~]/g, (character) => {
+      if (character === "&") return "&amp;";
+      if (character === "<") return "&lt;";
+      if (character === ">") return "&gt;";
+      return `\\${character}`;
+    })
+    .replace(/\r\n|[\r\n]/g, "<br>");
+}
+
+function escapeMarkdownText(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/\r?\n/g, "<br>")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function escapeMarkdownText(value) {
-  return escapeMarkdownCell(value)
+    .replace(/>/g, "&gt;")
     .replace(/([*_`#[\]])/g, "\\$1");
 }
 

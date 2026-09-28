@@ -1,6 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createScriptContext } = require("./test-context.cjs");
+const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
 // Default release gate: exercise the real data functions from script.js without
 // coupling core correctness to browser layout or CSS implementation details.
@@ -33,6 +36,110 @@ function createFilterDataset() {
     { id: 6, category: "A", amount: "", date: "invalid-date" }
   ];
 }
+
+for (const timezone of ["Asia/Shanghai", "UTC", "America/Los_Angeles"]) {
+  test(`English calendar dates and existing date formats are stable in ${timezone}`, () => {
+    const output = execFileSync(process.execPath, ["-e", `
+      const { createScriptContext } = require('./tests/test-context.cjs');
+      const { evaluate } = createScriptContext();
+      console.log(evaluate('JSON.stringify(["Jan 1, 2025", "January 1, 2025", "1 Jan 2025", "2025-Jan-1", "2025年1月1日", "2025-01-01", new Date(2025, 0, 1), new Date(Date.UTC(2025, 0, 1))].map(value => toDate(value)?.toISOString()))'));
+    `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
+    assert.deepEqual(JSON.parse(output), Array(8).fill("2025-01-01T00:00:00.000Z"));
+  });
+}
+
+test("English month names validate calendar days instead of normalizing invalid dates", () => {
+  const { context, evaluate } = createScriptContext();
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  months.forEach((month, index) => {
+    for (const spelling of [month, month.slice(0, 3).toUpperCase()]) {
+      context.__date = `${spelling} 15, 2025`;
+      assert.equal(evaluate("toDate(__date)?.toISOString()"), `2025-${String(index + 1).padStart(2, "0")}-15T00:00:00.000Z`);
+    }
+  });
+  for (const value of ["Feb 30, 2025", "Feb 29, 2025", "Apr 31, 2025", "Jan 0, 2025", "Jan 32, 2025", "29 Feb 1900", "Januaryish 1, 2025", "Jan 1, 2025 extra"]) {
+    context.__date = value;
+    assert.equal(evaluate("toDate(__date)"), null, value);
+  }
+  assert.equal(evaluate('toDate("Feb 29, 2024")?.toISOString()'), "2024-02-29T00:00:00.000Z");
+  assert.equal(evaluate('toDate("29 Feb 2000")?.toISOString()'), "2000-02-29T00:00:00.000Z");
+});
+
+test("English dates keep the correct calendar day in profiling and inclusive filtering", () => {
+  const { context, evaluate } = createScriptContext();
+  installDataset(context, evaluate, [
+    { id: 1, date: "Jan 1, 2025" }, { id: 2, date: "Jan 2, 2025" },
+    { id: 3, date: "Jan 3, 2025" }, { id: 4, date: "Jan 4, 2025" },
+    { id: 5, date: "Feb 30, 2025" }
+  ]);
+  assert.equal(evaluate('state.profiles.find(p => p.field === "date").typeKey'), "date");
+  assert.equal(evaluate('state.profiles.find(p => p.field === "date").conversionFailuresByType.date'), 1);
+  assert.deepEqual(filteredIds(evaluate, { category: null, numeric: null, date: { field: "date", start: "2025-01-01", end: "2025-01-01" } }), [1]);
+});
+
+for (const method of ["median", "sum", "avg"]) {
+  test(`${method} custom analysis preserves statistics and exports median in both report formats`, () => {
+    const { context, evaluate } = createScriptContext();
+    context.__rows = [1, 10, 100].map(amount => ({ group: "A", amount: String(amount) }));
+    evaluate('commitTabularData(["group", "amount"], __rows, "report.csv", beginImport())');
+    context.__method = method;
+    evaluate('dom.v2MetricField.value="amount"; dom.v2GroupField.value="group"; dom.v2AggregateMethod.value=__method; dom.v2DateField.value=""; renderV2Analysis()');
+    assert.equal(evaluate("state.customAnalysis.grouped[0].median"), 10);
+    context.__report = JSON.parse(evaluate("JSON.stringify(buildReportData())"));
+    assert.equal(context.__report.customAnalysis.aggregateMethod, method);
+    assert.equal(context.__report.customAnalysis.rows[0].median, "10");
+    assert.equal(context.__report.customAnalysis.rows[0].sum, "111");
+    assert.equal(context.__report.customAnalysis.rows[0].average, "37");
+    const html = evaluate("buildHtmlReport(__report, [])").split("自定义分组分析结果")[1];
+    assert.match(html, /<th>中位数<\/th>/);
+    assert.match(html, /<td>A<\/td>\s*<td>3<\/td>\s*<td>111<\/td>\s*<td>37<\/td>\s*<td>10<\/td>\s*<td>1<\/td>\s*<td>100<\/td>/);
+    const md = evaluate("buildMarkdownReport(__report)").split("## 自定义分组分析结果")[1];
+    assert.ok(md.includes("| group | 记录数 | 求和 | 平均值 | 中位数 | 最小值 | 最大值 |"));
+    assert.ok(md.includes("| A | 3 | 111 | 37 | 10 | 1 | 100 |"));
+  });
+}
+
+test("Markdown table cells escape inline syntax and preserve ordinary text", () => {
+  const { context, evaluate } = createScriptContext();
+  const cases = [
+    ["![x](https://example.com/a.png)", String.raw`\!\[x\]\(https\:\/\/example\.com\/a\.png\)`],
+    ["[x](javascript:alert(1))", String.raw`\[x\]\(javascript\:alert\(1\)\)`],
+    ["**bold** _em_ ~~strike~~ `code`", String.raw`\*\*bold\*\* \_em\_ \~\~strike\~\~ \`code\``],
+    ["中文 English 123", "中文 English 123"],
+    ["第一行\r\n第二行\n第三行\r第四行|末列", "第一行<br>第二行<br>第三行<br>第四行\\|末列"],
+    [String.raw`C:\data\[x]`, String.raw`C\:\\data\\\[x\]`],
+    ["<img src=x>&copy;", "&lt;img src\\=x&gt;&amp;copy\\;"],
+    ["www.example.com https://example.com", String.raw`www\.example\.com https\:\/\/example\.com`]
+  ];
+  for (const [input, expected] of cases) {
+    context.__cell = input;
+    assert.equal(evaluate("escapeMarkdownCell(__cell)"), expected, input);
+    assert.equal(evaluate("buildMarkdownTable([__cell], [[__cell]])"), `| ${expected} |\n| --- |\n| ${expected} |`);
+  }
+});
+
+test("Markdown report exports untrusted field names and values as inert table text", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__field = "[field](https://example.com)";
+  context.__value = "![pixel](https://example.com/pixel.png) **bold** `code`";
+  evaluate('commitTabularData([__field, "amount"], [{[__field]:__value, amount:"10"}], "report.csv", beginImport())');
+  const report = evaluate("buildMarkdownReport(buildReportData())");
+  assert.ok(report.includes(evaluate("escapeMarkdownCell(__field)")));
+  assert.ok(report.includes(evaluate("escapeMarkdownCell(__value)")));
+  assert.ok(!report.includes(context.__field));
+  assert.ok(!report.includes(context.__value));
+  assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
+});
+
+test("public current version markers agree on v2.1.2", () => {
+  const root = path.join(__dirname, "..");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.2");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.2/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.2/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate("buildReportData().version"), "v2.1.2");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.2");
+});
 
 test("numeric parsing handles common tabular formats safely", () => {
   const { evaluate } = createScriptContext();

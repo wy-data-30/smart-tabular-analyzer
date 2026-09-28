@@ -1,6 +1,6 @@
 {
   "name": "smart-tabular-analyzer",
-  "version": "2.1.0",
+  "version": "2.1.2",
   "private": true,
   "scripts": {
     "test": "node --test tests/data-processing.test.cjs",
