@@ -3544,16 +3544,32 @@ function toDate(value, strategy = {}) {
 
   // Parse English calendar dates explicitly: Date(string) applies the host
   // timezone and can silently roll an invalid day into the following month.
-  const monthFirst = raw.match(/^([a-z]+)[\s/-]+(\d{1,2})(?:,\s*|[\s/-]+)(\d{4})$/i);
-  const dayFirst = raw.match(/^(\d{1,2})[\s/-]+([a-z]+)(?:,\s*|[\s/-]+)(\d{4})$/i);
-  const englishYearFirst = raw.match(/^(\d{4})[\s/-]+([a-z]+)[\s/-]+(\d{1,2})$/i);
+  const englishDate = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
+  const monthFirst = englishDate.match(/^([a-z]+)\.?[\s/-]+(\d{1,2})(?:,\s*|[\s/-]+)(\d{4})(?:\s+(.+))?$/i);
+  const dayFirst = englishDate.match(/^(\d{1,2})[\s/-]+([a-z]+)\.?(?:,\s*|[\s/-]+)(\d{4})(?:\s+(.+))?$/i);
+  const englishYearFirst = englishDate.match(/^(\d{4})[\s/-]+([a-z]+)\.?[\s/-]+(\d{1,2})(?:\s+(.+))?$/i);
   if (!monthFirst && !dayFirst && !englishYearFirst) return null;
   const monthName = (monthFirst ? monthFirst[1] : (dayFirst || englishYearFirst)[2]).toLowerCase();
   const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
   const month = months.findIndex((name) => monthName === name || monthName === name.slice(0, 3) || (name === "september" && monthName === "sept")) + 1;
   const year = Number(englishYearFirst ? englishYearFirst[1] : (monthFirst || dayFirst)[3]);
   const day = Number(monthFirst ? monthFirst[2] : dayFirst ? dayFirst[1] : englishYearFirst[3]);
-  return buildUtcDate(year, month, day);
+  const calendarDate = buildUtcDate(year, month, day);
+  if (!calendarDate) return null;
+
+  // Accept familiar time/zone suffixes, but never convert the written date
+  // through their offset. Validate them rather than ignoring arbitrary text.
+  const suffix = (monthFirst || dayFirst || englishYearFirst)[4] || "";
+  const time = suffix.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(?:\s*(am|pm))?(?:\s*(\S.*))?$/i);
+  let timezone = suffix;
+  if (time) {
+    const hour = Number(time[1]);
+    if (hour > 23 || Number(time[2]) > 59 || Number(time[3] || 0) > 59) return null;
+    if (time[5] && (hour < 1 || hour > 12)) return null;
+    timezone = time[6] || "";
+  }
+  if (timezone && !/^(?:(?:GMT|UTC)(?:[+-](?:[01]\d|2[0-3]):?[0-5]\d)?|Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d|[ECMP][SD]T)(?:\s+\([a-z][a-z .+-]*\))?$/i.test(timezone)) return null;
+  return calendarDate;
 }
 
 function buildUtcDate(year, month, day) {
