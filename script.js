@@ -3542,10 +3542,50 @@ function toDate(value, strategy = {}) {
     return null;
   }
 
-  if (!/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(raw)) return null;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return buildUtcDate(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, parsed.getUTCDate());
+  return parseEnglishCalendarDate(raw);
+}
+
+function parseEnglishCalendarDate(raw) {
+  let text = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
+  let timeBeforeYear = false;
+
+  // Remove one validated clock, either after the date or between Month Day
+  // and Year (asctime order). Its value never participates in date conversion.
+  const clockStart = text.match(/(^|[\s,])(?=\d{1,2}:)/);
+  const timeIndex = clockStart ? clockStart.index + clockStart[0].length : -1;
+  if (timeIndex >= 0) {
+    const prefix = text.slice(0, timeIndex).trim();
+    const prefixParts = prefix.split(/[\s,/-]+/).filter(Boolean);
+    if (prefixParts.length !== 2 && prefixParts.length !== 3) return null;
+    timeBeforeYear = prefixParts.length === 2;
+    const time = text.slice(timeIndex).match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(?:\s*(am|pm))?(?=$|[\s,]|[+-]|Z|GMT|UTC)/i);
+    if (!time) return null;
+    const hour = Number(time[1]);
+    if (hour > 23 || Number(time[2]) > 59 || Number(time[3] || 0) > 59) return null;
+    if (time[5] && (hour < 1 || hour > 12)) return null;
+    text = `${prefix} ${text.slice(timeIndex + time[0].length).trim()}`.trim();
+  }
+
+  // Tokenize the three calendar components separately from the optional zone.
+  // Month Day Year, Day Month Year and Year Month Day are unambiguous here.
+  const parts = text.match(/^([a-z]+\.?|\d{1,4})[\s,/-]+([a-z]+\.?|\d{1,4})[\s,/-]+(\d{1,4})(?:[\s,]+(.*))?$/i);
+  if (!parts) return null;
+  const months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+  const monthFirst = /^[a-z]/i.test(parts[1]);
+  if (timeBeforeYear && !monthFirst) return null;
+  const monthName = (monthFirst ? parts[1] : parts[2]).replace(/\.$/, "").toLowerCase();
+  const month = months.findIndex((name) => monthName === name || monthName === name.slice(0, 3) || (name === "september" && monthName === "sept")) + 1;
+  const yearFirst = !monthFirst && /^\d{4}$/.test(parts[1]);
+  const year = yearFirst ? parts[1] : parts[3];
+  const day = monthFirst ? parts[2] : yearFirst ? parts[3] : parts[1];
+  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(day)) return null;
+  const calendarDate = buildUtcDate(Number(year), month, Number(day));
+  if (!calendarDate) return null;
+
+  // A zone is syntax only: applying its offset would change the written day.
+  const timezone = (parts[4] || "").trim();
+  if (timezone && !/^(?:(?:GMT|UTC)(?:[+-](?:[01]\d|2[0-3]):?[0-5]\d)?|Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d|[ECMP][SD]T)(?:\s+\([a-z][a-z .+-]*\))?$/i.test(timezone)) return null;
+  return calendarDate;
 }
 
 function buildUtcDate(year, month, day) {
@@ -3936,7 +3976,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "V2.1",
+    version: "v2.1.2",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -4062,6 +4102,7 @@ function buildReportCustomAnalysis() {
     count: item.count,
     sum: formatFieldNumber(current.metricField, item.sum),
     average: formatFieldNumber(current.metricField, item.avg),
+    median: formatFieldNumber(current.metricField, item.median),
     minimum: formatFieldNumber(current.metricField, item.min),
     maximum: formatFieldNumber(current.metricField, item.max)
   }));
@@ -4102,7 +4143,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "V2.1",
+    version: reportData.version || "v2.1.2",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     analysisTime: reportData.analysisTime || "—",
@@ -4181,8 +4222,8 @@ function buildHtmlReport(reportData, chartImages = []) {
       ${reportData.customAnalysis.dateField ? `　<strong>日期字段：</strong>${escapeHtml(reportData.customAnalysis.dateField)}` : ""}</p>
       ${reportData.customAnalysis.trendSummary ? `<p>${escapeHtml(reportData.customAnalysis.trendSummary)}</p>` : ""}
       ${buildHtmlReportTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "最小值", "最大值"],
-        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.minimum, row.maximum]),
+        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
+        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum]),
         "当前没有可导出的自定义分组分析结果。"
       )}
     `
@@ -4460,8 +4501,8 @@ function buildMarkdownReport(reportData) {
       ...(reportData.customAnalysis.trendSummary ? [`- ${escapeMarkdownText(reportData.customAnalysis.trendSummary)}`] : []),
       "",
       buildMarkdownTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "最小值", "最大值"],
-        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.minimum, row.maximum])
+        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
+        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum])
       )
     );
   } else {
@@ -4488,16 +4529,25 @@ function buildMarkdownTable(headers, rows) {
 }
 
 function escapeMarkdownCell(value) {
+  // Escape ASCII punctuation so table data cannot become inline Markdown,
+  // autolinks or raw HTML. Add only our own line-break markup afterwards.
+  return String(value ?? "")
+    .replace(/[!-/:-@\[-`{-~]/g, (character) => {
+      if (character === "&") return "&amp;";
+      if (character === "<") return "&lt;";
+      if (character === ">") return "&gt;";
+      return `\\${character}`;
+    })
+    .replace(/\r\n|[\r\n]/g, "<br>");
+}
+
+function escapeMarkdownText(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/\r?\n/g, "<br>")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function escapeMarkdownText(value) {
-  return escapeMarkdownCell(value)
+    .replace(/>/g, "&gt;")
     .replace(/([*_`#[\]])/g, "\\$1");
 }
 

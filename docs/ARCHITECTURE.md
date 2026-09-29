@@ -559,7 +559,7 @@ exportHtmlReport() / exportMarkdownReport()
 
 当前 `buildReportData()` 直接读取全局 state；`buildReportCustomAnalysis()` 在缺少自定义快照时还可能从 DOM 控件回推分析；`captureCurrentChartImages()` 同时依赖 Chart 实例与 DOM。这些是未来拆分时需要先明确的边界。
 
-报告快照中的版本字符串目前由 `buildReportData()` 和 `normalizeReportSnapshot()` 写为 `V2.1`；本文标题采用正式发布标签 `v2.1.0`。两者是当前代码与发布命名的实际差异。
+v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中的报告版本标识统一为 `v2.1.2`，与 README 和包版本一致；本文的架构基线仍为 v2.1.0。
 
 ## 11. UI Rendering（界面渲染）
 
