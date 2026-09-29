@@ -4,6 +4,7 @@ const { createScriptContext } = require("./test-context.cjs");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const englishDateCorpus = require("./fixtures/english-date-corpus.cjs");
 
 // Default release gate: exercise the real data functions from script.js without
 // coupling core correctness to browser layout or CSS implementation details.
@@ -38,6 +39,20 @@ function createFilterDataset() {
 }
 
 for (const timezone of ["Asia/Shanghai", "UTC", "America/Los_Angeles"]) {
+  test(`fixed English compatibility corpus preserves calendar semantics in ${timezone}`, () => {
+    const output = execFileSync(process.execPath, ["-e", `
+      const { createScriptContext } = require('./tests/test-context.cjs');
+      const { context, evaluate } = createScriptContext();
+      context.__corpus = require('./tests/fixtures/english-date-corpus.cjs');
+      console.log(evaluate('JSON.stringify(__corpus.map(({input}) => toDate(input)?.toISOString().slice(0, 10) ?? null))'));
+    `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
+    const results = JSON.parse(output);
+    assert.equal(results.length, englishDateCorpus.length);
+    results.forEach((actual, index) => {
+      assert.equal(actual, englishDateCorpus[index].expected, englishDateCorpus[index].input);
+    });
+  });
+
   test(`English calendar dates and existing date formats are stable in ${timezone}`, () => {
     const output = execFileSync(process.execPath, ["-e", `
       const { createScriptContext } = require('./tests/test-context.cjs');
@@ -88,6 +103,27 @@ test("English date/time parsing rejects malformed time and timezone suffixes", (
   }
 });
 
+test("English date token extraction rejects misplaced or repeated components", () => {
+  const { context, evaluate } = createScriptContext();
+  for (const input of [
+    "Jan 12:30:00 1 2025", "1 Jan 12:30:00 2025", "Jan 1 2025 12:30:00 13:00:00",
+    "Jan 1 2025 GMT 12:30:00", "Jan 1 12:30:00 25", "Jan 1 2025 2026",
+    "Jan 1 12:60:00 2025", "Feb 30 12:30:00 2025", "Apr 31 12:30:00 2025",
+    "Jan 1 2025, 24:00:00", "Wed Jan 32 12:30:00 2025"
+  ]) {
+    context.__date = input;
+    assert.equal(evaluate("toDate(__date)"), null, input);
+  }
+});
+
+test("a timezone offset colon is not mistaken for a clock", () => {
+  const { context, evaluate } = createScriptContext();
+  for (const zone of ["GMT", "UTC", "Z", "+0800", "+08:00", "GMT+08:00", "UTC-12:00", "EST", "PST"]) {
+    context.__date = `Jan 1, 2025 ${zone}`;
+    assert.equal(evaluate("toDate(__date)?.toISOString()"), "2025-01-01T00:00:00.000Z", zone);
+  }
+});
+
 test("English date/time columns remain date fields and filter by their written date", () => {
   const { context, evaluate } = createScriptContext();
   installDataset(context, evaluate, [
@@ -95,11 +131,13 @@ test("English date/time columns remain date fields and filter by their written d
     { id: 2, date: "Wed, 01 Jan 2025 12:30:00 GMT" },
     { id: 3, date: "Jan 1, 2025 00:00:00 +1400" },
     { id: 4, date: "Dec 31, 2025 23:59:59 -1200" },
-    { id: 5, date: "Feb 30, 2025 12:30:00 GMT" }
+    { id: 5, date: "Feb 30, 2025 12:30:00 GMT" },
+    { id: 6, date: "Jan 1, 2025, 12:30:00" },
+    { id: 7, date: "Wed Jan 1 12:30:00 2025" }
   ]);
   assert.equal(evaluate('state.profiles.find(p => p.field === "date").typeKey'), "date");
   assert.equal(evaluate('state.profiles.find(p => p.field === "date").conversionFailuresByType.date'), 1);
-  assert.deepEqual(filteredIds(evaluate, { category: null, numeric: null, date: { field: "date", start: "2025-01-01", end: "2025-01-01" } }), [1, 2, 3]);
+  assert.deepEqual(filteredIds(evaluate, { category: null, numeric: null, date: { field: "date", start: "2025-01-01", end: "2025-01-01" } }), [1, 2, 3, 6, 7]);
 });
 
 test("English month names validate calendar days instead of normalizing invalid dates", () => {
