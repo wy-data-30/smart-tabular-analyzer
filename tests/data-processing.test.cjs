@@ -311,14 +311,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.1.2", () => {
+test("public current version markers agree on v2.1.3", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.2");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.2/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.2/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.3");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.3/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.3/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.1.2");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.2");
+  assert.equal(evaluate("buildReportData().version"), "v2.1.3");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.3");
 });
 
 test("numeric parsing handles common tabular formats safely", () => {

@@ -3983,7 +3983,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.1.2",
+    version: "v2.1.3",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -4150,7 +4150,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.1.2",
+    version: reportData.version || "v2.1.3",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     analysisTime: reportData.analysisTime || "—",
