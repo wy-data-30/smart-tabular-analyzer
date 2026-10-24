@@ -4550,10 +4550,11 @@ function escapeMarkdownText(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
-    .replace(/\r?\n/g, "<br>")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/([*_`#[\]])/g, "\\$1");
+    .replace(/([*_`#[\]])/g, "\\$1")
+    // Add our own line-break markup only after user text is escaped.
+    .replace(/\r\n|[\r\n]/g, "<br>");
 }
 
 function buildReportFileName(extension, now = new Date()) {

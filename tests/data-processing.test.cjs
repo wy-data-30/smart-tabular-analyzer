@@ -210,6 +210,33 @@ test("Markdown table cells escape inline syntax and preserve ordinary text", () 
   }
 });
 
+test("Markdown report text converts every line ending, including a lone CR", () => {
+  const { context, evaluate } = createScriptContext();
+  const cases = [
+    ["a\r---", "a\n---"],
+    ["第一行\r\n第二行\r第三行", "第一行\n第二行\n第三行"]
+  ];
+  for (const [input, lfOnly] of cases) {
+    context.__text = input;
+    context.__lfOnly = lfOnly;
+    const escaped = evaluate("escapeMarkdownText(__text)");
+    assert.ok(!/[\r\n]/.test(escaped), JSON.stringify(input));
+    assert.equal(escaped, evaluate("escapeMarkdownText(__lfOnly)"), JSON.stringify(input));
+  }
+
+  // Our own <br> markup is added after escaping, so it stays a real line break
+  // while user-supplied angle brackets remain escaped.
+  const exact = [
+    ["a\r---", "a<br>---"],
+    ["第一行\r\n第二行\n第三行\r第四行", "第一行<br>第二行<br>第三行<br>第四行"],
+    ["<b>x</b>\n<br>", "&lt;b&gt;x&lt;/b&gt;<br>&lt;br&gt;"]
+  ];
+  for (const [input, expected] of exact) {
+    context.__text = input;
+    assert.equal(evaluate("escapeMarkdownText(__text)"), expected, JSON.stringify(input));
+  }
+});
+
 test("Markdown report exports untrusted field names and values as inert table text", () => {
   const { context, evaluate } = createScriptContext();
   context.__field = "[field](https://example.com)";
