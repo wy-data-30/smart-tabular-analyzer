@@ -3350,9 +3350,14 @@ function normalizeFieldName(field) {
 
 function normalizeParsedRow(row, fieldPairs) {
   return fieldPairs.reduce((normalized, pair) => {
-    normalized[pair.clean] = Object.prototype.hasOwnProperty.call(row, pair.raw)
-      ? row[pair.raw]
-      : row[pair.clean];
+    if (Object.prototype.hasOwnProperty.call(row, pair.raw)) {
+      normalized[pair.clean] = row[pair.raw];
+    } else if (Object.prototype.hasOwnProperty.call(row, pair.clean)) {
+      normalized[pair.clean] = row[pair.clean];
+    } else {
+      // A short row omits trailing cells; never read inherited prototype members.
+      normalized[pair.clean] = undefined;
+    }
     return normalized;
   }, Object.create(null));
 }
