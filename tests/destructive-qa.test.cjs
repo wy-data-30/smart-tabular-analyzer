@@ -161,6 +161,46 @@ test("a newer upload invalidates older results and removes stale state", () => {
   assert.equal(evaluate('Object.prototype.hasOwnProperty.call(state.rows[0], "old")'), false);
 });
 
+test("a newer upload without date data does not keep the previous date chart title", () => {
+  const { context, evaluate } = createScriptContext();
+  class FakeChart {
+    destroy() {}
+  }
+  context.Chart = FakeChart;
+  context.window.Chart = FakeChart;
+  const byId = (id) => context.document.getElementById(id);
+  const canvasAttributes = {};
+  byId("dateTrendChart").setAttribute = (name, value) => { canvasAttributes[name] = value; };
+  const defaultTitle = "日期字段趋势（记录数）";
+
+  context.__datedRows = [
+    { 日期: "2026-07-01", 金额: "10" },
+    { 日期: "2026-07-02", 金额: "20" }
+  ];
+  evaluate('commitTabularData(["日期", "金额"], __datedRows, "dated.csv", beginImport())');
+  byId("dateChartField").value = "日期";
+  byId("metricField").value = "金额";
+  evaluate("renderCharts()");
+  const previousTitle = byId("dateChartTitle").textContent;
+  assert.match(previousTitle, /金额/);
+
+  // The date select keeps a field name the new dataset no longer has valid dates for.
+  context.__undatedRows = [{ 城市: "上海", 分数: "90" }, { 城市: "北京", 分数: "80" }];
+  evaluate('commitTabularData(["城市", "分数"], __undatedRows, "undated.csv", beginImport())');
+  byId("metricField").value = "";
+  evaluate("renderCharts()");
+  assert.equal(byId("dateChartTitle").textContent, defaultTitle);
+  assert.equal(canvasAttributes["aria-label"], defaultTitle);
+
+  // No date field selected at all.
+  byId("dateChartField").value = "";
+  canvasAttributes["aria-label"] = previousTitle;
+  byId("dateChartTitle").textContent = previousTitle;
+  evaluate("renderCharts()");
+  assert.equal(byId("dateChartTitle").textContent, defaultTitle);
+  assert.equal(canvasAttributes["aria-label"], defaultTitle);
+});
+
 test("repeated field type changes rebuild cleanly without leaving filter state", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({ value: String(index + 1), group: index % 2 ? "B" : "A" }));

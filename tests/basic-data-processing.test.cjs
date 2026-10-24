@@ -53,6 +53,40 @@ test("CSV encoding and parsed rows preserve Chinese headers and values", () => {
   assert.equal(evaluate('state.rows[0]["城市"]'), "上海");
 });
 
+test("short CSV rows treat cells under prototype-named headers as missing", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const headers = ["name", "constructor", "__proto__", "toString"];
+    const keys = headers.map((header, index) => encodeCsvHeaderForParser(header, index));
+    // PapaParse header mode builds plain {} rows and omits missing trailing cells.
+    const fullRow = {};
+    keys.forEach((key, index) => { fullRow[key] = "v" + index; });
+    const shortRow = {};
+    shortRow[keys[0]] = "short";
+    const importId = beginImport();
+    handleParsedData({
+      errors: [{ type: "FieldMismatch", code: "TooFewFields", message: "Too few fields", row: 1 }],
+      meta: { fields: keys },
+      data: [fullRow, shortRow]
+    }, "short-row.csv", importId);
+    const prototypeHeaders = headers.slice(1);
+    return {
+      fields: state.fields,
+      rowCount: state.rows.length,
+      shortCellsMissing: prototypeHeaders.map((field) => isMissing(state.rows[1][field])),
+      missingCounts: prototypeHeaders.map((field) => getFieldProfile(field).missingCount),
+      suspiciousCells: state.rows.flatMap((row) => state.fields
+        .filter((field) => typeof row[field] === "function" || String(row[field]) === "[object Object]"))
+    };
+  })())`));
+
+  assert.deepEqual(result.fields, ["name", "constructor", "__proto__", "toString"]);
+  assert.equal(result.rowCount, 2);
+  assert.deepEqual(result.shortCellsMissing, [true, true, true]);
+  assert.deepEqual(result.missingCounts, [1, 1, 1]);
+  assert.deepEqual(result.suspiciousCells, []);
+});
+
 test("Excel worksheet arrays become rows with Chinese fields", () => {
   const { evaluate } = createScriptContext();
   const result = JSON.parse(evaluate(`JSON.stringify(buildExcelTabularData(

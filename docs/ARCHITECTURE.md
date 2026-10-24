@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.1.0 架构说明
+# Smart Tabular Analyzer v2.1.3 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于在不重构 `script.js` 的前提下理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -559,7 +559,7 @@ exportHtmlReport() / exportMarkdownReport()
 
 当前 `buildReportData()` 直接读取全局 state；`buildReportCustomAnalysis()` 在缺少自定义快照时还可能从 DOM 控件回推分析；`captureCurrentChartImages()` 同时依赖 Chart 实例与 DOM。这些是未来拆分时需要先明确的边界。
 
-v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中的报告版本标识统一为 `v2.1.2`，与 README 和包版本一致；本文的架构基线仍为 v2.1.0。
+v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中的报告版本标识统一为 `v2.1.2`，与 README 和包版本一致。
 
 ## 11. UI Rendering（界面渲染）
 
@@ -609,7 +609,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 
 ## 当前单体 `script.js` 的技术债
 
-当前文件约 4,593 行，包含 25 个顶层 state 字段和 102 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
+当前文件是数千行的单体脚本（具体行数随维护变化），包含 25 个顶层 state 字段和 102 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
 
 1. **全局可变状态是中心依赖。** 多个缓存必须由调用顺序保持一致，例如 `rows`、`filteredRows`、profiles、统计、图表和 `analysisCompletedAt`。
 2. **计算、状态写入和 DOM 副作用混合。** `renderInsights()`、`renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。

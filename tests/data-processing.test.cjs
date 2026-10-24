@@ -93,6 +93,40 @@ for (const timezone of ["Asia/Shanghai", "UTC", "America/Los_Angeles"]) {
     `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
     assert.deepEqual(JSON.parse(output), cases.map(([, expected]) => expected));
   });
+
+  test(`numeric date-time suffixes keep the written calendar date in ${timezone}`, () => {
+    const cases = [
+      ["2024-01-15 10:30:00", "2024-01-15"],
+      ["2024-01-15 10:30:00.123", "2024-01-15"],
+      ["2024-01-15 10:30:00.123456", "2024-01-15"],
+      ["2024-01-15T10:30:00.1234567Z", "2024-01-15"],
+      ["2024-01-15T10:30:00.123456789Z", "2024-01-15"],
+      ["2024-01-15 10:30:00+08", "2024-01-15"],
+      ["2024-01-15 10:30:00.123456+08", "2024-01-15"],
+      ["2024-01-15 10:30:00+0800", "2024-01-15"],
+      ["2024-01-15 10:30:00+08:00", "2024-01-15"],
+      ["2024-01-15T00:00:00+14:00", "2024-01-15"],
+      ["2024-01-15 23:59:59-12", "2024-01-15"],
+      ["15/01/2024 10:30:00.123456+08", "2024-01-15"],
+      ["2024年1月15日 10:30:00+08", "2024-01-15"],
+      ["2024-01-15T10:30:00+99:99", null],
+      ["2024-01-15T10:30:00+24:00", null],
+      ["2024-01-15T10:30:00+08:60", null],
+      ["2024-01-15T10:30:00+0860", null],
+      ["2024-01-15T10:30:00+080", null],
+      ["2024-01-15T10:30:00+08:", null],
+      ["2024-01-15T10:30:00.1234567890Z", null],
+      ["2024-01-15T10:30:00.Z", null],
+      ["2024-01-15 24:00:00", null]
+    ];
+    const output = execFileSync(process.execPath, ["-e", `
+      const { createScriptContext } = require('./tests/test-context.cjs');
+      const { context, evaluate } = createScriptContext();
+      context.__cases = ${JSON.stringify(cases)};
+      console.log(evaluate('JSON.stringify(__cases.map(([value]) => toDate(value)?.toISOString().slice(0, 10) ?? null))'));
+    `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
+    assert.deepEqual(JSON.parse(output), cases.map(([, expected]) => expected));
+  });
 }
 
 test("English date/time parsing rejects malformed time and timezone suffixes", () => {
@@ -138,6 +172,33 @@ test("English date/time columns remain date fields and filter by their written d
   assert.equal(evaluate('state.profiles.find(p => p.field === "date").typeKey'), "date");
   assert.equal(evaluate('state.profiles.find(p => p.field === "date").conversionFailuresByType.date'), 1);
   assert.deepEqual(filteredIds(evaluate, { category: null, numeric: null, date: { field: "date", start: "2025-01-01", end: "2025-01-01" } }), [1, 2, 3, 6, 7]);
+});
+
+test("database and pandas timestamp columns remain date fields and filter by their written date", () => {
+  const { context, evaluate } = createScriptContext();
+  installDataset(context, evaluate, Array.from({ length: 14 }, (_, index) => {
+    const day = 10 + index;
+    return {
+      id: index + 1,
+      pg: `2024-01-${day} 10:30:00.${123456 + index}+08`,
+      pandas: `2024-01-${day} 10:30:00.${123456 + index}`,
+      mixed: index === 13 ? `2024-01-${day}T10:30:00+99:99` : `2024-01-${day}T10:30:00+08:00`
+    };
+  }));
+  const profile = (field) => `state.profiles.find(p => p.field === "${field}")`;
+  const singleDay = (field) => ({ category: null, numeric: null, date: { field, start: "2024-01-15", end: "2024-01-15" } });
+
+  for (const field of ["pg", "pandas"]) {
+    assert.equal(evaluate(`${profile(field)}.typeKey`), "date", field);
+    assert.equal(evaluate(`${profile(field)}.conversionFailuresByType.date`), 0, field);
+    assert.deepEqual(filteredIds(evaluate, singleDay(field)), [6], field);
+  }
+  assert.equal(evaluate(`${profile("mixed")}.typeKey`), "date");
+  assert.equal(evaluate(`${profile("mixed")}.conversionFailuresByType.date`), 1);
+  assert.deepEqual(
+    filteredIds(evaluate, { category: null, numeric: null, date: { field: "mixed", start: "2024-01-01", end: "2024-01-31" } }),
+    Array.from({ length: 13 }, (_, index) => index + 1)
+  );
 });
 
 test("English month names validate calendar days instead of normalizing invalid dates", () => {
@@ -210,6 +271,33 @@ test("Markdown table cells escape inline syntax and preserve ordinary text", () 
   }
 });
 
+test("Markdown report text converts every line ending, including a lone CR", () => {
+  const { context, evaluate } = createScriptContext();
+  const cases = [
+    ["a\r---", "a\n---"],
+    ["第一行\r\n第二行\r第三行", "第一行\n第二行\n第三行"]
+  ];
+  for (const [input, lfOnly] of cases) {
+    context.__text = input;
+    context.__lfOnly = lfOnly;
+    const escaped = evaluate("escapeMarkdownText(__text)");
+    assert.ok(!/[\r\n]/.test(escaped), JSON.stringify(input));
+    assert.equal(escaped, evaluate("escapeMarkdownText(__lfOnly)"), JSON.stringify(input));
+  }
+
+  // Our own <br> markup is added after escaping, so it stays a real line break
+  // while user-supplied angle brackets remain escaped.
+  const exact = [
+    ["a\r---", "a<br>---"],
+    ["第一行\r\n第二行\n第三行\r第四行", "第一行<br>第二行<br>第三行<br>第四行"],
+    ["<b>x</b>\n<br>", "&lt;b&gt;x&lt;/b&gt;<br>&lt;br&gt;"]
+  ];
+  for (const [input, expected] of exact) {
+    context.__text = input;
+    assert.equal(evaluate("escapeMarkdownText(__text)"), expected, JSON.stringify(input));
+  }
+});
+
 test("Markdown report exports untrusted field names and values as inert table text", () => {
   const { context, evaluate } = createScriptContext();
   context.__field = "[field](https://example.com)";
@@ -223,14 +311,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.1.2", () => {
+test("public current version markers agree on v2.1.3", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.2");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.2/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.2/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.3");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.3/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.3/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.1.2");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.2");
+  assert.equal(evaluate("buildReportData().version"), "v2.1.3");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.3");
 });
 
 test("numeric parsing handles common tabular formats safely", () => {

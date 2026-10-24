@@ -45,7 +45,7 @@
 
 - 创建 Chart.js 实例前必须销毁同 ID 的旧实例。
 - CSV 导出必须保留 UTF-8 BOM、字段顺序和公式前缀中和。
-- HTML 报告中的数据必须经过 `escapeHtml()`；图像只接受安全的 PNG Data URL。
+- HTML 报告中的数据必须经过 `escapeHtml()`；图像只接受安全的 PNG、JPEG 或 WebP Data URL（与 `isSafeChartDataUrl()` 一致）。
 - 文件名清理负责移除非法字符和双向文本控制字符。
 
 ## 3. CDN 和依赖位置

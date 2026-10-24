@@ -156,7 +156,7 @@ const FIELD_TYPE_LABELS = {
   ignore: "忽略"
 };
 
-const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?";
+const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
 const CHART_THEME = {
   primary: "#625bde",
@@ -1983,6 +1983,8 @@ function renderDateTrendChart() {
   const field = dom.dateChartField.value;
   const canvas = document.getElementById("dateTrendChart");
   destroyChart("dateTrendChart");
+  dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
+  canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
 
   const numericField = dom.metricField.value || getProfilesByType("numeric")
@@ -3350,9 +3352,14 @@ function normalizeFieldName(field) {
 
 function normalizeParsedRow(row, fieldPairs) {
   return fieldPairs.reduce((normalized, pair) => {
-    normalized[pair.clean] = Object.prototype.hasOwnProperty.call(row, pair.raw)
-      ? row[pair.raw]
-      : row[pair.clean];
+    if (Object.prototype.hasOwnProperty.call(row, pair.raw)) {
+      normalized[pair.clean] = row[pair.raw];
+    } else if (Object.prototype.hasOwnProperty.call(row, pair.clean)) {
+      normalized[pair.clean] = row[pair.clean];
+    } else {
+      // A short row omits trailing cells; never read inherited prototype members.
+      normalized[pair.clean] = undefined;
+    }
     return normalized;
   }, Object.create(null));
 }
@@ -3976,7 +3983,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.1.2",
+    version: "v2.1.3",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -4143,7 +4150,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.1.2",
+    version: reportData.version || "v2.1.3",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     analysisTime: reportData.analysisTime || "—",
@@ -4545,10 +4552,11 @@ function escapeMarkdownText(value) {
   return String(value ?? "")
     .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
-    .replace(/\r?\n/g, "<br>")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/([*_`#[\]])/g, "\\$1");
+    .replace(/([*_`#[\]])/g, "\\$1")
+    // Add our own line-break markup only after user text is escaped.
+    .replace(/\r\n|[\r\n]/g, "<br>");
 }
 
 function buildReportFileName(extension, now = new Date()) {
