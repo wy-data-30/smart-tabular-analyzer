@@ -1983,6 +1983,8 @@ function renderDateTrendChart() {
   const field = dom.dateChartField.value;
   const canvas = document.getElementById("dateTrendChart");
   destroyChart("dateTrendChart");
+  dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
+  canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
 
   const numericField = dom.metricField.value || getProfilesByType("numeric")
