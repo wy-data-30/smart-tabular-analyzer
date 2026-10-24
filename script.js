@@ -156,7 +156,7 @@ const FIELD_TYPE_LABELS = {
   ignore: "忽略"
 };
 
-const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,3})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?";
+const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
 const CHART_THEME = {
   primary: "#625bde",
