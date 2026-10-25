@@ -798,6 +798,143 @@ test("the category conclusion re-picks fields from the filtered rows", () => {
   assert.deepEqual(report.insights, JSON.parse(scope.evaluate("JSON.stringify(state.insights)")));
 });
 
+const NO_FILTER_SENTENCE = "未设置筛选，结果基于完整数据。";
+const QUALITY_SCOPE_SENTENCE = "数据质量部分始终基于原始数据，不受筛选影响。";
+
+function applyFilterState(scope, filters) {
+  put(scope.context, "__appliedFilters", filters);
+  scope.evaluate(`(() => {
+    state.filters = { category: null, numeric: null, date: null, ...__appliedFilters };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+}
+
+function reportOf(scope) {
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  put(scope.context, "__filterReport", report);
+  return {
+    report,
+    html: scope.evaluate("buildHtmlReport(__filterReport, [])"),
+    markdown: scope.evaluate("buildMarkdownReport(__filterReport)")
+  };
+}
+
+test("reports say when no filter is applied", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.filters, []);
+  for (const text of [html, markdown]) {
+    assert.ok(text.includes("筛选条件"));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+    assert.ok(text.includes(QUALITY_SCOPE_SENTENCE));
+  }
+  assert.ok(html.indexOf("<h2>数据规模</h2>") < html.indexOf("<h2>筛选条件</h2>"));
+  assert.ok(html.indexOf("<h2>筛选条件</h2>") < html.indexOf("<h2>字段类型结果</h2>"));
+  assert.ok(markdown.indexOf("## 数据规模") < markdown.indexOf("## 筛选条件"));
+  assert.ok(markdown.indexOf("## 筛选条件") < markdown.indexOf("## 字段类型结果"));
+});
+
+test("reports list applied category, numeric and date filters in order", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  applyFilterState(scope, {
+    category: { field: "地区", values: ["华东", "华北", "华南"] },
+    numeric: { field: "销售额", min: 1000, max: 5000 },
+    date: { field: "订单日期", start: "2025-01-01", end: "2025-03-31" }
+  });
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.filters, [
+    { type: "category", field: "地区", keptCount: 3, totalCount: 6, keptValues: ["华北", "华东", "华南"], description: "地区：保留 3 / 共 6 个类别（华北、华东、华南）" },
+    { type: "numeric", field: "销售额", min: 1000, max: 5000, description: "销售额：1,000 至 5,000" },
+    { type: "date", field: "订单日期", start: "2025-01-01", end: "2025-03-31", description: "订单日期：2025-01-01 至 2025-03-31" }
+  ]);
+  const analysisRows = scope.evaluate("getAnalysisRows().length");
+  assert.equal(report.dataScale.rows, analysisRows);
+  assert.equal(report.dataScale.filteredOutRows, 38 - analysisRows);
+  assert.ok(report.dataScale.filteredOutRows > 0);
+
+  assert.ok(html.includes("<th>字段</th><th>条件</th>"));
+  assert.ok(html.includes("<td>地区</td><td>地区：保留 3 / 共 6 个类别（华北、华东、华南）</td>"));
+  assert.ok(html.includes("<td>销售额</td><td>销售额：1,000 至 5,000</td>"));
+  assert.ok(html.includes("<td>订单日期</td><td>订单日期：2025-01-01 至 2025-03-31</td>"));
+  assert.ok(!html.includes(NO_FILTER_SENTENCE));
+  assert.ok(html.includes(QUALITY_SCOPE_SENTENCE));
+  assert.ok(markdown.includes("| 字段 | 条件 |"));
+  assert.ok(markdown.includes("| 地区 | 地区：保留 3 \\/ 共 6 个类别（华北、华东、华南） |"));
+  // escapeMarkdownCell backslash-escapes ASCII punctuation, including "," "/" and "-".
+  assert.ok(markdown.includes("| 销售额 | 销售额：1\\,000 至 5\\,000 |"));
+  assert.ok(markdown.includes("| 订单日期 | 订单日期：2025\\-01\\-01 至 2025\\-03\\-31 |"));
+  assert.ok(markdown.includes(QUALITY_SCOPE_SENTENCE));
+});
+
+test("report category filters show at most ten kept values and empty values", () => {
+  const scope = createScriptContext();
+  const codes = Array.from({ length: 15 }, (_, index) => `c${String(index + 1).padStart(2, "0")}`);
+  commitRows(scope, ["类别"], [...codes, ...codes].map((code) => ({ 类别: code })), "many.csv");
+  applyFilterState(scope, { category: { field: "类别", values: codes.slice(0, 12) } });
+  const [many] = reportOf(scope).report.filters;
+  assert.equal(many.keptCount, 12);
+  assert.equal(many.totalCount, 15);
+  assert.deepEqual(many.keptValues, codes.slice(0, 10));
+  assert.equal(many.description, `类别：保留 12 / 共 15 个类别（${codes.slice(0, 10).join("、")}……等 12 个）`);
+
+  const blanks = createScriptContext();
+  commitRows(blanks, ["地区"], ["华东", "", "  ", "华南", "华东"].map((region) => ({ 地区: region })), "blank.csv");
+  applyFilterState(blanks, { category: { field: "地区", values: ["", "华东"] } });
+  const [blank] = reportOf(blanks).report.filters;
+  assert.deepEqual(blank.keptValues, ["（空值）", "华东"]);
+  assert.equal(blank.description, "地区：保留 2 / 共 3 个类别（（空值）、华东）");
+});
+
+test("report numeric filters on percent fields use the applied fraction range", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["转化率"], ["10%", "20%", "35%", "40%", "50%"].map((rate) => ({ 转化率: rate })), "rates.csv");
+  applyFilterState(scope, { numeric: { field: "转化率", min: 0.2, max: 0.4 } });
+  const { report } = reportOf(scope);
+  assert.deepEqual(report.filters, [{ type: "numeric", field: "转化率", min: 0.2, max: 0.4, description: "转化率：20% 至 40%" }]);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getAnalysisRows().map((row) => row["转化率"]))')), ["20%", "35%", "40%"]);
+});
+
+test("report filters ignore unapplied drafts and clear with the filters", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["地区", "金额"], [
+    { 地区: "华东", 金额: "100" }, { 地区: "华南", 金额: "200" }, { 地区: "华北", 金额: "300" }
+  ], "drafts.csv");
+  scope.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues.delete("华北"); applyFilters()');
+  const applied = reportOf(scope).report.filters;
+  assert.equal(applied[0].description, "地区：保留 2 / 共 3 个类别（华东、华南）");
+
+  scope.evaluate('state.categoryFilterDraftValues.delete("华南"); dom.numericFilterField.value = "金额"; updateNumericFilterField(); dom.numericFilterMin.value = "150"');
+  assert.deepEqual(reportOf(scope).report.filters, applied);
+
+  scope.evaluate("clearAllFilters()");
+  assert.deepEqual(reportOf(scope).report.filters, []);
+});
+
+test("report filter descriptions are escaped in HTML and Markdown", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["备注"], ["<b>x</b>|y", "第一行\n第二行", "其他"].map((note) => ({ 备注: note })), "escape.csv");
+  applyFilterState(scope, { category: { field: "备注", values: ["<b>x</b>|y", "第一行\n第二行"] } });
+  const { html, markdown } = reportOf(scope);
+  // The same values also appear as field samples, so look only at the filter section.
+  const htmlSection = html.split("<h2>筛选条件</h2>")[1]?.split("<h2>字段类型结果</h2>")[0] ?? "";
+  const markdownSection = markdown.split("## 筛选条件")[1]?.split("## 字段类型结果")[0] ?? "";
+  assert.ok(htmlSection.includes("<td>备注</td><td>备注：保留 2 / 共 3 个类别（&lt;b&gt;x&lt;/b&gt;|y、第一行\n第二行）</td>"));
+  assert.ok(!html.includes("<b>x</b>"));
+  assert.ok(markdownSection.includes("| 备注 | 备注：保留 2 \\/ 共 3 个类别（&lt;b&gt;x&lt;\\/b&gt;\\|y、第一行<br>第二行） |"));
+  assert.ok(!markdown.includes("<b>x</b>"));
+});
+
+test("legacy report snapshots without filters still render", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).filters)")), []);
+  assert.ok(scope.evaluate("buildHtmlReport({}, [])").includes(NO_FILTER_SENTENCE));
+  assert.ok(scope.evaluate("buildMarkdownReport({})").includes(NO_FILTER_SENTENCE));
+});
+
 test("field inference recognizes ID, numeric, date and category columns", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({

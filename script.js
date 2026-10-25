@@ -3986,6 +3986,10 @@ const REPORT_CHART_TITLES = Object.freeze({
   templateTrendChart: "场景模板时间趋势"
 });
 
+const REPORT_FILTER_MAX_VALUES = 10;
+const REPORT_NO_FILTER_TEXT = "未设置筛选，结果基于完整数据。";
+const REPORT_QUALITY_SCOPE_TEXT = "数据质量部分始终基于原始数据，不受筛选影响。";
+
 const REPORT_CHART_HEADING_IDS = Object.freeze({
   numericDistributionChart: "numericChartTitle",
   categoryTopChart: "categoryChartTitle",
@@ -4261,6 +4265,7 @@ function buildReportData(now = new Date()) {
       idFields: getProfilesByType("id").length,
       ignoredFields: getProfilesByType("ignore").length
     },
+    filters: buildReportFilters(),
     fieldTypes,
     quality: {
       totalMissing: state.totalMissing,
@@ -4289,6 +4294,44 @@ function buildReportData(now = new Date()) {
     customAnalysis: buildReportCustomAnalysis(),
     insights: [...state.insights]
   };
+}
+
+// Describes the applied filters (state.filters only changes on "应用筛选",
+// never on drafts) in the fixed order category, numeric, date.
+function buildReportFilters(filters = state.filters) {
+  const items = [];
+  if (filters?.category) {
+    const { field, values } = filters.category;
+    const options = getCategoryFilterOptions(field);
+    const keptKeys = new Set(values);
+    // Kept labels follow the filter panel order (display labels, zh-CN sort).
+    const kept = options.filter((option) => keptKeys.has(option.value)).map((option) => option.label);
+    const keptValues = kept.slice(0, REPORT_FILTER_MAX_VALUES);
+    const more = kept.length > keptValues.length ? `……等 ${formatInteger(kept.length)} 个` : "";
+    items.push({
+      type: "category",
+      field,
+      keptCount: kept.length,
+      totalCount: options.length,
+      keptValues,
+      description: `${field}：保留 ${formatInteger(kept.length)} / 共 ${formatInteger(options.length)} 个类别${kept.length ? `（${keptValues.join("、")}${more}）` : ""}`
+    });
+  }
+  if (filters?.numeric) {
+    const { field, min, max } = filters.numeric;
+    items.push({
+      type: "numeric",
+      field,
+      min,
+      max,
+      description: `${field}：${formatFieldNumber(field, min)} 至 ${formatFieldNumber(field, max)}`
+    });
+  }
+  if (filters?.date) {
+    const { field, start, end } = filters.date;
+    items.push({ type: "date", field, start, end, description: `${field}：${start} 至 ${end}` });
+  }
+  return items;
 }
 
 function getReportSourceFileName() {
@@ -4429,6 +4472,7 @@ function normalizeReportSnapshot(reportData = {}) {
       ignoredFields: 0,
       ...dataScale
     },
+    filters: Array.isArray(reportData.filters) ? reportData.filters : [],
     fieldTypes: (reportData.fieldTypes || []).map((field) => ({
       ...field,
       inferredType: field.inferredType || field.type || "—",
@@ -4582,6 +4626,13 @@ function buildHtmlReport(reportData, chartImages = []) {
     </div>
   </section>
   <section>
+    <h2>筛选条件</h2>
+    ${reportData.filters.length
+      ? buildHtmlReportTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]), REPORT_NO_FILTER_TEXT)
+      : `<p>${escapeHtml(REPORT_NO_FILTER_TEXT)}</p>`}
+    <p>${escapeHtml(REPORT_QUALITY_SCOPE_TEXT)}</p>
+  </section>
+  <section>
     <h2>字段类型结果</h2>
     ${buildHtmlReportTable(
       ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "缺失值", "转换失败", "示例值"],
@@ -4685,6 +4736,14 @@ function buildMarkdownReport(reportData) {
         ["忽略字段", reportData.dataScale.ignoredFields]
       ]
     ),
+    "",
+    "## 筛选条件",
+    "",
+    reportData.filters.length
+      ? buildMarkdownTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]))
+      : escapeMarkdownText(REPORT_NO_FILTER_TEXT),
+    "",
+    escapeMarkdownText(REPORT_QUALITY_SCOPE_TEXT),
     "",
     "## 字段类型结果",
     "",

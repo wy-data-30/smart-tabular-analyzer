@@ -560,6 +560,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告输入为当前分析快照，HTML 还包括可见图表图片；输出为带 BOM 的 `.html` 或 `.md` 下载。
 - 报告质量部分使用原始范围，统计、趋势和自定义分析使用当前分析范围。
 - 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“无法转换”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
+- 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
 
 **与其他模块的关系**
 
