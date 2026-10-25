@@ -719,6 +719,85 @@ test("the trend insight ignores numeric fields and both metric selects", () => {
   assert.equal(scope.evaluate('buildTrendInsight("日期")'), text);
 });
 
+const SCATTERED_CATEGORY_INSIGHT = "分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。";
+
+function categoryInsight(scope) {
+  return JSON.parse(scope.evaluate('JSON.stringify(state.insights.find((text) => text.startsWith("分类字段「")) ?? null)'));
+}
+
+test("the category conclusion skips near-unique fields in sample-students", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-students.csv");
+  assert.equal(categoryInsight(scope), "分类字段「班级」中占比最高的类别是「二班」，出现 25 次，占比 21.0%。");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "姓名").distinctCount'), 40);
+});
+
+test("the category conclusion of sample-data is unchanged", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(categoryInsight(scope), "分类字段「地区」中占比最高的类别是「华东」，出现 8 次，占比 21.6%。");
+});
+
+test("the category conclusion accepts 20 distinct values but not 21", () => {
+  const scope = createScriptContext();
+  // 22 rows: 甲 has 21 distinct values (v0 twice), 乙 has 20 (w0 and w19 twice).
+  const a = ["v0", ...Array.from({ length: 21 }, (_, index) => `v${index}`)];
+  const b = ["w0", ...Array.from({ length: 19 }, (_, index) => `w${index}`), "w19", "w19"];
+  const rows = a.map((value, index) => ({ 甲: value, 乙: b[index] }));
+  commitRows(scope, ["甲", "乙"], rows, "distinct.csv");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "甲").distinctCount'), 21);
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "乙").distinctCount'), 20);
+  assert.equal(categoryInsight(scope), "分类字段「乙」中占比最高的类别是「w0」，出现 2 次，占比 9.1%。");
+});
+
+test("the category conclusion needs a top category that appears at least twice", () => {
+  const scope = createScriptContext();
+  const rows = Array.from({ length: 15 }, (_, index) => ({ 编码值: `K${index + 1}`, 渠道: index % 3 ? "线上" : "门店" }));
+  commitRows(scope, ["编码值", "渠道"], rows, "unique.csv");
+  // 15 distinct values out of 15 is inferred as ID; make it a category on purpose.
+  scope.evaluate('stageFieldTypeChange("编码值", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "编码值").distinctCount'), 15);
+  assert.equal(categoryInsight(scope), "分类字段「渠道」中占比最高的类别是「线上」，出现 10 次，占比 66.7%。");
+});
+
+test("the category conclusion falls back when every category field is scattered", () => {
+  const scattered = createScriptContext();
+  const rows = Array.from({ length: 30 }, (_, index) => ({ 甲: `a${index % 25}`, 乙: `b${index % 26}` }));
+  commitRows(scattered, ["甲", "乙"], rows, "scattered.csv");
+  assert.equal(categoryInsight(scattered), null);
+  assert.equal(scattered.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), true);
+
+  const noCategory = createScriptContext();
+  commitRows(noCategory, ["日期", "金额"], [{ 日期: "2025-01-01", 金额: "1" }, { 日期: "2025-01-02", 金额: "2" }], "plain.csv");
+  assert.equal(categoryInsight(noCategory), null);
+  assert.equal(noCategory.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), false);
+  assert.equal(noCategory.evaluate('state.insights.includes("未识别到适合生成频数统计的分类字段。")'), true);
+});
+
+test("the category conclusion re-picks fields from the filtered rows", () => {
+  const scope = createScriptContext();
+  const rows = Array.from({ length: 40 }, (_, index) => ({
+    款号: index < 20 ? `g${Math.floor(index / 2)}` : `g${index - 10}`,
+    区域: index < 20 ? "X" : "Y"
+  }));
+  commitRows(scope, ["款号", "区域"], rows, "filtered.csv");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "款号").distinctCount'), 30);
+  assert.equal(categoryInsight(scope), "分类字段「区域」中占比最高的类别是「X」，出现 20 次，占比 50.0%。");
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "区域", values: ["X"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "款号").distinctCount'), 10);
+  assert.equal(categoryInsight(scope), "分类字段「款号」中占比最高的类别是「g0」，出现 2 次，占比 10.0%。");
+
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  assert.deepEqual(report.categoryStats.map((item) => [item.field, item.distinctCount]), [["款号", 10], ["区域", 1]]);
+  assert.deepEqual(report.insights, JSON.parse(scope.evaluate("JSON.stringify(state.insights)")));
+});
+
 test("field inference recognizes ID, numeric, date and category columns", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({

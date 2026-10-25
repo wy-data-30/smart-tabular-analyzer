@@ -151,6 +151,10 @@ const IMPORT_LIMITS = Object.freeze({
   maxColumns: 200
 });
 
+// A category field with more distinct values than this is too scattered for
+// the automatic category conclusion.
+const INSIGHT_CATEGORY_MAX_DISTINCT = 20;
+
 const FIELD_TYPE_LABELS = {
   numeric: "数值",
   category: "分类",
@@ -1262,6 +1266,7 @@ function buildCategoryStats(rows = getAnalysisRows()) {
     return {
       field: profile.field,
       total: nonMissingCount,
+      distinctCount: counts.size,
       top
     };
   });
@@ -1332,7 +1337,15 @@ function renderInsights() {
   const topNumeric = state.numericStats
     .slice()
     .sort((a, b) => Math.abs(b.max - b.min) - Math.abs(a.max - a.min))[0];
-  const firstCategory = state.categoryStats.find((item) => item.top.length);
+  // The first category field, in field order, whose values are concentrated
+  // enough to summarise: at most INSIGHT_CATEGORY_MAX_DISTINCT distinct values
+  // in the current rows and a top category that repeats.
+  const firstCategory = state.categoryStats.find((item) => (
+    item.top.length
+      && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT
+      && item.top[0].count >= 2
+  ));
+  const hasCategoryValues = state.categoryStats.some((item) => item.top.length);
   const dateProfile = getProfilesByType("date")
     .find((profile) => fieldHasDateData(profile.field));
 
@@ -1349,6 +1362,8 @@ function renderInsights() {
   if (firstCategory) {
     const top = firstCategory.top[0];
     insights.push(`分类字段「${firstCategory.field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`);
+  } else if (hasCategoryValues) {
+    insights.push(`分类字段的取值都比较分散（每个字段超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），没有适合概括的分类结论。`);
   } else {
     insights.push("未识别到适合生成频数统计的分类字段。");
   }
@@ -4218,6 +4233,7 @@ function buildReportData(now = new Date()) {
   const categoryStats = state.categoryStats.map((category) => ({
     field: category.field,
     total: category.total,
+    distinctCount: category.distinctCount,
     top: category.top.slice(0, 10).map((item) => ({
       name: item.name,
       count: item.count,
