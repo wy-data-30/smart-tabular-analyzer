@@ -473,7 +473,7 @@ upper = Q3 + 1.5 × IQR
 | 图表范围 | 主要函数 |
 | --- | --- |
 | 基础图表入口 | `renderCharts()` |
-| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildHistogram()` |
+| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间。场景模板的 `histogramChartConfig()` 不受影响 |
 | 分类 Top 10 | `renderCategoryTopChart()` → `countValues()` |
 | 日期趋势 | `renderDateTrendChart()` → `buildDateTrend()` |
 | 基础分组图 | `renderCustomAnalysisChart()` → `aggregateByCategory()` |

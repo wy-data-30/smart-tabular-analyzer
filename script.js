@@ -2010,7 +2010,7 @@ function renderNumericDistributionChart() {
 
   const values = getNumericValues(field);
   if (!values.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效数值");
-  const bins = buildHistogram(values, 10, field);
+  const bins = buildDiscreteValueCounts(values, field) || buildHistogram(values, 10, field);
   state.charts.numericDistributionChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -3117,6 +3117,23 @@ function aggregateByCategory(metricField, groupField, method) {
       return { name, value, count: values.length };
     })
     .sort((a, b) => compareNumbersDescending(a.value, b.value));
+}
+
+// Small integer ranges (scores, ratings) get one bar per value from min to max,
+// zeros included; anything else returns null so callers fall back to buildHistogram.
+function buildDiscreteValueCounts(values, field = "") {
+  if (!values.length || getNumericFormat(field) === "percent") return null;
+  if (!values.every(Number.isInteger)) return null;
+  const { min, max } = numericExtents(values);
+  if (!(max - min <= 11)) return null;
+  const bins = Array.from({ length: max - min + 1 }, (_, index) => ({
+    label: formatFieldNumber(field, min + index),
+    count: 0
+  }));
+  values.forEach((value) => {
+    bins[value - min].count += 1;
+  });
+  return bins;
 }
 
 function buildHistogram(values, binCount, field = "") {

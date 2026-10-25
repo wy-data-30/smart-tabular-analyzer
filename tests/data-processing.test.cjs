@@ -593,6 +593,32 @@ test("IQR detection handles an extreme outlier without numeric overflow", () => 
   assert.equal(Number.isFinite(stats.std), true);
 });
 
+test("small integer ranges are counted per value instead of binned", () => {
+  const { context, evaluate } = createScriptContext();
+  const counts = (values, field = "") => {
+    context.__values = values;
+    return JSON.parse(evaluate(`JSON.stringify(buildDiscreteValueCounts(__values, ${JSON.stringify(field)}))`));
+  };
+  const labels = (result) => result.map((bin) => bin.label);
+  const tallies = (result) => result.map((bin) => bin.count);
+
+  const scores = counts([2, 3, 4, 9, 9, 3]);
+  assert.deepEqual(labels(scores), ["2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.deepEqual(tallies(scores), [1, 2, 1, 0, 0, 0, 0, 2]);
+  assert.deepEqual(labels(counts([1, 2, 3, 4, 5, 3])), ["1", "2", "3", "4", "5"]);
+  assert.deepEqual(counts([4, 4, 4]), [{ label: "4", count: 3 }]);
+  assert.deepEqual(labels(counts([-2, 0, 3])), ["-2", "-1", "0", "1", "2", "3"]);
+  assert.equal(counts([0, 11]).length, 12);
+  assert.equal(counts([0, 12]), null);
+  assert.equal(counts([1, 2.5, 3]), null);
+  assert.equal(counts([]), null);
+  assert.deepEqual(labels(counts([1000000, 1000003])), ["1,000,000", "1,000,001", "1,000,002", "1,000,003"]);
+  assert.equal(counts([-Number.MAX_VALUE, Number.MAX_VALUE]), null);
+
+  evaluate('state.profiles = [{ field: "比例", numericFormat: "percent" }]');
+  assert.equal(counts([0, 1], "比例"), null);
+});
+
 test("extreme finite values do not crash histograms or overflow grouped sums", () => {
   const { context, evaluate } = createScriptContext();
   context.__extremeValues = [-1e308, 1e308];

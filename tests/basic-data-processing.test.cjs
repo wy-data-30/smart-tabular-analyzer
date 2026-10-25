@@ -6,6 +6,8 @@ const { createScriptContext } = require("./test-context.cjs");
 // The real vendored SheetJS builds and reads workbooks at test time, so no
 // binary fixture is committed and the production read options are exercised.
 const XLSX = require(path.join(__dirname, "..", "vendor", "xlsx-0.20.3.full.min.js"));
+const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.js"));
+const fs = require("node:fs");
 
 function put(context, name, value) {
   context[name] = value;
@@ -277,6 +279,82 @@ test("Excel percent sampling starts below the detected header row", () => {
   // that starts right below the header has a percent majority.
   const buffer = sampledRateSheet(2000, (index) => (index >= 499 && index < 1000 ? "0%" : "General"), 3);
   assert.equal(importedRateFormat(buffer), "percent");
+});
+
+// Records every Chart config so tests can read the labels and data the
+// numeric distribution chart was drawn with.
+function createChartContext() {
+  const scope = createScriptContext();
+  const configs = [];
+  class FakeChart {
+    constructor(canvas, config) { configs.push({ canvas, config }); }
+    destroy() {}
+  }
+  scope.context.Chart = FakeChart;
+  scope.context.window.Chart = FakeChart;
+  scope.lastDistribution = () => {
+    const canvas = scope.context.document.getElementById("numericDistributionChart");
+    const { config } = configs.filter((entry) => entry.canvas === canvas).pop();
+    return { labels: [...config.data.labels], data: [...config.data.datasets[0].data] };
+  };
+  return scope;
+}
+
+function commitExampleCsv(scope, fileName) {
+  const text = fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8");
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  put(scope.context, "__exampleFields", parsed.meta.fields);
+  put(scope.context, "__exampleRows", parsed.data);
+  scope.evaluate(`commitTabularData(__exampleFields, __exampleRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+
+function drawDistribution(scope, field) {
+  put(scope.context, "__chartField", field);
+  scope.evaluate("dom.numericChartField.value = __chartField; renderNumericDistributionChart()");
+  return scope.lastDistribution();
+}
+
+test("the distribution chart counts small integer scores per value", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-survey.csv");
+
+  const chart = drawDistribution(scope, "满意度");
+  assert.deepEqual(chart.labels, ["2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.equal(chart.labels.some((label) => label.includes(" - ")), false);
+  assert.equal(chart.data.reduce((total, count) => total + count, 0), scope.evaluate('getNumericValues("满意度").length'));
+});
+
+test("the distribution chart keeps ten intervals for continuous values", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const chart = drawDistribution(scope, "销售额");
+  const expected = JSON.parse(scope.evaluate('JSON.stringify(buildHistogram(getNumericValues("销售额"), 10, "销售额"))'));
+  assert.equal(chart.labels.length, 10);
+  assert.deepEqual(chart.labels, expected.map((bin) => bin.label));
+  assert.deepEqual(chart.data, expected.map((bin) => bin.count));
+});
+
+test("the distribution chart re-decides per-value counts after filtering", () => {
+  const scope = createChartContext();
+  const rows = Array.from({ length: 30 }, (_, index) => ({ 分值: String(index + 1), 组: index < 5 ? "A" : "B" }));
+  put(scope.context, "__rows", rows);
+  scope.evaluate('commitTabularData(["分值", "组"], __rows, "scores.csv", beginImport())');
+
+  assert.equal(drawDistribution(scope, "分值").labels.length, 10);
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "组", values: ["A"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.deepEqual(scope.lastDistribution(), { labels: ["1", "2", "3", "4", "5"], data: [1, 1, 1, 1, 1] });
+
+  scope.evaluate("clearAllFilters()");
+  const cleared = scope.lastDistribution();
+  assert.equal(cleared.labels.length, 10);
+  assert.equal(cleared.labels.every((label) => label.includes(" - ")), true);
 });
 
 test("field inference recognizes ID, numeric, date and category columns", () => {
