@@ -138,6 +138,30 @@ const dom = {
   workflowStepExport: document.getElementById("workflowStepExport")
 };
 
+ensureDomElementsPresent();
+
+// A cached older index.html can lack elements this script expects. Stop here
+// with a refresh notice (inline styles, because style.css may be stale too)
+// instead of failing later on the first addEventListener.
+function ensureDomElementsPresent() {
+  const missingKeys = Object.keys(dom).filter((key) => !dom[key]);
+  if (!missingKeys.length) return;
+
+  const notice = document.createElement("div");
+  notice.setAttribute("role", "alert");
+  notice.style.cssText = "position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid #fedf89;background:#fffaeb;color:#b54708;font:600 14px/1.5 system-ui,-apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;";
+  const message = document.createElement("span");
+  message.textContent = "页面已更新，请刷新后再使用。";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "刷新页面";
+  button.style.cssText = "padding:6px 14px;border:1px solid #b54708;border-radius:6px;background:#b54708;color:#fff;font:inherit;cursor:pointer;";
+  button.addEventListener("click", () => window.location.reload());
+  notice.append(message, button);
+  document.body.prepend(notice);
+  throw new Error(`页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
+}
+
 const ENCODING_LABELS = {
   auto: "自动识别",
   "utf-8": "UTF-8",

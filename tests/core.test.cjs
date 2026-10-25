@@ -14,6 +14,90 @@ const missingDomIds = [...new Set(
     .filter((id) => !new RegExp(`id=["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).test(htmlSource))
 )];
 assert.deepEqual(missingDomIds, []);
+
+// Startup self-check: a cached old index.html that lacks an element must stop
+// script.js with a visible refresh notice before any listener is attached.
+// test-context's fake DOM never returns null, so this uses its own minimal one.
+function loadScriptWithMissingElement(missingId) {
+  const vm = require("node:vm");
+  const listeners = [];
+  const reloads = [];
+  const makeElement = (tagName) => ({
+    tagName,
+    style: {},
+    attributes: {},
+    children: [],
+    textContent: "",
+    type: "",
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    dataset: {},
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    removeAttribute(name) { delete this.attributes[name]; },
+    addEventListener(type, handler) { listeners.push({ element: this, type, handler }); },
+    append(...nodes) { this.children.push(...nodes); },
+    appendChild(node) { this.children.push(node); return node; },
+    prepend(...nodes) { this.children.unshift(...nodes); },
+    querySelectorAll() { return []; },
+    getContext() { return { clearRect() {}, save() {}, restore() {}, fillText() {} }; }
+  });
+  const body = makeElement("body");
+  const lookedUp = new Set();
+  const document = {
+    body,
+    getElementById(id) {
+      if (id === missingId) return null;
+      const element = makeElement("div");
+      lookedUp.add(element);
+      return element;
+    },
+    createElement: makeElement,
+    querySelectorAll() { return []; }
+  };
+  const window = {
+    Chart: null,
+    location: { reload() { reloads.push("reload"); } },
+    addEventListener() {},
+    requestAnimationFrame(callback) { callback(); return 1; },
+    innerHeight: 900,
+    scrollY: 0
+  };
+  const sandbox = vm.createContext({ console, document, window, Intl, TextDecoder, Uint8Array, Blob, URL, setTimeout, clearTimeout });
+  let error = null;
+  try {
+    vm.runInContext(source, sandbox, { filename: "script.js" });
+  } catch (caught) {
+    error = caught;
+  }
+  return {
+    error,
+    body,
+    reloads,
+    listeners,
+    domListeners: listeners.filter(({ element }) => lookedUp.has(element))
+  };
+}
+
+const brokenStartup = loadScriptWithMissingElement("dateChartMetric");
+assert.ok(brokenStartup.error, "script.js must stop when a DOM element is missing");
+assert.match(String(brokenStartup.error.message), /dateChartMetric/);
+const refreshNotice = brokenStartup.body.children[0];
+assert.equal(refreshNotice?.attributes.role, "alert");
+const refreshNoticeText = refreshNotice.children.find((node) => node.tagName !== "button")?.textContent;
+assert.equal(refreshNoticeText, "页面已更新，请刷新后再使用。");
+const refreshButton = refreshNotice.children.find((node) => node.tagName === "button");
+assert.equal(refreshButton?.textContent, "刷新页面");
+assert.deepEqual(brokenStartup.domListeners, [], "no listener may be attached after the self-check stops");
+assert.deepEqual(brokenStartup.reloads, []);
+const refreshClick = brokenStartup.listeners.find(({ element, type }) => element === refreshButton && type === "click");
+assert.ok(refreshClick, "the refresh button needs a click handler");
+refreshClick.handler();
+assert.deepEqual(brokenStartup.reloads, ["reload"]);
+
+const healthyStartup = loadScriptWithMissingElement(null);
+assert.equal(healthyStartup.error, null);
+assert.deepEqual(healthyStartup.body.children, []);
+assert.ok(healthyStartup.domListeners.some(({ type }) => type === "change"), "a complete page keeps attaching its listeners");
+
 assert.doesNotMatch(htmlSource, /xlsx@0\.18\.5|xlsx-0\.18\.5/);
 const scriptTags = [...htmlSource.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g)]
   .map((match) => ({ tag: match[0], src: match[1] }));
@@ -24,7 +108,8 @@ assert.deepEqual(vendorScripts.map(({ src }) => src), [
   "vendor/chart-4.4.1.umd.min.js",
   "vendor/xlsx-0.20.3.full.min.js"
 ]);
-const appScriptIndex = scriptTags.findIndex(({ src }) => src === "script.js");
+// script.js carries a ?v= cache-busting parameter; compare the path only.
+const appScriptIndex = scriptTags.findIndex(({ src }) => src.split("?")[0] === "script.js");
 assert.ok(appScriptIndex >= 0);
 vendorScripts.forEach(({ tag, src }) => {
   assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before script.js`);

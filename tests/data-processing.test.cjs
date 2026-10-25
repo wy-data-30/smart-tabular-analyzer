@@ -350,6 +350,12 @@ test("public current version markers agree on v2.1.3", () => {
   const { evaluate } = createScriptContext();
   assert.equal(evaluate("buildReportData().version"), "v2.1.3");
   assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.3");
+
+  // index.html cache-busting parameters must follow package.json.
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
+  assert.equal(html.match(/<script src="script\.js\?v=([^"]+)"><\/script>/)?.[1], packageVersion);
 });
 
 test("numeric parsing handles common tabular formats safely", () => {

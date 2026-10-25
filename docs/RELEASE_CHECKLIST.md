@@ -6,7 +6,7 @@
 
 - [ ] 发布内容与项目定位一致：无需注册、浏览器本地处理、支持中文 CSV/Excel。
 - [ ] 没有加入后端、数据库、账号、云存储或其他范围外依赖。
-- [ ] `package.json`、README 当前版本和 `script.js` 报告版本保持一致。
+- [ ] `package.json`、README 当前版本、`script.js` 报告版本，以及 `index.html` 中 `style.css?v=` 和 `script.js?v=` 的版本参数保持一致。
 - [ ] README、中文 README 和 `docs/` 与实际行为一致。
 - [ ] 新增或修改的用户文件、测试夹具和截图不含真实个人数据。
 

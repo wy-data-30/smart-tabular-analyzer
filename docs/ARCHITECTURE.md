@@ -9,6 +9,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 - `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
 - `script.js` 包含应用状态、事件绑定、文件解析、分析计算、图表、页面渲染和导出逻辑。
+- 启动自检：`dom` 映射建立后立即调用 `ensureDomElementsPresent()`。如果缓存里的旧 `index.html` 缺少脚本需要的元素，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失键名的错误，阻止后续顶层代码执行；元素齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>` 和 `script.js?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
 - CSV、Excel、筛选、统计和报告生成均在浏览器本地完成。
 - 当前导入上限由 `IMPORT_LIMITS` 统一控制：25 MB、100,000 行数据、200 列。
 
