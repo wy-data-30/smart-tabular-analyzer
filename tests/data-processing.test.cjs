@@ -53,6 +53,37 @@ for (const timezone of ["Asia/Shanghai", "UTC", "America/Los_Angeles"]) {
     });
   });
 
+  test(`trend insight month-end and year-end checks use calendar days in ${timezone}`, () => {
+    const output = execFileSync(process.execPath, ["-e", `
+      const { createScriptContext } = require('./tests/test-context.cjs');
+      const cases = [
+        ["日期", ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01", "2024-02-29"]],
+        ["日期", ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01", "2024-02-28"]],
+        ["日期", ["2025-01-05", "2025-03-05", "2025-05-05", "2025-06-30"]],
+        ["日期", ["2025-01-05", "2025-03-05", "2025-05-05", "2025-06-01"]],
+        ["年份", ["2021", "2022", "2023", "2024", "2025-12-31"]],
+        ["年份", ["2021", "2022", "2023", "2024", "2025-01-01"]]
+      ];
+      console.log(JSON.stringify(cases.map(([field, values]) => {
+        const { context, evaluate } = createScriptContext();
+        context.__rows = values.map((value) => ({ [field]: value }));
+        context.__field = field;
+        evaluate('commitTabularData([__field], __rows, "tz.csv", beginImport())');
+        const text = evaluate('buildTrendInsight(__field)');
+        const start = text.indexOf("注意：最后一期");
+        return start < 0 ? "" : text.slice(start, text.indexOf("日，", start) + 1);
+      })));
+    `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
+    assert.deepEqual(JSON.parse(output), [
+      "",
+      "注意：最后一期（2024-02）的数据截至 2 月 28 日",
+      "",
+      "注意：最后一期（2025-06）的数据截至 6 月 1 日",
+      "",
+      "注意：最后一期（2025 年）的数据截至 1 月 1 日"
+    ]);
+  });
+
   test(`English calendar dates and existing date formats are stable in ${timezone}`, () => {
     const output = execFileSync(process.execPath, ["-e", `
       const { createScriptContext } = require('./tests/test-context.cjs');
@@ -311,14 +342,20 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.1.3", () => {
+test("public current version markers agree on v2.1.4", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.3");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.3/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.3/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.4");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.4/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.4/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.1.3");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.3");
+  assert.equal(evaluate("buildReportData().version"), "v2.1.4");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.4");
+
+  // index.html cache-busting parameters must follow package.json.
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
+  assert.equal(html.match(/<script src="script\.js\?v=([^"]+)"><\/script>/)?.[1], packageVersion);
 });
 
 test("numeric parsing handles common tabular formats safely", () => {
@@ -351,6 +388,51 @@ test("percentage and currency formats are parsed and classified correctly", () =
   assert.equal(evaluate('toNumber("(10%)")'), -0.1);
   assert.equal(evaluate('detectNumericFormat(["10%", "25%", "100%"] )'), "percent");
   assert.equal(evaluate('detectNumericFormat(["10%", "0.25"])'), "number");
+});
+
+test("number display keeps small values visible and never shows negative zero", () => {
+  const { evaluate } = createScriptContext();
+
+  assert.equal(evaluate("formatNumber(-0)"), "0");
+  assert.equal(evaluate("formatNumber(-0.001)"), "-0.001");
+  assert.equal(evaluate("formatNumber(0.000123)"), "0.000123");
+  assert.equal(evaluate("formatNumber(0.123456)"), "0.123");
+  assert.equal(evaluate("formatNumber(-0.00075)"), "-0.00075");
+  assert.equal(evaluate("formatNumber(-(0.1 + 0.2 - 0.3))"), "0");
+  assert.equal(evaluate("formatNumber(1e-11)"), "0");
+  assert.equal(evaluate("formatNumber(-1e-11)"), "0");
+
+  // Values at or above 1 keep the existing two-decimal display.
+  assert.equal(evaluate("formatNumber(1234.5)"), "1,234.5");
+  assert.equal(evaluate("formatNumber(500 / 3)"), "166.67");
+  assert.equal(evaluate("formatNumber(10)"), "10");
+  assert.equal(evaluate("formatNumber(-2.5)"), "-2.5");
+  assert.equal(evaluate("formatNumber(NaN)"), "-");
+  assert.equal(evaluate("formatNumber(Infinity)"), "-");
+  assert.equal(evaluate("formatNumber(-Infinity)"), "-");
+
+  assert.equal(evaluate("formatPercent(-0.00001)"), "0.0%");
+  assert.equal(evaluate("formatPercent(-0)"), "0.0%");
+  assert.equal(evaluate("formatPercent(0.25)"), "25.0%");
+  assert.equal(evaluate("formatPercent(NaN)"), "0%");
+
+  evaluate('state.profiles = [{ field: "比例", numericFormat: "percent" }]');
+  assert.equal(evaluate('formatFieldNumber("比例", -0.00001)'), "0%");
+  assert.equal(evaluate('formatFieldNumber("比例", -1e-11)'), "0%");
+  assert.equal(evaluate('formatFieldNumber("比例", 0.3375)'), "33.75%");
+  assert.equal(evaluate('formatFieldNumber("比例", -0.25)'), "-25%");
+  assert.equal(evaluate('formatFieldNumber("比例", NaN)'), "-");
+});
+
+test("Excel number formats count as percent only when % is a real scale token", () => {
+  const { evaluate } = createScriptContext();
+
+  for (const format of ["0%", "0.00%", "#,##0.0%", "[Red]0%"]) {
+    assert.equal(evaluate(`isPercentNumberFormat(${JSON.stringify(format)})`), true, format);
+  }
+  for (const format of ['0"%"', "0\\%", '"rate %" 0', "General", "#,##0.00", "¥#,##0.00", "yyyy-mm-dd", "", null, undefined]) {
+    assert.equal(evaluate(`isPercentNumberFormat(${JSON.stringify(format) ?? "undefined"})`), false, String(format));
+  }
 });
 
 test("date parsing accepts supported formats and rejects invalid or ambiguous dates", () => {
@@ -395,6 +477,47 @@ test("ID inference recognizes Chinese identifiers without treating ordinary coun
   assert.equal(evaluate('buildColumnProfile("订单ID", __studentRows).typeKey'), "id");
   assert.equal(evaluate('buildColumnProfile("学号数量", __studentRows).typeKey'), "numeric");
   assert.equal(evaluate('buildColumnProfile("普通数值", __studentRows).typeKey'), "numeric");
+});
+
+test("ID names cover row-number headers and Chinese names ending in ID", () => {
+  const { context, evaluate } = createScriptContext();
+  const isIdName = (name) => evaluate(`isIdFieldName(${JSON.stringify(name)})`);
+
+  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id"]) {
+    assert.equal(isIdName(name), true, name);
+  }
+  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量"]) {
+    assert.equal(isIdName(name), false, name);
+  }
+  // Already true before v2.1.4 (deferred finding 6 of v2.1.3); kept unchanged on purpose.
+  assert.equal(isIdName("Number of employees"), true);
+  assert.equal(isIdName("Key metric"), true);
+
+  context.__countRows = Array.from({ length: 12 }, (_, index) => ({ 学号数量: String(index + 1) }));
+  assert.equal(evaluate('buildColumnProfile("学号数量", __countRows).typeKey'), "numeric");
+});
+
+test("profiles keep up to three distinct conversion failure samples per type", () => {
+  const { context, evaluate } = createScriptContext();
+  const amounts = ["N/A", " N/A ", "待定", "约500", "x", ...Array.from({ length: 20 }, (_, index) => String(index * 10))];
+  context.__amountRows = amounts.map((value) => ({ 金额: value }));
+  const amount = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("金额", __amountRows))'));
+  assert.equal(amount.typeKey, "numeric");
+  assert.equal(amount.conversionFailureCount, 5);
+  assert.deepEqual(amount.conversionFailureSamples, ["N/A", "待定", "约500"]);
+  assert.deepEqual(amount.conversionFailureSamplesByType.numeric, ["N/A", "待定", "约500"]);
+
+  const dates = ["下周一", "2024-13-45", ...Array.from({ length: 8 }, (_, index) => `2024-01-0${index + 1}`)];
+  context.__dateRows = dates.map((value) => ({ 日期: value }));
+  const date = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("日期", __dateRows))'));
+  assert.equal(date.typeKey, "date");
+  assert.equal(date.conversionFailureCount, 2);
+  assert.deepEqual(date.conversionFailureSamples, ["下周一", "2024-13-45"]);
+
+  context.__textRows = ["甲", "乙", "丙"].map((value) => ({ 备注: value }));
+  const text = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("备注", __textRows))'));
+  assert.equal(text.conversionFailureCount, 0);
+  assert.deepEqual(text.conversionFailureSamples, []);
 });
 
 test("mixed-type fields follow the 80 percent inference threshold", () => {
@@ -528,6 +651,32 @@ test("IQR detection handles an extreme outlier without numeric overflow", () => 
   assert.equal(stats.max, 1_000_000_000);
   assert.equal(Number.isFinite(stats.mean), true);
   assert.equal(Number.isFinite(stats.std), true);
+});
+
+test("small integer ranges are counted per value instead of binned", () => {
+  const { context, evaluate } = createScriptContext();
+  const counts = (values, field = "") => {
+    context.__values = values;
+    return JSON.parse(evaluate(`JSON.stringify(buildDiscreteValueCounts(__values, ${JSON.stringify(field)}))`));
+  };
+  const labels = (result) => result.map((bin) => bin.label);
+  const tallies = (result) => result.map((bin) => bin.count);
+
+  const scores = counts([2, 3, 4, 9, 9, 3]);
+  assert.deepEqual(labels(scores), ["2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.deepEqual(tallies(scores), [1, 2, 1, 0, 0, 0, 0, 2]);
+  assert.deepEqual(labels(counts([1, 2, 3, 4, 5, 3])), ["1", "2", "3", "4", "5"]);
+  assert.deepEqual(counts([4, 4, 4]), [{ label: "4", count: 3 }]);
+  assert.deepEqual(labels(counts([-2, 0, 3])), ["-2", "-1", "0", "1", "2", "3"]);
+  assert.equal(counts([0, 11]).length, 12);
+  assert.equal(counts([0, 12]), null);
+  assert.equal(counts([1, 2.5, 3]), null);
+  assert.equal(counts([]), null);
+  assert.deepEqual(labels(counts([1000000, 1000003])), ["1,000,000", "1,000,001", "1,000,002", "1,000,003"]);
+  assert.equal(counts([-Number.MAX_VALUE, Number.MAX_VALUE]), null);
+
+  evaluate('state.profiles = [{ field: "比例", numericFormat: "percent" }]');
+  assert.equal(counts([0, 1], "比例"), null);
 });
 
 test("extreme finite values do not crash histograms or overflow grouped sums", () => {

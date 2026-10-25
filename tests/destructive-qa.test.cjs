@@ -179,7 +179,8 @@ test("a newer upload without date data does not keep the previous date chart tit
   ];
   evaluate('commitTabularData(["日期", "金额"], __datedRows, "dated.csv", beginImport())');
   byId("dateChartField").value = "日期";
-  byId("metricField").value = "金额";
+  // The trend chart reads its own metric select; #metricField no longer drives it.
+  byId("dateChartMetric").value = "金额";
   evaluate("renderCharts()");
   const previousTitle = byId("dateChartTitle").textContent;
   assert.match(previousTitle, /金额/);
@@ -187,7 +188,7 @@ test("a newer upload without date data does not keep the previous date chart tit
   // The date select keeps a field name the new dataset no longer has valid dates for.
   context.__undatedRows = [{ 城市: "上海", 分数: "90" }, { 城市: "北京", 分数: "80" }];
   evaluate('commitTabularData(["城市", "分数"], __undatedRows, "undated.csv", beginImport())');
-  byId("metricField").value = "";
+  assert.equal(byId("dateChartMetric").value, "");
   evaluate("renderCharts()");
   assert.equal(byId("dateChartTitle").textContent, defaultTitle);
   assert.equal(canvasAttributes["aria-label"], defaultTitle);

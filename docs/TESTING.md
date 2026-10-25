@@ -36,8 +36,8 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | `tests/data-processing.test.cjs` | 纯数据逻辑：数值/日期解析、字段与 ID 识别、缺失、重复、统计、IQR、筛选、去重和模板。 |
 | `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试。 |
 | `tests/destructive-qa.test.cjs` | 空数据、异常表头、编码、极端数值、连续上传、反复筛选、报告后继续分析和 100,000 行压力测试。 |
-| `tests/core.test.cjs` | DOM ID、相对资源路径、CDN/SRI、字段修正、报告生成和其他静态/集成断言。 |
-| `tests/fixtures/` | 手工回归资料。目前自动测试没有直接读取其中的 CSV/XLSX 文件。 |
+| `tests/core.test.cjs` | DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
+| `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
 测试环境不是完整浏览器：Chart.js、PapaParse、SheetJS、FileReader 或下载 API 会按测试需要注入替身。真实浏览器布局、触控交互、canvas 像素和 Excel/WPS 打开效果仍需手工回归。
@@ -82,7 +82,7 @@ test("new behavior", () => {
 
 ### `Papa`、`XLSX`、`Chart` 或 `FileReader` 未定义
 
-VM 不会加载 CDN。测试调用相关流程前，需要同时在 `context` 和必要的 `context.window` 属性上注入替身。
+VM 只加载 `script.js`，不会加载 `vendor/` 中的库文件。测试调用相关流程前，需要同时在 `context` 和必要的 `context.window` 属性上注入替身。
 
 ### VM 对象深比较失败
 
@@ -94,7 +94,7 @@ VM 中创建的对象属于不同 realm。复杂对象可先 `JSON.stringify()` 
 
 ### `core.test.cjs` 报 DOM ID 或资源缺失
 
-该测试会从 `script.js` 收集 `getElementById()`，并检查 `index.html`、相对资源路径和 CDN 标签。修改 ID 或移动根目录资源时必须同步 HTML、JS 和测试契约。
+该测试会从 `script.js` 收集 `getElementById()`，并检查 `index.html`、相对资源路径、vendor 脚本标签及其 SRI、许可证文件和 `.nojekyll`。修改 ID、移动根目录资源或升级 vendor 依赖时必须同步 HTML、JS 和测试契约。
 
 ### 压力测试变慢
 

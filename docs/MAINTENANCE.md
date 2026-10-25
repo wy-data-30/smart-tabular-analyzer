@@ -48,24 +48,33 @@
 - HTML 报告中的数据必须经过 `escapeHtml()`；图像只接受安全的 PNG、JPEG 或 WebP Data URL（与 `isSafeChartDataUrl()` 一致）。
 - 文件名清理负责移除非法字符和双向文本控制字符。
 
-## 3. CDN 和依赖位置
+## 3. 依赖位置（vendor/ 自行托管）
 
-浏览器运行时依赖都在 `index.html` 顶部：
+浏览器运行时依赖保存在仓库的 `vendor/` 目录，由 `index.html` 顶部按以下顺序以相对路径加载，并且都在 `script.js` 之前：
 
-| 库 | 当前版本 | 用途 |
-| --- | --- | --- |
-| PapaParse | 5.4.1 | CSV 解析和 CSV 生成 |
-| Chart.js | 4.4.1 | 页面图表 |
-| SheetJS | 0.20.3 | `.xlsx` / `.xls` 读取 |
+| 库 | 当前版本 | 文件 | 许可证 | 用途 |
+| --- | --- | --- | --- | --- |
+| PapaParse | 5.4.1 | `vendor/papaparse-5.4.1.min.js` | `vendor/licenses/papaparse-LICENSE`（MIT） | CSV 解析和 CSV 生成 |
+| Chart.js | 4.4.1 | `vendor/chart-4.4.1.umd.min.js` | `vendor/licenses/chartjs-LICENSE.md`（MIT） | 页面图表 |
+| SheetJS | 0.20.3 | `vendor/xlsx-0.20.3.full.min.js` | `vendor/licenses/sheetjs-LICENSE`（Apache-2.0） | `.xlsx` / `.xls` 读取 |
 
-三个脚本都固定版本，并配置 SHA-384 SRI 和 `crossorigin="anonymous"`。升级依赖时：
+三个脚本都保留 SHA-384 `integrity`，页面不再请求第三方 CDN。仓库根目录的 `.nojekyll` 让 GitHub Pages 原样发布 `vendor/`。`tests/core.test.cjs` 会校验：没有 http(s) 外部脚本、三个 vendor 文件名与顺序、每个文件的实际 SHA-384 与 `integrity` 一致、三个许可证文件和 `.nojekyll` 存在。
 
-1. 修改精确 CDN URL，不使用 `latest`。
-2. 对下载到的精确文件重新计算 SHA-384 Base64。
-3. 更新对应 `integrity`，确认 CDN 返回允许匿名跨域加载的响应头。
-4. 运行 `core.test.cjs` 和完整回归，并在浏览器中实际加载页面。
+升级依赖时：
 
-不要只修改版本号而保留旧 SRI，否则浏览器会拒绝执行脚本。
+1. 从该库官方发布渠道下载新版本的精确文件，不使用 `latest`。
+2. 替换 `vendor/` 中的旧文件，文件名使用新版本号，并同步修改 `index.html` 中的 `src`。
+3. 对新文件重新计算 SHA-384 Base64，更新对应 `integrity`：
+
+   ```bash
+   node -e "console.log('sha384-'+require('crypto').createHash('sha384').update(require('fs').readFileSync(process.argv[1])).digest('base64'))" vendor/<文件名>
+   ```
+
+4. 从同一个包中取得许可证文件，替换 `vendor/licenses/` 中对应的文件并核对许可证类型。
+5. 同步修改 `tests/core.test.cjs` 中的文件名，运行完整回归，并在浏览器中实际加载页面。
+6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
+
+不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。
 
 `package.json` 当前只有测试脚本，没有生产依赖或开发依赖。测试使用 Node 内置模块。`tests/create-excel-fixture.mjs` 引用的外部工具不是标准项目依赖，也不由 CI 执行。
 
@@ -76,7 +85,7 @@
 - 入口为根目录 `index.html`。
 - `style.css`、`script.js`、示例 CSV 和 `assets/` 使用相对路径。
 - 不添加本地绝对路径、开发服务器代理或后端 API 依赖。
-- CDN 在公网可访问且 SRI 与内容一致。
+- `vendor/` 下三个库文件随仓库发布、线上返回 200，且 SRI 与内容一致；根目录保留 `.nojekyll`，`.gitattributes` 保持 `vendor/** -text`，避免换行转换改变文件字节。
 
 仓库内的 `.github/workflows/ci.yml` 只运行测试，没有 Pages 部署步骤或写权限，因此不会替代 Pages 配置。当前代码适合 GitHub Pages 的“从分支部署”；实际来源分支和目录应在仓库 `Settings > Pages` 中确认。
 
@@ -93,7 +102,7 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 ### 页面空白或按钮无响应
 
 1. 查看浏览器控制台是否有语法错误或 DOM ID 为 `null`。
-2. 在 Network 面板检查三个 CDN 是否为 200，以及是否出现 SRI/CORS 拒绝。
+2. 在 Network 面板检查 `vendor/` 下三个库文件是否为 200，以及控制台是否出现 SRI（integrity）拒绝；若本地出现 SRI 拒绝，检查文件是否被换行转换改成了 CRLF。
 3. 确认 `script.js` 仍在页面底部加载，且 HTML ID 与 `dom` 映射一致。
 4. 运行 `node --check script.js` 和 `npm run test:regression`。
 

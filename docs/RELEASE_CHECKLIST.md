@@ -6,7 +6,7 @@
 
 - [ ] 发布内容与项目定位一致：无需注册、浏览器本地处理、支持中文 CSV/Excel。
 - [ ] 没有加入后端、数据库、账号、云存储或其他范围外依赖。
-- [ ] `package.json`、README 当前版本和 `script.js` 报告版本保持一致。
+- [ ] `package.json`、README 当前版本、`script.js` 报告版本，以及 `index.html` 中 `style.css?v=` 和 `script.js?v=` 的版本参数保持一致。
 - [ ] README、中文 README 和 `docs/` 与实际行为一致。
 - [ ] 新增或修改的用户文件、测试夹具和截图不含真实个人数据。
 
@@ -14,8 +14,8 @@
 
 - [ ] 根目录存在 `index.html`、`style.css` 和 `script.js`。
 - [ ] HTML 中本地资源使用相对路径，且文件实际存在。
-- [ ] PapaParse、Chart.js、SheetJS 使用固定版本 CDN。
-- [ ] 三个 CDN 的 SRI 哈希与实际文件一致，`crossorigin` 配置正确。
+- [ ] PapaParse、Chart.js、SheetJS 使用 `vendor/` 中的固定版本文件，页面没有 http(s) 外部脚本。
+- [ ] 三个 vendor 文件的 SRI 哈希与实际文件一致，`vendor/licenses/` 中有对应许可证，根目录存在 `.nojekyll`。
 - [ ] 页面不依赖构建步骤、后端接口或本地绝对路径。
 - [ ] `node --check script.js` 通过。
 
@@ -88,13 +88,13 @@
 - [ ] 上传数据不会通过 `fetch`、XHR 或第三方 API 发送到服务器。
 - [ ] 写入 `innerHTML` 的用户字段和值经过 `escapeHtml()`。
 - [ ] Markdown 和 HTML 报告对用户内容进行对应转义。
-- [ ] 新增 CDN 或外部请求已经记录用途和隐私影响。
+- [ ] 没有新增 CDN 或其他外部请求；如确需新增，已经记录用途和隐私影响。
 
 ## 10. GitHub Pages 与发布后检查
 
 - [ ] GitHub Pages 来源分支和目录配置正确。
 - [ ] CI workflow 没有部署步骤，不会覆盖 Pages 发布设置。
-- [ ] 在线首页、`style.css`、`script.js`、示例 CSV 和截图资源返回 200。
+- [ ] 在线首页、`style.css`、`script.js`、`vendor/papaparse-5.4.1.min.js`、`vendor/chart-4.4.1.umd.min.js`、`vendor/xlsx-0.20.3.full.min.js`、示例 CSV 和截图资源返回 200。
 - [ ] 在线演示可以加载 `examples/sample-data.csv`。
 - [ ] 在线演示可以上传一份中文 CSV 和一份多工作表 Excel。
 - [ ] README Live Demo 指向当前仓库的 Pages 地址。

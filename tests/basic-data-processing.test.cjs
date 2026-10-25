@@ -1,9 +1,53 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const { createScriptContext } = require("./test-context.cjs");
+
+// The real vendored SheetJS builds and reads workbooks at test time, so no
+// binary fixture is committed and the production read options are exercised.
+const XLSX = require(path.join(__dirname, "..", "vendor", "xlsx-0.20.3.full.min.js"));
+const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.js"));
+const fs = require("node:fs");
 
 function put(context, name, value) {
   context[name] = value;
+}
+
+function buildXlsxBuffer(sheets) {
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows, formats = {} }) => {
+    const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+    Object.entries(formats).forEach(([address, format]) => {
+      worksheet[address].z = format;
+    });
+    XLSX.utils.book_append_sheet(workbook, worksheet, name);
+  });
+  return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+}
+
+function createExcelContext() {
+  const scope = createScriptContext();
+  scope.context.XLSX = XLSX;
+  scope.context.window.XLSX = XLSX;
+  return scope;
+}
+
+function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = true } = {}) {
+  put(context, "__xlsxBuffer", buffer);
+  put(context, "__xlsxSheet", sheetName);
+  put(context, "__newImport", newImport);
+  evaluate(`(() => {
+    const importId = __newImport ? beginImport() : state.activeImportId;
+    importExcelSheet(readExcelWorkbook(__xlsxBuffer), "formats.xlsx", __xlsxSheet, importId);
+  })()`);
+}
+
+function tableCells(elements, id) {
+  return [...elements.get(id).innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+}
+
+function profileSummary(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey, profile.numericFormat]))"));
 }
 
 test("CSV encoding and parsed rows preserve Chinese headers and values", () => {
@@ -111,6 +155,786 @@ test("Excel worksheet arrays become rows with Chinese fields", () => {
   assert.match(emptyMessage, /为空/);
 });
 
+test("Excel percent-formatted numbers are analyzed like CSV percent text", () => {
+  const excel = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [
+      ["毛利率", "精确值", "金额", "下单日期"],
+      [0.26, 1.23456789, 1234.5, new Date(Date.UTC(2026, 6, 17))],
+      [0.26, 1200, 99.9, new Date(Date.UTC(2026, 6, 18))],
+      [0.31, 3.5, 10, new Date(Date.UTC(2026, 6, 19))]
+    ],
+    formats: { A2: "0%", A3: "0%", A4: "0.00%", C2: "¥#,##0.00", C3: "¥#,##0.00", C4: "¥#,##0.00", D2: "yyyy-mm-dd", D3: "yyyy-mm-dd", D4: "yyyy-mm-dd" }
+  }]);
+  importXlsxSheet(excel.context, excel.evaluate, buffer, "S1");
+
+  assert.deepEqual(profileSummary(excel.evaluate), [
+    ["毛利率", "numeric", "percent"],
+    ["精确值", "numeric", "number"],
+    ["金额", "numeric", "number"],
+    ["下单日期", "date", "number"]
+  ]);
+  assert.equal(excel.evaluate('state.rows[0]["毛利率"]'), "0.26");
+  assert.equal(excel.evaluate('state.rows[0]["精确值"]'), "1.23456789");
+  assert.equal(excel.evaluate('state.rows[0]["下单日期"]'), "2026-07-17");
+
+  const csv = createScriptContext();
+  put(csv.context, "__rows", ["26%", "26%", "31%"].map((value) => ({ 毛利率: value })));
+  csv.evaluate('commitTabularData(["毛利率"], __rows, "rates.csv", beginImport())');
+
+  // One stats row is 字段, 有效数量, 无法转换, 平均值, 中位数, 最大值, 最小值, 标准差.
+  const excelRateCells = tableCells(excel.elements, "numericStatsTable").slice(0, 8);
+  assert.deepEqual(excelRateCells, tableCells(csv.elements, "numericStatsTable"));
+  assert.equal(excelRateCells[4], "26%");
+});
+
+test("Excel columns with only a minority of percent cells stay plain numbers", () => {
+  const { context, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [["少数百分比", "一半百分比"], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4], [0.5, 0.5]],
+    formats: { A2: "0%", B2: "0%", B3: "0%", A4: '0"%"', A5: "0\\%" }
+  }]);
+  importXlsxSheet(context, evaluate, buffer, "S1");
+
+  assert.deepEqual(profileSummary(evaluate), [
+    ["少数百分比", "numeric", "number"],
+    ["一半百分比", "numeric", "number"]
+  ]);
+});
+
+test("Excel percent hints do not leak across worksheets or into a later CSV", () => {
+  const { context, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([
+    { name: "A", rows: [["毛利率"], [0.26], [0.3]], formats: { A2: "0%", A3: "0%" } },
+    { name: "B", rows: [["毛利率"], [0.26], [0.3]] }
+  ]);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "percent"]]);
+
+  importXlsxSheet(context, evaluate, buffer, "B", { newImport: false });
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "number"]]);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  put(context, "__csvRows", [{ 毛利率: "0.26" }, { 毛利率: "0.3" }]);
+  evaluate('commitTabularData(["毛利率"], __csvRows, "rates.csv", beginImport())');
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "number"]]);
+  assert.equal(evaluate("Object.keys(state.numberFormatHints).length"), 0);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  evaluate("resetAnalysisState()");
+  assert.equal(evaluate("Object.keys(state.numberFormatHints).length"), 0);
+});
+
+test("Excel percent hints survive field configuration and restoring automatic types", () => {
+  const { context, elements, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [["毛利率", "门店"], [0.26, "1"], [0.26, "2"], [0.31, "3"]],
+    formats: { A2: "0%", A3: "0%", A4: "0%" }
+  }]);
+  importXlsxSheet(context, evaluate, buffer, "S1");
+
+  evaluate('stageFieldTypeChange("门店", "category"); applyFieldConfiguration()');
+  assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
+  assert.equal(tableCells(elements, "numericStatsTable")[4], "26%");
+
+  evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
+  assert.equal(evaluate('state.numberFormatHints["毛利率"]'), "percent");
+  assert.equal(tableCells(elements, "numericStatsTable")[4], "26%");
+});
+
+// Builds one "毛利率" column below `leadingBlankRows` empty rows; formatOf(i)
+// returns the number format for the i-th data row (0-based).
+function sampledRateSheet(dataRowCount, formatOf, leadingBlankRows = 0) {
+  const rows = [...Array.from({ length: leadingBlankRows }, () => [null]), ["毛利率"]];
+  const formats = {};
+  for (let index = 0; index < dataRowCount; index += 1) {
+    rows.push([0.2 + (index % 10) / 100]);
+    formats[`A${leadingBlankRows + index + 2}`] = formatOf(index);
+  }
+  return buildXlsxBuffer([{ name: "S1", rows, formats }]);
+}
+
+function importedRateFormat(buffer) {
+  const { context, evaluate } = createExcelContext();
+  importXlsxSheet(context, evaluate, buffer, "S1");
+  return evaluate('getFieldProfile("毛利率").numericFormat');
+}
+
+test("Excel percent hints sample only the first 1,000 data rows", () => {
+  // Cases from the request: both results also hold under a full scan.
+  assert.equal(importedRateFormat(sampledRateSheet(1500, (index) => (index < 1000 ? "0%" : "General"))), "percent");
+  assert.equal(importedRateFormat(sampledRateSheet(1500, (index) => (index < 1000 ? "General" : "0%"))), "number");
+
+  // A full scan would give the opposite result for these two sheets.
+  assert.equal(importedRateFormat(sampledRateSheet(2500, (index) => (index < 1000 ? "0%" : "General"))), "percent");
+  assert.equal(importedRateFormat(sampledRateSheet(2500, (index) => (index < 1000 ? "General" : "0%"))), "number");
+});
+
+test("Excel percent sampling starts below the detected header row", () => {
+  // Data rows 500-999 are percent (501 of the first 1,000), so only a window
+  // that starts right below the header has a percent majority.
+  const buffer = sampledRateSheet(2000, (index) => (index >= 499 && index < 1000 ? "0%" : "General"), 3);
+  assert.equal(importedRateFormat(buffer), "percent");
+});
+
+// Records every Chart config so tests can read the labels and data the
+// numeric distribution chart was drawn with.
+function createChartContext() {
+  const scope = createScriptContext();
+  const configs = [];
+  class FakeChart {
+    constructor(canvas, config) { configs.push({ canvas, config }); }
+    destroy() {}
+  }
+  scope.context.Chart = FakeChart;
+  scope.context.window.Chart = FakeChart;
+  scope.lastChart = (canvasId) => {
+    const canvas = scope.context.document.getElementById(canvasId);
+    const { config } = configs.filter((entry) => entry.canvas === canvas).pop();
+    return { labels: [...config.data.labels], data: [...config.data.datasets[0].data] };
+  };
+  scope.lastDistribution = () => scope.lastChart("numericDistributionChart");
+  return scope;
+}
+
+function commitExampleCsv(scope, fileName) {
+  const text = fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8");
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  put(scope.context, "__exampleFields", parsed.meta.fields);
+  put(scope.context, "__exampleRows", parsed.data);
+  scope.evaluate(`commitTabularData(__exampleFields, __exampleRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+
+function drawDistribution(scope, field) {
+  put(scope.context, "__chartField", field);
+  scope.evaluate("dom.numericChartField.value = __chartField; renderNumericDistributionChart()");
+  return scope.lastDistribution();
+}
+
+test("the distribution chart counts small integer scores per value", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-survey.csv");
+
+  const chart = drawDistribution(scope, "满意度");
+  assert.deepEqual(chart.labels, ["2", "3", "4", "5", "6", "7", "8", "9"]);
+  assert.equal(chart.labels.some((label) => label.includes(" - ")), false);
+  assert.equal(chart.data.reduce((total, count) => total + count, 0), scope.evaluate('getNumericValues("满意度").length'));
+});
+
+test("the distribution chart keeps ten intervals for continuous values", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const chart = drawDistribution(scope, "销售额");
+  const expected = JSON.parse(scope.evaluate('JSON.stringify(buildHistogram(getNumericValues("销售额"), 10, "销售额"))'));
+  assert.equal(chart.labels.length, 10);
+  assert.deepEqual(chart.labels, expected.map((bin) => bin.label));
+  assert.deepEqual(chart.data, expected.map((bin) => bin.count));
+});
+
+test("the distribution chart re-decides per-value counts after filtering", () => {
+  const scope = createChartContext();
+  const rows = Array.from({ length: 30 }, (_, index) => ({ 分值: String(index + 1), 组: index < 5 ? "A" : "B" }));
+  put(scope.context, "__rows", rows);
+  scope.evaluate('commitTabularData(["分值", "组"], __rows, "scores.csv", beginImport())');
+
+  assert.equal(drawDistribution(scope, "分值").labels.length, 10);
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "组", values: ["A"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.deepEqual(scope.lastDistribution(), { labels: ["1", "2", "3", "4", "5"], data: [1, 1, 1, 1, 1] });
+
+  scope.evaluate("clearAllFilters()");
+  const cleared = scope.lastDistribution();
+  assert.equal(cleared.labels.length, 10);
+  assert.equal(cleared.labels.every((label) => label.includes(" - ")), true);
+});
+
+// 15 amounts, 3 of them not numbers (12 / 15 = 80%, so the column is still
+// inferred as numeric). Only the first three rows are 华东 and hold one bad value.
+const BAD_AMOUNT_ROWS = ["100", "200", "N/A", "300", "待定", "400", "约500", "600", "700", "800", "900", "1000", "1100", "1200", "1300"]
+  .map((amount, index) => ({ 金额: amount, 地区: index < 3 ? "华东" : "华南" }));
+
+function commitRows(scope, fields, rows, fileName = "bad-values.csv") {
+  put(scope.context, "__badFields", fields);
+  put(scope.context, "__badRows", rows);
+  scope.evaluate(`commitTabularData(__badFields, __badRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+
+function cellsWithClass(elements, id) {
+  return [...elements.get(id).innerHTML.matchAll(/<td( class="[^"]*")?>([^<]*)<\/td>/g)]
+    .map((match) => ({ warning: /warning/.test(match[1] || ""), text: match[2] }));
+}
+
+function qualityPill(elements, label) {
+  return [...elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill ([^"]*)">([^<]*)<\/span>/g)]
+    .map((match) => ({ tone: match[1].trim(), text: match[2] }))
+    .find((pill) => pill.text.startsWith(label));
+}
+
+function qualityRow(elements, field) {
+  const row = [...elements.get("qualityTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((match) => [...match[1].matchAll(/<td( class="[^"]*")?>([^<]*)<\/td>/g)].map((cell) => ({ warning: /warning/.test(cell[1] || ""), text: cell[2] })))
+    .find((cells) => cells[0]?.text === field);
+  return row;
+}
+
+test("unconvertible values are flagged on the quality page from the original data", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  const amountRow = qualityRow(scope.elements, "金额");
+  assert.equal(amountRow[amountRow.length - 1].warning, true);
+  assert.equal(amountRow[amountRow.length - 1].text, "3（N/A、待定、约500）");
+  assert.deepEqual(qualityRow(scope.elements, "地区").slice(-1)[0], { warning: false, text: "0" });
+
+  const clean = createScriptContext();
+  commitRows(clean, ["金额"], ["1", "2", "3"].map((amount) => ({ 金额: amount })), "clean.csv");
+  assert.deepEqual(qualityPill(clean.elements, "格式问题"), { tone: "success", text: "格式问题：0 个值" });
+});
+
+test("unconvertible dates count as format problems with samples", () => {
+  const scope = createScriptContext();
+  const dates = ["下周一", "2024-13-45", ...Array.from({ length: 8 }, (_, index) => `2024-01-0${index + 1}`)];
+  commitRows(scope, ["日期"], dates.map((value) => ({ 日期: value })), "dates.csv");
+
+  assert.equal(scope.evaluate('getFieldProfile("日期").typeKey'), "date");
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：2 个值" });
+  assert.equal(qualityRow(scope.elements, "日期").slice(-1)[0].text, "2（下周一、2024-13-45）");
+});
+
+test("statistics count unconvertible values for the current rows only", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 3);
+  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th>有效数量<\/th>\s*<th>无法转换<\/th>/);
+  assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(0, 3), [
+    { warning: false, text: "金额" },
+    { warning: false, text: "12" },
+    { warning: true, text: "3" }
+  ]);
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 1);
+  assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(1, 3), [
+    { warning: false, text: "2" },
+    { warning: true, text: "1" }
+  ]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  assert.equal(qualityRow(scope.elements, "金额").slice(-1)[0].text, "3（N/A、待定、约500）");
+});
+
+test("field configuration changes update unconvertible counts and samples", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  scope.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 0);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), []);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "success", text: "格式问题：0 个值" });
+
+  scope.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+
+  scope.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration(); restoreAutomaticFieldTypes()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+});
+
+test("custom analysis summary names excluded unconvertible metric values", () => {
+  const run = (rows) => {
+    const scope = createScriptContext();
+    commitRows(scope, ["金额", "地区"], rows);
+    scope.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
+    return scope;
+  };
+
+  const bad = run(BAD_AMOUNT_ROWS);
+  assert.match(bad.elements.get("v2ResultSummary").textContent, /指标字段「金额」有 3 个值无法转换为数字，已从计算中排除。$/);
+  assert.equal(bad.evaluate("state.customAnalysis.metricInvalidCount"), 3);
+
+  bad.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.match(bad.elements.get("v2ResultSummary").textContent, /有 1 个值无法转换为数字/);
+
+  const clean = run(BAD_AMOUNT_ROWS.map((row, index) => ({ ...row, 金额: String((index + 1) * 100) })));
+  assert.doesNotMatch(clean.elements.get("v2ResultSummary").textContent, /无法转换/);
+  assert.equal(clean.evaluate("state.customAnalysis.metricInvalidCount"), 0);
+});
+
+test("reports carry unconvertible counts and escaped samples", () => {
+  const scope = createScriptContext();
+  const rows = BAD_AMOUNT_ROWS.map((row, index) => (index === 2 ? { ...row, 金额: "<b>x</b>|y" } : row));
+  commitRows(scope, ["金额", "地区"], rows);
+  scope.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
+
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  assert.equal(report.numericStats.find((item) => item.field === "金额").invalidCount, 3);
+  assert.equal(report.customAnalysis.metricInvalidCount, 3);
+  assert.deepEqual(report.fieldTypes.find((item) => item.field === "金额").conversionFailureSamples, ["<b>x</b>|y", "待定", "约500"]);
+  assert.deepEqual(report.fieldTypes.find((item) => item.field === "地区").conversionFailureSamples, []);
+
+  put(scope.context, "__report", report);
+  const html = scope.evaluate("buildHtmlReport(__report, [])");
+  assert.match(html.split("数值字段描述性统计")[1], /<th>有效数量<\/th><th>无法转换<\/th>/);
+  assert.match(html.split("数值字段描述性统计")[1], /<td>金额<\/td><td>12<\/td><td>3<\/td>/);
+  assert.match(html, /<td>3（&lt;b&gt;x&lt;\/b&gt;\|y、待定、约500）<\/td>/);
+  assert.doesNotMatch(html, /<b>x<\/b>/);
+
+  const markdown = scope.evaluate("buildMarkdownReport(__report)");
+  assert.ok(markdown.includes("| 字段 | 有效数量 | 无法转换 | 平均值 | 中位数 | 最小值 | 最大值 | 标准差 |"));
+  // escapeMarkdownCell backslash-escapes ASCII punctuation, so "/" and "|" both carry a backslash.
+  assert.ok(markdown.includes("3（&lt;b&gt;x&lt;\\/b&gt;\\|y、待定、约500）"));
+
+  const legacy = {
+    numericStats: [{ field: "金额", count: 2, mean: "1", median: "1", min: "1", max: "1", standardDeviation: "0" }],
+    fieldTypes: [{ field: "金额", inferredType: "数值", appliedType: "数值", conversionFailureCount: 1 }],
+    customAnalysis: { completed: true, metricField: "金额", groupField: "地区", rows: [] }
+  };
+  put(scope.context, "__legacy", legacy);
+  const normalized = JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot(__legacy))"));
+  assert.equal(normalized.numericStats[0].invalidCount, 0);
+  assert.deepEqual(normalized.fieldTypes[0].conversionFailureSamples, []);
+  assert.equal(normalized.customAnalysis.metricInvalidCount, 0);
+  assert.doesNotThrow(() => scope.evaluate("buildHtmlReport(__legacy, [])"));
+  assert.doesNotThrow(() => scope.evaluate("buildMarkdownReport(__legacy)"));
+});
+
+// sample-data 订单日期 spans Jan-Jun 2025, so trends are grouped by month.
+const SAMPLE_MONTHS = ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"];
+// buildDateTrend("订单日期", "销售额") values from the HEAD before this change.
+const SAMPLE_SALES_MONTHLY_AVERAGE = [2400, 2665.0000000000005, 4033.333333333333, 3167.5, 4110.833333333334, 11142.5];
+
+function drawDateTrend(scope, { metric = "", aggregate = "avg" } = {}) {
+  put(scope.context, "__trendMetric", metric);
+  put(scope.context, "__trendAggregate", aggregate);
+  scope.evaluate('dom.dateChartField.value = "订单日期"; dom.dateChartMetric.value = __trendMetric; dom.dateChartAggregate.value = __trendAggregate; renderDateTrendChart()');
+  return { ...scope.lastChart("dateTrendChart"), title: scope.elements.get("dateChartTitle").textContent };
+}
+
+test("the date trend chart defaults to record counts per period", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  const chart = drawDateTrend(scope);
+  assert.equal(chart.title, "订单日期 按月份趋势（记录数）");
+  assert.deepEqual(chart.labels, SAMPLE_MONTHS);
+  assert.deepEqual(chart.data, [6, 6, 6, 6, 6, 8]);
+  assert.equal(scope.elements.get("dateChartAggregate").disabled, true);
+});
+
+test("the date trend chart averages or sums the selected metric", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const average = drawDateTrend(scope, { metric: "销售额", aggregate: "avg" });
+  assert.equal(average.title, "销售额 按月份趋势（平均值）");
+  assert.deepEqual(average.labels, SAMPLE_MONTHS);
+  assert.deepEqual(average.data, SAMPLE_SALES_MONTHLY_AVERAGE);
+  assert.equal(scope.elements.get("dateChartAggregate").disabled, false);
+
+  const total = drawDateTrend(scope, { metric: "销售额", aggregate: "sum" });
+  assert.equal(total.title, "销售额 按月份趋势（合计）");
+  assert.deepEqual(total.labels, SAMPLE_MONTHS);
+  assert.equal(total.data[0], 14400);
+  assert.equal(total.data[5], 89140);
+});
+
+test("the date trend chart ignores the quick-grouping metric select", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const before = drawDateTrend(scope);
+  scope.evaluate('dom.metricField.value = "销售额"; renderCharts()');
+  const after = { ...scope.lastChart("dateTrendChart"), title: scope.elements.get("dateChartTitle").textContent };
+  assert.deepEqual(after, before);
+});
+
+test("date trend selections follow the import, filter and field-configuration paths", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  drawDateTrend(scope, { metric: "销售额", aggregate: "sum" });
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "销售额");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "sum");
+  assert.equal(scope.elements.get("dateChartTitle").textContent, "销售额 按月份趋势（合计）");
+
+  scope.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "销售额");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "sum");
+
+  scope.evaluate('stageFieldTypeChange("销售额", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  assert.match(scope.elements.get("dateChartTitle").textContent, /（记录数）$/);
+
+  scope.evaluate('dom.dateChartMetric.value = "成本"; dom.dateChartAggregate.value = "sum"');
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "avg");
+});
+
+test("report date trends follow the trend chart selection", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  const report = () => JSON.parse(scope.evaluate("JSON.stringify(buildReportDateTrends())"))[0];
+
+  const counts = report();
+  assert.equal(counts.metricField, "");
+  assert.deepEqual(counts.values, [6, 6, 6, 6, 6, 8]);
+  assert.match(counts.summary, /记录数从 2025-01 的 6 变为 2025-06 的 8/);
+
+  scope.evaluate('dom.dateChartMetric.value = "销售额"; dom.dateChartAggregate.value = "avg"');
+  const average = report();
+  assert.equal(average.metricField, "销售额");
+  assert.deepEqual(average.values, SAMPLE_SALES_MONTHLY_AVERAGE);
+  assert.match(average.summary, /销售额平均值从 2025-01 的 2,400 变为 2025-06 的 11,142.5/);
+
+  scope.evaluate('dom.dateChartAggregate.value = "sum"');
+  const total = report();
+  assert.equal(total.values[0], 14400);
+  assert.match(total.summary, /销售额合计从 2025-01 的 14,400 变为 2025-06 的 89,140/);
+});
+
+function trendInsightFor(rows, dateField = "日期") {
+  const scope = createScriptContext();
+  commitRows(scope, Object.keys(rows[0]), rows, "trend.csv");
+  put(scope.context, "__trendDateField", dateField);
+  return { scope, text: scope.evaluate("buildTrendInsight(__trendDateField)") };
+}
+
+const datedRows = (dates) => dates.map((date) => ({ 日期: date }));
+const PARTIAL_NOTE = /注意：最后一期/;
+
+test("the trend insight compares record counts and flags a partial last month", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(
+    scope.evaluate('buildTrendInsight("订单日期")'),
+    "基于日期字段「订单日期」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 33.3%。注意：最后一期（2025-06）的数据截至 6 月 28 日，可能不完整，比较结果仅供参考。"
+  );
+});
+
+test("the partial-period note follows month ends, leap days and day buckets", () => {
+  const months = ["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-05-05"];
+  assert.doesNotMatch(trendInsightFor(datedRows([...months, "2025-06-30"])).text, PARTIAL_NOTE);
+  assert.match(trendInsightFor(datedRows([...months, "2025-06-29"])).text, /注意：最后一期（2025-06）的数据截至 6 月 29 日/);
+
+  const leap = ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01"];
+  assert.match(trendInsightFor(datedRows([...leap, "2024-02-28"])).text, /注意：最后一期（2024-02）的数据截至 2 月 28 日/);
+  assert.doesNotMatch(trendInsightFor(datedRows([...leap, "2024-02-29"])).text, PARTIAL_NOTE);
+
+  // A 19-day span is bucketed by day, so no note even though June is incomplete.
+  const daily = trendInsightFor(datedRows(["2025-06-01", "2025-06-02", "2025-06-02", "2025-06-20"]));
+  assert.match(daily.text, /从 2025-06-01 到 2025-06-20/);
+  assert.doesNotMatch(daily.text, PARTIAL_NOTE);
+});
+
+test("the partial-period note handles year fields and year-only values", () => {
+  const years = (last) => ["2021", "2022", "2023", "2024", last].map((value) => ({ 年份: value }));
+  const partial = trendInsightFor(years("2025-06-30"), "年份");
+  assert.equal(partial.scope.evaluate('getDateGranularity("年份")'), "year");
+  assert.match(partial.text, /注意：最后一期（2025 年）的数据截至 6 月 30 日，可能不完整，比较结果仅供参考。$/);
+  assert.doesNotMatch(trendInsightFor(years("2025-12-31"), "年份").text, PARTIAL_NOTE);
+  assert.doesNotMatch(trendInsightFor(years("2025"), "年份").text, PARTIAL_NOTE);
+});
+
+test("the partial-period note follows the filtered rows", () => {
+  const rows = [
+    ["2025-01-10", "A"], ["2025-02-10", "A"], ["2025-03-10", "A"], ["2025-04-10", "A"], ["2025-05-31", "A"],
+    ["2025-01-12", "C"], ["2025-03-12", "C"], ["2025-05-20", "C"],
+    ["2025-01-15", "B"], ["2025-06-15", "B"]
+  ].map(([date, region]) => ({ 日期: date, 地区: region }));
+  const { scope, text } = trendInsightFor(rows);
+  assert.match(text, /注意：最后一期（2025-06）的数据截至 6 月 15 日/);
+
+  const filtered = (region) => {
+    put(scope.context, "__trendRegion", region);
+    scope.evaluate(`(() => {
+      state.filters = { category: { field: "地区", values: [__trendRegion] }, numeric: null, date: null };
+      state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+      state.filterSourceRows = state.rows;
+      refreshFilteredAnalysis();
+    })()`);
+    return scope.evaluate('buildTrendInsight("日期")');
+  };
+  assert.doesNotMatch(filtered("A"), PARTIAL_NOTE);
+  assert.match(filtered("C"), /注意：最后一期（2025-05）的数据截至 5 月 20 日/);
+  assert.equal(scope.evaluate("state.insights[state.insights.length - 1]"), scope.evaluate('buildTrendInsight("日期")'));
+});
+
+test("a flat record-count trend reads 基本持平 without a change ratio", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-used-products.csv");
+  const usedProducts = scope.evaluate('buildTrendInsight("上架日期")');
+  assert.equal(usedProducts, "基于日期字段「上架日期」观察，记录数趋势 从 2025-04-01 到 2025-07-27 基本持平。");
+
+  const monthly = trendInsightFor(datedRows(["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-05-05", "2025-06-10"])).text;
+  assert.equal(monthly, "基于日期字段「日期」观察，记录数趋势 从 2025-01 到 2025-06 基本持平。注意：最后一期（2025-06）的数据截至 6 月 10 日，可能不完整，比较结果仅供参考。");
+  for (const text of [usedProducts, monthly]) {
+    assert.doesNotMatch(text, /呈基本持平变化/);
+    assert.doesNotMatch(text, /变化幅度/);
+  }
+});
+
+test("the trend insight ignores numeric fields and both metric selects", () => {
+  const dates = ["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-06-10"];
+  const withAmounts = (amounts) => dates.map((date, index) => ({ 日期: date, 金额: String(amounts[index]) }));
+  const { scope, text } = trendInsightFor(withAmounts([1, 2, 3, 4, 5]));
+  assert.match(text, /记录数趋势/);
+  assert.equal(trendInsightFor(withAmounts([500, 1, 900, 2, 0])).text, text);
+  assert.equal(trendInsightFor(datedRows(dates)).text, text);
+
+  scope.evaluate('dom.metricField.value = "金额"; dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "sum"; renderCharts()');
+  assert.equal(scope.evaluate('buildTrendInsight("日期")'), text);
+});
+
+const SCATTERED_CATEGORY_INSIGHT = "分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。";
+
+function categoryInsight(scope) {
+  return JSON.parse(scope.evaluate('JSON.stringify(state.insights.find((text) => text.startsWith("分类字段「")) ?? null)'));
+}
+
+test("the category conclusion skips near-unique fields in sample-students", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-students.csv");
+  assert.equal(categoryInsight(scope), "分类字段「班级」中占比最高的类别是「二班」，出现 25 次，占比 21.0%。");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "姓名").distinctCount'), 40);
+});
+
+test("the category conclusion of sample-data is unchanged", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(categoryInsight(scope), "分类字段「地区」中占比最高的类别是「华东」，出现 8 次，占比 21.6%。");
+});
+
+test("the category conclusion accepts 20 distinct values but not 21", () => {
+  const scope = createScriptContext();
+  // 22 rows: 甲 has 21 distinct values (v0 twice), 乙 has 20 (w0 and w19 twice).
+  const a = ["v0", ...Array.from({ length: 21 }, (_, index) => `v${index}`)];
+  const b = ["w0", ...Array.from({ length: 19 }, (_, index) => `w${index}`), "w19", "w19"];
+  const rows = a.map((value, index) => ({ 甲: value, 乙: b[index] }));
+  commitRows(scope, ["甲", "乙"], rows, "distinct.csv");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "甲").distinctCount'), 21);
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "乙").distinctCount'), 20);
+  assert.equal(categoryInsight(scope), "分类字段「乙」中占比最高的类别是「w0」，出现 2 次，占比 9.1%。");
+});
+
+test("the category conclusion needs a top category that appears at least twice", () => {
+  const scope = createScriptContext();
+  const rows = Array.from({ length: 15 }, (_, index) => ({ 编码值: `K${index + 1}`, 渠道: index % 3 ? "线上" : "门店" }));
+  commitRows(scope, ["编码值", "渠道"], rows, "unique.csv");
+  // 15 distinct values out of 15 is inferred as ID; make it a category on purpose.
+  scope.evaluate('stageFieldTypeChange("编码值", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "编码值").distinctCount'), 15);
+  assert.equal(categoryInsight(scope), "分类字段「渠道」中占比最高的类别是「线上」，出现 10 次，占比 66.7%。");
+});
+
+test("the category conclusion falls back when every category field is scattered", () => {
+  const scattered = createScriptContext();
+  const rows = Array.from({ length: 30 }, (_, index) => ({ 甲: `a${index % 25}`, 乙: `b${index % 26}` }));
+  commitRows(scattered, ["甲", "乙"], rows, "scattered.csv");
+  assert.equal(categoryInsight(scattered), null);
+  assert.equal(scattered.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), true);
+
+  const noCategory = createScriptContext();
+  commitRows(noCategory, ["日期", "金额"], [{ 日期: "2025-01-01", 金额: "1" }, { 日期: "2025-01-02", 金额: "2" }], "plain.csv");
+  assert.equal(categoryInsight(noCategory), null);
+  assert.equal(noCategory.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), false);
+  assert.equal(noCategory.evaluate('state.insights.includes("未识别到适合生成频数统计的分类字段。")'), true);
+});
+
+test("the category conclusion re-picks fields from the filtered rows", () => {
+  const scope = createScriptContext();
+  const rows = Array.from({ length: 40 }, (_, index) => ({
+    款号: index < 20 ? `g${Math.floor(index / 2)}` : `g${index - 10}`,
+    区域: index < 20 ? "X" : "Y"
+  }));
+  commitRows(scope, ["款号", "区域"], rows, "filtered.csv");
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "款号").distinctCount'), 30);
+  assert.equal(categoryInsight(scope), "分类字段「区域」中占比最高的类别是「X」，出现 20 次，占比 50.0%。");
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "区域", values: ["X"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "款号").distinctCount'), 10);
+  assert.equal(categoryInsight(scope), "分类字段「款号」中占比最高的类别是「g0」，出现 2 次，占比 10.0%。");
+
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  assert.deepEqual(report.categoryStats.map((item) => [item.field, item.distinctCount]), [["款号", 10], ["区域", 1]]);
+  assert.deepEqual(report.insights, JSON.parse(scope.evaluate("JSON.stringify(state.insights)")));
+});
+
+const NO_FILTER_SENTENCE = "未设置筛选，结果基于完整数据。";
+const QUALITY_SCOPE_SENTENCE = "数据质量部分始终基于原始数据，不受筛选影响。";
+
+function applyFilterState(scope, filters) {
+  put(scope.context, "__appliedFilters", filters);
+  scope.evaluate(`(() => {
+    state.filters = { category: null, numeric: null, date: null, ...__appliedFilters };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+}
+
+function reportOf(scope) {
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  put(scope.context, "__filterReport", report);
+  return {
+    report,
+    html: scope.evaluate("buildHtmlReport(__filterReport, [])"),
+    markdown: scope.evaluate("buildMarkdownReport(__filterReport)")
+  };
+}
+
+test("reports say when no filter is applied", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.filters, []);
+  for (const text of [html, markdown]) {
+    assert.ok(text.includes("筛选条件"));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+    assert.ok(text.includes(QUALITY_SCOPE_SENTENCE));
+  }
+  assert.ok(html.indexOf("<h2>数据规模</h2>") < html.indexOf("<h2>筛选条件</h2>"));
+  assert.ok(html.indexOf("<h2>筛选条件</h2>") < html.indexOf("<h2>字段类型结果</h2>"));
+  assert.ok(markdown.indexOf("## 数据规模") < markdown.indexOf("## 筛选条件"));
+  assert.ok(markdown.indexOf("## 筛选条件") < markdown.indexOf("## 字段类型结果"));
+});
+
+test("reports list applied category, numeric and date filters in order", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  applyFilterState(scope, {
+    category: { field: "地区", values: ["华东", "华北", "华南"] },
+    numeric: { field: "销售额", min: 1000, max: 5000 },
+    date: { field: "订单日期", start: "2025-01-01", end: "2025-03-31" }
+  });
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.filters, [
+    { type: "category", field: "地区", keptCount: 3, totalCount: 6, keptValues: ["华北", "华东", "华南"], description: "地区：保留 3 / 共 6 个类别（华北、华东、华南）" },
+    { type: "numeric", field: "销售额", min: 1000, max: 5000, description: "销售额：1,000 至 5,000" },
+    { type: "date", field: "订单日期", start: "2025-01-01", end: "2025-03-31", description: "订单日期：2025-01-01 至 2025-03-31" }
+  ]);
+  const analysisRows = scope.evaluate("getAnalysisRows().length");
+  assert.equal(report.dataScale.rows, analysisRows);
+  assert.equal(report.dataScale.filteredOutRows, 38 - analysisRows);
+  assert.ok(report.dataScale.filteredOutRows > 0);
+
+  assert.ok(html.includes("<th>字段</th><th>条件</th>"));
+  assert.ok(html.includes("<td>地区</td><td>地区：保留 3 / 共 6 个类别（华北、华东、华南）</td>"));
+  assert.ok(html.includes("<td>销售额</td><td>销售额：1,000 至 5,000</td>"));
+  assert.ok(html.includes("<td>订单日期</td><td>订单日期：2025-01-01 至 2025-03-31</td>"));
+  assert.ok(!html.includes(NO_FILTER_SENTENCE));
+  assert.ok(html.includes(QUALITY_SCOPE_SENTENCE));
+  assert.ok(markdown.includes("| 字段 | 条件 |"));
+  assert.ok(markdown.includes("| 地区 | 地区：保留 3 \\/ 共 6 个类别（华北、华东、华南） |"));
+  // escapeMarkdownCell backslash-escapes ASCII punctuation, including "," "/" and "-".
+  assert.ok(markdown.includes("| 销售额 | 销售额：1\\,000 至 5\\,000 |"));
+  assert.ok(markdown.includes("| 订单日期 | 订单日期：2025\\-01\\-01 至 2025\\-03\\-31 |"));
+  assert.ok(markdown.includes(QUALITY_SCOPE_SENTENCE));
+});
+
+test("report category filters show at most ten kept values and empty values", () => {
+  const scope = createScriptContext();
+  const codes = Array.from({ length: 15 }, (_, index) => `c${String(index + 1).padStart(2, "0")}`);
+  commitRows(scope, ["类别"], [...codes, ...codes].map((code) => ({ 类别: code })), "many.csv");
+  applyFilterState(scope, { category: { field: "类别", values: codes.slice(0, 12) } });
+  const [many] = reportOf(scope).report.filters;
+  assert.equal(many.keptCount, 12);
+  assert.equal(many.totalCount, 15);
+  assert.deepEqual(many.keptValues, codes.slice(0, 10));
+  assert.equal(many.description, `类别：保留 12 / 共 15 个类别（${codes.slice(0, 10).join("、")}……等 12 个）`);
+
+  const blanks = createScriptContext();
+  commitRows(blanks, ["地区"], ["华东", "", "  ", "华南", "华东"].map((region) => ({ 地区: region })), "blank.csv");
+  applyFilterState(blanks, { category: { field: "地区", values: ["", "华东"] } });
+  const [blank] = reportOf(blanks).report.filters;
+  assert.deepEqual(blank.keptValues, ["（空值）", "华东"]);
+  assert.equal(blank.description, "地区：保留 2 / 共 3 个类别（（空值）、华东）");
+});
+
+test("report numeric filters on percent fields use the applied fraction range", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["转化率"], ["10%", "20%", "35%", "40%", "50%"].map((rate) => ({ 转化率: rate })), "rates.csv");
+  applyFilterState(scope, { numeric: { field: "转化率", min: 0.2, max: 0.4 } });
+  const { report } = reportOf(scope);
+  assert.deepEqual(report.filters, [{ type: "numeric", field: "转化率", min: 0.2, max: 0.4, description: "转化率：20% 至 40%" }]);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getAnalysisRows().map((row) => row["转化率"]))')), ["20%", "35%", "40%"]);
+});
+
+test("report filters ignore unapplied drafts and clear with the filters", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["地区", "金额"], [
+    { 地区: "华东", 金额: "100" }, { 地区: "华南", 金额: "200" }, { 地区: "华北", 金额: "300" }
+  ], "drafts.csv");
+  scope.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues.delete("华北"); applyFilters()');
+  const applied = reportOf(scope).report.filters;
+  assert.equal(applied[0].description, "地区：保留 2 / 共 3 个类别（华东、华南）");
+
+  scope.evaluate('state.categoryFilterDraftValues.delete("华南"); dom.numericFilterField.value = "金额"; updateNumericFilterField(); dom.numericFilterMin.value = "150"');
+  assert.deepEqual(reportOf(scope).report.filters, applied);
+
+  scope.evaluate("clearAllFilters()");
+  assert.deepEqual(reportOf(scope).report.filters, []);
+});
+
+test("report filter descriptions are escaped in HTML and Markdown", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["备注"], ["<b>x</b>|y", "第一行\n第二行", "其他"].map((note) => ({ 备注: note })), "escape.csv");
+  applyFilterState(scope, { category: { field: "备注", values: ["<b>x</b>|y", "第一行\n第二行"] } });
+  const { html, markdown } = reportOf(scope);
+  // The same values also appear as field samples, so look only at the filter section.
+  const htmlSection = html.split("<h2>筛选条件</h2>")[1]?.split("<h2>字段类型结果</h2>")[0] ?? "";
+  const markdownSection = markdown.split("## 筛选条件")[1]?.split("## 字段类型结果")[0] ?? "";
+  assert.ok(htmlSection.includes("<td>备注</td><td>备注：保留 2 / 共 3 个类别（&lt;b&gt;x&lt;/b&gt;|y、第一行\n第二行）</td>"));
+  assert.ok(!html.includes("<b>x</b>"));
+  assert.ok(markdownSection.includes("| 备注 | 备注：保留 2 \\/ 共 3 个类别（&lt;b&gt;x&lt;\\/b&gt;\\|y、第一行<br>第二行） |"));
+  assert.ok(!markdown.includes("<b>x</b>"));
+});
+
+test("legacy report snapshots without filters still render", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).filters)")), []);
+  assert.ok(scope.evaluate("buildHtmlReport({}, [])").includes(NO_FILTER_SENTENCE));
+  assert.ok(scope.evaluate("buildMarkdownReport({})").includes(NO_FILTER_SENTENCE));
+});
+
 test("field inference recognizes ID, numeric, date and category columns", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({
@@ -150,6 +974,35 @@ test("missing values, duplicate rows and IQR outliers are detected", () => {
   assert.equal(evaluate('countDuplicateRows(state.rows, state.fields)'), 1);
   assert.equal(evaluate('state.numericStats[0].outlierCount'), 1);
   assert.equal(evaluate('state.numericStats[0].max'), 100);
+});
+
+test("quality outlier bounds near zero are displayed without negative zero", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const rows = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0.002, 0.004, 0.01].map((value) => ({ 比例: String(value) }));
+  put(context, "__rows", rows);
+  evaluate('commitTabularData(["比例"], __rows, "near-zero.csv", beginImport())');
+
+  assert.equal(evaluate("state.qualityNumericStats[0].lowerBound"), -0.00075);
+  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  assert.deepEqual(outlierCells, ["比例", "3", "-0.00075", "0.00125"]);
+  assert.equal(outlierCells.includes("-0"), false);
+
+  const outliers = JSON.parse(evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")).quality.outliers)'));
+  assert.deepEqual(outliers, [{ field: "比例", outlierCount: 3, lowerBound: "-0.00075", upperBound: "0.00125" }]);
+});
+
+test("descriptive statistics show small averages instead of rounding them to zero", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const rows = ["0.001", "0.0012", "0.0014"].map((value) => ({ 误差: value }));
+  put(context, "__rows", rows);
+  evaluate('commitTabularData(["误差"], __rows, "small-mean.csv", beginImport())');
+
+  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  // statsCells[2] is the 无法转换 count; the statistics start at index 3.
+  assert.equal(statsCells[0], "误差");
+  assert.equal(statsCells[2], "0");
+  assert.equal(statsCells[3], "0.0012");
+  assert.equal(statsCells.slice(3).includes("0"), false);
 });
 
 test("descriptive and category statistics return expected values", () => {

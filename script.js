@@ -10,6 +10,7 @@ const state = {
   duplicateRows: 0,
   totalMissing: 0,
   parseWarnings: [],
+  numberFormatHints: Object.create(null),
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -85,6 +86,8 @@ const dom = {
   numericChartField: document.getElementById("numericChartField"),
   categoryChartField: document.getElementById("categoryChartField"),
   dateChartField: document.getElementById("dateChartField"),
+  dateChartMetric: document.getElementById("dateChartMetric"),
+  dateChartAggregate: document.getElementById("dateChartAggregate"),
   numericChartTitle: document.getElementById("numericChartTitle"),
   categoryChartTitle: document.getElementById("categoryChartTitle"),
   dateChartTitle: document.getElementById("dateChartTitle"),
@@ -135,6 +138,30 @@ const dom = {
   workflowStepExport: document.getElementById("workflowStepExport")
 };
 
+ensureDomElementsPresent();
+
+// A cached older index.html can lack elements this script expects. Stop here
+// with a refresh notice (inline styles, because style.css may be stale too)
+// instead of failing later on the first addEventListener.
+function ensureDomElementsPresent() {
+  const missingKeys = Object.keys(dom).filter((key) => !dom[key]);
+  if (!missingKeys.length) return;
+
+  const notice = document.createElement("div");
+  notice.setAttribute("role", "alert");
+  notice.style.cssText = "position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid #fedf89;background:#fffaeb;color:#b54708;font:600 14px/1.5 system-ui,-apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;";
+  const message = document.createElement("span");
+  message.textContent = "页面已更新，请刷新后再使用。";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "刷新页面";
+  button.style.cssText = "padding:6px 14px;border:1px solid #b54708;border-radius:6px;background:#b54708;color:#fff;font:inherit;cursor:pointer;";
+  button.addEventListener("click", () => window.location.reload());
+  notice.append(message, button);
+  document.body.prepend(notice);
+  throw new Error(`页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
+}
+
 const ENCODING_LABELS = {
   auto: "自动识别",
   "utf-8": "UTF-8",
@@ -147,6 +174,10 @@ const IMPORT_LIMITS = Object.freeze({
   maxRows: 100000,
   maxColumns: 200
 });
+
+// A category field with more distinct values than this is too scattered for
+// the automatic category conclusion.
+const INSIGHT_CATEGORY_MAX_DISTINCT = 20;
 
 const FIELD_TYPE_LABELS = {
   numeric: "数值",
@@ -288,6 +319,8 @@ dom.dropZone.addEventListener("drop", (event) => {
   dom.numericChartField,
   dom.categoryChartField,
   dom.dateChartField,
+  dom.dateChartMetric,
+  dom.dateChartAggregate,
   dom.metricField,
   dom.groupField,
   dom.aggregateMethod
@@ -479,7 +512,7 @@ function updateWorkflowSteps() {
 async function parseCsvFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请检查网络连接后刷新页面重试。");
+    assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
     const selectedEncoding = dom.fileEncoding.value || "auto";
     setStatus(`正在读取 ${file.name} ...`);
     const buffer = await readFileAsArrayBuffer(file, importId);
@@ -507,7 +540,7 @@ function parseDataFile(file) {
 async function parseExcelFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("XLSX", "Excel 解析组件加载失败，请检查网络连接后刷新页面重试。");
+    assertRuntimeDependency("XLSX", "Excel 解析组件加载失败，请刷新页面重试。");
     setStatus(`正在读取 ${file.name} ...`);
     const buffer = await readFileAsArrayBuffer(file, importId);
     if (!isCurrentImport(importId)) return;
@@ -515,7 +548,7 @@ async function parseExcelFile(file) {
     validateExcelFileSignature(buffer, file.name);
     let workbook;
     try {
-      workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      workbook = readExcelWorkbook(buffer);
     } catch {
       throw new Error("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。");
     }
@@ -532,6 +565,11 @@ async function parseExcelFile(file) {
   } catch (error) {
     showError(error.message, importId);
   }
+}
+
+function readExcelWorkbook(buffer) {
+  // cellNF keeps each cell's number format string (cell.z) for format hints.
+  return XLSX.read(buffer, { type: "array", cellDates: true, cellNF: true });
 }
 
 function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
@@ -588,17 +626,73 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     raw: true,
     blankrows: true
   });
-  const { fields, rows } = buildExcelTabularData(rawRows, rawRows, sheetName);
+  const { fields, rows, numberFormatHints } = buildExcelTabularData(
+    rawRows,
+    rawRows,
+    sheetName,
+    createExcelNumberFormatReader(worksheet)
+  );
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints);
 }
 
-function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表") {
+// Percent hints inspect only the first data rows below the header, so large
+// sheets do not pay for a second full cell scan. The cost: a percent format
+// that first appears after this many rows is not recognized.
+const EXCEL_FORMAT_SAMPLE_ROWS = 1000;
+
+// Returns a reader for one sheet_to_json({ header: 1 }) row index: numeric
+// cells get cell.z, every other position stays empty. Formatted text (cell.w)
+// is never used because it depends on the runtime time zone and can shift
+// dates by one day.
+function createExcelNumberFormatReader(worksheet) {
+  const range = XLSX.utils.decode_range(worksheet["!ref"]);
+  const columnNames = [];
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    columnNames.push(XLSX.utils.encode_col(column));
+  }
+  return (rowIndex) => {
+    const formats = [];
+    columnNames.forEach((columnName, columnIndex) => {
+      const cell = worksheet[`${columnName}${range.s.r + rowIndex + 1}`];
+      if (cell?.t === "n") formats[columnIndex] = String(cell.z ?? "General");
+    });
+    return formats;
+  };
+}
+
+function isPercentNumberFormat(format) {
+  // Quoted text and backslash-escaped characters are literals, not a percent scale.
+  return String(format ?? "").replace(/\\.|"[^"]*"/g, "").includes("%");
+}
+
+function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats) {
+  const sampledFormats = dataPairs
+    .slice(0, EXCEL_FORMAT_SAMPLE_ROWS)
+    .map((pair) => readNumberFormats(pair.index));
+  const hints = Object.create(null);
+  fields.forEach((field, fieldIndex) => {
+    const columnIndex = usedColumnIndexes[fieldIndex];
+    let numericCells = 0;
+    let percentCells = 0;
+    sampledFormats.forEach((formats) => {
+      const format = formats[columnIndex];
+      if (typeof format !== "string") return;
+      numericCells += 1;
+      if (isPercentNumberFormat(format)) percentCells += 1;
+    });
+    if (percentCells * 2 > numericCells) hints[field] = "percent";
+  });
+  return hints;
+}
+
+function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
+    index,
     formatted: Array.isArray(formattedRows?.[index]) ? formattedRows[index] : [],
     raw: Array.isArray(rawRows?.[index]) ? rawRows[index] : []
   }));
@@ -666,7 +760,12 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」只有表头，没有可分析的数据行。`);
   }
 
-  return { fields, rows };
+  if (!readNumberFormats) return { fields, rows };
+  return {
+    fields,
+    rows,
+    numberFormatHints: buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats)
+  };
 }
 
 function excelRowHasValue(row) {
@@ -733,7 +832,7 @@ function showSheetSelectionError(message) {
 
 function parseCsvText(text, sourceName, importId = beginImport()) {
   if (!isCurrentImport(importId)) return;
-  assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请检查网络连接后刷新页面重试。");
+  assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
   Papa.parse(text, {
     header: true,
     skipEmptyLines: true,
@@ -940,7 +1039,7 @@ function handleParsedData(results, sourceName, importId) {
   commitTabularData(fields, rows, sourceName, importId, parseWarnings);
 }
 
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "") {
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -966,7 +1065,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
-  state.profiles = fields.map((field) => buildColumnProfile(field, rows));
+  // Source-file hints are replaced on every commit; only Excel imports pass them.
+  state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
+  state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
@@ -1005,7 +1106,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   showResultsWorkspace();
 }
 
-function buildColumnProfile(field, rows) {
+function buildColumnProfile(field, rows, numberFormatHint = "") {
   const values = rows.map((row) => row[field]);
   const nonMissingValues = values.filter((value) => !isMissing(value));
   const total = rows.length;
@@ -1013,9 +1114,20 @@ function buildColumnProfile(field, rows) {
   const uniqueValues = new Set(nonMissingValues.map((value) => normalizeValue(value)));
   const uniqueCount = uniqueValues.size;
   const uniqueRatio = nonMissingCount ? uniqueCount / nonMissingCount : 0;
-  const numericValues = nonMissingValues.map(toNumber).filter((value) => value !== null);
+  const conversionFailureSamplesByType = { numeric: [], date: [] };
+  const numericValues = [];
+  nonMissingValues.forEach((value) => {
+    const number = toNumber(value);
+    if (number !== null) numericValues.push(number);
+    else addConversionFailureSample(conversionFailureSamplesByType.numeric, value);
+  });
   const dateStrategy = buildDateStrategy(field, nonMissingValues);
-  const dateValues = nonMissingValues.map((value) => toDate(value, dateStrategy)).filter(Boolean);
+  const dateValues = [];
+  nonMissingValues.forEach((value) => {
+    const date = toDate(value, dateStrategy);
+    if (date) dateValues.push(date);
+    else addConversionFailureSample(conversionFailureSamplesByType.date, value);
+  });
   const numericRatio = nonMissingCount ? numericValues.length / nonMissingCount : 0;
   const dateRatio = nonMissingCount ? dateValues.length / nonMissingCount : 0;
   const idName = isIdFieldName(field);
@@ -1035,7 +1147,10 @@ function buildColumnProfile(field, rows) {
     numeric: nonMissingCount - numericValues.length,
     date: nonMissingCount - dateValues.length
   };
-  const numericFormat = detectNumericFormat(nonMissingValues);
+  const detectedNumericFormat = detectNumericFormat(nonMissingValues);
+  const numericFormat = detectedNumericFormat === "number" && numberFormatHint === "percent"
+    ? "percent"
+    : detectedNumericFormat;
   const sampleValues = [];
   const sampleKeys = new Set();
   nonMissingValues.forEach((value) => {
@@ -1064,8 +1179,17 @@ function buildColumnProfile(field, rows) {
     numericFormat,
     sampleValues,
     conversionFailuresByType,
-    conversionFailureCount: conversionFailuresByType[typeKey] || 0
+    conversionFailureSamplesByType,
+    conversionFailureCount: conversionFailuresByType[typeKey] || 0,
+    conversionFailureSamples: [...(conversionFailureSamplesByType[typeKey] || [])]
   };
+}
+
+// Keeps up to three distinct (trimmed) raw values that failed conversion.
+function addConversionFailureSample(samples, value) {
+  if (samples.length >= 3) return;
+  const sample = displayValue(value);
+  if (!samples.includes(sample)) samples.push(sample);
 }
 
 function countConversionFailuresForValues(values, typeKey) {
@@ -1088,9 +1212,38 @@ function countFieldConversionFailures(field, typeKey) {
   );
 }
 
+function getFieldConversionFailureSamples(field, typeKey) {
+  if (typeKey !== "numeric" && typeKey !== "date") return [];
+  const profile = getFieldProfile(field);
+  if (profile?.conversionFailureSamplesByType) {
+    return [...(profile.conversionFailureSamplesByType[typeKey] || [])];
+  }
+  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const samples = [];
+  state.rows.forEach((row) => {
+    if (!isMissing(row[field]) && convert(row[field]) === null) addConversionFailureSample(samples, row[field]);
+  });
+  return samples;
+}
+
+// Non-missing values in `rows` that toNumber() cannot convert.
+function countInvalidNumericValues(field, rows = getAnalysisRows()) {
+  return rows.reduce((count, row) => (
+    count + (!isMissing(row[field]) && toNumber(row[field]) === null ? 1 : 0)
+  ), 0);
+}
+
 function buildNumericStats(rows = getAnalysisRows()) {
   return getProfilesByType("numeric").flatMap((profile) => {
-    const values = getNumericValues(profile.field, rows);
+    const values = [];
+    let invalidCount = 0;
+    rows.forEach((row) => {
+      const value = row[profile.field];
+      if (isMissing(value)) return;
+      const number = toNumber(value);
+      if (number === null) invalidCount += 1;
+      else values.push(number);
+    });
     if (!values.length) return [];
     const sorted = [...values].sort((a, b) => a - b);
     const avg = mean(values);
@@ -1106,6 +1259,7 @@ function buildNumericStats(rows = getAnalysisRows()) {
     return [{
       field: profile.field,
       count: values.length,
+      invalidCount,
       mean: avg,
       median: median(values),
       min,
@@ -1136,6 +1290,7 @@ function buildCategoryStats(rows = getAnalysisRows()) {
     return {
       field: profile.field,
       total: nonMissingCount,
+      distinctCount: counts.size,
       top
     };
   });
@@ -1206,7 +1361,15 @@ function renderInsights() {
   const topNumeric = state.numericStats
     .slice()
     .sort((a, b) => Math.abs(b.max - b.min) - Math.abs(a.max - a.min))[0];
-  const firstCategory = state.categoryStats.find((item) => item.top.length);
+  // The first category field, in field order, whose values are concentrated
+  // enough to summarise: at most INSIGHT_CATEGORY_MAX_DISTINCT distinct values
+  // in the current rows and a top category that repeats.
+  const firstCategory = state.categoryStats.find((item) => (
+    item.top.length
+      && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT
+      && item.top[0].count >= 2
+  ));
+  const hasCategoryValues = state.categoryStats.some((item) => item.top.length);
   const dateProfile = getProfilesByType("date")
     .find((profile) => fieldHasDateData(profile.field));
 
@@ -1223,6 +1386,8 @@ function renderInsights() {
   if (firstCategory) {
     const top = firstCategory.top[0];
     insights.push(`分类字段「${firstCategory.field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`);
+  } else if (hasCategoryValues) {
+    insights.push(`分类字段的取值都比较分散（每个字段超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），没有适合概括的分类结论。`);
   } else {
     insights.push("未识别到适合生成频数统计的分类字段。");
   }
@@ -1387,6 +1552,7 @@ function applyFieldConfiguration() {
     profile.typeKey = typeKey;
     profile.type = FIELD_TYPE_LABELS[typeKey];
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, typeKey);
+    profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, typeKey);
   });
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.typeKey])
@@ -1405,6 +1571,7 @@ function restoreAutomaticFieldTypes() {
     profile.typeKey = profile.inferredTypeKey;
     profile.type = profile.inferredType;
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, profile.inferredTypeKey);
+    profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, profile.inferredTypeKey);
   });
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
@@ -1776,7 +1943,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderQuality();
   renderNumericStats();
   renderCategoryStats();
-  populateControls();
+  populateControls({ keepDateChartSelection: true });
   renderCharts();
   resetV2AnalysisState();
   renderTemplateMappingForm();
@@ -1790,9 +1957,12 @@ function renderQuality() {
   const qualityNumericStats = getQualityNumericStats();
   const missingClass = state.totalMissing === 0 ? "success" : missingRateLevel();
   const duplicateClass = state.duplicateRows === 0 ? "success" : "warning";
+  const conversionFailureTotal = state.profiles.reduce((sum, profile) => sum + (profile.conversionFailureCount || 0), 0);
+  const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
+    <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
   `;
 
@@ -1803,6 +1973,7 @@ function renderQuality() {
         <th>类型</th>
         <th>缺失值数量</th>
         <th>缺失率</th>
+        <th>无法转换</th>
       </tr>
     </thead>
     <tbody>
@@ -1812,6 +1983,7 @@ function renderQuality() {
           <td>${escapeHtml(profile.type)}</td>
           <td>${formatInteger(profile.missingCount)}</td>
           <td>${formatPercent(profile.missingRate)}</td>
+          <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
         </tr>
       `).join("")}
     </tbody>
@@ -1855,6 +2027,7 @@ function renderNumericStats() {
       <tr>
         <th>字段</th>
         <th>有效数量</th>
+        <th>无法转换</th>
         <th>平均值</th>
         <th>中位数</th>
         <th>最大值</th>
@@ -1867,6 +2040,7 @@ function renderNumericStats() {
         <tr>
           <td>${escapeHtml(stat.field)}</td>
           <td>${formatInteger(stat.count)}</td>
+          <td${stat.invalidCount ? ' class="cell-warning"' : ""}>${formatInteger(stat.invalidCount)}</td>
           <td>${formatFieldNumber(stat.field, stat.mean)}</td>
           <td>${formatFieldNumber(stat.field, stat.median)}</td>
           <td>${formatFieldNumber(stat.field, stat.max)}</td>
@@ -1898,16 +2072,26 @@ function renderCategoryStats() {
   `).join("");
 }
 
-function populateControls() {
+// A new import resets the trend chart to record counts; a field-configuration
+// rebuild keeps the chosen metric while it is still a numeric field with data.
+function populateControls({ keepDateChartSelection = false } = {}) {
   const numericProfiles = getProfilesByType("numeric")
     .filter((profile) => fieldHasNumericData(profile.field));
   const categoryProfiles = getProfilesByType("category");
   const dateProfiles = getProfilesByType("date")
     .filter((profile) => fieldHasDateData(profile.field));
+  const numericFields = numericProfiles.map((profile) => profile.field);
+  const previousDateChartMetric = dom.dateChartMetric.value;
+  const previousDateChartAggregate = dom.dateChartAggregate.value;
 
   setSelectOptions(dom.numericChartField, numericProfiles.map((profile) => profile.field));
   setSelectOptions(dom.categoryChartField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.dateChartField, dateProfiles.map((profile) => profile.field));
+  setSelectOptions(dom.dateChartMetric, numericFields, "记录数", true);
+  dom.dateChartMetric.value = keepDateChartSelection && numericFields.includes(previousDateChartMetric)
+    ? previousDateChartMetric
+    : "";
+  dom.dateChartAggregate.value = keepDateChartSelection && previousDateChartAggregate === "sum" ? "sum" : "avg";
   setSelectOptions(dom.metricField, numericProfiles.map((profile) => profile.field));
   setSelectOptions(dom.groupField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), "请选择数值字段");
@@ -1918,7 +2102,7 @@ function populateControls() {
 function renderCharts() {
   if (!window.Chart) {
     ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "customAnalysisChart"].forEach((id) => {
-      drawEmptyChart(document.getElementById(id), "图表组件加载失败，请检查网络连接");
+      drawEmptyChart(document.getElementById(id), "图表组件加载失败，请刷新页面重试");
     });
     return;
   }
@@ -1938,7 +2122,7 @@ function renderNumericDistributionChart() {
 
   const values = getNumericValues(field);
   if (!values.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效数值");
-  const bins = buildHistogram(values, 10, field);
+  const bins = buildDiscreteValueCounts(values, field) || buildHistogram(values, 10, field);
   state.charts.numericDistributionChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -1985,16 +2169,17 @@ function renderDateTrendChart() {
   destroyChart("dateTrendChart");
   dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  const { metricField: numericField, aggregate } = getDateChartSelection();
+  dom.dateChartAggregate.disabled = !numericField;
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
 
-  const numericField = dom.metricField.value || getProfilesByType("numeric")
-    .find((profile) => fieldHasNumericData(profile.field))?.field;
-  const trend = buildDateTrend(field, numericField);
+  const trend = buildDateChartTrend(field, numericField, aggregate);
   if (!trend.labels.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效日期");
   const timeUnit = getDateGranularity(field) === "year"
     ? "年份"
     : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
-  const aggregationLabel = numericField ? "平均值" : "记录数";
+  const aggregationLabel = getDateChartAggregateLabel(aggregate);
+  const yearly = getDateGranularity(field) === "year";
   dom.dateChartTitle.textContent = numericField
     ? `${numericField} 按${timeUnit}趋势（${aggregationLabel}）`
     : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
@@ -2004,7 +2189,9 @@ function renderDateTrendChart() {
     data: {
       labels: trend.labels,
       datasets: [{
-        label: trend.label,
+        label: numericField
+          ? `${numericField}${yearly ? "年度" : " "}${aggregationLabel}趋势`
+          : `${yearly ? "年度" : ""}记录数趋势`,
         data: trend.values,
         borderColor: CHART_THEME.primary,
         backgroundColor: CHART_THEME.primaryFill,
@@ -2012,8 +2199,27 @@ function renderDateTrendChart() {
         fill: true
       }]
     },
-    options: chartOptions(numericAxisLabel(numericField, trend.axisLabel), numericField)
+    options: chartOptions(numericAxisLabel(numericField, aggregationLabel), numericField)
   });
+}
+
+// Reads the trend chart's own metric and aggregate selects. An empty or no
+// longer numeric metric means record counts.
+function getDateChartSelection() {
+  const selected = dom.dateChartMetric.value;
+  const metricField = getProfilesByType("numeric").some((profile) => profile.field === selected) ? selected : "";
+  if (!metricField) return { metricField: "", aggregate: "count" };
+  return { metricField, aggregate: dom.dateChartAggregate.value === "sum" ? "sum" : "avg" };
+}
+
+function getDateChartAggregateLabel(aggregate) {
+  return { count: "记录数", avg: "平均值", sum: "合计" }[aggregate] || "记录数";
+}
+
+// Same bucketing as buildDateTrend(): month when the dated span exceeds 120
+// days, otherwise day; year-only fields by year.
+function buildDateChartTrend(dateField, metricField, aggregate) {
+  return buildTrendFromRows(dateField, (row) => toNumber(row[metricField]), metricField ? aggregate : "count");
 }
 
 function renderCustomAnalysisChart() {
@@ -2091,11 +2297,13 @@ function renderV2Analysis() {
     : `已生成分组${aggregateLabel}汇总；未选择时间字段，因此不生成时间趋势图。`;
   dom.v2AnalysisResults.classList.remove("hidden");
 
+  const metricInvalidCount = countInvalidNumericValues(metricField, getAnalysisRows());
   state.customAnalysis = {
     metricField,
     groupField,
     aggregateMethod,
     dateField,
+    metricInvalidCount,
     grouped: grouped.map((item) => ({ ...item })),
     trend: dateField ? buildMetricDateTrend(dateField, metricField, aggregateMethod) : null
   };
@@ -2104,9 +2312,12 @@ function renderV2Analysis() {
   renderV2AggregationTables(metricField, groupField, grouped);
   renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod);
   renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod);
-  dom.v2ResultSummary.textContent = hasActiveFilters()
+  const invalidMetricText = metricInvalidCount
+    ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值无法转换为数字，已从计算中排除。`
+    : "";
+  dom.v2ResultSummary.textContent = (hasActiveFilters()
     ? `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于当前筛选数据 ${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行。`
-    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`;
+    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`) + invalidMetricText;
 
   if (dateField) {
     dom.v2TrendCard.classList.remove("hidden");
@@ -2195,7 +2406,7 @@ function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
 
 function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2TopGroupChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   const topGroups = [...grouped]
     .sort((a, b) => compareNumbersDescending(a[aggregateMethod], b[aggregateMethod]))
@@ -2218,7 +2429,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
 
 function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2SelectedTrendChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
   const trend = buildMetricDateTrend(dateField, metricField, aggregateMethod);
   if (!trend.labels.length) {
     return drawEmptyChart(canvas, "所选时间字段没有可用的趋势数据");
@@ -2394,7 +2605,7 @@ function renderTemplateChart(chartId, titleElement, chartConfig) {
   const canvas = document.getElementById(chartId);
   titleElement.textContent = chartConfig.title;
   if (!window.Chart) {
-    drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+    drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
     return;
   }
   if (!chartConfig.labels.length) {
@@ -2962,10 +3173,10 @@ function countNonMissingValues(field, rows = getAnalysisRows()) {
   return rows.filter((row) => !isMissing(row[field])).length;
 }
 
+// The trend conclusion always compares record counts; numeric fields and the
+// chart's metric selects do not change it.
 function buildTrendInsight(dateField) {
-  const numericField = getProfilesByType("numeric")
-    .find((profile) => fieldHasNumericData(profile.field))?.field;
-  const trend = buildDateTrend(dateField, numericField);
+  const trend = buildDateTrend(dateField, "");
   if (!trend.labels.length) {
     return `日期字段「${dateField}」没有可安全转换的有效日期，因此未生成趋势结论。`;
   }
@@ -2974,12 +3185,44 @@ function buildTrendInsight(dateField) {
   }
   const first = trend.values[0];
   const last = trend.values[trend.values.length - 1];
-  const direction = last > first ? "上升" : last < first ? "下降" : "基本持平";
-  if (first === 0 && last !== 0) {
-    return `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]} 呈${direction}变化；由于首期值为 0，百分比变化无法计算，绝对变化为 ${formatFieldNumber(numericField || "", Math.abs(last - first))}。`;
-  }
-  const change = first === 0 ? 0 : (last - first) / Math.abs(first);
-  return `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]} 呈${direction}变化，变化幅度约 ${formatPercent(Math.abs(change))}。`;
+  const range = `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]}`;
+  const note = buildPartialPeriodNote(dateField, trend);
+  // Every bucket holds at least one record, so the first count is never 0.
+  if (last === first) return `${range} 基本持平。${note}`;
+  const direction = last > first ? "上升" : "下降";
+  return `${range} 呈${direction}变化，变化幅度约 ${formatPercent(Math.abs((last - first) / first))}。${note}`;
+}
+
+// Month and year buckets may be incomplete when the latest written date ends
+// before that month / year. Day buckets and year-only values ("2025") are not
+// judged. Dates are UTC calendar days from parseFieldDate(), compared with the
+// same bucket keys as getDateTrendKey(), so the runtime time zone never matters.
+function buildPartialPeriodNote(dateField, trend) {
+  const lastLabel = trend.labels[trend.labels.length - 1];
+  const yearly = getDateGranularity(dateField) === "year";
+  if (!yearly && !/^\d{4}-\d{2}$/.test(lastLabel)) return "";
+  const strategy = getFieldProfile(dateField)?.dateStrategy || {};
+  let lastDate = null;
+  getAnalysisRows().forEach((row) => {
+    const value = row[dateField];
+    const date = parseFieldDate(dateField, value);
+    if (!date || (yearly && isYearOnlyDateValue(value, strategy))) return;
+    if (!lastDate || date > lastDate) lastDate = date;
+  });
+  if (!lastDate || getDateTrendKey(dateField, lastDate, !yearly) !== lastLabel) return "";
+  const year = lastDate.getUTCFullYear();
+  const month = lastDate.getUTCMonth();
+  const periodEnd = yearly ? Date.UTC(year, 11, 31) : Date.UTC(year, month + 1, 0);
+  if (lastDate.getTime() >= periodEnd) return "";
+  const period = yearly ? `${year} 年` : lastLabel;
+  return `注意：最后一期（${period}）的数据截至 ${month + 1} 月 ${lastDate.getUTCDate()} 日，可能不完整，比较结果仅供参考。`;
+}
+
+function isYearOnlyDateValue(value, strategy = {}) {
+  if (!strategy.allowYearOnly || isDateObject(value) || isMissing(value)) return false;
+  const raw = String(value).trim();
+  const yearText = raw.match(/^(\d{4})\s*年$/);
+  return isPlausibleYear(yearText ? yearText[1] : raw);
 }
 
 function buildDateTrend(dateField, numericField) {
@@ -3045,6 +3288,23 @@ function aggregateByCategory(metricField, groupField, method) {
       return { name, value, count: values.length };
     })
     .sort((a, b) => compareNumbersDescending(a.value, b.value));
+}
+
+// Small integer ranges (scores, ratings) get one bar per value from min to max,
+// zeros included; anything else returns null so callers fall back to buildHistogram.
+function buildDiscreteValueCounts(values, field = "") {
+  if (!values.length || getNumericFormat(field) === "percent") return null;
+  if (!values.every(Number.isInteger)) return null;
+  const { min, max } = numericExtents(values);
+  if (!(max - min <= 11)) return null;
+  const bins = Array.from({ length: max - min + 1 }, (_, index) => ({
+    label: formatFieldNumber(field, min + index),
+    count: 0
+  }));
+  values.forEach((value) => {
+    bins[value - min].count += 1;
+  });
+  return bins;
 }
 
 function buildHistogram(values, binCount, field = "") {
@@ -3152,6 +3412,7 @@ function resetAnalysisState() {
   state.duplicateRows = 0;
   state.totalMissing = 0;
   state.parseWarnings = [];
+  state.numberFormatHints = Object.create(null);
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
@@ -3378,7 +3639,9 @@ function displayValue(value) {
 
 function isIdFieldName(field) {
   const name = String(field || "").trim();
-  return /(^|[_\-\s])(id|uuid|guid|code|key|number|no)([_\-\s]|$)/i.test(name)
+  return /^(?:序号|行号|行序号|index|idx|no\.|row no\.?|#)$/i.test(name)
+    || /[\u4e00-\u9fff]\s*id$/i.test(name)
+    || /(^|[_\-\s])(id|uuid|guid|code|key|number|no)([_\-\s]|$)/i.test(name)
     || /[a-z0-9](?:Id|ID|Uuid|UUID|Guid|GUID|Code|CODE|Key|KEY|Number|NUMBER|No|NO)$/.test(name)
     || /^(?:user|customer|order|product|account|session|event|device|student|employee|member|record)(?:id|uuid|guid|code|key|number|no)$/i.test(name)
     || /编号|编码|代码|订单号|账号|工号|主键|用户ID|事件ID|会话ID/i.test(name)
@@ -3664,11 +3927,23 @@ function quantile(sortedValues, q) {
   return sortedValues[base];
 }
 
+function absorbFloatNoise(value) {
+  return Math.abs(value) < 1e-10 ? 0 : value;
+}
+
+function stripNegativeZeroSign(text) {
+  // "-0", "-0.0", "-0%" and "-0.0%" are zero after rounding; show them unsigned.
+  return /^-[0.,]*%?$/.test(text) ? text.slice(1) : text;
+}
+
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "-";
-  return new Intl.NumberFormat("zh-CN", {
-    maximumFractionDigits: 2
-  }).format(value);
+  const displayed = absorbFloatNoise(value);
+  const magnitude = Math.abs(displayed);
+  const options = magnitude > 0 && magnitude < 1
+    ? { maximumSignificantDigits: 3 }
+    : { maximumFractionDigits: 2 };
+  return stripNegativeZeroSign(new Intl.NumberFormat("zh-CN", options).format(displayed));
 }
 
 function formatInteger(value) {
@@ -3681,9 +3956,14 @@ function formatImportLimitSize(bytes) {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+// Plain text such as "3（N/A、待定、约500）"; callers escape it for their output format.
+function formatConversionFailures(count, samples = [], countText = String(count ?? 0)) {
+  return count && samples.length ? `${countText}（${samples.join("、")}）` : countText;
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "0%";
-  return `${(value * 100).toFixed(1)}%`;
+  return stripNegativeZeroSign(`${(absorbFloatNoise(value) * 100).toFixed(1)}%`);
 }
 
 function numericExtents(values) {
@@ -3704,10 +3984,10 @@ function getNumericFormat(field) {
 function formatFieldNumber(field, value) {
   if (!Number.isFinite(value)) return "-";
   if (getNumericFormat(field) === "percent") {
-    return new Intl.NumberFormat("zh-CN", {
+    return stripNegativeZeroSign(new Intl.NumberFormat("zh-CN", {
       style: "percent",
       maximumFractionDigits: 2
-    }).format(value);
+    }).format(absorbFloatNoise(value)));
   }
   return formatNumber(value);
 }
@@ -3729,6 +4009,10 @@ const REPORT_CHART_TITLES = Object.freeze({
   templateSecondaryChart: "场景模板辅助图",
   templateTrendChart: "场景模板时间趋势"
 });
+
+const REPORT_FILTER_MAX_VALUES = 10;
+const REPORT_NO_FILTER_TEXT = "未设置筛选，结果基于完整数据。";
+const REPORT_QUALITY_SCOPE_TEXT = "数据质量部分始终基于原始数据，不受筛选影响。";
 
 const REPORT_CHART_HEADING_IDS = Object.freeze({
   numericDistributionChart: "numericChartTitle",
@@ -3807,7 +4091,7 @@ function getProcessedExportRows(mode) {
 
 function buildCsvExportContent(rows, fields) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
-    throw new Error("CSV 导出组件未加载，请检查网络连接后刷新页面重试。");
+    throw new Error("CSV 导出组件未加载，请刷新页面重试。");
   }
   const sourceFields = [...fields];
   const orderedFields = sourceFields.map(sanitizeCsvExportValue);
@@ -3960,11 +4244,13 @@ function buildReportData(now = new Date()) {
     missingCount: profile.missingCount,
     missingRate: formatPercent(profile.missingRate),
     conversionFailureCount: profile.conversionFailureCount || 0,
+    conversionFailureSamples: [...(profile.conversionFailureSamples || [])],
     sampleValues: [...profile.sampleValues]
   }));
   const numericStats = state.numericStats.map((stat) => ({
     field: stat.field,
     count: stat.count,
+    invalidCount: stat.invalidCount || 0,
     mean: formatFieldNumber(stat.field, stat.mean),
     median: formatFieldNumber(stat.field, stat.median),
     min: formatFieldNumber(stat.field, stat.min),
@@ -3975,6 +4261,7 @@ function buildReportData(now = new Date()) {
   const categoryStats = state.categoryStats.map((category) => ({
     field: category.field,
     total: category.total,
+    distinctCount: category.distinctCount,
     top: category.top.slice(0, 10).map((item) => ({
       name: item.name,
       count: item.count,
@@ -3983,7 +4270,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.1.3",
+    version: "v2.1.4",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -4002,6 +4289,7 @@ function buildReportData(now = new Date()) {
       idFields: getProfilesByType("id").length,
       ignoredFields: getProfilesByType("ignore").length
     },
+    filters: buildReportFilters(),
     fieldTypes,
     quality: {
       totalMissing: state.totalMissing,
@@ -4032,16 +4320,55 @@ function buildReportData(now = new Date()) {
   };
 }
 
+// Describes the applied filters (state.filters only changes on "应用筛选",
+// never on drafts) in the fixed order category, numeric, date.
+function buildReportFilters(filters = state.filters) {
+  const items = [];
+  if (filters?.category) {
+    const { field, values } = filters.category;
+    const options = getCategoryFilterOptions(field);
+    const keptKeys = new Set(values);
+    // Kept labels follow the filter panel order (display labels, zh-CN sort).
+    const kept = options.filter((option) => keptKeys.has(option.value)).map((option) => option.label);
+    const keptValues = kept.slice(0, REPORT_FILTER_MAX_VALUES);
+    const more = kept.length > keptValues.length ? `……等 ${formatInteger(kept.length)} 个` : "";
+    items.push({
+      type: "category",
+      field,
+      keptCount: kept.length,
+      totalCount: options.length,
+      keptValues,
+      description: `${field}：保留 ${formatInteger(kept.length)} / 共 ${formatInteger(options.length)} 个类别${kept.length ? `（${keptValues.join("、")}${more}）` : ""}`
+    });
+  }
+  if (filters?.numeric) {
+    const { field, min, max } = filters.numeric;
+    items.push({
+      type: "numeric",
+      field,
+      min,
+      max,
+      description: `${field}：${formatFieldNumber(field, min)} 至 ${formatFieldNumber(field, max)}`
+    });
+  }
+  if (filters?.date) {
+    const { field, start, end } = filters.date;
+    items.push({ type: "date", field, start, end, description: `${field}：${start} 至 ${end}` });
+  }
+  return items;
+}
+
 function getReportSourceFileName() {
   if (state.sourceFileName) return state.sourceFileName;
   const sourceTitle = dom.sourceName?.title || dom.sourceName?.textContent || "";
   return sourceTitle.replace(/^已载入\s*·\s+/, "").split(" · ")[0] || "data-report";
 }
 
+// Every date field uses the trend chart's current metric / aggregate selection.
 function buildReportDateTrends() {
-  const metricField = state.numericStats[0]?.field || "";
+  const { metricField, aggregate } = getDateChartSelection();
   return getProfilesByType("date").map((profile) => {
-    const trend = buildDateTrend(profile.field, metricField);
+    const trend = buildDateChartTrend(profile.field, metricField, aggregate);
     if (!trend.labels.length) {
       return {
         field: profile.field,
@@ -4057,7 +4384,7 @@ function buildReportDateTrends() {
 
     const firstValue = trend.values[0];
     const lastValue = trend.values[trend.values.length - 1];
-    const valueLabel = metricField ? `${metricField}平均值` : "记录数";
+    const valueLabel = metricField ? `${metricField}${getDateChartAggregateLabel(aggregate)}` : "记录数";
     const firstDisplay = metricField
       ? formatFieldNumber(metricField, firstValue)
       : formatInteger(firstValue);
@@ -4125,6 +4452,7 @@ function buildReportCustomAnalysis() {
     aggregateMethod,
     aggregateLabel: getAggregateMethodLabel(aggregateMethod),
     dateField: current.dateField || "",
+    metricInvalidCount: current.metricInvalidCount ?? countInvalidNumericValues(current.metricField, getAnalysisRows()),
     rows,
     trendSummary
   };
@@ -4150,7 +4478,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.1.3",
+    version: reportData.version || "v2.1.4",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     analysisTime: reportData.analysisTime || "—",
@@ -4168,6 +4496,7 @@ function normalizeReportSnapshot(reportData = {}) {
       ignoredFields: 0,
       ...dataScale
     },
+    filters: Array.isArray(reportData.filters) ? reportData.filters : [],
     fieldTypes: (reportData.fieldTypes || []).map((field) => ({
       ...field,
       inferredType: field.inferredType || field.type || "—",
@@ -4176,6 +4505,7 @@ function normalizeReportSnapshot(reportData = {}) {
       uniqueCount: field.uniqueCount ?? 0,
       missingCount: field.missingCount ?? 0,
       conversionFailureCount: field.conversionFailureCount ?? 0,
+      conversionFailureSamples: Array.isArray(field.conversionFailureSamples) ? field.conversionFailureSamples : [],
       sampleValues: Array.isArray(field.sampleValues) ? field.sampleValues : []
     })),
     quality: {
@@ -4189,13 +4519,21 @@ function normalizeReportSnapshot(reportData = {}) {
         : Array.isArray(quality.fields) ? quality.fields : [],
       outliers: Array.isArray(quality.outliers) ? quality.outliers : []
     },
-    numericStats: Array.isArray(reportData.numericStats) ? reportData.numericStats : [],
+    numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
+      ...item,
+      invalidCount: item.invalidCount ?? 0
+    })),
     categoryStats: Array.isArray(reportData.categoryStats) ? reportData.categoryStats : [],
     dateTrends: Array.isArray(reportData.dateTrends) ? reportData.dateTrends : [],
-    customAnalysis: reportData.customAnalysis || {
-      completed: false,
-      message: "当前没有可导出的自定义分组分析结果。"
-    },
+    customAnalysis: reportData.customAnalysis
+      ? {
+        ...reportData.customAnalysis,
+        ...(reportData.customAnalysis.completed ? { metricInvalidCount: reportData.customAnalysis.metricInvalidCount ?? 0 } : {})
+      }
+      : {
+        completed: false,
+        message: "当前没有可导出的自定义分组分析结果。"
+      },
     insights: Array.isArray(reportData.insights) ? reportData.insights : []
   };
 }
@@ -4312,6 +4650,13 @@ function buildHtmlReport(reportData, chartImages = []) {
     </div>
   </section>
   <section>
+    <h2>筛选条件</h2>
+    ${reportData.filters.length
+      ? buildHtmlReportTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]), REPORT_NO_FILTER_TEXT)
+      : `<p>${escapeHtml(REPORT_NO_FILTER_TEXT)}</p>`}
+    <p>${escapeHtml(REPORT_QUALITY_SCOPE_TEXT)}</p>
+  </section>
+  <section>
     <h2>字段类型结果</h2>
     ${buildHtmlReportTable(
       ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "缺失值", "转换失败", "示例值"],
@@ -4322,7 +4667,7 @@ function buildHtmlReport(reportData, chartImages = []) {
         field.nonMissingCount,
         field.uniqueCount,
         field.missingCount,
-        field.conversionFailureCount,
+        formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
         field.sampleValues.join("、") || "—"
       ]),
       "无字段类型结果。"
@@ -4347,8 +4692,8 @@ function buildHtmlReport(reportData, chartImages = []) {
   <section>
     <h2>数值字段描述性统计</h2>
     ${buildHtmlReportTable(
-      ["字段", "有效数量", "平均值", "中位数", "最小值", "最大值", "标准差"],
-      reportData.numericStats.map((item) => [item.field, item.count, item.mean, item.median, item.min, item.max, item.standardDeviation]),
+      ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+      reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
   </section>
@@ -4416,6 +4761,14 @@ function buildMarkdownReport(reportData) {
       ]
     ),
     "",
+    "## 筛选条件",
+    "",
+    reportData.filters.length
+      ? buildMarkdownTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]))
+      : escapeMarkdownText(REPORT_NO_FILTER_TEXT),
+    "",
+    escapeMarkdownText(REPORT_QUALITY_SCOPE_TEXT),
+    "",
     "## 字段类型结果",
     "",
     reportData.fieldTypes.length
@@ -4428,7 +4781,7 @@ function buildMarkdownReport(reportData) {
           field.nonMissingCount,
           field.uniqueCount,
           field.missingCount,
-          field.conversionFailureCount,
+          formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
           field.sampleValues.join("、") || "—"
         ])
       )
@@ -4462,8 +4815,8 @@ function buildMarkdownReport(reportData) {
     "",
     reportData.numericStats.length
       ? buildMarkdownTable(
-        ["字段", "有效数量", "平均值", "中位数", "最小值", "最大值", "标准差"],
-        reportData.numericStats.map((item) => [item.field, item.count, item.mean, item.median, item.min, item.max, item.standardDeviation])
+        ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+        reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
       )
       : "未识别到数值字段，暂无可用数值统计。",
     "",

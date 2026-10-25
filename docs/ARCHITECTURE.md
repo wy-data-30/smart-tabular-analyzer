@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.1.3 架构说明
+# Smart Tabular Analyzer v2.1.4 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于在不重构 `script.js` 的前提下理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -6,9 +6,10 @@
 
 Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静态浏览器应用：
 
-- `index.html` 定义页面结构，并从 CDN 加载 PapaParse、Chart.js 和 SheetJS。
+- `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
 - `script.js` 包含应用状态、事件绑定、文件解析、分析计算、图表、页面渲染和导出逻辑。
+- 启动自检：`dom` 映射建立后立即调用 `ensureDomElementsPresent()`。如果缓存里的旧 `index.html` 缺少脚本需要的元素，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失键名的错误，阻止后续顶层代码执行；元素齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>` 和 `script.js?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
 - CSV、Excel、筛选、统计和报告生成均在浏览器本地完成。
 - 当前导入上限由 `IMPORT_LIMITS` 统一控制：25 MB、100,000 行数据、200 列。
 
@@ -22,10 +23,14 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 ```text
 .
-├── index.html                  # 页面结构、控件和 CDN 引用
+├── index.html                  # 页面结构、控件和 vendor/ 依赖引用
 ├── style.css                   # 页面样式与响应式规则
 ├── script.js                   # 全部浏览器端应用逻辑
 ├── package.json                # Node 测试命令
+├── .nojekyll                   # 空文件，让 GitHub Pages 跳过 Jekyll、原样发布 vendor/
+├── .gitattributes              # vendor/** -text，禁止换行转换，保证文件与 integrity 一致
+├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
+│   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
 │   └── sample-*.csv            # 内置与手工测试用虚构数据
 ├── assets/                     # README 截图
@@ -225,7 +230,7 @@ UTF-8 BOM
 
 | 函数 | 职责 |
 | --- | --- |
-| `parseExcelFile(file)` | 读取文件、校验签名，并调用 `XLSX.read(..., { type: "array", cellDates: true })` |
+| `parseExcelFile(file)` | 读取文件、校验签名，并通过 `readExcelWorkbook()` 调用 `XLSX.read(..., { type: "array", cellDates: true, cellNF: true })` |
 | `validateExcelFileSignature(buffer, fileName)` | `.xlsx` 检查 ZIP `PK` 签名，`.xls` 检查 OLE 签名 |
 | `showExcelSheetSelection(...)` | 把完整工作簿保存到 `state.pendingExcel` 并显示工作表下拉框 |
 | `analyzeSelectedExcelSheet()` | 校验待选状态和当前选择 |
@@ -245,7 +250,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 })
 ```
 
-生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。
+生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。百分比格式会被识别（只看表头以下前 1,000 行，`EXCEL_FORMAT_SAMPLE_ROWS`），货币等其他格式仍不读取。
 
 **输入 / 输出**
 
@@ -275,12 +280,12 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 | 函数 | 职责 |
 | --- | --- |
-| `buildColumnProfile(field, rows)` | 生成完整 profile |
-| `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称 |
+| `buildColumnProfile(field, rows, numberFormatHint)` | 生成完整 profile；第三个参数可选，是 Excel 导入时该列的格式提示（目前只有 `"percent"`），CSV 不传 |
+| `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称；整个字段名等于序号、行号、行序号、index、idx、No.、Row No.、Row No 或 `#`（不区分大小写），以及以"中文字符 + ID"结尾（如 学生ID、客户 ID）的名称也判为 ID |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
 | `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
 | `toNumber(value)` | 解析普通数值、科学计数、规范千分位、货币、会计负数和百分比 |
-| `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent |
+| `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
 | `countFieldConversionFailures()` | 取得指定字段按数值或日期解释时的失败数量 |
 | `stageFieldTypeChange()` | 只更新未应用草稿和提示 |
 | `applyFieldConfiguration()` | 把草稿提交到 `profile.typeKey` 并触发重建 |
@@ -302,7 +307,8 @@ XLSX.utils.sheet_to_json(worksheet, {
 - 唯一值数量和唯一率。
 - 数值率、日期率、日期策略和数值格式。
 - 最多 3 个去重后的示例值。
-- 数值与日期两种解释下的转换失败数。
+- 数值与日期两种解释下的转换失败数（`conversionFailuresByType`）和各自最多 3 个去重后的失败样例（`conversionFailureSamplesByType`）。
+- 当前类型对应的 `conversionFailureCount` 与 `conversionFailureSamples`；分类、ID 和忽略字段均为 0 与空数组。`applyFieldConfiguration()` / `restoreAutomaticFieldTypes()` 改类型时通过 `countFieldConversionFailures()` 与 `getFieldConversionFailureSamples()` 同步更新。
 
 **输入 / 输出**
 
@@ -335,7 +341,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
 - `buildNumericStats(rows)`：同时生成 Q1、Q3、IQR 边界和异常值数量。
 - `getQualityNumericStats()`：返回基于原始 `state.rows` 的数值质量统计。
-- `renderQuality()`：渲染摘要、逐字段缺失表和数值异常值表。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表和数值异常值表。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。
 
 异常值规则为：
 
@@ -349,8 +355,9 @@ upper = Q3 + 1.5 × IQR
 **输入 / 输出**
 
 - 输入：原始 `state.rows`、完整 `state.fields` 和当前已应用 profiles。
-- 输出：`totalMissing`、`duplicateRows`、`qualityNumericStats`，以及质量页的缺失、重复和异常值 DOM。
-- `renderQuality()` 不展示 CSV 解析警告或转换失败；前者保存在 state 并进入报告，后者主要显示在字段配置和报告字段类型部分。
+- 输出：`totalMissing`、`duplicateRows`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题和异常值 DOM。
+- `renderQuality()` 不展示 CSV 解析警告；它保存在 state 并进入报告。转换失败（格式问题）按原始数据显示在质量页，也显示在字段配置和报告字段类型部分。
+- 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但 `toNumber()` 失败的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
 
 **与其他模块的关系**
 
@@ -393,11 +400,15 @@ upper = Q3 + 1.5 × IQR
 - 总体标准差
 - Q1、Q3、IQR 上下界和异常值数量
 
-`buildCategoryStats()` 忽略缺失值，以非缺失值为分母计算占比，并只保留频数 Top 10。
+`buildCategoryStats()` 忽略缺失值，以非缺失值为分母计算占比，并只保留频数 Top 10。每项是 `{ field, total, distinctCount, top }`：`distinctCount` 是当前分析行中该字段的不同值个数（与 `countValues()` 口径相同，不受 Top 10 截断影响），也写入报告快照的 `categoryStats`。
+
+自动分类结论按字段顺序选第一个同时满足 `top.length > 0`、`distinctCount ≤ INSIGHT_CATEGORY_MAX_DISTINCT`（20）且排第一的类别至少出现 2 次的分类字段，文字仍为“分类字段「X」中占比最高的类别是……”。有带数据的分类字段但都不满足时，写“分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。”；没有分类字段或分类字段全空时仍写“未识别到适合生成频数统计的分类字段。”。因为 `distinctCount` 按当前分析行计算，筛选后结论会重新选字段。
 
 `mean()`、`sumNumbers()` 和 `standardDeviation()` 会按最大绝对值缩放计算，降低极端有限数导致中间结果溢出的风险。`quantile()` 使用 `(n - 1) × q` 位置上的线性插值。
 
-日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图对数值指标使用平均值，没有可用数值指标时使用记录数。
+日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图由自带的 `#dateChartMetric`（第一项“记录数”，其余为有数据的数值字段）和 `#dateChartAggregate`（平均值 avg / 合计 sum，选“记录数”时禁用）决定，默认是每期记录数；它不再读取快速分组的 `#metricField`。新导入时两个下拉框回到“记录数”和平均值；筛选变化保持选择；字段配置变化时，若所选指标仍是有数据的数值字段则保持，否则回到“记录数”。
+
+自动趋势结论 `buildTrendInsight()` 固定调用 `buildDateTrend(dateField, "")`，比较当前分析行第一期和最后一期的记录数，不受数值字段、`#metricField` 或 `#dateChartMetric` 影响。首尾相同时写“……从 A 到 B 基本持平。”，不给变化幅度；上升或下降时给出变化幅度。每期至少 1 条记录，首期不会为 0，因此不再有“首期为 0”的分支。按月分桶时，如果该日期字段的最后一个日期早于当月最后一天；或按年分桶时，最后一个带月日的日期早于当年 12 月 31 日，`buildPartialPeriodNote()` 会在结论末尾追加“注意：最后一期（…）的数据截至 M 月 D 日，可能不完整，比较结果仅供参考。”。它不剔除最后一期，也不改变比较方式；按天分桶、只有年份（如“2025”）的值、只有一个时间点或没有有效日期时不加注释。日期按 `parseFieldDate()` 的 UTC 日历日和 `getDateTrendKey()` 的分桶键判断，不受运行时区影响。
 
 **输入 / 输出**
 
@@ -469,9 +480,9 @@ upper = Q3 + 1.5 × IQR
 | 图表范围 | 主要函数 |
 | --- | --- |
 | 基础图表入口 | `renderCharts()` |
-| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildHistogram()` |
+| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间。场景模板的 `histogramChartConfig()` 不受影响 |
 | 分类 Top 10 | `renderCategoryTopChart()` → `countValues()` |
-| 日期趋势 | `renderDateTrendChart()` → `buildDateTrend()` |
+| 日期趋势 | `renderDateTrendChart()` → `getDateChartSelection()` → `buildDateChartTrend()` → `buildTrendFromRows()`（count / avg / sum，分桶规则与 `buildDateTrend()` 相同；`buildDateTrend()` 仍供自动趋势结论使用） |
 | 基础分组图 | `renderCustomAnalysisChart()` → `aggregateByCategory()` |
 | V2 自定义图 | `renderV2TopGroupChart()`, `renderV2TrendChart()` |
 | 模板图 | `renderTemplateChart()` 和各模板返回的 Chart 配置 |
@@ -537,7 +548,7 @@ exportHtmlReport() / exportMarkdownReport()
 
 - `canExportReport()` / `canExportProcessedData()`：导出门禁。
 - `buildReportData()`：从当前状态建立两种报告共用的快照。
-- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。
+- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>合计`），不再取 `numericStats[0]`。
 - `normalizeReportSnapshot()`：为缺少可选部分的快照提供默认结构。
 - `captureCurrentChartImages()` / `isSafeChartDataUrl()`：捕获当前可见图表并校验图片 Data URL。
 - `buildHtmlReport()` / `buildMarkdownReport()`：生成最终文本。
@@ -549,6 +560,8 @@ exportHtmlReport() / exportMarkdownReport()
 - 数据导出输入为原始或当前筛选 rows；输出为带 BOM 的 CSV 下载。
 - 报告输入为当前分析快照，HTML 还包括可见图表图片；输出为带 BOM 的 `.html` 或 `.md` 下载。
 - 报告质量部分使用原始范围，统计、趋势和自定义分析使用当前分析范围。
+- 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“无法转换”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
+- 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
 
 **与其他模块的关系**
 

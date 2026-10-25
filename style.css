@@ -1304,6 +1304,12 @@ tbody tr:hover {
   color: var(--danger);
 }
 
+.cell-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 620;
+}
+
 .type-badge {
   display: inline-flex;
   min-height: 24px;
@@ -1421,6 +1427,14 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 12px;
   font-weight: 620;
+}
+
+.chart-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 14px;
 }
 
 select {
@@ -2204,6 +2218,12 @@ select:focus-visible,
 
   .chart-control {
     display: grid;
+  }
+
+  .chart-control-group {
+    display: grid;
+    justify-content: stretch;
+    gap: 10px;
   }
 
   .chart-control select {
