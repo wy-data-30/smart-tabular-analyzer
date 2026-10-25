@@ -23,15 +23,15 @@ The project is a static website with no backend service, database, account syste
 
 ## Core Features
 
-- Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030.
+- Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages.
 - Preview the first 10 rows and summarize the dataset size, field composition, missing values, and duplicate rows.
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
-- Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and numeric or date conversion failures.
-- Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions, and date trends.
+- Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
+- Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
 - Apply categorical, numeric, and date filters; run grouped analysis; or use scenario templates for common structured datasets.
-- Produce data-grounded observations without inferring external business context.
+- Produce data-grounded observations without inferring external business context; trend observations compare record counts and flag a possibly incomplete last month or year, and the category observation skips fields whose values are too scattered.
 - Export filtered or deduplicated rows to CSV in the browser while preserving field order and neutralizing spreadsheet-formula prefixes.
-- Export the analysis as HTML or Markdown; HTML reports embed the currently rendered charts for offline viewing.
+- Export the analysis as HTML or Markdown; reports also record the applied filters, and HTML reports embed the currently rendered charts for offline viewing.
 
 Detailed processing rules and data flows are documented in [Architecture](./docs/ARCHITECTURE.md).
 
@@ -45,7 +45,7 @@ Upload CSV or Excel files, or start immediately with the built-in sample data.
 
 ### Data Quality
 
-Review missing values, duplicate rows, and IQR-based numeric outliers in one view.
+Review missing values, duplicate rows, format problems, and IQR-based numeric outliers in one view.
 
 ![Smart Tabular Analyzer data quality checks](./assets/data-quality.png)
 
@@ -59,7 +59,7 @@ Compare numeric distributions, categorical Top 10 results, and date trends throu
 
 CSV and Excel parsing, filtering, analysis, processed-data export, and report generation run locally in the browser. The application does not upload or store user files or generated reports. It does not send dataset contents to a third-party API or require an account.
 
-The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repository's own `vendor/` directory and verifies them with Subresource Integrity (SRI). It does not contact third-party CDN hosts, and uploaded file contents remain in the browser runtime.
+The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repository's own `vendor/` directory and verifies them with Subresource Integrity (SRI). It does not contact third-party CDN hosts, and uploaded file contents remain in the browser runtime. Because the libraries are hosted with the page, files you import can still be analyzed after the page has loaded, even without a network connection; the built-in sample data is fetched from the site and needs the connection.
 
 ## Tech Stack
 
@@ -128,6 +128,7 @@ npm run test:regression
 ├── index.html
 ├── style.css
 ├── script.js
+├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
 │   ├── sample-data.csv          # Loaded by "Use Sample Data"
 │   ├── sample-sales.csv
@@ -147,6 +148,7 @@ npm run test:regression
 - Parsing and analysis run on the browser main thread and may temporarily block the interface near the import limits, especially on mobile devices.
 - Field inference is heuristic, and strict date parsing may require manual confirmation for ambiguous columns.
 - Excel worksheets must have unique, non-empty text headers in the first non-empty row; empty, headerless, protected, or structurally irregular worksheets may be rejected.
+- Excel percentage formats are detected from the first 1,000 data rows below the header; other number formats such as currency are not read.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.
