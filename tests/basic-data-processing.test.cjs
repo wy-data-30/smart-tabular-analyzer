@@ -293,11 +293,12 @@ function createChartContext() {
   }
   scope.context.Chart = FakeChart;
   scope.context.window.Chart = FakeChart;
-  scope.lastDistribution = () => {
-    const canvas = scope.context.document.getElementById("numericDistributionChart");
+  scope.lastChart = (canvasId) => {
+    const canvas = scope.context.document.getElementById(canvasId);
     const { config } = configs.filter((entry) => entry.canvas === canvas).pop();
     return { labels: [...config.data.labels], data: [...config.data.datasets[0].data] };
   };
+  scope.lastDistribution = () => scope.lastChart("numericDistributionChart");
   return scope;
 }
 
@@ -521,6 +522,108 @@ test("reports carry unconvertible counts and escaped samples", () => {
   assert.equal(normalized.customAnalysis.metricInvalidCount, 0);
   assert.doesNotThrow(() => scope.evaluate("buildHtmlReport(__legacy, [])"));
   assert.doesNotThrow(() => scope.evaluate("buildMarkdownReport(__legacy)"));
+});
+
+// sample-data 订单日期 spans Jan-Jun 2025, so trends are grouped by month.
+const SAMPLE_MONTHS = ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06"];
+// buildDateTrend("订单日期", "销售额") values from the HEAD before this change.
+const SAMPLE_SALES_MONTHLY_AVERAGE = [2400, 2665.0000000000005, 4033.333333333333, 3167.5, 4110.833333333334, 11142.5];
+
+function drawDateTrend(scope, { metric = "", aggregate = "avg" } = {}) {
+  put(scope.context, "__trendMetric", metric);
+  put(scope.context, "__trendAggregate", aggregate);
+  scope.evaluate('dom.dateChartField.value = "订单日期"; dom.dateChartMetric.value = __trendMetric; dom.dateChartAggregate.value = __trendAggregate; renderDateTrendChart()');
+  return { ...scope.lastChart("dateTrendChart"), title: scope.elements.get("dateChartTitle").textContent };
+}
+
+test("the date trend chart defaults to record counts per period", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  const chart = drawDateTrend(scope);
+  assert.equal(chart.title, "订单日期 按月份趋势（记录数）");
+  assert.deepEqual(chart.labels, SAMPLE_MONTHS);
+  assert.deepEqual(chart.data, [6, 6, 6, 6, 6, 8]);
+  assert.equal(scope.elements.get("dateChartAggregate").disabled, true);
+});
+
+test("the date trend chart averages or sums the selected metric", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const average = drawDateTrend(scope, { metric: "销售额", aggregate: "avg" });
+  assert.equal(average.title, "销售额 按月份趋势（平均值）");
+  assert.deepEqual(average.labels, SAMPLE_MONTHS);
+  assert.deepEqual(average.data, SAMPLE_SALES_MONTHLY_AVERAGE);
+  assert.equal(scope.elements.get("dateChartAggregate").disabled, false);
+
+  const total = drawDateTrend(scope, { metric: "销售额", aggregate: "sum" });
+  assert.equal(total.title, "销售额 按月份趋势（合计）");
+  assert.deepEqual(total.labels, SAMPLE_MONTHS);
+  assert.equal(total.data[0], 14400);
+  assert.equal(total.data[5], 89140);
+});
+
+test("the date trend chart ignores the quick-grouping metric select", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+
+  const before = drawDateTrend(scope);
+  scope.evaluate('dom.metricField.value = "销售额"; renderCharts()');
+  const after = { ...scope.lastChart("dateTrendChart"), title: scope.elements.get("dateChartTitle").textContent };
+  assert.deepEqual(after, before);
+});
+
+test("date trend selections follow the import, filter and field-configuration paths", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  drawDateTrend(scope, { metric: "销售额", aggregate: "sum" });
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "销售额");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "sum");
+  assert.equal(scope.elements.get("dateChartTitle").textContent, "销售额 按月份趋势（合计）");
+
+  scope.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "销售额");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "sum");
+
+  scope.evaluate('stageFieldTypeChange("销售额", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  assert.match(scope.elements.get("dateChartTitle").textContent, /（记录数）$/);
+
+  scope.evaluate('dom.dateChartMetric.value = "成本"; dom.dateChartAggregate.value = "sum"');
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(scope.evaluate("dom.dateChartMetric.value"), "");
+  assert.equal(scope.evaluate("dom.dateChartAggregate.value"), "avg");
+});
+
+test("report date trends follow the trend chart selection", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  const report = () => JSON.parse(scope.evaluate("JSON.stringify(buildReportDateTrends())"))[0];
+
+  const counts = report();
+  assert.equal(counts.metricField, "");
+  assert.deepEqual(counts.values, [6, 6, 6, 6, 6, 8]);
+  assert.match(counts.summary, /记录数从 2025-01 的 6 变为 2025-06 的 8/);
+
+  scope.evaluate('dom.dateChartMetric.value = "销售额"; dom.dateChartAggregate.value = "avg"');
+  const average = report();
+  assert.equal(average.metricField, "销售额");
+  assert.deepEqual(average.values, SAMPLE_SALES_MONTHLY_AVERAGE);
+  assert.match(average.summary, /销售额平均值从 2025-01 的 2,400 变为 2025-06 的 11,142.5/);
+
+  scope.evaluate('dom.dateChartAggregate.value = "sum"');
+  const total = report();
+  assert.equal(total.values[0], 14400);
+  assert.match(total.summary, /销售额合计从 2025-01 的 14,400 变为 2025-06 的 89,140/);
 });
 
 test("field inference recognizes ID, numeric, date and category columns", () => {

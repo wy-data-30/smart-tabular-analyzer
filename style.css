@@ -1429,6 +1429,14 @@ tbody tr:hover {
   font-weight: 620;
 }
 
+.chart-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 14px;
+}
+
 select {
   min-height: 38px;
   max-width: 280px;
@@ -2210,6 +2218,12 @@ select:focus-visible,
 
   .chart-control {
     display: grid;
+  }
+
+  .chart-control-group {
+    display: grid;
+    justify-content: stretch;
+    gap: 10px;
   }
 
   .chart-control select {

@@ -377,7 +377,16 @@
           <div class="chart-card wide">
             <div class="chart-header">
               <h3 id="dateChartTitle">日期字段趋势（记录数）</h3>
-              <label class="chart-control" for="dateChartField"><span>选择字段</span><select id="dateChartField"></select></label>
+              <div class="chart-control-group">
+                <label class="chart-control" for="dateChartField"><span>选择字段</span><select id="dateChartField"></select></label>
+                <label class="chart-control" for="dateChartMetric"><span>选择指标</span><select id="dateChartMetric"></select></label>
+                <label class="chart-control" for="dateChartAggregate"><span>汇总方式</span>
+                  <select id="dateChartAggregate">
+                    <option value="avg" selected>平均值</option>
+                    <option value="sum">合计</option>
+                  </select>
+                </label>
+              </div>
             </div>
             <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas></div>
           </div>

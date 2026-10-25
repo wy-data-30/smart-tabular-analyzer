@@ -403,7 +403,7 @@ upper = Q3 + 1.5 × IQR
 
 `mean()`、`sumNumbers()` 和 `standardDeviation()` 会按最大绝对值缩放计算，降低极端有限数导致中间结果溢出的风险。`quantile()` 使用 `(n - 1) × q` 位置上的线性插值。
 
-日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图对数值指标使用平均值，没有可用数值指标时使用记录数。
+日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图由自带的 `#dateChartMetric`（第一项“记录数”，其余为有数据的数值字段）和 `#dateChartAggregate`（平均值 avg / 合计 sum，选“记录数”时禁用）决定，默认是每期记录数；它不再读取快速分组的 `#metricField`。新导入时两个下拉框回到“记录数”和平均值；筛选变化保持选择；字段配置变化时，若所选指标仍是有数据的数值字段则保持，否则回到“记录数”。
 
 **输入 / 输出**
 
@@ -477,7 +477,7 @@ upper = Q3 + 1.5 × IQR
 | 基础图表入口 | `renderCharts()` |
 | 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间。场景模板的 `histogramChartConfig()` 不受影响 |
 | 分类 Top 10 | `renderCategoryTopChart()` → `countValues()` |
-| 日期趋势 | `renderDateTrendChart()` → `buildDateTrend()` |
+| 日期趋势 | `renderDateTrendChart()` → `getDateChartSelection()` → `buildDateChartTrend()` → `buildTrendFromRows()`（count / avg / sum，分桶规则与 `buildDateTrend()` 相同；`buildDateTrend()` 仍供自动趋势结论使用） |
 | 基础分组图 | `renderCustomAnalysisChart()` → `aggregateByCategory()` |
 | V2 自定义图 | `renderV2TopGroupChart()`, `renderV2TrendChart()` |
 | 模板图 | `renderTemplateChart()` 和各模板返回的 Chart 配置 |
@@ -543,7 +543,7 @@ exportHtmlReport() / exportMarkdownReport()
 
 - `canExportReport()` / `canExportProcessedData()`：导出门禁。
 - `buildReportData()`：从当前状态建立两种报告共用的快照。
-- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。
+- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>合计`），不再取 `numericStats[0]`。
 - `normalizeReportSnapshot()`：为缺少可选部分的快照提供默认结构。
 - `captureCurrentChartImages()` / `isSafeChartDataUrl()`：捕获当前可见图表并校验图片 Data URL。
 - `buildHtmlReport()` / `buildMarkdownReport()`：生成最终文本。

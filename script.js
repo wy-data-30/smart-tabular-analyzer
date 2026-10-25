@@ -86,6 +86,8 @@ const dom = {
   numericChartField: document.getElementById("numericChartField"),
   categoryChartField: document.getElementById("categoryChartField"),
   dateChartField: document.getElementById("dateChartField"),
+  dateChartMetric: document.getElementById("dateChartMetric"),
+  dateChartAggregate: document.getElementById("dateChartAggregate"),
   numericChartTitle: document.getElementById("numericChartTitle"),
   categoryChartTitle: document.getElementById("categoryChartTitle"),
   dateChartTitle: document.getElementById("dateChartTitle"),
@@ -289,6 +291,8 @@ dom.dropZone.addEventListener("drop", (event) => {
   dom.numericChartField,
   dom.categoryChartField,
   dom.dateChartField,
+  dom.dateChartMetric,
+  dom.dateChartAggregate,
   dom.metricField,
   dom.groupField,
   dom.aggregateMethod
@@ -1900,7 +1904,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderQuality();
   renderNumericStats();
   renderCategoryStats();
-  populateControls();
+  populateControls({ keepDateChartSelection: true });
   renderCharts();
   resetV2AnalysisState();
   renderTemplateMappingForm();
@@ -2029,16 +2033,26 @@ function renderCategoryStats() {
   `).join("");
 }
 
-function populateControls() {
+// A new import resets the trend chart to record counts; a field-configuration
+// rebuild keeps the chosen metric while it is still a numeric field with data.
+function populateControls({ keepDateChartSelection = false } = {}) {
   const numericProfiles = getProfilesByType("numeric")
     .filter((profile) => fieldHasNumericData(profile.field));
   const categoryProfiles = getProfilesByType("category");
   const dateProfiles = getProfilesByType("date")
     .filter((profile) => fieldHasDateData(profile.field));
+  const numericFields = numericProfiles.map((profile) => profile.field);
+  const previousDateChartMetric = dom.dateChartMetric.value;
+  const previousDateChartAggregate = dom.dateChartAggregate.value;
 
   setSelectOptions(dom.numericChartField, numericProfiles.map((profile) => profile.field));
   setSelectOptions(dom.categoryChartField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.dateChartField, dateProfiles.map((profile) => profile.field));
+  setSelectOptions(dom.dateChartMetric, numericFields, "记录数", true);
+  dom.dateChartMetric.value = keepDateChartSelection && numericFields.includes(previousDateChartMetric)
+    ? previousDateChartMetric
+    : "";
+  dom.dateChartAggregate.value = keepDateChartSelection && previousDateChartAggregate === "sum" ? "sum" : "avg";
   setSelectOptions(dom.metricField, numericProfiles.map((profile) => profile.field));
   setSelectOptions(dom.groupField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), "请选择数值字段");
@@ -2116,16 +2130,17 @@ function renderDateTrendChart() {
   destroyChart("dateTrendChart");
   dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  const { metricField: numericField, aggregate } = getDateChartSelection();
+  dom.dateChartAggregate.disabled = !numericField;
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
 
-  const numericField = dom.metricField.value || getProfilesByType("numeric")
-    .find((profile) => fieldHasNumericData(profile.field))?.field;
-  const trend = buildDateTrend(field, numericField);
+  const trend = buildDateChartTrend(field, numericField, aggregate);
   if (!trend.labels.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效日期");
   const timeUnit = getDateGranularity(field) === "year"
     ? "年份"
     : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
-  const aggregationLabel = numericField ? "平均值" : "记录数";
+  const aggregationLabel = getDateChartAggregateLabel(aggregate);
+  const yearly = getDateGranularity(field) === "year";
   dom.dateChartTitle.textContent = numericField
     ? `${numericField} 按${timeUnit}趋势（${aggregationLabel}）`
     : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
@@ -2135,7 +2150,9 @@ function renderDateTrendChart() {
     data: {
       labels: trend.labels,
       datasets: [{
-        label: trend.label,
+        label: numericField
+          ? `${numericField}${yearly ? "年度" : " "}${aggregationLabel}趋势`
+          : `${yearly ? "年度" : ""}记录数趋势`,
         data: trend.values,
         borderColor: CHART_THEME.primary,
         backgroundColor: CHART_THEME.primaryFill,
@@ -2143,8 +2160,27 @@ function renderDateTrendChart() {
         fill: true
       }]
     },
-    options: chartOptions(numericAxisLabel(numericField, trend.axisLabel), numericField)
+    options: chartOptions(numericAxisLabel(numericField, aggregationLabel), numericField)
   });
+}
+
+// Reads the trend chart's own metric and aggregate selects. An empty or no
+// longer numeric metric means record counts.
+function getDateChartSelection() {
+  const selected = dom.dateChartMetric.value;
+  const metricField = getProfilesByType("numeric").some((profile) => profile.field === selected) ? selected : "";
+  if (!metricField) return { metricField: "", aggregate: "count" };
+  return { metricField, aggregate: dom.dateChartAggregate.value === "sum" ? "sum" : "avg" };
+}
+
+function getDateChartAggregateLabel(aggregate) {
+  return { count: "记录数", avg: "平均值", sum: "合计" }[aggregate] || "记录数";
+}
+
+// Same bucketing as buildDateTrend(): month when the dated span exceeds 120
+// days, otherwise day; year-only fields by year.
+function buildDateChartTrend(dateField, metricField, aggregate) {
+  return buildTrendFromRows(dateField, (row) => toNumber(row[metricField]), metricField ? aggregate : "count");
 }
 
 function renderCustomAnalysisChart() {
@@ -4213,10 +4249,11 @@ function getReportSourceFileName() {
   return sourceTitle.replace(/^已载入\s*·\s+/, "").split(" · ")[0] || "data-report";
 }
 
+// Every date field uses the trend chart's current metric / aggregate selection.
 function buildReportDateTrends() {
-  const metricField = state.numericStats[0]?.field || "";
+  const { metricField, aggregate } = getDateChartSelection();
   return getProfilesByType("date").map((profile) => {
-    const trend = buildDateTrend(profile.field, metricField);
+    const trend = buildDateChartTrend(profile.field, metricField, aggregate);
     if (!trend.labels.length) {
       return {
         field: profile.field,
@@ -4232,7 +4269,7 @@ function buildReportDateTrends() {
 
     const firstValue = trend.values[0];
     const lastValue = trend.values[trend.values.length - 1];
-    const valueLabel = metricField ? `${metricField}平均值` : "记录数";
+    const valueLabel = metricField ? `${metricField}${getDateChartAggregateLabel(aggregate)}` : "记录数";
     const firstDisplay = metricField
       ? formatFieldNumber(metricField, firstValue)
       : formatInteger(firstValue);
