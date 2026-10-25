@@ -1,9 +1,51 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const { createScriptContext } = require("./test-context.cjs");
+
+// The real vendored SheetJS builds and reads workbooks at test time, so no
+// binary fixture is committed and the production read options are exercised.
+const XLSX = require(path.join(__dirname, "..", "vendor", "xlsx-0.20.3.full.min.js"));
 
 function put(context, name, value) {
   context[name] = value;
+}
+
+function buildXlsxBuffer(sheets) {
+  const workbook = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows, formats = {} }) => {
+    const worksheet = XLSX.utils.aoa_to_sheet(rows, { cellDates: true });
+    Object.entries(formats).forEach(([address, format]) => {
+      worksheet[address].z = format;
+    });
+    XLSX.utils.book_append_sheet(workbook, worksheet, name);
+  });
+  return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+}
+
+function createExcelContext() {
+  const scope = createScriptContext();
+  scope.context.XLSX = XLSX;
+  scope.context.window.XLSX = XLSX;
+  return scope;
+}
+
+function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = true } = {}) {
+  put(context, "__xlsxBuffer", buffer);
+  put(context, "__xlsxSheet", sheetName);
+  put(context, "__newImport", newImport);
+  evaluate(`(() => {
+    const importId = __newImport ? beginImport() : state.activeImportId;
+    importExcelSheet(readExcelWorkbook(__xlsxBuffer), "formats.xlsx", __xlsxSheet, importId);
+  })()`);
+}
+
+function tableCells(elements, id) {
+  return [...elements.get(id).innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+}
+
+function profileSummary(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey, profile.numericFormat]))"));
 }
 
 test("CSV encoding and parsed rows preserve Chinese headers and values", () => {
@@ -109,6 +151,132 @@ test("Excel worksheet arrays become rows with Chinese fields", () => {
     }
   })()`);
   assert.match(emptyMessage, /为空/);
+});
+
+test("Excel percent-formatted numbers are analyzed like CSV percent text", () => {
+  const excel = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [
+      ["毛利率", "精确值", "金额", "下单日期"],
+      [0.26, 1.23456789, 1234.5, new Date(Date.UTC(2026, 6, 17))],
+      [0.26, 1200, 99.9, new Date(Date.UTC(2026, 6, 18))],
+      [0.31, 3.5, 10, new Date(Date.UTC(2026, 6, 19))]
+    ],
+    formats: { A2: "0%", A3: "0%", A4: "0.00%", C2: "¥#,##0.00", C3: "¥#,##0.00", C4: "¥#,##0.00", D2: "yyyy-mm-dd", D3: "yyyy-mm-dd", D4: "yyyy-mm-dd" }
+  }]);
+  importXlsxSheet(excel.context, excel.evaluate, buffer, "S1");
+
+  assert.deepEqual(profileSummary(excel.evaluate), [
+    ["毛利率", "numeric", "percent"],
+    ["精确值", "numeric", "number"],
+    ["金额", "numeric", "number"],
+    ["下单日期", "date", "number"]
+  ]);
+  assert.equal(excel.evaluate('state.rows[0]["毛利率"]'), "0.26");
+  assert.equal(excel.evaluate('state.rows[0]["精确值"]'), "1.23456789");
+  assert.equal(excel.evaluate('state.rows[0]["下单日期"]'), "2026-07-17");
+
+  const csv = createScriptContext();
+  put(csv.context, "__rows", ["26%", "26%", "31%"].map((value) => ({ 毛利率: value })));
+  csv.evaluate('commitTabularData(["毛利率"], __rows, "rates.csv", beginImport())');
+
+  const excelRateCells = tableCells(excel.elements, "numericStatsTable").slice(0, 7);
+  assert.deepEqual(excelRateCells, tableCells(csv.elements, "numericStatsTable"));
+  assert.equal(excelRateCells[3], "26%");
+});
+
+test("Excel columns with only a minority of percent cells stay plain numbers", () => {
+  const { context, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [["少数百分比", "一半百分比"], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4], [0.5, 0.5]],
+    formats: { A2: "0%", B2: "0%", B3: "0%", A4: '0"%"', A5: "0\\%" }
+  }]);
+  importXlsxSheet(context, evaluate, buffer, "S1");
+
+  assert.deepEqual(profileSummary(evaluate), [
+    ["少数百分比", "numeric", "number"],
+    ["一半百分比", "numeric", "number"]
+  ]);
+});
+
+test("Excel percent hints do not leak across worksheets or into a later CSV", () => {
+  const { context, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([
+    { name: "A", rows: [["毛利率"], [0.26], [0.3]], formats: { A2: "0%", A3: "0%" } },
+    { name: "B", rows: [["毛利率"], [0.26], [0.3]] }
+  ]);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "percent"]]);
+
+  importXlsxSheet(context, evaluate, buffer, "B", { newImport: false });
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "number"]]);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  put(context, "__csvRows", [{ 毛利率: "0.26" }, { 毛利率: "0.3" }]);
+  evaluate('commitTabularData(["毛利率"], __csvRows, "rates.csv", beginImport())');
+  assert.deepEqual(profileSummary(evaluate), [["毛利率", "numeric", "number"]]);
+  assert.equal(evaluate("Object.keys(state.numberFormatHints).length"), 0);
+
+  importXlsxSheet(context, evaluate, buffer, "A");
+  evaluate("resetAnalysisState()");
+  assert.equal(evaluate("Object.keys(state.numberFormatHints).length"), 0);
+});
+
+test("Excel percent hints survive field configuration and restoring automatic types", () => {
+  const { context, elements, evaluate } = createExcelContext();
+  const buffer = buildXlsxBuffer([{
+    name: "S1",
+    rows: [["毛利率", "门店"], [0.26, "1"], [0.26, "2"], [0.31, "3"]],
+    formats: { A2: "0%", A3: "0%", A4: "0%" }
+  }]);
+  importXlsxSheet(context, evaluate, buffer, "S1");
+
+  evaluate('stageFieldTypeChange("门店", "category"); applyFieldConfiguration()');
+  assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
+  assert.equal(tableCells(elements, "numericStatsTable")[3], "26%");
+
+  evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
+  assert.equal(evaluate('state.numberFormatHints["毛利率"]'), "percent");
+  assert.equal(tableCells(elements, "numericStatsTable")[3], "26%");
+});
+
+// Builds one "毛利率" column below `leadingBlankRows` empty rows; formatOf(i)
+// returns the number format for the i-th data row (0-based).
+function sampledRateSheet(dataRowCount, formatOf, leadingBlankRows = 0) {
+  const rows = [...Array.from({ length: leadingBlankRows }, () => [null]), ["毛利率"]];
+  const formats = {};
+  for (let index = 0; index < dataRowCount; index += 1) {
+    rows.push([0.2 + (index % 10) / 100]);
+    formats[`A${leadingBlankRows + index + 2}`] = formatOf(index);
+  }
+  return buildXlsxBuffer([{ name: "S1", rows, formats }]);
+}
+
+function importedRateFormat(buffer) {
+  const { context, evaluate } = createExcelContext();
+  importXlsxSheet(context, evaluate, buffer, "S1");
+  return evaluate('getFieldProfile("毛利率").numericFormat');
+}
+
+test("Excel percent hints sample only the first 1,000 data rows", () => {
+  // Cases from the request: both results also hold under a full scan.
+  assert.equal(importedRateFormat(sampledRateSheet(1500, (index) => (index < 1000 ? "0%" : "General"))), "percent");
+  assert.equal(importedRateFormat(sampledRateSheet(1500, (index) => (index < 1000 ? "General" : "0%"))), "number");
+
+  // A full scan would give the opposite result for these two sheets.
+  assert.equal(importedRateFormat(sampledRateSheet(2500, (index) => (index < 1000 ? "0%" : "General"))), "percent");
+  assert.equal(importedRateFormat(sampledRateSheet(2500, (index) => (index < 1000 ? "General" : "0%"))), "number");
+});
+
+test("Excel percent sampling starts below the detected header row", () => {
+  // Data rows 500-999 are percent (501 of the first 1,000), so only a window
+  // that starts right below the header has a percent majority.
+  const buffer = sampledRateSheet(2000, (index) => (index >= 499 && index < 1000 ? "0%" : "General"), 3);
+  assert.equal(importedRateFormat(buffer), "percent");
 });
 
 test("field inference recognizes ID, numeric, date and category columns", () => {

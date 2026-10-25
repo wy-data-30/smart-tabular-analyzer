@@ -229,7 +229,7 @@ UTF-8 BOM
 
 | 函数 | 职责 |
 | --- | --- |
-| `parseExcelFile(file)` | 读取文件、校验签名，并调用 `XLSX.read(..., { type: "array", cellDates: true })` |
+| `parseExcelFile(file)` | 读取文件、校验签名，并通过 `readExcelWorkbook()` 调用 `XLSX.read(..., { type: "array", cellDates: true, cellNF: true })` |
 | `validateExcelFileSignature(buffer, fileName)` | `.xlsx` 检查 ZIP `PK` 签名，`.xls` 检查 OLE 签名 |
 | `showExcelSheetSelection(...)` | 把完整工作簿保存到 `state.pendingExcel` 并显示工作表下拉框 |
 | `analyzeSelectedExcelSheet()` | 校验待选状态和当前选择 |
@@ -249,7 +249,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 })
 ```
 
-生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。
+生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。百分比格式会被识别（只看表头以下前 1,000 行，`EXCEL_FORMAT_SAMPLE_ROWS`），货币等其他格式仍不读取。
 
 **输入 / 输出**
 
@@ -279,12 +279,12 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 | 函数 | 职责 |
 | --- | --- |
-| `buildColumnProfile(field, rows)` | 生成完整 profile |
+| `buildColumnProfile(field, rows, numberFormatHint)` | 生成完整 profile；第三个参数可选，是 Excel 导入时该列的格式提示（目前只有 `"percent"`），CSV 不传 |
 | `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称 |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
 | `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
 | `toNumber(value)` | 解析普通数值、科学计数、规范千分位、货币、会计负数和百分比 |
-| `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent |
+| `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
 | `countFieldConversionFailures()` | 取得指定字段按数值或日期解释时的失败数量 |
 | `stageFieldTypeChange()` | 只更新未应用草稿和提示 |
 | `applyFieldConfiguration()` | 把草稿提交到 `profile.typeKey` 并触发重建 |

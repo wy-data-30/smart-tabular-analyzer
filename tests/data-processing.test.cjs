@@ -387,6 +387,17 @@ test("number display keeps small values visible and never shows negative zero", 
   assert.equal(evaluate('formatFieldNumber("比例", NaN)'), "-");
 });
 
+test("Excel number formats count as percent only when % is a real scale token", () => {
+  const { evaluate } = createScriptContext();
+
+  for (const format of ["0%", "0.00%", "#,##0.0%", "[Red]0%"]) {
+    assert.equal(evaluate(`isPercentNumberFormat(${JSON.stringify(format)})`), true, format);
+  }
+  for (const format of ['0"%"', "0\\%", '"rate %" 0', "General", "#,##0.00", "¥#,##0.00", "yyyy-mm-dd", "", null, undefined]) {
+    assert.equal(evaluate(`isPercentNumberFormat(${JSON.stringify(format) ?? "undefined"})`), false, String(format));
+  }
+});
+
 test("date parsing accepts supported formats and rejects invalid or ambiguous dates", () => {
   const { evaluate } = createScriptContext();
 

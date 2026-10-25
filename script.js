@@ -10,6 +10,7 @@ const state = {
   duplicateRows: 0,
   totalMissing: 0,
   parseWarnings: [],
+  numberFormatHints: Object.create(null),
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -515,7 +516,7 @@ async function parseExcelFile(file) {
     validateExcelFileSignature(buffer, file.name);
     let workbook;
     try {
-      workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+      workbook = readExcelWorkbook(buffer);
     } catch {
       throw new Error("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。");
     }
@@ -532,6 +533,11 @@ async function parseExcelFile(file) {
   } catch (error) {
     showError(error.message, importId);
   }
+}
+
+function readExcelWorkbook(buffer) {
+  // cellNF keeps each cell's number format string (cell.z) for format hints.
+  return XLSX.read(buffer, { type: "array", cellDates: true, cellNF: true });
 }
 
 function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
@@ -588,17 +594,73 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     raw: true,
     blankrows: true
   });
-  const { fields, rows } = buildExcelTabularData(rawRows, rawRows, sheetName);
+  const { fields, rows, numberFormatHints } = buildExcelTabularData(
+    rawRows,
+    rawRows,
+    sheetName,
+    createExcelNumberFormatReader(worksheet)
+  );
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints);
 }
 
-function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表") {
+// Percent hints inspect only the first data rows below the header, so large
+// sheets do not pay for a second full cell scan. The cost: a percent format
+// that first appears after this many rows is not recognized.
+const EXCEL_FORMAT_SAMPLE_ROWS = 1000;
+
+// Returns a reader for one sheet_to_json({ header: 1 }) row index: numeric
+// cells get cell.z, every other position stays empty. Formatted text (cell.w)
+// is never used because it depends on the runtime time zone and can shift
+// dates by one day.
+function createExcelNumberFormatReader(worksheet) {
+  const range = XLSX.utils.decode_range(worksheet["!ref"]);
+  const columnNames = [];
+  for (let column = range.s.c; column <= range.e.c; column += 1) {
+    columnNames.push(XLSX.utils.encode_col(column));
+  }
+  return (rowIndex) => {
+    const formats = [];
+    columnNames.forEach((columnName, columnIndex) => {
+      const cell = worksheet[`${columnName}${range.s.r + rowIndex + 1}`];
+      if (cell?.t === "n") formats[columnIndex] = String(cell.z ?? "General");
+    });
+    return formats;
+  };
+}
+
+function isPercentNumberFormat(format) {
+  // Quoted text and backslash-escaped characters are literals, not a percent scale.
+  return String(format ?? "").replace(/\\.|"[^"]*"/g, "").includes("%");
+}
+
+function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats) {
+  const sampledFormats = dataPairs
+    .slice(0, EXCEL_FORMAT_SAMPLE_ROWS)
+    .map((pair) => readNumberFormats(pair.index));
+  const hints = Object.create(null);
+  fields.forEach((field, fieldIndex) => {
+    const columnIndex = usedColumnIndexes[fieldIndex];
+    let numericCells = 0;
+    let percentCells = 0;
+    sampledFormats.forEach((formats) => {
+      const format = formats[columnIndex];
+      if (typeof format !== "string") return;
+      numericCells += 1;
+      if (isPercentNumberFormat(format)) percentCells += 1;
+    });
+    if (percentCells * 2 > numericCells) hints[field] = "percent";
+  });
+  return hints;
+}
+
+function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
+    index,
     formatted: Array.isArray(formattedRows?.[index]) ? formattedRows[index] : [],
     raw: Array.isArray(rawRows?.[index]) ? rawRows[index] : []
   }));
@@ -666,7 +728,12 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」只有表头，没有可分析的数据行。`);
   }
 
-  return { fields, rows };
+  if (!readNumberFormats) return { fields, rows };
+  return {
+    fields,
+    rows,
+    numberFormatHints: buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats)
+  };
 }
 
 function excelRowHasValue(row) {
@@ -940,7 +1007,7 @@ function handleParsedData(results, sourceName, importId) {
   commitTabularData(fields, rows, sourceName, importId, parseWarnings);
 }
 
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "") {
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -966,7 +1033,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
-  state.profiles = fields.map((field) => buildColumnProfile(field, rows));
+  // Source-file hints are replaced on every commit; only Excel imports pass them.
+  state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
+  state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
@@ -1005,7 +1074,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   showResultsWorkspace();
 }
 
-function buildColumnProfile(field, rows) {
+function buildColumnProfile(field, rows, numberFormatHint = "") {
   const values = rows.map((row) => row[field]);
   const nonMissingValues = values.filter((value) => !isMissing(value));
   const total = rows.length;
@@ -1035,7 +1104,10 @@ function buildColumnProfile(field, rows) {
     numeric: nonMissingCount - numericValues.length,
     date: nonMissingCount - dateValues.length
   };
-  const numericFormat = detectNumericFormat(nonMissingValues);
+  const detectedNumericFormat = detectNumericFormat(nonMissingValues);
+  const numericFormat = detectedNumericFormat === "number" && numberFormatHint === "percent"
+    ? "percent"
+    : detectedNumericFormat;
   const sampleValues = [];
   const sampleKeys = new Set();
   nonMissingValues.forEach((value) => {
@@ -3152,6 +3224,7 @@ function resetAnalysisState() {
   state.duplicateRows = 0;
   state.totalMissing = 0;
   state.parseWarnings = [];
+  state.numberFormatHints = Object.create(null);
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
