@@ -152,6 +152,33 @@ test("missing values, duplicate rows and IQR outliers are detected", () => {
   assert.equal(evaluate('state.numericStats[0].max'), 100);
 });
 
+test("quality outlier bounds near zero are displayed without negative zero", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const rows = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0.002, 0.004, 0.01].map((value) => ({ 比例: String(value) }));
+  put(context, "__rows", rows);
+  evaluate('commitTabularData(["比例"], __rows, "near-zero.csv", beginImport())');
+
+  assert.equal(evaluate("state.qualityNumericStats[0].lowerBound"), -0.00075);
+  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  assert.deepEqual(outlierCells, ["比例", "3", "-0.00075", "0.00125"]);
+  assert.equal(outlierCells.includes("-0"), false);
+
+  const outliers = JSON.parse(evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")).quality.outliers)'));
+  assert.deepEqual(outliers, [{ field: "比例", outlierCount: 3, lowerBound: "-0.00075", upperBound: "0.00125" }]);
+});
+
+test("descriptive statistics show small averages instead of rounding them to zero", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const rows = ["0.001", "0.0012", "0.0014"].map((value) => ({ 误差: value }));
+  put(context, "__rows", rows);
+  evaluate('commitTabularData(["误差"], __rows, "small-mean.csv", beginImport())');
+
+  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  assert.equal(statsCells[0], "误差");
+  assert.equal(statsCells[2], "0.0012");
+  assert.equal(statsCells.slice(2).includes("0"), false);
+});
+
 test("descriptive and category statistics return expected values", () => {
   const { context, evaluate } = createScriptContext();
   const rows = [

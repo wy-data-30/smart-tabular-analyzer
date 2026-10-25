@@ -3664,11 +3664,23 @@ function quantile(sortedValues, q) {
   return sortedValues[base];
 }
 
+function absorbFloatNoise(value) {
+  return Math.abs(value) < 1e-10 ? 0 : value;
+}
+
+function stripNegativeZeroSign(text) {
+  // "-0", "-0.0", "-0%" and "-0.0%" are zero after rounding; show them unsigned.
+  return /^-[0.,]*%?$/.test(text) ? text.slice(1) : text;
+}
+
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "-";
-  return new Intl.NumberFormat("zh-CN", {
-    maximumFractionDigits: 2
-  }).format(value);
+  const displayed = absorbFloatNoise(value);
+  const magnitude = Math.abs(displayed);
+  const options = magnitude > 0 && magnitude < 1
+    ? { maximumSignificantDigits: 3 }
+    : { maximumFractionDigits: 2 };
+  return stripNegativeZeroSign(new Intl.NumberFormat("zh-CN", options).format(displayed));
 }
 
 function formatInteger(value) {
@@ -3683,7 +3695,7 @@ function formatImportLimitSize(bytes) {
 
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "0%";
-  return `${(value * 100).toFixed(1)}%`;
+  return stripNegativeZeroSign(`${(absorbFloatNoise(value) * 100).toFixed(1)}%`);
 }
 
 function numericExtents(values) {
@@ -3704,10 +3716,10 @@ function getNumericFormat(field) {
 function formatFieldNumber(field, value) {
   if (!Number.isFinite(value)) return "-";
   if (getNumericFormat(field) === "percent") {
-    return new Intl.NumberFormat("zh-CN", {
+    return stripNegativeZeroSign(new Intl.NumberFormat("zh-CN", {
       style: "percent",
       maximumFractionDigits: 2
-    }).format(value);
+    }).format(absorbFloatNoise(value)));
   }
   return formatNumber(value);
 }

@@ -353,6 +353,40 @@ test("percentage and currency formats are parsed and classified correctly", () =
   assert.equal(evaluate('detectNumericFormat(["10%", "0.25"])'), "number");
 });
 
+test("number display keeps small values visible and never shows negative zero", () => {
+  const { evaluate } = createScriptContext();
+
+  assert.equal(evaluate("formatNumber(-0)"), "0");
+  assert.equal(evaluate("formatNumber(-0.001)"), "-0.001");
+  assert.equal(evaluate("formatNumber(0.000123)"), "0.000123");
+  assert.equal(evaluate("formatNumber(0.123456)"), "0.123");
+  assert.equal(evaluate("formatNumber(-0.00075)"), "-0.00075");
+  assert.equal(evaluate("formatNumber(-(0.1 + 0.2 - 0.3))"), "0");
+  assert.equal(evaluate("formatNumber(1e-11)"), "0");
+  assert.equal(evaluate("formatNumber(-1e-11)"), "0");
+
+  // Values at or above 1 keep the existing two-decimal display.
+  assert.equal(evaluate("formatNumber(1234.5)"), "1,234.5");
+  assert.equal(evaluate("formatNumber(500 / 3)"), "166.67");
+  assert.equal(evaluate("formatNumber(10)"), "10");
+  assert.equal(evaluate("formatNumber(-2.5)"), "-2.5");
+  assert.equal(evaluate("formatNumber(NaN)"), "-");
+  assert.equal(evaluate("formatNumber(Infinity)"), "-");
+  assert.equal(evaluate("formatNumber(-Infinity)"), "-");
+
+  assert.equal(evaluate("formatPercent(-0.00001)"), "0.0%");
+  assert.equal(evaluate("formatPercent(-0)"), "0.0%");
+  assert.equal(evaluate("formatPercent(0.25)"), "25.0%");
+  assert.equal(evaluate("formatPercent(NaN)"), "0%");
+
+  evaluate('state.profiles = [{ field: "比例", numericFormat: "percent" }]');
+  assert.equal(evaluate('formatFieldNumber("比例", -0.00001)'), "0%");
+  assert.equal(evaluate('formatFieldNumber("比例", -1e-11)'), "0%");
+  assert.equal(evaluate('formatFieldNumber("比例", 0.3375)'), "33.75%");
+  assert.equal(evaluate('formatFieldNumber("比例", -0.25)'), "-25%");
+  assert.equal(evaluate('formatFieldNumber("比例", NaN)'), "-");
+});
+
 test("date parsing accepts supported formats and rejects invalid or ambiguous dates", () => {
   const { evaluate } = createScriptContext();
 
