@@ -3451,7 +3451,9 @@ function displayValue(value) {
 
 function isIdFieldName(field) {
   const name = String(field || "").trim();
-  return /(^|[_\-\s])(id|uuid|guid|code|key|number|no)([_\-\s]|$)/i.test(name)
+  return /^(?:序号|行号|行序号|index|idx|no\.|row no\.?|#)$/i.test(name)
+    || /[\u4e00-\u9fff]\s*id$/i.test(name)
+    || /(^|[_\-\s])(id|uuid|guid|code|key|number|no)([_\-\s]|$)/i.test(name)
     || /[a-z0-9](?:Id|ID|Uuid|UUID|Guid|GUID|Code|CODE|Key|KEY|Number|NUMBER|No|NO)$/.test(name)
     || /^(?:user|customer|order|product|account|session|event|device|student|employee|member|record)(?:id|uuid|guid|code|key|number|no)$/i.test(name)
     || /编号|编码|代码|订单号|账号|工号|主键|用户ID|事件ID|会话ID/i.test(name)

@@ -280,7 +280,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 | 函数 | 职责 |
 | --- | --- |
 | `buildColumnProfile(field, rows, numberFormatHint)` | 生成完整 profile；第三个参数可选，是 Excel 导入时该列的格式提示（目前只有 `"percent"`），CSV 不传 |
-| `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称 |
+| `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称；整个字段名等于序号、行号、行序号、index、idx、No.、Row No.、Row No 或 `#`（不区分大小写），以及以"中文字符 + ID"结尾（如 学生ID、客户 ID）的名称也判为 ID |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
 | `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
 | `toNumber(value)` | 解析普通数值、科学计数、规范千分位、货币、会计负数和百分比 |

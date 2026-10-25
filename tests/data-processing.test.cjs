@@ -442,6 +442,24 @@ test("ID inference recognizes Chinese identifiers without treating ordinary coun
   assert.equal(evaluate('buildColumnProfile("普通数值", __studentRows).typeKey'), "numeric");
 });
 
+test("ID names cover row-number headers and Chinese names ending in ID", () => {
+  const { context, evaluate } = createScriptContext();
+  const isIdName = (name) => evaluate(`isIdFieldName(${JSON.stringify(name)})`);
+
+  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id"]) {
+    assert.equal(isIdName(name), true, name);
+  }
+  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量"]) {
+    assert.equal(isIdName(name), false, name);
+  }
+  // Already true before v2.1.4 (deferred finding 6 of v2.1.3); kept unchanged on purpose.
+  assert.equal(isIdName("Number of employees"), true);
+  assert.equal(isIdName("Key metric"), true);
+
+  context.__countRows = Array.from({ length: 12 }, (_, index) => ({ 学号数量: String(index + 1) }));
+  assert.equal(evaluate('buildColumnProfile("学号数量", __countRows).typeKey'), "numeric");
+});
+
 test("mixed-type fields follow the 80 percent inference threshold", () => {
   const { context, evaluate } = createScriptContext();
   context.__mostlyNumeric = ["1", "2", "3", "4", "bad"].map((value) => ({ value }));
