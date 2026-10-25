@@ -479,7 +479,7 @@ function updateWorkflowSteps() {
 async function parseCsvFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请检查网络连接后刷新页面重试。");
+    assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
     const selectedEncoding = dom.fileEncoding.value || "auto";
     setStatus(`正在读取 ${file.name} ...`);
     const buffer = await readFileAsArrayBuffer(file, importId);
@@ -507,7 +507,7 @@ function parseDataFile(file) {
 async function parseExcelFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("XLSX", "Excel 解析组件加载失败，请检查网络连接后刷新页面重试。");
+    assertRuntimeDependency("XLSX", "Excel 解析组件加载失败，请刷新页面重试。");
     setStatus(`正在读取 ${file.name} ...`);
     const buffer = await readFileAsArrayBuffer(file, importId);
     if (!isCurrentImport(importId)) return;
@@ -733,7 +733,7 @@ function showSheetSelectionError(message) {
 
 function parseCsvText(text, sourceName, importId = beginImport()) {
   if (!isCurrentImport(importId)) return;
-  assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请检查网络连接后刷新页面重试。");
+  assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
   Papa.parse(text, {
     header: true,
     skipEmptyLines: true,
@@ -1918,7 +1918,7 @@ function populateControls() {
 function renderCharts() {
   if (!window.Chart) {
     ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "customAnalysisChart"].forEach((id) => {
-      drawEmptyChart(document.getElementById(id), "图表组件加载失败，请检查网络连接");
+      drawEmptyChart(document.getElementById(id), "图表组件加载失败，请刷新页面重试");
     });
     return;
   }
@@ -2195,7 +2195,7 @@ function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
 
 function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2TopGroupChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   const topGroups = [...grouped]
     .sort((a, b) => compareNumbersDescending(a[aggregateMethod], b[aggregateMethod]))
@@ -2218,7 +2218,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
 
 function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2SelectedTrendChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
   const trend = buildMetricDateTrend(dateField, metricField, aggregateMethod);
   if (!trend.labels.length) {
     return drawEmptyChart(canvas, "所选时间字段没有可用的趋势数据");
@@ -2394,7 +2394,7 @@ function renderTemplateChart(chartId, titleElement, chartConfig) {
   const canvas = document.getElementById(chartId);
   titleElement.textContent = chartConfig.title;
   if (!window.Chart) {
-    drawEmptyChart(canvas, "图表组件加载失败，请检查网络连接");
+    drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
     return;
   }
   if (!chartConfig.labels.length) {
@@ -3807,7 +3807,7 @@ function getProcessedExportRows(mode) {
 
 function buildCsvExportContent(rows, fields) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
-    throw new Error("CSV 导出组件未加载，请检查网络连接后刷新页面重试。");
+    throw new Error("CSV 导出组件未加载，请刷新页面重试。");
   }
   const sourceFields = [...fields];
   const orderedFields = sourceFields.map(sanitizeCsvExportValue);

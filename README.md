@@ -59,7 +59,7 @@ Compare numeric distributions, categorical Top 10 results, and date trends throu
 
 CSV and Excel parsing, filtering, analysis, processed-data export, and report generation run locally in the browser. The application does not upload or store user files or generated reports. It does not send dataset contents to a third-party API or require an account.
 
-The page loads pinned versions of PapaParse, Chart.js, and SheetJS from CDN providers and verifies them with Subresource Integrity (SRI). The browser contacts these CDN hosts when loading the page, but uploaded file contents remain in the browser runtime.
+The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repository's own `vendor/` directory and verifies them with Subresource Integrity (SRI). It does not contact third-party CDN hosts, and uploaded file contents remain in the browser runtime.
 
 ## Tech Stack
 
@@ -149,7 +149,7 @@ npm run test:regression
 - Excel worksheets must have unique, non-empty text headers in the first non-empty row; empty, headerless, protected, or structurally irregular worksheets may be rejected.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
-- CDN dependencies require network access unless the libraries are hosted locally.
+- The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.
 
 ## License
 

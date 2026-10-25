@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createScriptContext } = require("./test-context.cjs");
@@ -13,18 +14,31 @@ const missingDomIds = [...new Set(
     .filter((id) => !new RegExp(`id=["']${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).test(htmlSource))
 )];
 assert.deepEqual(missingDomIds, []);
-assert.match(
-  htmlSource,
-  /https:\/\/cdn\.sheetjs\.com\/xlsx-0\.20\.3\/package\/dist\/xlsx\.full\.min\.js/
-);
 assert.doesNotMatch(htmlSource, /xlsx@0\.18\.5|xlsx-0\.18\.5/);
-const externalScripts = [...htmlSource.matchAll(/<script\s+[^>]*src="https:\/\/[^>]+><\/script>/g)]
-  .map((match) => match[0]);
-assert.equal(externalScripts.length, 3);
-externalScripts.forEach((tag) => {
-  assert.match(tag, /integrity="sha384-[A-Za-z0-9+/=]+"/);
-  assert.match(tag, /crossorigin="anonymous"/);
+const scriptTags = [...htmlSource.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g)]
+  .map((match) => ({ tag: match[0], src: match[1] }));
+assert.deepEqual(scriptTags.filter(({ src }) => /^(?:https?:)?\/\//i.test(src)).map(({ src }) => src), []);
+const vendorScripts = scriptTags.filter(({ src }) => src.startsWith("vendor/"));
+assert.deepEqual(vendorScripts.map(({ src }) => src), [
+  "vendor/papaparse-5.4.1.min.js",
+  "vendor/chart-4.4.1.umd.min.js",
+  "vendor/xlsx-0.20.3.full.min.js"
+]);
+const appScriptIndex = scriptTags.findIndex(({ src }) => src === "script.js");
+assert.ok(appScriptIndex >= 0);
+vendorScripts.forEach(({ tag, src }) => {
+  assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before script.js`);
+  const integrity = tag.match(/\bintegrity="(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
+  assert.ok(integrity, `${src} is missing integrity`);
+  const vendorPath = path.join(projectRoot, src);
+  assert.equal(fs.existsSync(vendorPath), true, `missing vendor file: ${src}`);
+  const actual = `sha384-${crypto.createHash("sha384").update(fs.readFileSync(vendorPath)).digest("base64")}`;
+  assert.equal(actual, integrity, `${src} does not match its integrity`);
 });
+const licenseDir = path.join(projectRoot, "vendor", "licenses");
+const licenseFiles = fs.existsSync(licenseDir) ? fs.readdirSync(licenseDir).sort() : [];
+assert.deepEqual(licenseFiles, ["chartjs-LICENSE.md", "papaparse-LICENSE", "sheetjs-LICENSE"]);
+assert.equal(fs.existsSync(path.join(projectRoot, ".nojekyll")), true);
 
 const localAssetReferences = [...htmlSource.matchAll(/(?:src|href)="([^"]+)"/g)]
   .map((match) => match[1])

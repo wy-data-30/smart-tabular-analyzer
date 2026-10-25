@@ -6,7 +6,7 @@
 
 Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静态浏览器应用：
 
-- `index.html` 定义页面结构，并从 CDN 加载 PapaParse、Chart.js 和 SheetJS。
+- `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
 - `script.js` 包含应用状态、事件绑定、文件解析、分析计算、图表、页面渲染和导出逻辑。
 - CSV、Excel、筛选、统计和报告生成均在浏览器本地完成。
@@ -22,10 +22,14 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 ```text
 .
-├── index.html                  # 页面结构、控件和 CDN 引用
+├── index.html                  # 页面结构、控件和 vendor/ 依赖引用
 ├── style.css                   # 页面样式与响应式规则
 ├── script.js                   # 全部浏览器端应用逻辑
 ├── package.json                # Node 测试命令
+├── .nojekyll                   # 空文件，让 GitHub Pages 跳过 Jekyll、原样发布 vendor/
+├── .gitattributes              # vendor/** -text，禁止换行转换，保证文件与 integrity 一致
+├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
+│   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
 │   └── sample-*.csv            # 内置与手工测试用虚构数据
 ├── assets/                     # README 截图
