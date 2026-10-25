@@ -306,7 +306,8 @@ XLSX.utils.sheet_to_json(worksheet, {
 - 唯一值数量和唯一率。
 - 数值率、日期率、日期策略和数值格式。
 - 最多 3 个去重后的示例值。
-- 数值与日期两种解释下的转换失败数。
+- 数值与日期两种解释下的转换失败数（`conversionFailuresByType`）和各自最多 3 个去重后的失败样例（`conversionFailureSamplesByType`）。
+- 当前类型对应的 `conversionFailureCount` 与 `conversionFailureSamples`；分类、ID 和忽略字段均为 0 与空数组。`applyFieldConfiguration()` / `restoreAutomaticFieldTypes()` 改类型时通过 `countFieldConversionFailures()` 与 `getFieldConversionFailureSamples()` 同步更新。
 
 **输入 / 输出**
 
@@ -339,7 +340,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
 - `buildNumericStats(rows)`：同时生成 Q1、Q3、IQR 边界和异常值数量。
 - `getQualityNumericStats()`：返回基于原始 `state.rows` 的数值质量统计。
-- `renderQuality()`：渲染摘要、逐字段缺失表和数值异常值表。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表和数值异常值表。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。
 
 异常值规则为：
 
@@ -353,8 +354,9 @@ upper = Q3 + 1.5 × IQR
 **输入 / 输出**
 
 - 输入：原始 `state.rows`、完整 `state.fields` 和当前已应用 profiles。
-- 输出：`totalMissing`、`duplicateRows`、`qualityNumericStats`，以及质量页的缺失、重复和异常值 DOM。
-- `renderQuality()` 不展示 CSV 解析警告或转换失败；前者保存在 state 并进入报告，后者主要显示在字段配置和报告字段类型部分。
+- 输出：`totalMissing`、`duplicateRows`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题和异常值 DOM。
+- `renderQuality()` 不展示 CSV 解析警告；它保存在 state 并进入报告。转换失败（格式问题）按原始数据显示在质量页，也显示在字段配置和报告字段类型部分。
+- 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但 `toNumber()` 失败的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
 
 **与其他模块的关系**
 
@@ -553,6 +555,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 数据导出输入为原始或当前筛选 rows；输出为带 BOM 的 CSV 下载。
 - 报告输入为当前分析快照，HTML 还包括可见图表图片；输出为带 BOM 的 `.html` 或 `.md` 下载。
 - 报告质量部分使用原始范围，统计、趋势和自定义分析使用当前分析范围。
+- 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“无法转换”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
 
 **与其他模块的关系**
 

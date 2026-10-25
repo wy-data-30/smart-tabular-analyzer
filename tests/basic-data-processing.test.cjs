@@ -183,9 +183,10 @@ test("Excel percent-formatted numbers are analyzed like CSV percent text", () =>
   put(csv.context, "__rows", ["26%", "26%", "31%"].map((value) => ({ 毛利率: value })));
   csv.evaluate('commitTabularData(["毛利率"], __rows, "rates.csv", beginImport())');
 
-  const excelRateCells = tableCells(excel.elements, "numericStatsTable").slice(0, 7);
+  // One stats row is 字段, 有效数量, 无法转换, 平均值, 中位数, 最大值, 最小值, 标准差.
+  const excelRateCells = tableCells(excel.elements, "numericStatsTable").slice(0, 8);
   assert.deepEqual(excelRateCells, tableCells(csv.elements, "numericStatsTable"));
-  assert.equal(excelRateCells[3], "26%");
+  assert.equal(excelRateCells[4], "26%");
 });
 
 test("Excel columns with only a minority of percent cells stay plain numbers", () => {
@@ -238,12 +239,12 @@ test("Excel percent hints survive field configuration and restoring automatic ty
 
   evaluate('stageFieldTypeChange("门店", "category"); applyFieldConfiguration()');
   assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
-  assert.equal(tableCells(elements, "numericStatsTable")[3], "26%");
+  assert.equal(tableCells(elements, "numericStatsTable")[4], "26%");
 
   evaluate("restoreAutomaticFieldTypes()");
   assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
   assert.equal(evaluate('state.numberFormatHints["毛利率"]'), "percent");
-  assert.equal(tableCells(elements, "numericStatsTable")[3], "26%");
+  assert.equal(tableCells(elements, "numericStatsTable")[4], "26%");
 });
 
 // Builds one "毛利率" column below `leadingBlankRows` empty rows; formatOf(i)
@@ -357,6 +358,171 @@ test("the distribution chart re-decides per-value counts after filtering", () =>
   assert.equal(cleared.labels.every((label) => label.includes(" - ")), true);
 });
 
+// 15 amounts, 3 of them not numbers (12 / 15 = 80%, so the column is still
+// inferred as numeric). Only the first three rows are 华东 and hold one bad value.
+const BAD_AMOUNT_ROWS = ["100", "200", "N/A", "300", "待定", "400", "约500", "600", "700", "800", "900", "1000", "1100", "1200", "1300"]
+  .map((amount, index) => ({ 金额: amount, 地区: index < 3 ? "华东" : "华南" }));
+
+function commitRows(scope, fields, rows, fileName = "bad-values.csv") {
+  put(scope.context, "__badFields", fields);
+  put(scope.context, "__badRows", rows);
+  scope.evaluate(`commitTabularData(__badFields, __badRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+
+function cellsWithClass(elements, id) {
+  return [...elements.get(id).innerHTML.matchAll(/<td( class="[^"]*")?>([^<]*)<\/td>/g)]
+    .map((match) => ({ warning: /warning/.test(match[1] || ""), text: match[2] }));
+}
+
+function qualityPill(elements, label) {
+  return [...elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill ([^"]*)">([^<]*)<\/span>/g)]
+    .map((match) => ({ tone: match[1].trim(), text: match[2] }))
+    .find((pill) => pill.text.startsWith(label));
+}
+
+function qualityRow(elements, field) {
+  const row = [...elements.get("qualityTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((match) => [...match[1].matchAll(/<td( class="[^"]*")?>([^<]*)<\/td>/g)].map((cell) => ({ warning: /warning/.test(cell[1] || ""), text: cell[2] })))
+    .find((cells) => cells[0]?.text === field);
+  return row;
+}
+
+test("unconvertible values are flagged on the quality page from the original data", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  const amountRow = qualityRow(scope.elements, "金额");
+  assert.equal(amountRow[amountRow.length - 1].warning, true);
+  assert.equal(amountRow[amountRow.length - 1].text, "3（N/A、待定、约500）");
+  assert.deepEqual(qualityRow(scope.elements, "地区").slice(-1)[0], { warning: false, text: "0" });
+
+  const clean = createScriptContext();
+  commitRows(clean, ["金额"], ["1", "2", "3"].map((amount) => ({ 金额: amount })), "clean.csv");
+  assert.deepEqual(qualityPill(clean.elements, "格式问题"), { tone: "success", text: "格式问题：0 个值" });
+});
+
+test("unconvertible dates count as format problems with samples", () => {
+  const scope = createScriptContext();
+  const dates = ["下周一", "2024-13-45", ...Array.from({ length: 8 }, (_, index) => `2024-01-0${index + 1}`)];
+  commitRows(scope, ["日期"], dates.map((value) => ({ 日期: value })), "dates.csv");
+
+  assert.equal(scope.evaluate('getFieldProfile("日期").typeKey'), "date");
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：2 个值" });
+  assert.equal(qualityRow(scope.elements, "日期").slice(-1)[0].text, "2（下周一、2024-13-45）");
+});
+
+test("statistics count unconvertible values for the current rows only", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 3);
+  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th>有效数量<\/th>\s*<th>无法转换<\/th>/);
+  assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(0, 3), [
+    { warning: false, text: "金额" },
+    { warning: false, text: "12" },
+    { warning: true, text: "3" }
+  ]);
+
+  scope.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 1);
+  assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(1, 3), [
+    { warning: false, text: "2" },
+    { warning: true, text: "1" }
+  ]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  assert.equal(qualityRow(scope.elements, "金额").slice(-1)[0].text, "3（N/A、待定、约500）");
+});
+
+test("field configuration changes update unconvertible counts and samples", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
+
+  scope.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 0);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), []);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "success", text: "格式问题：0 个值" });
+
+  scope.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+  assert.deepEqual(qualityPill(scope.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+
+  scope.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration(); restoreAutomaticFieldTypes()');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 3);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["N/A", "待定", "约500"]);
+});
+
+test("custom analysis summary names excluded unconvertible metric values", () => {
+  const run = (rows) => {
+    const scope = createScriptContext();
+    commitRows(scope, ["金额", "地区"], rows);
+    scope.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
+    return scope;
+  };
+
+  const bad = run(BAD_AMOUNT_ROWS);
+  assert.match(bad.elements.get("v2ResultSummary").textContent, /指标字段「金额」有 3 个值无法转换为数字，已从计算中排除。$/);
+  assert.equal(bad.evaluate("state.customAnalysis.metricInvalidCount"), 3);
+
+  bad.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    state.filterSourceRows = state.rows;
+    refreshFilteredAnalysis();
+  })()`);
+  assert.match(bad.elements.get("v2ResultSummary").textContent, /有 1 个值无法转换为数字/);
+
+  const clean = run(BAD_AMOUNT_ROWS.map((row, index) => ({ ...row, 金额: String((index + 1) * 100) })));
+  assert.doesNotMatch(clean.elements.get("v2ResultSummary").textContent, /无法转换/);
+  assert.equal(clean.evaluate("state.customAnalysis.metricInvalidCount"), 0);
+});
+
+test("reports carry unconvertible counts and escaped samples", () => {
+  const scope = createScriptContext();
+  const rows = BAD_AMOUNT_ROWS.map((row, index) => (index === 2 ? { ...row, 金额: "<b>x</b>|y" } : row));
+  commitRows(scope, ["金额", "地区"], rows);
+  scope.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
+
+  const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  assert.equal(report.numericStats.find((item) => item.field === "金额").invalidCount, 3);
+  assert.equal(report.customAnalysis.metricInvalidCount, 3);
+  assert.deepEqual(report.fieldTypes.find((item) => item.field === "金额").conversionFailureSamples, ["<b>x</b>|y", "待定", "约500"]);
+  assert.deepEqual(report.fieldTypes.find((item) => item.field === "地区").conversionFailureSamples, []);
+
+  put(scope.context, "__report", report);
+  const html = scope.evaluate("buildHtmlReport(__report, [])");
+  assert.match(html.split("数值字段描述性统计")[1], /<th>有效数量<\/th><th>无法转换<\/th>/);
+  assert.match(html.split("数值字段描述性统计")[1], /<td>金额<\/td><td>12<\/td><td>3<\/td>/);
+  assert.match(html, /<td>3（&lt;b&gt;x&lt;\/b&gt;\|y、待定、约500）<\/td>/);
+  assert.doesNotMatch(html, /<b>x<\/b>/);
+
+  const markdown = scope.evaluate("buildMarkdownReport(__report)");
+  assert.ok(markdown.includes("| 字段 | 有效数量 | 无法转换 | 平均值 | 中位数 | 最小值 | 最大值 | 标准差 |"));
+  // escapeMarkdownCell backslash-escapes ASCII punctuation, so "/" and "|" both carry a backslash.
+  assert.ok(markdown.includes("3（&lt;b&gt;x&lt;\\/b&gt;\\|y、待定、约500）"));
+
+  const legacy = {
+    numericStats: [{ field: "金额", count: 2, mean: "1", median: "1", min: "1", max: "1", standardDeviation: "0" }],
+    fieldTypes: [{ field: "金额", inferredType: "数值", appliedType: "数值", conversionFailureCount: 1 }],
+    customAnalysis: { completed: true, metricField: "金额", groupField: "地区", rows: [] }
+  };
+  put(scope.context, "__legacy", legacy);
+  const normalized = JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot(__legacy))"));
+  assert.equal(normalized.numericStats[0].invalidCount, 0);
+  assert.deepEqual(normalized.fieldTypes[0].conversionFailureSamples, []);
+  assert.equal(normalized.customAnalysis.metricInvalidCount, 0);
+  assert.doesNotThrow(() => scope.evaluate("buildHtmlReport(__legacy, [])"));
+  assert.doesNotThrow(() => scope.evaluate("buildMarkdownReport(__legacy)"));
+});
+
 test("field inference recognizes ID, numeric, date and category columns", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({
@@ -420,9 +586,11 @@ test("descriptive statistics show small averages instead of rounding them to zer
   evaluate('commitTabularData(["误差"], __rows, "small-mean.csv", beginImport())');
 
   const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  // statsCells[2] is the 无法转换 count; the statistics start at index 3.
   assert.equal(statsCells[0], "误差");
-  assert.equal(statsCells[2], "0.0012");
-  assert.equal(statsCells.slice(2).includes("0"), false);
+  assert.equal(statsCells[2], "0");
+  assert.equal(statsCells[3], "0.0012");
+  assert.equal(statsCells.slice(3).includes("0"), false);
 });
 
 test("descriptive and category statistics return expected values", () => {

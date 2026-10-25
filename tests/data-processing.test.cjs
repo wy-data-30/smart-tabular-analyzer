@@ -460,6 +460,29 @@ test("ID names cover row-number headers and Chinese names ending in ID", () => {
   assert.equal(evaluate('buildColumnProfile("学号数量", __countRows).typeKey'), "numeric");
 });
 
+test("profiles keep up to three distinct conversion failure samples per type", () => {
+  const { context, evaluate } = createScriptContext();
+  const amounts = ["N/A", " N/A ", "待定", "约500", "x", ...Array.from({ length: 20 }, (_, index) => String(index * 10))];
+  context.__amountRows = amounts.map((value) => ({ 金额: value }));
+  const amount = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("金额", __amountRows))'));
+  assert.equal(amount.typeKey, "numeric");
+  assert.equal(amount.conversionFailureCount, 5);
+  assert.deepEqual(amount.conversionFailureSamples, ["N/A", "待定", "约500"]);
+  assert.deepEqual(amount.conversionFailureSamplesByType.numeric, ["N/A", "待定", "约500"]);
+
+  const dates = ["下周一", "2024-13-45", ...Array.from({ length: 8 }, (_, index) => `2024-01-0${index + 1}`)];
+  context.__dateRows = dates.map((value) => ({ 日期: value }));
+  const date = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("日期", __dateRows))'));
+  assert.equal(date.typeKey, "date");
+  assert.equal(date.conversionFailureCount, 2);
+  assert.deepEqual(date.conversionFailureSamples, ["下周一", "2024-13-45"]);
+
+  context.__textRows = ["甲", "乙", "丙"].map((value) => ({ 备注: value }));
+  const text = JSON.parse(evaluate('JSON.stringify(buildColumnProfile("备注", __textRows))'));
+  assert.equal(text.conversionFailureCount, 0);
+  assert.deepEqual(text.conversionFailureSamples, []);
+});
+
 test("mixed-type fields follow the 80 percent inference threshold", () => {
   const { context, evaluate } = createScriptContext();
   context.__mostlyNumeric = ["1", "2", "3", "4", "bad"].map((value) => ({ value }));

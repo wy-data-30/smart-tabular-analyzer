@@ -1082,9 +1082,20 @@ function buildColumnProfile(field, rows, numberFormatHint = "") {
   const uniqueValues = new Set(nonMissingValues.map((value) => normalizeValue(value)));
   const uniqueCount = uniqueValues.size;
   const uniqueRatio = nonMissingCount ? uniqueCount / nonMissingCount : 0;
-  const numericValues = nonMissingValues.map(toNumber).filter((value) => value !== null);
+  const conversionFailureSamplesByType = { numeric: [], date: [] };
+  const numericValues = [];
+  nonMissingValues.forEach((value) => {
+    const number = toNumber(value);
+    if (number !== null) numericValues.push(number);
+    else addConversionFailureSample(conversionFailureSamplesByType.numeric, value);
+  });
   const dateStrategy = buildDateStrategy(field, nonMissingValues);
-  const dateValues = nonMissingValues.map((value) => toDate(value, dateStrategy)).filter(Boolean);
+  const dateValues = [];
+  nonMissingValues.forEach((value) => {
+    const date = toDate(value, dateStrategy);
+    if (date) dateValues.push(date);
+    else addConversionFailureSample(conversionFailureSamplesByType.date, value);
+  });
   const numericRatio = nonMissingCount ? numericValues.length / nonMissingCount : 0;
   const dateRatio = nonMissingCount ? dateValues.length / nonMissingCount : 0;
   const idName = isIdFieldName(field);
@@ -1136,8 +1147,17 @@ function buildColumnProfile(field, rows, numberFormatHint = "") {
     numericFormat,
     sampleValues,
     conversionFailuresByType,
-    conversionFailureCount: conversionFailuresByType[typeKey] || 0
+    conversionFailureSamplesByType,
+    conversionFailureCount: conversionFailuresByType[typeKey] || 0,
+    conversionFailureSamples: [...(conversionFailureSamplesByType[typeKey] || [])]
   };
+}
+
+// Keeps up to three distinct (trimmed) raw values that failed conversion.
+function addConversionFailureSample(samples, value) {
+  if (samples.length >= 3) return;
+  const sample = displayValue(value);
+  if (!samples.includes(sample)) samples.push(sample);
 }
 
 function countConversionFailuresForValues(values, typeKey) {
@@ -1160,9 +1180,38 @@ function countFieldConversionFailures(field, typeKey) {
   );
 }
 
+function getFieldConversionFailureSamples(field, typeKey) {
+  if (typeKey !== "numeric" && typeKey !== "date") return [];
+  const profile = getFieldProfile(field);
+  if (profile?.conversionFailureSamplesByType) {
+    return [...(profile.conversionFailureSamplesByType[typeKey] || [])];
+  }
+  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const samples = [];
+  state.rows.forEach((row) => {
+    if (!isMissing(row[field]) && convert(row[field]) === null) addConversionFailureSample(samples, row[field]);
+  });
+  return samples;
+}
+
+// Non-missing values in `rows` that toNumber() cannot convert.
+function countInvalidNumericValues(field, rows = getAnalysisRows()) {
+  return rows.reduce((count, row) => (
+    count + (!isMissing(row[field]) && toNumber(row[field]) === null ? 1 : 0)
+  ), 0);
+}
+
 function buildNumericStats(rows = getAnalysisRows()) {
   return getProfilesByType("numeric").flatMap((profile) => {
-    const values = getNumericValues(profile.field, rows);
+    const values = [];
+    let invalidCount = 0;
+    rows.forEach((row) => {
+      const value = row[profile.field];
+      if (isMissing(value)) return;
+      const number = toNumber(value);
+      if (number === null) invalidCount += 1;
+      else values.push(number);
+    });
     if (!values.length) return [];
     const sorted = [...values].sort((a, b) => a - b);
     const avg = mean(values);
@@ -1178,6 +1227,7 @@ function buildNumericStats(rows = getAnalysisRows()) {
     return [{
       field: profile.field,
       count: values.length,
+      invalidCount,
       mean: avg,
       median: median(values),
       min,
@@ -1459,6 +1509,7 @@ function applyFieldConfiguration() {
     profile.typeKey = typeKey;
     profile.type = FIELD_TYPE_LABELS[typeKey];
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, typeKey);
+    profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, typeKey);
   });
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.typeKey])
@@ -1477,6 +1528,7 @@ function restoreAutomaticFieldTypes() {
     profile.typeKey = profile.inferredTypeKey;
     profile.type = profile.inferredType;
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, profile.inferredTypeKey);
+    profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, profile.inferredTypeKey);
   });
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
@@ -1862,9 +1914,12 @@ function renderQuality() {
   const qualityNumericStats = getQualityNumericStats();
   const missingClass = state.totalMissing === 0 ? "success" : missingRateLevel();
   const duplicateClass = state.duplicateRows === 0 ? "success" : "warning";
+  const conversionFailureTotal = state.profiles.reduce((sum, profile) => sum + (profile.conversionFailureCount || 0), 0);
+  const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
+    <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
   `;
 
@@ -1875,6 +1930,7 @@ function renderQuality() {
         <th>类型</th>
         <th>缺失值数量</th>
         <th>缺失率</th>
+        <th>无法转换</th>
       </tr>
     </thead>
     <tbody>
@@ -1884,6 +1940,7 @@ function renderQuality() {
           <td>${escapeHtml(profile.type)}</td>
           <td>${formatInteger(profile.missingCount)}</td>
           <td>${formatPercent(profile.missingRate)}</td>
+          <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
         </tr>
       `).join("")}
     </tbody>
@@ -1927,6 +1984,7 @@ function renderNumericStats() {
       <tr>
         <th>字段</th>
         <th>有效数量</th>
+        <th>无法转换</th>
         <th>平均值</th>
         <th>中位数</th>
         <th>最大值</th>
@@ -1939,6 +1997,7 @@ function renderNumericStats() {
         <tr>
           <td>${escapeHtml(stat.field)}</td>
           <td>${formatInteger(stat.count)}</td>
+          <td${stat.invalidCount ? ' class="cell-warning"' : ""}>${formatInteger(stat.invalidCount)}</td>
           <td>${formatFieldNumber(stat.field, stat.mean)}</td>
           <td>${formatFieldNumber(stat.field, stat.median)}</td>
           <td>${formatFieldNumber(stat.field, stat.max)}</td>
@@ -2163,11 +2222,13 @@ function renderV2Analysis() {
     : `已生成分组${aggregateLabel}汇总；未选择时间字段，因此不生成时间趋势图。`;
   dom.v2AnalysisResults.classList.remove("hidden");
 
+  const metricInvalidCount = countInvalidNumericValues(metricField, getAnalysisRows());
   state.customAnalysis = {
     metricField,
     groupField,
     aggregateMethod,
     dateField,
+    metricInvalidCount,
     grouped: grouped.map((item) => ({ ...item })),
     trend: dateField ? buildMetricDateTrend(dateField, metricField, aggregateMethod) : null
   };
@@ -2176,9 +2237,12 @@ function renderV2Analysis() {
   renderV2AggregationTables(metricField, groupField, grouped);
   renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod);
   renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod);
-  dom.v2ResultSummary.textContent = hasActiveFilters()
+  const invalidMetricText = metricInvalidCount
+    ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值无法转换为数字，已从计算中排除。`
+    : "";
+  dom.v2ResultSummary.textContent = (hasActiveFilters()
     ? `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于当前筛选数据 ${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行。`
-    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`;
+    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`) + invalidMetricText;
 
   if (dateField) {
     dom.v2TrendCard.classList.remove("hidden");
@@ -3785,6 +3849,11 @@ function formatImportLimitSize(bytes) {
   return `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
+// Plain text such as "3（N/A、待定、约500）"; callers escape it for their output format.
+function formatConversionFailures(count, samples = [], countText = String(count ?? 0)) {
+  return count && samples.length ? `${countText}（${samples.join("、")}）` : countText;
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "0%";
   return stripNegativeZeroSign(`${(absorbFloatNoise(value) * 100).toFixed(1)}%`);
@@ -4064,11 +4133,13 @@ function buildReportData(now = new Date()) {
     missingCount: profile.missingCount,
     missingRate: formatPercent(profile.missingRate),
     conversionFailureCount: profile.conversionFailureCount || 0,
+    conversionFailureSamples: [...(profile.conversionFailureSamples || [])],
     sampleValues: [...profile.sampleValues]
   }));
   const numericStats = state.numericStats.map((stat) => ({
     field: stat.field,
     count: stat.count,
+    invalidCount: stat.invalidCount || 0,
     mean: formatFieldNumber(stat.field, stat.mean),
     median: formatFieldNumber(stat.field, stat.median),
     min: formatFieldNumber(stat.field, stat.min),
@@ -4229,6 +4300,7 @@ function buildReportCustomAnalysis() {
     aggregateMethod,
     aggregateLabel: getAggregateMethodLabel(aggregateMethod),
     dateField: current.dateField || "",
+    metricInvalidCount: current.metricInvalidCount ?? countInvalidNumericValues(current.metricField, getAnalysisRows()),
     rows,
     trendSummary
   };
@@ -4280,6 +4352,7 @@ function normalizeReportSnapshot(reportData = {}) {
       uniqueCount: field.uniqueCount ?? 0,
       missingCount: field.missingCount ?? 0,
       conversionFailureCount: field.conversionFailureCount ?? 0,
+      conversionFailureSamples: Array.isArray(field.conversionFailureSamples) ? field.conversionFailureSamples : [],
       sampleValues: Array.isArray(field.sampleValues) ? field.sampleValues : []
     })),
     quality: {
@@ -4293,13 +4366,21 @@ function normalizeReportSnapshot(reportData = {}) {
         : Array.isArray(quality.fields) ? quality.fields : [],
       outliers: Array.isArray(quality.outliers) ? quality.outliers : []
     },
-    numericStats: Array.isArray(reportData.numericStats) ? reportData.numericStats : [],
+    numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
+      ...item,
+      invalidCount: item.invalidCount ?? 0
+    })),
     categoryStats: Array.isArray(reportData.categoryStats) ? reportData.categoryStats : [],
     dateTrends: Array.isArray(reportData.dateTrends) ? reportData.dateTrends : [],
-    customAnalysis: reportData.customAnalysis || {
-      completed: false,
-      message: "当前没有可导出的自定义分组分析结果。"
-    },
+    customAnalysis: reportData.customAnalysis
+      ? {
+        ...reportData.customAnalysis,
+        ...(reportData.customAnalysis.completed ? { metricInvalidCount: reportData.customAnalysis.metricInvalidCount ?? 0 } : {})
+      }
+      : {
+        completed: false,
+        message: "当前没有可导出的自定义分组分析结果。"
+      },
     insights: Array.isArray(reportData.insights) ? reportData.insights : []
   };
 }
@@ -4426,7 +4507,7 @@ function buildHtmlReport(reportData, chartImages = []) {
         field.nonMissingCount,
         field.uniqueCount,
         field.missingCount,
-        field.conversionFailureCount,
+        formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
         field.sampleValues.join("、") || "—"
       ]),
       "无字段类型结果。"
@@ -4451,8 +4532,8 @@ function buildHtmlReport(reportData, chartImages = []) {
   <section>
     <h2>数值字段描述性统计</h2>
     ${buildHtmlReportTable(
-      ["字段", "有效数量", "平均值", "中位数", "最小值", "最大值", "标准差"],
-      reportData.numericStats.map((item) => [item.field, item.count, item.mean, item.median, item.min, item.max, item.standardDeviation]),
+      ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+      reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
   </section>
@@ -4532,7 +4613,7 @@ function buildMarkdownReport(reportData) {
           field.nonMissingCount,
           field.uniqueCount,
           field.missingCount,
-          field.conversionFailureCount,
+          formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
           field.sampleValues.join("、") || "—"
         ])
       )
@@ -4566,8 +4647,8 @@ function buildMarkdownReport(reportData) {
     "",
     reportData.numericStats.length
       ? buildMarkdownTable(
-        ["字段", "有效数量", "平均值", "中位数", "最小值", "最大值", "标准差"],
-        reportData.numericStats.map((item) => [item.field, item.count, item.mean, item.median, item.min, item.max, item.standardDeviation])
+        ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+        reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
       )
       : "未识别到数值字段，暂无可用数值统计。",
     "",

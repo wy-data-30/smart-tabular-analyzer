@@ -1304,6 +1304,12 @@ tbody tr:hover {
   color: var(--danger);
 }
 
+.cell-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 620;
+}
+
 .type-badge {
   display: inline-flex;
   min-height: 24px;
