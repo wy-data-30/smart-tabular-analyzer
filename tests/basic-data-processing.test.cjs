@@ -626,6 +626,99 @@ test("report date trends follow the trend chart selection", () => {
   assert.match(total.summary, /销售额合计从 2025-01 的 14,400 变为 2025-06 的 89,140/);
 });
 
+function trendInsightFor(rows, dateField = "日期") {
+  const scope = createScriptContext();
+  commitRows(scope, Object.keys(rows[0]), rows, "trend.csv");
+  put(scope.context, "__trendDateField", dateField);
+  return { scope, text: scope.evaluate("buildTrendInsight(__trendDateField)") };
+}
+
+const datedRows = (dates) => dates.map((date) => ({ 日期: date }));
+const PARTIAL_NOTE = /注意：最后一期/;
+
+test("the trend insight compares record counts and flags a partial last month", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  assert.equal(
+    scope.evaluate('buildTrendInsight("订单日期")'),
+    "基于日期字段「订单日期」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 33.3%。注意：最后一期（2025-06）的数据截至 6 月 28 日，可能不完整，比较结果仅供参考。"
+  );
+});
+
+test("the partial-period note follows month ends, leap days and day buckets", () => {
+  const months = ["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-05-05"];
+  assert.doesNotMatch(trendInsightFor(datedRows([...months, "2025-06-30"])).text, PARTIAL_NOTE);
+  assert.match(trendInsightFor(datedRows([...months, "2025-06-29"])).text, /注意：最后一期（2025-06）的数据截至 6 月 29 日/);
+
+  const leap = ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01"];
+  assert.match(trendInsightFor(datedRows([...leap, "2024-02-28"])).text, /注意：最后一期（2024-02）的数据截至 2 月 28 日/);
+  assert.doesNotMatch(trendInsightFor(datedRows([...leap, "2024-02-29"])).text, PARTIAL_NOTE);
+
+  // A 19-day span is bucketed by day, so no note even though June is incomplete.
+  const daily = trendInsightFor(datedRows(["2025-06-01", "2025-06-02", "2025-06-02", "2025-06-20"]));
+  assert.match(daily.text, /从 2025-06-01 到 2025-06-20/);
+  assert.doesNotMatch(daily.text, PARTIAL_NOTE);
+});
+
+test("the partial-period note handles year fields and year-only values", () => {
+  const years = (last) => ["2021", "2022", "2023", "2024", last].map((value) => ({ 年份: value }));
+  const partial = trendInsightFor(years("2025-06-30"), "年份");
+  assert.equal(partial.scope.evaluate('getDateGranularity("年份")'), "year");
+  assert.match(partial.text, /注意：最后一期（2025 年）的数据截至 6 月 30 日，可能不完整，比较结果仅供参考。$/);
+  assert.doesNotMatch(trendInsightFor(years("2025-12-31"), "年份").text, PARTIAL_NOTE);
+  assert.doesNotMatch(trendInsightFor(years("2025"), "年份").text, PARTIAL_NOTE);
+});
+
+test("the partial-period note follows the filtered rows", () => {
+  const rows = [
+    ["2025-01-10", "A"], ["2025-02-10", "A"], ["2025-03-10", "A"], ["2025-04-10", "A"], ["2025-05-31", "A"],
+    ["2025-01-12", "C"], ["2025-03-12", "C"], ["2025-05-20", "C"],
+    ["2025-01-15", "B"], ["2025-06-15", "B"]
+  ].map(([date, region]) => ({ 日期: date, 地区: region }));
+  const { scope, text } = trendInsightFor(rows);
+  assert.match(text, /注意：最后一期（2025-06）的数据截至 6 月 15 日/);
+
+  const filtered = (region) => {
+    put(scope.context, "__trendRegion", region);
+    scope.evaluate(`(() => {
+      state.filters = { category: { field: "地区", values: [__trendRegion] }, numeric: null, date: null };
+      state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+      state.filterSourceRows = state.rows;
+      refreshFilteredAnalysis();
+    })()`);
+    return scope.evaluate('buildTrendInsight("日期")');
+  };
+  assert.doesNotMatch(filtered("A"), PARTIAL_NOTE);
+  assert.match(filtered("C"), /注意：最后一期（2025-05）的数据截至 5 月 20 日/);
+  assert.equal(scope.evaluate("state.insights[state.insights.length - 1]"), scope.evaluate('buildTrendInsight("日期")'));
+});
+
+test("a flat record-count trend reads 基本持平 without a change ratio", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-used-products.csv");
+  const usedProducts = scope.evaluate('buildTrendInsight("上架日期")');
+  assert.equal(usedProducts, "基于日期字段「上架日期」观察，记录数趋势 从 2025-04-01 到 2025-07-27 基本持平。");
+
+  const monthly = trendInsightFor(datedRows(["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-05-05", "2025-06-10"])).text;
+  assert.equal(monthly, "基于日期字段「日期」观察，记录数趋势 从 2025-01 到 2025-06 基本持平。注意：最后一期（2025-06）的数据截至 6 月 10 日，可能不完整，比较结果仅供参考。");
+  for (const text of [usedProducts, monthly]) {
+    assert.doesNotMatch(text, /呈基本持平变化/);
+    assert.doesNotMatch(text, /变化幅度/);
+  }
+});
+
+test("the trend insight ignores numeric fields and both metric selects", () => {
+  const dates = ["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-06-10"];
+  const withAmounts = (amounts) => dates.map((date, index) => ({ 日期: date, 金额: String(amounts[index]) }));
+  const { scope, text } = trendInsightFor(withAmounts([1, 2, 3, 4, 5]));
+  assert.match(text, /记录数趋势/);
+  assert.equal(trendInsightFor(withAmounts([500, 1, 900, 2, 0])).text, text);
+  assert.equal(trendInsightFor(datedRows(dates)).text, text);
+
+  scope.evaluate('dom.metricField.value = "金额"; dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "sum"; renderCharts()');
+  assert.equal(scope.evaluate('buildTrendInsight("日期")'), text);
+});
+
 test("field inference recognizes ID, numeric, date and category columns", () => {
   const { context, evaluate } = createScriptContext();
   const rows = Array.from({ length: 12 }, (_, index) => ({

@@ -498,6 +498,9 @@ assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"numer
 assert.equal(evaluate('JSON.stringify(buildDateTrend("下单日期", "渠道").labels)'), "[]");
 evaluate("restoreAutomaticFieldTypes()");
 
+// The trend conclusion compares record counts, so a metric that moves from 0
+// is irrelevant: one record per day on both days is a flat count.
+const flatCountInsight = "基于日期字段「date」观察，记录数趋势 从 2026-01-01 到 2026-01-02 基本持平。";
 const zeroBaselineInsight = evaluate(`(() => {
   state.rows = [
     { date: "2026-01-01", metric: "0" },
@@ -507,11 +510,7 @@ const zeroBaselineInsight = evaluate(`(() => {
   state.profiles = state.fields.map((field) => buildColumnProfile(field, state.rows));
   return buildTrendInsight("date");
 })()`);
-assert.match(zeroBaselineInsight, /上升/);
-assert.match(zeroBaselineInsight, /首期值为 0/);
-assert.match(zeroBaselineInsight, /百分比变化无法计算/);
-assert.match(zeroBaselineInsight, /绝对变化为 10/);
-assert.doesNotMatch(zeroBaselineInsight, /变化幅度约 0(?:\.0)?%/);
+assert.equal(zeroBaselineInsight, flatCountInsight);
 
 const negativeZeroBaselineInsight = evaluate(`(() => {
   state.rows = [
@@ -522,9 +521,7 @@ const negativeZeroBaselineInsight = evaluate(`(() => {
   state.profiles = state.fields.map((field) => buildColumnProfile(field, state.rows));
   return buildTrendInsight("date");
 })()`);
-assert.match(negativeZeroBaselineInsight, /下降/);
-assert.match(negativeZeroBaselineInsight, /绝对变化为 10/);
-assert.doesNotMatch(negativeZeroBaselineInsight, /绝对变化为 -10/);
+assert.equal(negativeZeroBaselineInsight, flatCountInsight);
 
 // V2.1 report export: build a serializable report model that is shared by
 // both exporters. Keep these tests DOM-independent so empty analytical

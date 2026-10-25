@@ -53,6 +53,37 @@ for (const timezone of ["Asia/Shanghai", "UTC", "America/Los_Angeles"]) {
     });
   });
 
+  test(`trend insight month-end and year-end checks use calendar days in ${timezone}`, () => {
+    const output = execFileSync(process.execPath, ["-e", `
+      const { createScriptContext } = require('./tests/test-context.cjs');
+      const cases = [
+        ["日期", ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01", "2024-02-29"]],
+        ["日期", ["2023-10-01", "2023-11-01", "2023-12-01", "2024-01-01", "2024-02-28"]],
+        ["日期", ["2025-01-05", "2025-03-05", "2025-05-05", "2025-06-30"]],
+        ["日期", ["2025-01-05", "2025-03-05", "2025-05-05", "2025-06-01"]],
+        ["年份", ["2021", "2022", "2023", "2024", "2025-12-31"]],
+        ["年份", ["2021", "2022", "2023", "2024", "2025-01-01"]]
+      ];
+      console.log(JSON.stringify(cases.map(([field, values]) => {
+        const { context, evaluate } = createScriptContext();
+        context.__rows = values.map((value) => ({ [field]: value }));
+        context.__field = field;
+        evaluate('commitTabularData([__field], __rows, "tz.csv", beginImport())');
+        const text = evaluate('buildTrendInsight(__field)');
+        const start = text.indexOf("注意：最后一期");
+        return start < 0 ? "" : text.slice(start, text.indexOf("日，", start) + 1);
+      })));
+    `], { cwd: path.join(__dirname, ".."), env: { ...process.env, TZ: timezone }, encoding: "utf8" });
+    assert.deepEqual(JSON.parse(output), [
+      "",
+      "注意：最后一期（2024-02）的数据截至 2 月 28 日",
+      "",
+      "注意：最后一期（2025-06）的数据截至 6 月 1 日",
+      "",
+      "注意：最后一期（2025 年）的数据截至 1 月 1 日"
+    ]);
+  });
+
   test(`English calendar dates and existing date formats are stable in ${timezone}`, () => {
     const output = execFileSync(process.execPath, ["-e", `
       const { createScriptContext } = require('./tests/test-context.cjs');

@@ -3134,10 +3134,10 @@ function countNonMissingValues(field, rows = getAnalysisRows()) {
   return rows.filter((row) => !isMissing(row[field])).length;
 }
 
+// The trend conclusion always compares record counts; numeric fields and the
+// chart's metric selects do not change it.
 function buildTrendInsight(dateField) {
-  const numericField = getProfilesByType("numeric")
-    .find((profile) => fieldHasNumericData(profile.field))?.field;
-  const trend = buildDateTrend(dateField, numericField);
+  const trend = buildDateTrend(dateField, "");
   if (!trend.labels.length) {
     return `日期字段「${dateField}」没有可安全转换的有效日期，因此未生成趋势结论。`;
   }
@@ -3146,12 +3146,44 @@ function buildTrendInsight(dateField) {
   }
   const first = trend.values[0];
   const last = trend.values[trend.values.length - 1];
-  const direction = last > first ? "上升" : last < first ? "下降" : "基本持平";
-  if (first === 0 && last !== 0) {
-    return `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]} 呈${direction}变化；由于首期值为 0，百分比变化无法计算，绝对变化为 ${formatFieldNumber(numericField || "", Math.abs(last - first))}。`;
-  }
-  const change = first === 0 ? 0 : (last - first) / Math.abs(first);
-  return `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]} 呈${direction}变化，变化幅度约 ${formatPercent(Math.abs(change))}。`;
+  const range = `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]}`;
+  const note = buildPartialPeriodNote(dateField, trend);
+  // Every bucket holds at least one record, so the first count is never 0.
+  if (last === first) return `${range} 基本持平。${note}`;
+  const direction = last > first ? "上升" : "下降";
+  return `${range} 呈${direction}变化，变化幅度约 ${formatPercent(Math.abs((last - first) / first))}。${note}`;
+}
+
+// Month and year buckets may be incomplete when the latest written date ends
+// before that month / year. Day buckets and year-only values ("2025") are not
+// judged. Dates are UTC calendar days from parseFieldDate(), compared with the
+// same bucket keys as getDateTrendKey(), so the runtime time zone never matters.
+function buildPartialPeriodNote(dateField, trend) {
+  const lastLabel = trend.labels[trend.labels.length - 1];
+  const yearly = getDateGranularity(dateField) === "year";
+  if (!yearly && !/^\d{4}-\d{2}$/.test(lastLabel)) return "";
+  const strategy = getFieldProfile(dateField)?.dateStrategy || {};
+  let lastDate = null;
+  getAnalysisRows().forEach((row) => {
+    const value = row[dateField];
+    const date = parseFieldDate(dateField, value);
+    if (!date || (yearly && isYearOnlyDateValue(value, strategy))) return;
+    if (!lastDate || date > lastDate) lastDate = date;
+  });
+  if (!lastDate || getDateTrendKey(dateField, lastDate, !yearly) !== lastLabel) return "";
+  const year = lastDate.getUTCFullYear();
+  const month = lastDate.getUTCMonth();
+  const periodEnd = yearly ? Date.UTC(year, 11, 31) : Date.UTC(year, month + 1, 0);
+  if (lastDate.getTime() >= periodEnd) return "";
+  const period = yearly ? `${year} 年` : lastLabel;
+  return `注意：最后一期（${period}）的数据截至 ${month + 1} 月 ${lastDate.getUTCDate()} 日，可能不完整，比较结果仅供参考。`;
+}
+
+function isYearOnlyDateValue(value, strategy = {}) {
+  if (!strategy.allowYearOnly || isDateObject(value) || isMissing(value)) return false;
+  const raw = String(value).trim();
+  const yearText = raw.match(/^(\d{4})\s*年$/);
+  return isPlausibleYear(yearText ? yearText[1] : raw);
 }
 
 function buildDateTrend(dateField, numericField) {
