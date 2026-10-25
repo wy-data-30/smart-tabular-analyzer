@@ -37,7 +37,7 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试。 |
 | `tests/destructive-qa.test.cjs` | 空数据、异常表头、编码、极端数值、连续上传、反复筛选、报告后继续分析和 100,000 行压力测试。 |
 | `tests/core.test.cjs` | DOM ID、相对资源路径、CDN/SRI、字段修正、报告生成和其他静态/集成断言。 |
-| `tests/fixtures/` | 手工回归资料。目前自动测试没有直接读取其中的 CSV/XLSX 文件。 |
+| `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
 测试环境不是完整浏览器：Chart.js、PapaParse、SheetJS、FileReader 或下载 API 会按测试需要注入替身。真实浏览器布局、触控交互、canvas 像素和 Excel/WPS 打开效果仍需手工回归。
