@@ -4,14 +4,19 @@
 
 1. 先确定功能使用原始数据还是筛选数据：质量检查使用 `state.rows`，普通分析使用 `getAnalysisRows()`。
 2. 优先把计算写成接收参数并返回结果的纯函数，再由事件处理函数更新 `state` 和 DOM。
-3. 新增控件时同步修改 `index.html`、顶部 `dom` 映射、事件监听和对应渲染函数。
+3. 新增控件时同步修改 `index.html`、`app.js` 顶部的 `dom` 映射、`script.js` 中的事件监听和对应渲染函数。
 4. 新增状态时明确其创建、重置、连续上传和字段类型修正时的生命周期。
 5. 新增图表时使用唯一 canvas ID，把实例存入 `state.charts`，并在重绘前调用 `destroyChart(id)`。
 6. 新增用户内容到 `innerHTML` 或导出报告时必须经过对应转义函数。
 7. 为纯逻辑和主要边界增加测试，并运行 `npm run test:regression`。
 8. 更新 README 或 `docs/` 中受影响的行为说明。
 
-当前项目没有模块打包器，所有浏览器逻辑都在 `script.js`。小改动应遵循现有函数边界，不要仅为代码风格进行大范围拆分。
+浏览器逻辑按职责分在 10 个普通 `<script>` 文件里（加载顺序和各文件职责见 `docs/ARCHITECTURE.md` 的“应用脚本”表），没有打包器或模块系统，所有文件共享同一个全局作用域：
+
+- 新代码放进职责对应的文件；小改动应遵循现有函数边界，不要仅为代码风格进行大范围搬动。
+- 加载时立即执行的代码（事件绑定、全局设置等）只放在最后加载的 `script.js`，其他文件只声明函数和常量。
+- 顶层名字在全部应用脚本中必须唯一：重复的 `const` / `let` 会让整个文件无法执行，重复的函数声明会静默覆盖前一个。
+- 新增应用脚本时，要同时更新 `index.html`（放在 `script.js` 之前，并带 `?v=<版本>`）、`tests/core.test.cjs` 中的固定文件列表，以及 `script.js` 启动自检 `ensureDomElementsPresent()` 中的代表函数列表。
 
 ## 2. 不要随便修改的核心逻辑
 
@@ -50,7 +55,7 @@
 
 ## 3. 依赖位置（vendor/ 自行托管）
 
-浏览器运行时依赖保存在仓库的 `vendor/` 目录，由 `index.html` 顶部按以下顺序以相对路径加载，并且都在 `script.js` 之前：
+浏览器运行时依赖保存在仓库的 `vendor/` 目录，由 `index.html` 顶部按以下顺序以相对路径加载，并且都在所有应用脚本之前：
 
 | 库 | 当前版本 | 文件 | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
@@ -83,7 +88,7 @@
 项目不需要构建产物，发布目录就是仓库根目录。必须保持：
 
 - 入口为根目录 `index.html`。
-- `style.css`、`script.js`、示例 CSV 和 `assets/` 使用相对路径。
+- `style.css`、10 个应用脚本、示例 CSV 和 `assets/` 使用相对路径。
 - 不添加本地绝对路径、开发服务器代理或后端 API 依赖。
 - `vendor/` 下三个库文件随仓库发布、线上返回 200，且 SRI 与内容一致；根目录保留 `.nojekyll`，`.gitattributes` 保持 `vendor/** -text`，避免换行转换改变文件字节。
 
@@ -103,8 +108,12 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 1. 查看浏览器控制台是否有语法错误或 DOM ID 为 `null`。
 2. 在 Network 面板检查 `vendor/` 下三个库文件是否为 200，以及控制台是否出现 SRI（integrity）拒绝；若本地出现 SRI 拒绝，检查文件是否被换行转换改成了 CRLF。
-3. 确认 `script.js` 仍在页面底部加载，且 HTML ID 与 `dom` 映射一致。
-4. 运行 `node --check script.js` 和 `npm run test:regression`。
+3. 确认 10 个应用脚本都在页面底部按顺序加载、`script.js` 在最底部最后加载，且 HTML ID 与 `app.js` 中的 `dom` 映射一致。页面顶部出现“页面已更新，请刷新后再使用。”时，控制台错误会列出缺失的脚本文件或 DOM 键名。
+4. 逐个文件运行 `node --check`，再运行 `npm run test:regression`。`node --check a.js b.js` 只检查第一个文件，因此要用循环：
+
+   ```bash
+   for f in parsing.js profiling.js format.js stats.js quality.js app.js importer.js templates.js report.js script.js; do node --check "$f"; done
+   ```
 
 ### CSV 中文乱码
 

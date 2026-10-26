@@ -39,6 +39,12 @@ class FakeElement {
   }
 }
 
+// Local app scripts in the order index.html loads them (vendor scripts excluded).
+const APP_SCRIPT_FILES = [...fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8")
+  .matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g)]
+  .map((match) => match[1].split("?")[0])
+  .filter((src) => !src.startsWith("vendor/"));
+
 function createScriptContext() {
   const elements = new Map();
   const document = {
@@ -71,8 +77,13 @@ function createScriptContext() {
     clearTimeout
   });
 
-  const source = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
-  vm.runInContext(source, context, { filename: "script.js" });
+  // One runInContext per file, like separate <script> tags sharing one global scope.
+  const scripts = APP_SCRIPT_FILES.map((file) => ({
+    file,
+    text: fs.readFileSync(path.join(__dirname, "..", file), "utf8")
+  }));
+  scripts.forEach(({ file, text }) => vm.runInContext(text, context, { filename: file }));
+  const source = scripts.map(({ text }) => text).join("\n");
 
   return {
     context,
@@ -84,4 +95,4 @@ function createScriptContext() {
   };
 }
 
-module.exports = { createScriptContext };
+module.exports = { createScriptContext, APP_SCRIPT_FILES };

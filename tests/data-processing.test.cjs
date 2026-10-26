@@ -1,12 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createScriptContext } = require("./test-context.cjs");
+const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const englishDateCorpus = require("./fixtures/english-date-corpus.cjs");
 
-// Default release gate: exercise the real data functions from script.js without
+// Default release gate: exercise the real data functions from the app scripts without
 // coupling core correctness to browser layout or CSS implementation details.
 
 function installDataset(context, evaluate, rows, fields = Object.keys(rows[0] || {})) {
@@ -342,20 +342,23 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.1.4", () => {
+test("public current version markers agree on v2.1.5", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.4");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.4/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.4/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.1.5");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.1\.5/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.1\.5/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.1.4");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.4");
+  assert.equal(evaluate("buildReportData().version"), "v2.1.5");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.1.5");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
-  assert.equal(html.match(/<script src="script\.js\?v=([^"]+)"><\/script>/)?.[1], packageVersion);
+  const appScriptVersions = [...html.matchAll(/<script src="(?!vendor\/)([^"?]+)\?v=([^"]+)"><\/script>/g)]
+    .map((match) => ({ file: match[1], version: match[2] }));
+  assert.deepEqual(appScriptVersions.map(({ file }) => file), APP_SCRIPT_FILES);
+  appScriptVersions.forEach(({ file, version }) => assert.equal(version, packageVersion, file));
 });
 
 test("numeric parsing handles common tabular formats safely", () => {

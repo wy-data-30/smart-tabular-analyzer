@@ -1,6 +1,6 @@
-# Smart Tabular Analyzer v2.1.4 架构说明
+# Smart Tabular Analyzer v2.1.5 架构说明
 
-本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于在不重构 `script.js` 的前提下理解状态、导入、分析、渲染和导出之间的关系。
+本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
 ## 架构概览
 
@@ -8,10 +8,31 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 - `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
-- `script.js` 包含应用状态、事件绑定、文件解析、分析计算、图表、页面渲染和导出逻辑。
-- 启动自检：`dom` 映射建立后立即调用 `ensureDomElementsPresent()`。如果缓存里的旧 `index.html` 缺少脚本需要的元素，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失键名的错误，阻止后续顶层代码执行；元素齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>` 和 `script.js?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
+- 浏览器端逻辑按职责分在 10 个普通 `<script>` 文件里（经典脚本，共享同一个全局作用域，没有打包器或模块系统），加载顺序和职责见下方“应用脚本”表。
+- 启动自检：`script.js` 一开始就调用 `ensureDomElementsPresent()`。它先用 `typeof` 检查前 9 个应用脚本各一个代表函数（如 `toNumber`、`commitTabularData`），缺失说明缓存里的旧 `index.html` 只加载了 `script.js`，或某个文件没有加载成功；脚本齐全时再检查 `dom` 映射中的元素是否都存在，缺失说明缓存里的旧 `index.html` 缺少新元素。任一项缺失，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失文件或键名的错误，阻止 `script.js` 后续代码执行，因此不会绑定任何业务事件；全部齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>`，全部 10 个应用脚本也都带 `?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
 - CSV、Excel、筛选、统计和报告生成均在浏览器本地完成。
 - 当前导入上限由 `IMPORT_LIMITS` 统一控制：25 MB、100,000 行数据、200 列。
+
+### 应用脚本
+
+应用脚本按以下顺序加载，都在三个 `vendor/` 脚本之后；职责说明与各文件第一行的注释一致：
+
+| 顺序 | 文件 | 职责 |
+| --- | --- | --- |
+| 1 | `parsing.js` | 单元格值的缺失判断与解析：把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。 |
+| 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
+| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，以及 HTML 转义。 |
+| 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。 |
+| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、缺失率等级，以及质量页使用的原始数据数值统计。 |
+| 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览、字段、质量、统计、图表和自定义分析的渲染。 |
+| 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。 |
+| 8 | `templates.js` | 场景模板：模板定义、字段映射表单、各模板的分析计算和结果渲染。 |
+| 9 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、导出门禁、文件名和下载。 |
+| 10 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
+
+- 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。前 9 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
+- `parsing.js`、`profiling.js`、`format.js`、`stats.js`、`quality.js` 是纯逻辑层，不直接访问 DOM 或第三方全局对象；但其中部分函数会在调用时读取 `state`（例如经由 `getFieldProfile()`）和 `getAnalysisRows()`（两者都定义在 `app.js`），所以还不是纯函数。
+- 经典脚本共享全局作用域：重复的顶层 `const` / `let` 会让后加载的整个文件无法执行，重复的函数声明会静默覆盖前一个。`tests/core.test.cjs` 会检查全部应用脚本的顶层名字不重复。
 
 | 外部依赖 | 当前职责 | 代码访问方式 |
 | --- | --- | --- |
@@ -25,7 +46,16 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 .
 ├── index.html                  # 页面结构、控件和 vendor/ 依赖引用
 ├── style.css                   # 页面样式与响应式规则
-├── script.js                   # 全部浏览器端应用逻辑
+├── parsing.js                  # 缺失判断，数值和日期解析
+├── profiling.js                # 字段类型识别和字段 profile
+├── format.js                   # 显示格式化和 HTML 转义
+├── stats.js                    # 描述统计、IQR、分组、趋势、直方图
+├── quality.js                  # 转换失败、重复行、缺失率等级
+├── app.js                      # state / dom、三条刷新路径、页面渲染
+├── importer.js                 # CSV / Excel 导入和导入并发保护
+├── templates.js                # 场景模板
+├── report.js                   # 报告生成和数据导出
+├── script.js                   # 启动入口（最后加载）：自检、导航和事件绑定
 ├── package.json                # Node 测试命令
 ├── .nojekyll                   # 空文件，让 GitHub Pages 跳过 Jekyll、原样发布 vendor/
 ├── .gitattributes              # vendor/** -text，禁止换行转换，保证文件与 integrity 一致
@@ -117,7 +147,7 @@ flowchart LR
 
 **与其他模块的关系**
 
-- 所有模块都直接或间接读取 `state`，它是当前单体脚本中耦合度最高的中心。
+- 所有模块都直接或间接读取 `state`（定义在 `app.js`），它是当前代码中耦合度最高的中心。
 - File Input & Parsing 最终调用 `commitTabularData()`。
 - Profiling、Statistics 和 Filtering 生成派生状态。
 - Visualization、UI Rendering 和 Export 消费这些状态。
@@ -618,11 +648,11 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 - UI 既是入口层，也是当前多个分析流程的编排层。
 - 它直接调用 File Input、Filtering、Statistics、Visualization 和 Export。
 - `dom` 中的 ID 与 `index.html` 强绑定；`tests/core.test.cjs` 会检查脚本引用的 DOM ID 和本地静态资源。
-- `tests/test-context.cjs` 用轻量假 DOM 加载整份 `script.js`，因此全局函数名和初始化顺序也属于现有测试契约。
+- `tests/test-context.cjs` 用轻量假 DOM，按 `index.html` 中的顺序逐个加载全部应用脚本（每个文件单独执行，与浏览器中多个 `<script>` 标签一致），因此全局函数名、脚本加载顺序和初始化顺序也属于现有测试契约。
 
-## 当前单体 `script.js` 的技术债
+## 当前脚本的技术债
 
-当前文件是数千行的单体脚本（具体行数随维护变化），包含 25 个顶层 state 字段和 102 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
+当前浏览器逻辑共约五千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 26 个顶层 state 字段和 104 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
 
 1. **全局可变状态是中心依赖。** 多个缓存必须由调用顺序保持一致，例如 `rows`、`filteredRows`、profiles、统计、图表和 `analysisCompletedAt`。
 2. **计算、状态写入和 DOM 副作用混合。** `renderInsights()`、`renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。
@@ -632,7 +662,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 6. **报告结构存在双份维护。** HTML 和 Markdown 分别维护完整章节；快照较早把部分数字格式化成字符串，数据模型与展示格式未完全分离。
 7. **缺少显式类型和模块接口。** 函数之间通过约定传递普通对象，状态字段依赖主要由测试和调用顺序保护。
 8. **主线程和内存压力集中。** CSV、Excel、统计和渲染均一次性执行；100,000 行上限是风险控制，不是流式架构。
-9. **测试与全局脚本形态绑定。** VM 测试直接加载 `script.js` 并按全局函数名调用；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
+9. **测试与全局脚本形态绑定。** VM 测试把应用脚本按顺序加载进同一个上下文，再按全局函数名调用，依赖经典脚本共享的全局作用域；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
 
 当前代码也有值得保留的基础：纯计算 helper 较多、函数命名明确、原始/筛选口径有保护、Chart 有销毁约定、导出有转义和公式注入防护，并且核心数据逻辑已有回归测试。未来拆分应保留这些行为，而不是重写业务规则。
 
@@ -689,7 +719,7 @@ V3 应采用“保留兼容入口的渐进迁移”，不要一次性重写。�
 建议分别建立 profiling、filtering、statistics、grouping / trends 和 quality 的显式边界；其中 quality 的数值异常部分继续复用 statistics 的数值统计能力，不把它们误写成互不相关的实现。
 
 - 函数应接收 `rows`、`fields` 和 profiles，而不是直接读取全局 state。
-- 原 `script.js` 保留包装函数，以维持现有调用方和测试。
+- 保留原全局函数名作为包装函数，以维持现有调用方和测试。
 - 先迁移纯计算，再迁移把结果写回 state 的 orchestration。
 
 ### 3. 拆出纯报告与导出序列化

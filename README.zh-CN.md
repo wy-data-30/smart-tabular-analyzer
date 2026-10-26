@@ -2,7 +2,7 @@
 
 > 一款在浏览器中完成 CSV 和 Excel 快速探索分析的隐私友好型工具。
 
-**当前版本：** v2.1.4
+**当前版本：** v2.1.5
 
 ## 语言
 
@@ -127,7 +127,16 @@ npm run test:regression
 .
 ├── index.html
 ├── style.css
-├── script.js
+├── parsing.js                   # 缺失判断，数值和日期解析
+├── profiling.js                 # 字段类型识别和字段 profile
+├── format.js                    # 显示格式化和 HTML 转义
+├── stats.js                     # 描述统计、IQR、分组、趋势
+├── quality.js                   # 转换失败、重复行、缺失率
+├── app.js                       # 应用状态、DOM 映射、刷新路径、页面渲染
+├── importer.js                  # CSV / Excel 导入
+├── templates.js                 # 场景模板
+├── report.js                    # 报告生成和 CSV 导出
+├── script.js                    # 启动入口：自检和事件绑定（最后加载）
 ├── vendor/                      # 自行托管的依赖库及许可证
 ├── examples/
 │   ├── sample-data.csv          # “使用示例数据”加载的文件

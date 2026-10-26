@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createScriptContext } = require("./test-context.cjs");
+const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 
 const { context, elements, source, evaluate } = createScriptContext();
 
@@ -18,7 +18,7 @@ assert.deepEqual(missingDomIds, []);
 // Startup self-check: a cached old index.html that lacks an element must stop
 // script.js with a visible refresh notice before any listener is attached.
 // test-context's fake DOM never returns null, so this uses its own minimal one.
-function loadScriptWithMissingElement(missingId) {
+function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
   const vm = require("node:vm");
   const listeners = [];
   const reloads = [];
@@ -63,11 +63,14 @@ function loadScriptWithMissingElement(missingId) {
   };
   const sandbox = vm.createContext({ console, document, window, Intl, TextDecoder, Uint8Array, Blob, URL, setTimeout, clearTimeout });
   let error = null;
-  try {
-    vm.runInContext(source, sandbox, { filename: "script.js" });
-  } catch (caught) {
-    error = caught;
-  }
+  // Like separate <script> tags: a throwing file stops only itself, later files still run.
+  files.forEach((file) => {
+    try {
+      vm.runInContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), sandbox, { filename: file });
+    } catch (caught) {
+      error ??= caught;
+    }
+  });
   return {
     error,
     body,
@@ -93,6 +96,31 @@ assert.ok(refreshClick, "the refresh button needs a click handler");
 refreshClick.handler();
 assert.deepEqual(brokenStartup.reloads, ["reload"]);
 
+// The same notice when the page and the app scripts do not match: an old cached
+// index.html loads only script.js, or one of the earlier files fails to load.
+function assertStoppedForMissingScripts(startup, missingFiles) {
+  assert.ok(startup.error, `startup must stop without ${missingFiles.join(", ")}`);
+  missingFiles.forEach((file) => assert.match(String(startup.error.message), new RegExp(file.replace(".", "\\."))));
+  const notice = startup.body.children[0];
+  assert.equal(notice?.attributes.role, "alert");
+  assert.equal(notice.children.find((node) => node.tagName !== "button")?.textContent, "页面已更新，请刷新后再使用。");
+  const button = notice.children.find((node) => node.tagName === "button");
+  assert.equal(button?.textContent, "刷新页面");
+  assert.deepEqual(
+    startup.listeners.filter(({ element }) => element !== button).map(({ type }) => type),
+    [],
+    "only the refresh button may get a listener"
+  );
+}
+assertStoppedForMissingScripts(
+  loadScriptWithMissingElement(null, ["script.js"]),
+  APP_SCRIPT_FILES.filter((file) => file !== "script.js")
+);
+assertStoppedForMissingScripts(
+  loadScriptWithMissingElement(null, APP_SCRIPT_FILES.filter((file) => file !== "stats.js")),
+  ["stats.js"]
+);
+
 const healthyStartup = loadScriptWithMissingElement(null);
 assert.equal(healthyStartup.error, null);
 assert.deepEqual(healthyStartup.body.children, []);
@@ -108,11 +136,32 @@ assert.deepEqual(vendorScripts.map(({ src }) => src), [
   "vendor/chart-4.4.1.umd.min.js",
   "vendor/xlsx-0.20.3.full.min.js"
 ]);
-// script.js carries a ?v= cache-busting parameter; compare the path only.
-const appScriptIndex = scriptTags.findIndex(({ src }) => src.split("?")[0] === "script.js");
+// App scripts carry a ?v= cache-busting parameter; compare the path only.
+const appScriptIndex = scriptTags.findIndex(({ src }) => !src.startsWith("vendor/"));
 assert.ok(appScriptIndex >= 0);
+assert.deepEqual(APP_SCRIPT_FILES, [
+  "parsing.js",
+  "profiling.js",
+  "format.js",
+  "stats.js",
+  "quality.js",
+  "app.js",
+  "importer.js",
+  "templates.js",
+  "report.js",
+  "script.js"
+]);
+assert.equal(scriptTags[scriptTags.length - 1].src.split("?")[0], "script.js", "script.js (startup) must load last");
+// Classic scripts share one global scope: a repeated function name silently
+// replaces the earlier one, and a repeated const / let stops a whole file.
+const topLevelNames = APP_SCRIPT_FILES.flatMap((file) => [
+  ...fs.readFileSync(path.join(projectRoot, file), "utf8")
+    .matchAll(/^(?:(?:async\s+)?function\s*\*?\s*|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)/gm)
+].map((match) => match[1]));
+assert.ok(topLevelNames.length > 0);
+assert.deepEqual(topLevelNames.filter((name, index) => topLevelNames.indexOf(name) !== index), [], "top-level names must be unique across app scripts");
 vendorScripts.forEach(({ tag, src }) => {
-  assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before script.js`);
+  assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before all app scripts`);
   const integrity = tag.match(/\bintegrity="(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
   assert.ok(integrity, `${src} is missing integrity`);
   const vendorPath = path.join(projectRoot, src);
@@ -152,7 +201,10 @@ assert.match(htmlSource, /id="globalFilterSummary"/);
 assert.match(htmlSource, /id="globalClearFilters"/);
 assert.match(htmlSource, /href="#exportSection"/);
 assert.doesNotMatch(htmlSource, /href="#(?:dataExportSection|reportSection)"/);
-assert.match(htmlSource, /<title>Smart Tabular Analyzer \| 智能表格数据分析工具<\/title>/);
+assert.match(htmlSource, /<title>Smart Tabular Analyzer \| 表格数据体检工具<\/title>/);
+assert.match(htmlSource, /<strong>Smart Tabular Analyzer<\/strong>\s*<small>表格数据体检工具<\/small>/);
+assert.match(htmlSource, /<p><strong>Smart Tabular Analyzer<\/strong> · 表格数据体检工具<\/p>/);
+assert.doesNotMatch(htmlSource, /智能表格数据分析工具/);
 const legacyProductNamePattern = new RegExp(["Smart", "CSV", "Analyzer"].join(" "));
 assert.doesNotMatch(htmlSource, legacyProductNamePattern);
 assert.doesNotMatch(source, legacyProductNamePattern);

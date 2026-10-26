@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.1.4
+**Current release:** v2.1.5
 
 ## Language
 
@@ -127,7 +127,16 @@ npm run test:regression
 .
 ├── index.html
 ├── style.css
-├── script.js
+├── parsing.js                   # Missing values, number and date parsing
+├── profiling.js                 # Field type detection and field profiles
+├── format.js                    # Display formatting and HTML escaping
+├── stats.js                     # Descriptive stats, IQR, grouping, trends
+├── quality.js                   # Conversion failures, duplicates, missing rates
+├── app.js                       # State, DOM map, refresh paths, rendering
+├── importer.js                  # CSV / Excel import
+├── templates.js                 # Scenario templates
+├── report.js                    # Reports and CSV export
+├── script.js                    # Startup: self-check and event bindings (loads last)
 ├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
 │   ├── sample-data.csv          # Loaded by "Use Sample Data"
