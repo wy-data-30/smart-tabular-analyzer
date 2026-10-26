@@ -32,11 +32,11 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 
 | 路径 | 用途 |
 | --- | --- |
-| `tests/test-context.cjs` | 创建 VM 上下文和轻量 `FakeElement`，把真实 `script.js` 加载到隔离环境。 |
+| `tests/test-context.cjs` | 创建 VM 上下文和轻量 `FakeElement`，按 `index.html` 中的顺序逐个加载全部应用脚本（每个文件单独执行，共享同一个全局作用域）。返回的 `source` 是所有应用脚本按顺序拼接的文本，并导出文件列表 `APP_SCRIPT_FILES`。 |
 | `tests/data-processing.test.cjs` | 纯数据逻辑：数值/日期解析、字段与 ID 识别、缺失、重复、统计、IQR、筛选、去重和模板。 |
 | `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试。 |
 | `tests/destructive-qa.test.cjs` | 空数据、异常表头、编码、极端数值、连续上传、反复筛选、报告后继续分析和 100,000 行压力测试。 |
-| `tests/core.test.cjs` | DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
+| `tests/core.test.cjs` | 启动自检、应用脚本顺序和顶层名字唯一性、DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
 | `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
@@ -46,7 +46,7 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 
 1. 把测试放到最接近风险的文件：纯函数放 `data-processing`，导入/导出联动放 `basic`，边界与压力放 `destructive-qa`，DOM/资源/报告契约放 `core`。
 2. 使用 `createScriptContext()` 创建新上下文，避免前一个测试残留 `state`。
-3. 通过 `context` 放入测试数据，再用 `evaluate()` 调用 `script.js` 中的真实函数。
+3. 通过 `context` 放入测试数据，再用 `evaluate()` 调用应用脚本中的真实函数。函数都是全局的，调用时不需要关心它在哪个文件。
 4. 优先断言输入不变、返回值和关键状态，不要断言无业务价值的 CSS 细节。
 5. 修改导入、筛选或字段类型时，同时断言 `state.rows` 未被改变。
 6. 修改筛选分析时，同时验证 `numericStats/categoryStats` 更新且原始质量统计保持不变。
@@ -82,7 +82,7 @@ test("new behavior", () => {
 
 ### `Papa`、`XLSX`、`Chart` 或 `FileReader` 未定义
 
-VM 只加载 `script.js`，不会加载 `vendor/` 中的库文件。测试调用相关流程前，需要同时在 `context` 和必要的 `context.window` 属性上注入替身。
+VM 只加载 `index.html` 中的应用脚本，不会加载 `vendor/` 中的库文件。测试调用相关流程前，需要同时在 `context` 和必要的 `context.window` 属性上注入替身。
 
 ### VM 对象深比较失败
 
@@ -94,7 +94,7 @@ VM 中创建的对象属于不同 realm。复杂对象可先 `JSON.stringify()` 
 
 ### `core.test.cjs` 报 DOM ID 或资源缺失
 
-该测试会从 `script.js` 收集 `getElementById()`，并检查 `index.html`、相对资源路径、vendor 脚本标签及其 SRI、许可证文件和 `.nojekyll`。修改 ID、移动根目录资源或升级 vendor 依赖时必须同步 HTML、JS 和测试契约。
+该测试会从所有应用脚本（拼接后的 `source`）收集 `getElementById()`，并检查 `index.html`、相对资源路径、vendor 脚本标签及其 SRI、许可证文件和 `.nojekyll`。它还会检查应用脚本的固定加载顺序（vendor 脚本在前，`script.js` 最后）和全部应用脚本的顶层名字不重复；每个应用脚本都带与 `package.json` 一致的 `?v=`，由 `data-processing.test.cjs` 的版本一致性测试检查。修改 ID、移动根目录资源或升级 vendor 依赖时必须同步 HTML、JS 和测试契约；新增、删除或改名应用脚本时，还要同步 `core.test.cjs` 中的固定文件列表和 `script.js` 自检里的代表函数列表。
 
 ### 压力测试变慢
 

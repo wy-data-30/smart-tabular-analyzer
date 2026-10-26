@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const englishDateCorpus = require("./fixtures/english-date-corpus.cjs");
 
-// Default release gate: exercise the real data functions from script.js without
+// Default release gate: exercise the real data functions from the app scripts without
 // coupling core correctness to browser layout or CSS implementation details.
 
 function installDataset(context, evaluate, rows, fields = Object.keys(rows[0] || {})) {

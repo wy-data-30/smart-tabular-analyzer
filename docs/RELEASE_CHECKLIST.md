@@ -6,18 +6,18 @@
 
 - [ ] 发布内容与项目定位一致：无需注册、浏览器本地处理、支持中文 CSV/Excel。
 - [ ] 没有加入后端、数据库、账号、云存储或其他范围外依赖。
-- [ ] `package.json`、README 当前版本、`script.js` 报告版本，以及 `index.html` 中 `style.css?v=` 和 `script.js?v=` 的版本参数保持一致。
+- [ ] `package.json`、README 当前版本、`report.js` 中的两处报告版本，以及 `index.html` 中 `style.css?v=` 和全部 10 个应用脚本 `?v=` 的版本参数保持一致。
 - [ ] README、中文 README 和 `docs/` 与实际行为一致。
 - [ ] 新增或修改的用户文件、测试夹具和截图不含真实个人数据。
 
 ## 2. 静态结构与依赖（核心）
 
-- [ ] 根目录存在 `index.html`、`style.css` 和 `script.js`。
+- [ ] 根目录存在 `index.html`、`style.css` 和 10 个应用脚本：`parsing.js`、`profiling.js`、`format.js`、`stats.js`、`quality.js`、`app.js`、`importer.js`、`templates.js`、`report.js`、`script.js`。
 - [ ] HTML 中本地资源使用相对路径，且文件实际存在。
 - [ ] PapaParse、Chart.js、SheetJS 使用 `vendor/` 中的固定版本文件，页面没有 http(s) 外部脚本。
 - [ ] 三个 vendor 文件的 SRI 哈希与实际文件一致，`vendor/licenses/` 中有对应许可证，根目录存在 `.nojekyll`。
 - [ ] 页面不依赖构建步骤、后端接口或本地绝对路径。
-- [ ] `node --check script.js` 通过。
+- [ ] 10 个应用脚本逐个运行 `node --check` 都通过（`node --check a.js b.js` 只检查第一个文件，需要循环逐个检查）。
 
 ## 3. 自动化测试（核心）
 
@@ -94,7 +94,7 @@
 
 - [ ] GitHub Pages 来源分支和目录配置正确。
 - [ ] CI workflow 没有部署步骤，不会覆盖 Pages 发布设置。
-- [ ] 在线首页、`style.css`、`script.js`、`vendor/papaparse-5.4.1.min.js`、`vendor/chart-4.4.1.umd.min.js`、`vendor/xlsx-0.20.3.full.min.js`、示例 CSV 和截图资源返回 200。
+- [ ] 在线首页、`style.css`、10 个应用脚本、`vendor/papaparse-5.4.1.min.js`、`vendor/chart-4.4.1.umd.min.js`、`vendor/xlsx-0.20.3.full.min.js`、示例 CSV 和截图资源返回 200。
 - [ ] 在线演示可以加载 `examples/sample-data.csv`。
 - [ ] 在线演示可以上传一份中文 CSV 和一份多工作表 Excel。
 - [ ] README Live Demo 指向当前仓库的 Pages 地址。
