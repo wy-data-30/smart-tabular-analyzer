@@ -5,8 +5,24 @@ ensureDomElementsPresent();
 // A cached older index.html can lack elements this script expects. Stop here
 // with a refresh notice (inline styles, because style.css may be stale too)
 // instead of failing later on the first addEventListener.
+// The same notice covers app scripts that did not load: an old cached index.html
+// loads only script.js, and a file that failed to load leaves its names
+// undeclared. typeof is safe on undeclared names, and dom itself lives in app.js.
 function ensureDomElementsPresent() {
-  const missingKeys = Object.keys(dom).filter((key) => !dom[key]);
+  const missingScripts = [
+    ["parsing.js", typeof toNumber],
+    ["profiling.js", typeof buildColumnProfile],
+    ["format.js", typeof formatNumber],
+    ["stats.js", typeof buildNumericStats],
+    ["quality.js", typeof countDuplicateRows],
+    ["app.js", typeof commitTabularData],
+    ["importer.js", typeof parseDataFile],
+    ["templates.js", typeof runTemplateAnalysis],
+    ["report.js", typeof buildReportData]
+  ].filter(([, type]) => type !== "function").map(([file]) => file);
+  const missingKeys = missingScripts.length
+    ? missingScripts
+    : Object.keys(dom).filter((key) => !dom[key]);
   if (!missingKeys.length) return;
 
   const notice = document.createElement("div");
@@ -21,7 +37,9 @@ function ensureDomElementsPresent() {
   button.addEventListener("click", () => window.location.reload());
   notice.append(message, button);
   document.body.prepend(notice);
-  throw new Error(`页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
+  throw new Error(missingScripts.length
+    ? `脚本文件缺失，HTML 与脚本版本不一致：${missingKeys.join(", ")}`
+    : `页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
 }
 
 if (window.Chart) {

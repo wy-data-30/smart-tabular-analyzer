@@ -18,7 +18,7 @@ assert.deepEqual(missingDomIds, []);
 // Startup self-check: a cached old index.html that lacks an element must stop
 // script.js with a visible refresh notice before any listener is attached.
 // test-context's fake DOM never returns null, so this uses its own minimal one.
-function loadScriptWithMissingElement(missingId) {
+function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
   const vm = require("node:vm");
   const listeners = [];
   const reloads = [];
@@ -64,7 +64,7 @@ function loadScriptWithMissingElement(missingId) {
   const sandbox = vm.createContext({ console, document, window, Intl, TextDecoder, Uint8Array, Blob, URL, setTimeout, clearTimeout });
   let error = null;
   // Like separate <script> tags: a throwing file stops only itself, later files still run.
-  APP_SCRIPT_FILES.forEach((file) => {
+  files.forEach((file) => {
     try {
       vm.runInContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), sandbox, { filename: file });
     } catch (caught) {
@@ -95,6 +95,31 @@ const refreshClick = brokenStartup.listeners.find(({ element, type }) => element
 assert.ok(refreshClick, "the refresh button needs a click handler");
 refreshClick.handler();
 assert.deepEqual(brokenStartup.reloads, ["reload"]);
+
+// The same notice when the page and the app scripts do not match: an old cached
+// index.html loads only script.js, or one of the earlier files fails to load.
+function assertStoppedForMissingScripts(startup, missingFiles) {
+  assert.ok(startup.error, `startup must stop without ${missingFiles.join(", ")}`);
+  missingFiles.forEach((file) => assert.match(String(startup.error.message), new RegExp(file.replace(".", "\\."))));
+  const notice = startup.body.children[0];
+  assert.equal(notice?.attributes.role, "alert");
+  assert.equal(notice.children.find((node) => node.tagName !== "button")?.textContent, "页面已更新，请刷新后再使用。");
+  const button = notice.children.find((node) => node.tagName === "button");
+  assert.equal(button?.textContent, "刷新页面");
+  assert.deepEqual(
+    startup.listeners.filter(({ element }) => element !== button).map(({ type }) => type),
+    [],
+    "only the refresh button may get a listener"
+  );
+}
+assertStoppedForMissingScripts(
+  loadScriptWithMissingElement(null, ["script.js"]),
+  APP_SCRIPT_FILES.filter((file) => file !== "script.js")
+);
+assertStoppedForMissingScripts(
+  loadScriptWithMissingElement(null, APP_SCRIPT_FILES.filter((file) => file !== "stats.js")),
+  ["stats.js"]
+);
 
 const healthyStartup = loadScriptWithMissingElement(null);
 assert.equal(healthyStartup.error, null);
