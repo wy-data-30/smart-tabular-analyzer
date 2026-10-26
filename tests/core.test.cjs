@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { createScriptContext } = require("./test-context.cjs");
+const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 
 const { context, elements, source, evaluate } = createScriptContext();
 
@@ -63,11 +63,14 @@ function loadScriptWithMissingElement(missingId) {
   };
   const sandbox = vm.createContext({ console, document, window, Intl, TextDecoder, Uint8Array, Blob, URL, setTimeout, clearTimeout });
   let error = null;
-  try {
-    vm.runInContext(source, sandbox, { filename: "script.js" });
-  } catch (caught) {
-    error = caught;
-  }
+  // Like separate <script> tags: a throwing file stops only itself, later files still run.
+  APP_SCRIPT_FILES.forEach((file) => {
+    try {
+      vm.runInContext(fs.readFileSync(path.join(projectRoot, file), "utf8"), sandbox, { filename: file });
+    } catch (caught) {
+      error ??= caught;
+    }
+  });
   return {
     error,
     body,
@@ -108,11 +111,20 @@ assert.deepEqual(vendorScripts.map(({ src }) => src), [
   "vendor/chart-4.4.1.umd.min.js",
   "vendor/xlsx-0.20.3.full.min.js"
 ]);
-// script.js carries a ?v= cache-busting parameter; compare the path only.
-const appScriptIndex = scriptTags.findIndex(({ src }) => src.split("?")[0] === "script.js");
+// App scripts carry a ?v= cache-busting parameter; compare the path only.
+const appScriptIndex = scriptTags.findIndex(({ src }) => !src.startsWith("vendor/"));
 assert.ok(appScriptIndex >= 0);
+assert.equal(scriptTags[scriptTags.length - 1].src.split("?")[0], "script.js", "script.js (startup) must load last");
+// Classic scripts share one global scope: a repeated function name silently
+// replaces the earlier one, and a repeated const / let stops a whole file.
+const topLevelNames = APP_SCRIPT_FILES.flatMap((file) => [
+  ...fs.readFileSync(path.join(projectRoot, file), "utf8")
+    .matchAll(/^(?:(?:async\s+)?function\s*\*?\s*|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)/gm)
+].map((match) => match[1]));
+assert.ok(topLevelNames.length > 0);
+assert.deepEqual(topLevelNames.filter((name, index) => topLevelNames.indexOf(name) !== index), [], "top-level names must be unique across app scripts");
 vendorScripts.forEach(({ tag, src }) => {
-  assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before script.js`);
+  assert.ok(scriptTags.findIndex((script) => script.src === src) < appScriptIndex, `${src} must load before all app scripts`);
   const integrity = tag.match(/\bintegrity="(sha384-[A-Za-z0-9+/=]+)"/)?.[1];
   assert.ok(integrity, `${src} is missing integrity`);
   const vendorPath = path.join(projectRoot, src);

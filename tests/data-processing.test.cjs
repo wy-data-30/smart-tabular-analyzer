@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createScriptContext } = require("./test-context.cjs");
+const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -355,7 +355,10 @@ test("public current version markers agree on v2.1.4", () => {
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
   const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
   assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
-  assert.equal(html.match(/<script src="script\.js\?v=([^"]+)"><\/script>/)?.[1], packageVersion);
+  const appScriptVersions = [...html.matchAll(/<script src="(?!vendor\/)([^"?]+)\?v=([^"]+)"><\/script>/g)]
+    .map((match) => ({ file: match[1], version: match[2] }));
+  assert.deepEqual(appScriptVersions.map(({ file }) => file), APP_SCRIPT_FILES);
+  appScriptVersions.forEach(({ file, version }) => assert.equal(version, packageVersion, file));
 });
 
 test("numeric parsing handles common tabular formats safely", () => {
