@@ -114,6 +114,18 @@ assert.deepEqual(vendorScripts.map(({ src }) => src), [
 // App scripts carry a ?v= cache-busting parameter; compare the path only.
 const appScriptIndex = scriptTags.findIndex(({ src }) => !src.startsWith("vendor/"));
 assert.ok(appScriptIndex >= 0);
+assert.deepEqual(APP_SCRIPT_FILES, [
+  "parsing.js",
+  "profiling.js",
+  "format.js",
+  "stats.js",
+  "quality.js",
+  "app.js",
+  "importer.js",
+  "templates.js",
+  "report.js",
+  "script.js"
+]);
 assert.equal(scriptTags[scriptTags.length - 1].src.split("?")[0], "script.js", "script.js (startup) must load last");
 // Classic scripts share one global scope: a repeated function name silently
 // replaces the earlier one, and a repeated const / let stops a whole file.
