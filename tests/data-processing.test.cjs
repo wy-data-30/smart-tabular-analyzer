@@ -774,22 +774,65 @@ test("oversized files and Excel ranges are rejected before analysis", () => {
   assert.match(elements.get("statusPanel").textContent, /25 MB/);
   assert.equal(evaluate("state.rows.length"), 0);
 
+  // The coarse range check allows HEADER_SCAN_ROWS extra rows for title rows above the header.
+  const rejectedDataRows = evaluate("IMPORT_LIMITS.maxRows + HEADER_SCAN_ROWS + 1");
   context.XLSX = {
     utils: {
       decode_range() {
-        return { s: { r: 0, c: 0 }, e: { r: 100001, c: 0 } };
+        return { s: { r: 0, c: 0 }, e: { r: rejectedDataRows, c: 0 } };
       }
     }
   };
   const rowLimitMessage = evaluate(`(() => {
     try {
-      validateExcelWorksheetLimits({"!ref": "A1:A100002"}, "Large Sheet");
+      validateExcelWorksheetLimits({"!ref": "A1:A${rejectedDataRows + 1}"}, "Large Sheet");
       return "";
     } catch (error) {
       return error.message;
     }
   })()`);
   assert.match(rowLimitMessage, /100,000/);
+});
+
+test("the coarse Excel range check leaves room for title rows above the header", () => {
+  const { context, evaluate } = createScriptContext();
+  const allowedDataRows = evaluate("IMPORT_LIMITS.maxRows + HEADER_SCAN_ROWS");
+  context.XLSX = {
+    utils: {
+      decode_range() {
+        return { s: { r: 0, c: 0 }, e: { r: allowedDataRows, c: 0 } };
+      }
+    }
+  };
+  assert.doesNotThrow(() => evaluate(`validateExcelWorksheetLimits({"!ref": "A1:A${allowedDataRows + 1}"}, "Large Sheet")`));
+});
+
+test("Excel sheets over the row limit below a first-row header are rejected when built", () => {
+  const { context, evaluate } = createScriptContext();
+  let lastDataRow = 0;
+  context.XLSX = {
+    utils: {
+      decode_range() {
+        return { s: { r: 0, c: 0 }, e: { r: lastDataRow, c: 0 } };
+      }
+    }
+  };
+  const errorMessage = (expression) => evaluate(`(() => {
+    try { ${expression}; return ""; } catch (error) { return error.message; }
+  })()`);
+
+  // One header row plus maxRows + 1 data rows: inside the coarse margin, over the exact limit.
+  lastDataRow = evaluate("IMPORT_LIMITS.maxRows + 1");
+  assert.equal(errorMessage('validateExcelWorksheetLimits({ "!ref": "A1" }, "大表")'), "");
+  const builtMessage = errorMessage(`(() => {
+    const rows = [["值"], ...Array.from({ length: ${lastDataRow} }, (_, index) => [index])];
+    buildExcelTabularData(rows, rows, "大表");
+  })()`);
+
+  lastDataRow = evaluate("IMPORT_LIMITS.maxRows + HEADER_SCAN_ROWS + 1");
+  const coarseMessage = errorMessage('validateExcelWorksheetLimits({ "!ref": "A1" }, "大表")');
+  assert.match(coarseMessage, /100,000/);
+  assert.equal(builtMessage, coarseMessage);
 });
 
 test("scenario templates use every selected mapping field", () => {

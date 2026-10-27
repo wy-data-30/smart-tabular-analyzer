@@ -122,6 +122,17 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
+  const { fields, rows, numberFormatHints } = readExcelSheetTable(worksheet, sheetName);
+
+  state.pendingExcel = null;
+  dom.sheetSelectionPanel.classList.add("hidden");
+  setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints);
+}
+
+// Reads one worksheet into { fields, rows, numberFormatHints } plus headerDetection
+// when title rows above the header were skipped. Row numbers follow the !ref start.
+function readExcelSheetTable(worksheet, sheetName) {
   validateExcelWorksheetLimits(worksheet, sheetName);
 
   const rawRows = XLSX.utils.sheet_to_json(worksheet, {
@@ -130,17 +141,13 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     raw: true,
     blankrows: true
   });
-  const { fields, rows, numberFormatHints } = buildExcelTabularData(
+  return buildExcelTabularData(
     rawRows,
     rawRows,
     sheetName,
-    createExcelNumberFormatReader(worksheet)
+    createExcelNumberFormatReader(worksheet),
+    XLSX.utils.decode_range(worksheet["!ref"]).s.r + 1
   );
-
-  state.pendingExcel = null;
-  dom.sheetSelectionPanel.classList.add("hidden");
-  setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints);
 }
 
 // Percent hints inspect only the first data rows below the header, so large
@@ -193,7 +200,8 @@ function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readN
   return hints;
 }
 
-function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null) {
+// firstRowNumber is the worksheet row number of formattedRows[0] (the !ref start row).
+function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
     index,
@@ -212,12 +220,15 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  if (rowPairs.length - 1 > IMPORT_LIMITS.maxRows) {
+  const headerPosition = findExcelHeaderPosition(rowPairs);
+
+  // The row limit counts data rows below the header, not skipped title rows.
+  if (rowPairs.length - 1 - headerPosition > IMPORT_LIMITS.maxRows) {
     throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`);
   }
 
-  const headerPair = rowPairs[0];
-  const dataPairs = rowPairs.slice(1);
+  const headerPair = rowPairs[headerPosition];
+  const dataPairs = rowPairs.slice(headerPosition + 1);
   const usedColumnIndexes = getExcelUsedColumnIndexes(headerPair, dataPairs);
 
   if (usedColumnIndexes.length > IMPORT_LIMITS.maxColumns) {
@@ -247,12 +258,40 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」只有表头，没有可分析的数据行。`);
   }
 
-  if (!readNumberFormats) return { fields, rows };
-  return {
-    fields,
-    rows,
-    numberFormatHints: buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats)
-  };
+  const result = { fields, rows };
+  if (headerPosition) {
+    // Rows above the header count as headerRowNumber - 1; only non-empty ones are kept.
+    result.headerDetection = {
+      headerRowNumber: firstRowNumber + headerPair.index,
+      skippedRows: rowPairs.slice(0, headerPosition)
+        .map((pair) => ({
+          rowNumber: firstRowNumber + pair.index,
+          cells: pair.formatted.filter((value) => !isMissing(value)).map(displayValue)
+        }))
+        .filter((row) => row.cells.length)
+    };
+  }
+  if (readNumberFormats) {
+    result.numberFormatHints = buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats);
+  }
+  return result;
+}
+
+// Position in rowPairs of the header row. It stays 0 unless the first non-empty
+// row fails the header checks, detectHeaderRow() finds a header below title rows
+// within the first rows, and that row passes the same checks against every row.
+function findExcelHeaderPosition(rowPairs) {
+  if (!findExcelHeaderErrorAt(rowPairs, 0)) return 0;
+  const sampleRows = rowPairs.slice(0, HEADER_SCAN_ROWS + HEADER_DETECTION_DATA_ROWS).map((pair) => pair.raw);
+  const detection = detectHeaderRow(sampleRows, "excel");
+  if (detection.status !== "skipped" || !detection.headerIndex) return 0;
+  return findExcelHeaderErrorAt(rowPairs, detection.headerIndex) ? 0 : detection.headerIndex;
+}
+
+function findExcelHeaderErrorAt(rowPairs, position) {
+  const headerPair = rowPairs[position];
+  const usedColumnIndexes = getExcelUsedColumnIndexes(headerPair, rowPairs.slice(position + 1));
+  return usedColumnIndexes.length ? checkExcelHeaderFields(headerPair, usedColumnIndexes).error : null;
 }
 
 // Columns that hold a header cell or any data value; empty trailing columns drop out.
@@ -339,7 +378,9 @@ function validateExcelWorksheetLimits(worksheet, sheetName) {
 
   const dataRowCount = range.e.r - range.s.r;
   const columnCount = range.e.c - range.s.c + 1;
-  if (dataRowCount > IMPORT_LIMITS.maxRows) {
+  // An early, coarse check: title rows above the header may still be skipped, so
+  // allow HEADER_SCAN_ROWS extra rows; buildExcelTabularData() applies the exact limit.
+  if (dataRowCount > IMPORT_LIMITS.maxRows + HEADER_SCAN_ROWS) {
     throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`);
   }
   if (columnCount > IMPORT_LIMITS.maxColumns) {
@@ -577,6 +618,8 @@ function csvBlankHeaderHasData(headerNames, dataRows, readCell) {
 
 // Header detection scans at most this many rows, starting at the first non-empty row.
 const HEADER_SCAN_ROWS = 10;
+// Detection reads only this many rows beyond the scan; the full checks then see every row.
+const HEADER_DETECTION_DATA_ROWS = 200;
 // A column below a header candidate counts as numeric or date data from this share on.
 const HEADER_GUARD_TYPE_RATIO = 0.8;
 

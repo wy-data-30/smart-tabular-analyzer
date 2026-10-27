@@ -1270,3 +1270,82 @@ test("a header in the first row of the roster fixture imports as before", async 
     totalMissing: 2
   });
 });
+
+async function importWorkbookFile(buffer, fileName = "t.xlsx") {
+  const scope = createExcelContext();
+  const bytes = Buffer.from(buffer);
+  put(scope.context, "__workbookFile", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  return scope;
+}
+
+const STAGE3_ATTENDANCE_HEADER = ["姓名", "部门", "出勤天数", "迟到次数"];
+const STAGE3_ATTENDANCE_ROWS = [["张三", "销售部", 22, 1], ["李四", "技术部", 21, 0], ["王五", "财务部", 20, 2]];
+
+test("the store report imports with the header from row 4 below its title area", async () => {
+  const { evaluate } = await importStage3Fixture("门店报表.xlsx");
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.fields)")),
+    ["门店编号", "门店名称", "城市", "开业日期", "销售额", "成本", "毛利率", "店长"]);
+  assert.equal(evaluate("state.rows.length"), 29);
+  assert.equal(evaluate('getFieldProfile("毛利率").numericFormat'), "percent");
+});
+
+test("Excel imports skip a title row with a unit note and a school/date row", async () => {
+  const unitNote = await importWorkbookFile(buildXlsxBuffer([{
+    name: "S1", rows: [["考勤表", "单位：天"], STAGE3_ATTENDANCE_HEADER, ...STAGE3_ATTENDANCE_ROWS]
+  }]));
+  assert.equal(unitNote.evaluate('state.fields.join(",")'), STAGE3_ATTENDANCE_HEADER.join(","));
+  assert.equal(unitNote.evaluate("state.rows.length"), 3);
+
+  const schoolDate = await importWorkbookFile(buildXlsxBuffer([{
+    name: "S1", rows: [["期末成绩"], ["学校：一中", "日期：2024-06"], STAGE3_ATTENDANCE_HEADER, ...STAGE3_ATTENDANCE_ROWS]
+  }]));
+  assert.equal(schoolDate.evaluate('state.fields.join(",")'), STAGE3_ATTENDANCE_HEADER.join(","));
+  assert.equal(schoolDate.evaluate("state.rows.length"), 3);
+});
+
+test("Excel header row numbers count leading blank rows and the !ref start", () => {
+  const { context, evaluate } = createExcelContext();
+  const worksheet = XLSX.utils.aoa_to_sheet([["考勤表"], STAGE3_ATTENDANCE_HEADER, ...STAGE3_ATTENDANCE_ROWS], { origin: "B4" });
+  worksheet["!ref"] = "B3:E8"; // row 3 is a blank row inside the used range
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S1");
+  put(context, "__offsetBuffer", XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
+  const table = JSON.parse(evaluate(`JSON.stringify((() => {
+    const sheet = readExcelWorkbook(__offsetBuffer).Sheets.S1;
+    return readExcelSheetTable(sheet, "S1");
+  })())`));
+  assert.deepEqual(table.fields, STAGE3_ATTENDANCE_HEADER);
+  assert.equal(table.rows.length, 3);
+  assert.equal(table.headerDetection.headerRowNumber, 5);
+  assert.deepEqual(table.headerDetection.skippedRows, [{ rowNumber: 4, cells: ["考勤表"] }]);
+});
+
+test("Excel detection falls back when a later data column has no header", async () => {
+  // Column E is empty at the header and for the first 250 rows, so only the
+  // full check after detection sees its data.
+  const rows = [["考勤汇总"], [...STAGE3_ATTENDANCE_HEADER, ""]];
+  for (let index = 1; index <= 300; index += 1) {
+    rows.push([`员工${index}`, ["销售部", "技术部", "财务部"][index % 3], 20 + (index % 3), index % 4, index > 250 ? "补录" : ""]);
+  }
+  const scope = await importWorkbookFile(buildXlsxBuffer([{ name: "S1", rows }]));
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "工作表「S1」的第 2 列缺少表头，请补充字段名后重新上传。");
+});
+
+test("Excel sheets whose first row is not a title keep their header errors", async () => {
+  const cases = [
+    [[["姓名"], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], 2],
+    [[["姓名", "部门"], ["张三", "销售部", new Date(Date.UTC(2024, 0, 5)), 90], ["李四", "技术部", new Date(Date.UTC(2024, 1, 6)), 85], ["王五", "财务部", new Date(Date.UTC(2024, 2, 7)), 78]], 3],
+    [[["姓名", "", "出勤天数", "迟到次数"], ...STAGE3_ATTENDANCE_ROWS], 2]
+  ];
+  for (const [rows, column] of cases) {
+    const scope = await importWorkbookFile(buildXlsxBuffer([{ name: "S1", rows }]));
+    assert.equal(scope.evaluate("state.rows.length"), 0);
+    assert.equal(scope.elements.get("statusPanel").textContent, `工作表「S1」的第 ${column} 列缺少表头，请补充字段名后重新上传。`);
+  }
+});
