@@ -58,7 +58,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 ├── script.js                   # 启动入口（最后加载）：自检、导航和事件绑定
 ├── package.json                # Node 测试命令
 ├── .nojekyll                   # 空文件，让 GitHub Pages 跳过 Jekyll、原样发布 vendor/
-├── .gitattributes              # vendor/** -text，禁止换行转换，保证文件与 integrity 一致
+├── .gitattributes              # vendor/** 与 tests/fixtures/stage3/** -text，禁止换行转换，保证 integrity 和夹具字节不变
 ├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
 │   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
@@ -70,7 +70,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 │   ├── basic-data-processing.test.cjs
 │   ├── destructive-qa.test.cjs
 │   ├── core.test.cjs
-│   └── fixtures/               # 手工回归夹具
+│   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具
 ├── docs/                       # 开发者维护文档
 └── .github/workflows/ci.yml    # push / PR 自动回归测试
 ```
@@ -124,6 +124,7 @@ flowchart LR
 | 字段配置 | `profiles`, `fieldTypeDrafts` | 自动识别结果、已应用类型和未应用草稿 |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照 |
 | 质量信息 | `duplicateRows`, `totalMissing`, `parseWarnings` | 原始数据重复、缺失和 CSV 解析警告 |
+| 表头检测 | `headerDetection` | `null`，或 `{ headerRowNumber, skippedRows: [{ rowNumber, preview }] }`：导入时跳过了表头上方的标题行才有值。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 清空；筛选和字段配置两条刷新路径不改它 |
 | 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待状态、当前读取器和导入版本号 |
 | 来源与完成状态 | `sourceFileName`, `sourceSheetName`, `sourceType`, `analysisCompletedAt` | 报告元信息和导出门禁 |
 | 图表与筛选 UI | `charts`, `categoryFilterOptions`, `categoryFilterDraftValues` | Chart 实例及分类筛选草稿 |
@@ -167,8 +168,10 @@ flowchart LR
 | --- | --- |
 | `parseDataFile(file)` | 检查 25 MB 上限，按 `.csv`、`.xlsx`、`.xls` 后缀路由 |
 | `parseCsvFile(file)` | 读取 CSV 编码选择、获取 `ArrayBuffer`、解码并进入 PapaParse |
-| `parseCsvText(text, sourceName, importId)` | 以表头模式调用 PapaParse |
-| `handleParsedData(results, sourceName, importId)` | 校验 PapaParse 结果，规范化字段和行 |
+| `parseCsvText(text, sourceName, importId, retry)` | 以表头模式调用 PapaParse；`retry` 只在跳过标题行后的那一次重新解析时传入 |
+| `handleParsedData(results, sourceName, importId, source)` | 校验 PapaParse 结果，规范化字段和行；表头类错误时尝试跳过标题行重试一次 |
+| `findCsvHeaderBelowTitleRows(text)` / `retryCsvBelowTitleRows(...)` | CSV 的表头行检测和切片重试，见下文“表头行检测” |
+| `detectHeaderRow(rows, kind)` | CSV 与 Excel 共用的表头行检测纯函数 |
 | `encodeCsvHeaderForParser()` / `decodeCsvHeaderFromParser()` | 用唯一内部键保护重复、空白及 `__proto__` 等特殊表头 |
 | `normalizeFieldName()` / `normalizeParsedRow()` | 去除表头 BOM 和空格，并生成无原型行对象 |
 | `readFileAsArrayBuffer(file, importId)` | 通过 `FileReader` 或 `file.arrayBuffer()` 读取完整文件 |
@@ -192,6 +195,23 @@ PapaParse 当前配置为：
 - 空表头下存在数据时拒绝导入；完全空的尾列可忽略。
 - 空数据行被过滤；最终必须至少有一个字段和一行数据。
 - 非致命 PapaParse 问题最多保存 20 条到 `parseWarnings`。
+- 前三类表头错误（数据列多于表头、空表头下有数据、重复表头）会先尝试表头行检测，见下文。
+
+### 表头行检测（v2.2.0）
+
+表头上方的标题行、说明行和空行由 `detectHeaderRow()` 自动跳过，CSV 和 Excel 共用同一套规则：
+
+- **触发时机**：只有第一个非空行在现有表头校验中报错时才运行。Excel 是“缺少表头”“未识别到有效文本表头”“重复表头”；CSV 是 `TooManyFields`、“空表头下有数据”“重复表头”。第一个非空行能通过校验的文件完全走原来的路径，CSV 也只调用一次 `Papa.parse`。
+- **输入 / 输出**：二维数组（Excel 传 `sheet_to_json` 的原始值，CSV 传 PapaParse `header: false` 的字符串）和 `kind`；返回 `{ status: "unchanged" | "skipped" | "fallback", headerIndex, skippedIndexes, attempted }`。它是纯函数，不碰 DOM 和 `state`。
+- **扫描范围**：从第一个非空行起，最多 `HEADER_SCAN_ROWS`（10）行。
+- **可跳过的行**：空行（含 CSV 里只有分隔符的行）；只有 1 个非空格且是文本；只有 2 个非空格、都是文本、且至少一格含 `:` 或 `：`。“文本”指值是字符串，并且 `toNumber()` 和 `toDate()` 都解析不出来；Excel 的数字和日期单元格不算文本。第一个非空行本身不可跳过时直接回退，`attempted` 为 `false`。
+- **候选表头**：第一个非空行之后第一个不可跳过的行，必须同时满足：通过与导入相同的表头校验（`findHeaderRowError()` 复用 `checkExcelHeaderFields()`、`findDuplicateCsvHeaders()`、`csvBlankHeaderHasData()`；CSV 另外要求下方各行的列数不超过表头，对应 PapaParse 的 `TooManyFields`）；下方数据行非空格数的众数不小于 2（并列时取较小值）；不被 `vetoesHeaderCandidate()` 的三条护栏否决——候选格能解析成数字而下方同列至少 80% 是数字、同样的日期规则、候选格去掉首尾空格后的值在下方同列出现过。
+- **检测与完整校验分开**：只把前 `HEADER_SCAN_ROWS + HEADER_DETECTION_DATA_ROWS`（10 + 200）行交给检测；选中后仍对全部行走现有的完整校验和构建，失败就显示原来那条报错。
+- **CSV 重试**：`retryCsvBelowTitleRows()` 调用 `findCsvHeaderBelowTitleRows()`，后者用 `header: false`、`preview: 210` 和 `step` 回调里的 `meta.cursor` 找到表头行的起始字符位置；然后从这里切开文本，用同一个 `importId` 再调用一次 `parseCsvText()`。`retry` 参数保证只重试一次，不会递归，也不调用 `beginImport()`；分隔符由第二次解析重新自动识别。重试中的任何失败都显示第一次的报错。
+- **行号**：一律用文件行号。Excel 是 `!ref` 起始行加 `sheet_to_json` 的原始下标（`buildExcelTabularData()` 去掉的开头空行也计算在内）；CSV 是解码后文本（不含 BOM）里表头行之前的物理换行数加 1。重试后，“CSV 第 N 行”报错和解析警告的行号会加上跳过的行数；表头以下的空行和跨行引号单元格造成的偏差仍未修正。
+- **结果**：导入层返回 `headerDetection = { headerRowNumber, skippedRows: [{ rowNumber, cells }] }`，`skippedRows` 只含非空行；`commitTabularData()` 用 `formatSkippedRowPreview()` 把 `cells` 转成 `preview`（非空格用空格连接，超过 20 个字符截断加“…”）后写入 `state.headerDetection`。跳过的行数 K 一律等于 `headerRowNumber − 1`，空行也计算在内。状态栏在成功和“有解析警告”两种文案后面追加 `formatHeaderDetectionNote()` 生成的“表头在第 N 行，已跳过上方 K 行：「…」「…」。”，最多列 2 行摘要，更多时加“等”。
+- **回退提示**：第一个非空行是可跳过的行（`attempted` 为 `true`）但没能确认表头时，在原报错后面追加 `formatTitleRowFallbackHint()` 的“第 N 行看起来像标题。如果表头不在第 N 行，请删除表头上方的标题行后重新上传。”，N 是第一个非空行的文件行号。多工作表时，这条报错显示在工作表选择面板里。
+- **已知残留**：两列文件的表头只写了第一列、第二列是互不相同的文本时，会把第一条数据当成表头（状态栏会写明跳过了哪一行）；手动指定表头行计划在后续版本提供。多行表头、“合计”行、一个工作表里的多块表格都不在处理范围内。
 
 **输入 / 输出**
 
@@ -264,12 +284,13 @@ UTF-8 BOM
 | `validateExcelFileSignature(buffer, fileName)` | `.xlsx` 检查 ZIP `PK` 签名，`.xls` 检查 OLE 签名 |
 | `showExcelSheetSelection(...)` | 把完整工作簿保存到 `state.pendingExcel` 并显示工作表下拉框 |
 | `analyzeSelectedExcelSheet()` | 校验待选状态和当前选择 |
-| `importExcelSheet(...)` | 校验 `!ref`、读取二维数组并提交所选工作表 |
-| `validateExcelWorksheetLimits()` | 根据工作表使用区域预检 100,000 行和 200 列 |
-| `buildExcelTabularData()` | 去除首尾空行、识别使用列、验证表头并生成 `{ fields, rows }` |
+| `importExcelSheet(...)` | 校验 `!ref`，经 `readExcelSheetTable()` 读取所选工作表并提交 |
+| `readExcelSheetTable(worksheet, sheetName)` | 粗检上限、`sheet_to_json` 并调用 `buildExcelTabularData()`，传入 `!ref` 起始行号用于换算文件行号 |
+| `validateExcelWorksheetLimits()` | 根据工作表使用区域粗检行数和 200 列；行数额外留出 `HEADER_SCAN_ROWS` 行给表头上方的标题行 |
+| `buildExcelTabularData()` | 去除首尾空行、经 `findExcelHeaderPosition()` 确定表头行、按表头以下的数据行检查 100,000 行上限、识别使用列、验证表头并生成 `{ fields, rows }`，跳过标题行时另带 `headerDetection` |
 | `normalizeExcelCellValue()` | Date 转 `YYYY-MM-DD`，其他原始标量转字符串 |
 
-`importExcelSheet()` 当前使用：
+`readExcelSheetTable()` 当前使用：
 
 ```js
 XLSX.utils.sheet_to_json(worksheet, {
@@ -280,7 +301,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 })
 ```
 
-生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。百分比格式会被识别（只看表头以下前 1,000 行，`EXCEL_FORMAT_SAMPLE_ROWS`），货币等其他格式仍不读取。
+生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。百分比格式会被识别（只看表头以下前 1,000 行，`EXCEL_FORMAT_SAMPLE_ROWS`；跳过标题行时取样起点跟着新表头走），货币等其他格式仍不读取。
 
 **输入 / 输出**
 
@@ -295,7 +316,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - UI Rendering 管理工作表选择面板及错误状态。
 - 成功选择后调用 `commitTabularData(..., sheetName)`，后续 profiling、统计和渲染与 CSV 完全共用。
 
-当前一次只分析一个工作表，不合并多表。首个非空行必须是唯一、非空的文本表头；复杂标题区、合并单元格、数值表头或异常 `!ref` 可能被拒绝。整个工作簿保存在内存中，解析仍在主线程完成。
+当前一次只分析一个工作表，不合并多表。表头默认是第一个非空行；它通不过表头校验时，按上文“表头行检测”在前 10 行内跳过标题行、说明行（含合并单元格的标题）和空行。最终选定的表头仍必须是唯一、非空的文本表头；多行表头、数值表头、识别不出的复杂标题区或异常 `!ref` 仍会被拒绝，此时如果第一个非空行像标题，报错后面会附加删除标题行的提示。整个工作簿保存在内存中，解析仍在主线程完成。
 
 ## 5. Field Profiling & Type Detection（字段画像与类型识别）
 
@@ -592,6 +613,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告质量部分使用原始范围，统计、趋势和自定义分析使用当前分析范围。
 - 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“无法转换”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
 - 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
+- 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
 
 **与其他模块的关系**
 

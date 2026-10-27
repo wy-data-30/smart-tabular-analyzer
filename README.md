@@ -24,6 +24,7 @@ The project is a static website with no backend service, database, account syste
 ## Core Features
 
 - Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages.
+- Skip title, note, and blank rows above the header automatically, and state in the status bar and reports which row the header was found on.
 - Preview the first 10 rows and summarize the dataset size, field composition, missing values, and duplicate rows.
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
 - Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
@@ -156,7 +157,10 @@ npm run test:regression
 - Each import is limited to 25 MB, 100,000 data rows, and 200 columns.
 - Parsing and analysis run on the browser main thread and may temporarily block the interface near the import limits, especially on mobile devices.
 - Field inference is heuristic, and strict date parsing may require manual confirmation for ambiguous columns.
-- Excel worksheets must have unique, non-empty text headers in the first non-empty row; empty, headerless, protected, or structurally irregular worksheets may be rejected.
+- Title, note, and blank rows above the header are skipped automatically; the header row is looked for within 10 rows starting at the first non-empty row. A row can be skipped when it holds a single text cell, or two text cells where one contains a colon (such as “制表日期：…”). When rows are skipped, the status bar and the reports state “表头在第 N 行” (the header is on row N).
+- If no header row can be confirmed, the error message suggests removing the title rows; choosing the header row manually is not supported yet.
+- Multi-row headers are not supported, total rows such as “合计” are treated as data, and several tables on one worksheet are not supported.
+- The header itself must still be unique and non-empty for every column that holds data, and Excel headers must be text cells; empty, headerless, protected, or structurally irregular worksheets may be rejected.
 - Excel percentage formats are detected from the first 1,000 data rows below the header; other number formats such as currency are not read.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.

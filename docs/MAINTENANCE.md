@@ -90,7 +90,7 @@
 - 入口为根目录 `index.html`。
 - `style.css`、10 个应用脚本、示例 CSV 和 `assets/` 使用相对路径。
 - 不添加本地绝对路径、开发服务器代理或后端 API 依赖。
-- `vendor/` 下三个库文件随仓库发布、线上返回 200，且 SRI 与内容一致；根目录保留 `.nojekyll`，`.gitattributes` 保持 `vendor/** -text`，避免换行转换改变文件字节。
+- `vendor/` 下三个库文件随仓库发布、线上返回 200，且 SRI 与内容一致；根目录保留 `.nojekyll`，`.gitattributes` 保持 `vendor/** -text` 和 `tests/fixtures/stage3/** -text`，避免换行转换改变文件字节。
 
 仓库内的 `.github/workflows/ci.yml` 只运行测试，没有 Pages 部署步骤或写权限，因此不会替代 Pages 配置。当前代码适合 GitHub Pages 的“从分支部署”；实际来源分支和目录应在仓库 `Settings > Pages` 中确认。
 
@@ -125,11 +125,13 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 检查 PapaParse 的 `errors`、`TooManyFields`、引号和表头。项目会拒绝可能丢失额外单元格的数据，不应把该错误降级为普通警告。
 
+表头上方有标题行时：第一次解析报出表头类错误（数据列多于表头、空表头下有数据、重复表头）后，会用 `findCsvHeaderBelowTitleRows()` 自动检测表头行，并从表头行切开文本重新解析一次；检测或重试失败时显示第一次的报错，如果第一个非空行像标题，报错后面会附加“第 N 行看起来像标题……”的提示。规则见 `docs/ARCHITECTURE.md` 的“表头行检测”。
+
 ### Excel 无法导入
 
 1. 确认扩展名与 ZIP/OLE 签名一致。
 2. 检查工作表 `!ref`、行列上限和是否为空。
-3. 第一个非空行必须是唯一、非空的文本表头。
+3. 表头默认是第一个非空行；它通不过表头校验时，会在前 10 行内自动跳过标题行、说明行和空行（见 `docs/ARCHITECTURE.md` 的“表头行检测”）。最终选定的表头必须是唯一、非空的文本表头；识别不出时显示原来的报错，第一个非空行像标题时附加删除标题行的提示。
 4. 多工作表问题重点检查 `pendingExcel` 和 `activeImportId` 是否仍有效。
 
 ### 筛选后统计不一致
