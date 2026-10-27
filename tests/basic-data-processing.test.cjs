@@ -1349,3 +1349,93 @@ test("Excel sheets whose first row is not a title keep their header errors", asy
     assert.equal(scope.elements.get("statusPanel").textContent, `工作表「S1」的第 ${column} 列缺少表头，请补充字段名后重新上传。`);
   }
 });
+
+function importCsvTextWithPapa(text) {
+  const scope = createExcelContext();
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  put(scope.context, "__csvSourceText", text);
+  scope.evaluate('parseCsvText(__csvSourceText, "t.csv", beginImport())');
+  return scope;
+}
+
+const csvLines = (rows) => `${rows.map((row) => row.join(",")).join("\r\n")}\r\n`;
+const STAGE3_GRADE_HEADER = ["学号", "姓名", "语文", "数学"];
+const STAGE3_GRADE_ROWS = [["S01", "张三", "90", "85"], ["S02", "李四", "78", "92"], ["S03", "王五", "88", "70"]];
+
+test("the grade fixtures import with the header from line 2 below their title row", async () => {
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const { evaluate } = await importStage3Fixture(fileName);
+    assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.fields)")),
+      ["学号", "姓名", "性别", "语文", "数学", "英语", "物理", "总分"], fileName);
+    assert.equal(evaluate("state.rows.length"), 30, fileName);
+    assert.equal(evaluate('getFieldProfile("数学").typeKey'), "numeric", fileName);
+    assert.equal(evaluate('getFieldProfile("物理").typeKey'), "numeric", fileName);
+  }
+});
+
+test("CSV imports skip a title, unit note and blank row, or a delimiter-only row", () => {
+  const titled = importCsvTextWithPapa(csvLines([["期中成绩", "", "", ""], ["单位：分", "", "", ""], ["", "", "", ""], STAGE3_GRADE_HEADER, ...STAGE3_GRADE_ROWS]));
+  assert.equal(titled.evaluate('state.fields.join(",")'), STAGE3_GRADE_HEADER.join(","));
+  assert.equal(titled.evaluate("state.rows.length"), 3);
+
+  const delimiterRow = importCsvTextWithPapa(csvLines([["", "", "", ""], STAGE3_GRADE_HEADER, ...STAGE3_GRADE_ROWS]));
+  assert.equal(delimiterRow.evaluate('state.fields.join(",")'), STAGE3_GRADE_HEADER.join(","));
+  assert.equal(delimiterRow.evaluate("state.rows.length"), 3);
+});
+
+test("a semicolon CSV below one title row is re-detected after skipping the title", () => {
+  const scope = importCsvTextWithPapa("成绩单\r\n姓名;部门;分数\r\n张三;销售部;90\r\n李四;技术部;85\r\n王五;财务部;78\r\n");
+  assert.equal(scope.evaluate('state.fields.join("|")'), "姓名|部门|分数");
+  assert.equal(scope.evaluate('state.rows[2]["分数"]'), "78");
+});
+
+test("CSV header row numbers count physical lines above the header", () => {
+  const { context, evaluate } = createExcelContext();
+  put(context, "Papa", Papa);
+  context.window.Papa = Papa;
+  put(context, "__titledText", csvLines([["期中成绩", "", "", ""], ["单位：分", "", "", ""], ["", "", "", ""], STAGE3_GRADE_HEADER, ...STAGE3_GRADE_ROWS]));
+  const found = JSON.parse(evaluate("JSON.stringify(findCsvHeaderBelowTitleRows(__titledText))"));
+  assert.equal(found.headerDetection.headerRowNumber, 4);
+  assert.deepEqual(found.headerDetection.skippedRows, [
+    { rowNumber: 1, cells: ["期中成绩"] },
+    { rowNumber: 2, cells: ["单位：分"] }
+  ]);
+  assert.equal(found.lineOffset, 3);
+  assert.equal(context.__titledText.slice(found.offset).split("\r\n")[0], STAGE3_GRADE_HEADER.join(","));
+});
+
+const STAGE3_EIGHT_GRADE_ROWS = Array.from({ length: 8 }, (_, index) => [`S0${index + 1}`, `学生${index + 1}`, "80", "90"]);
+
+test("a CSV title row above a data row with an extra cell falls back to the first error", () => {
+  // The extra cell fails the candidate header's column check, so detection falls back.
+  const rows = STAGE3_EIGHT_GRADE_ROWS.map((row) => [...row]);
+  rows[6].push("多出");
+  const scope = importCsvTextWithPapa(csvLines([["期中成绩"], STAGE3_GRADE_HEADER, ...rows]));
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。");
+});
+
+test("CSV parse warning row numbers include the skipped title lines", () => {
+  const rows = STAGE3_EIGHT_GRADE_ROWS.map((row) => [...row]);
+  rows[6].pop();
+  const scope = importCsvTextWithPapa(csvLines([["期中成绩"], STAGE3_GRADE_HEADER, ...rows]));
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => warning.row))")), [9]);
+});
+
+test("CSV files whose first row is not a title keep their header errors", () => {
+  const missingHeader = "CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。";
+  const cases = [
+    [[["姓名", ""], ["学生1", "61"], ["学生2", "75"], ["学生3", "82"], ["学生4", "90"], ["学生5", "68"]], missingHeader],
+    [[["姓名", ""], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], missingHeader],
+    [[["姓名", "性别", "", ""], ["张三", "男", "90", "85"], ["李四", "女", "78", "92"], ["王五", "男", "88", "70"]], missingHeader],
+    [[["姓名", "工号", "", ""], ["张三", "E01", "销售部", "上海"], ["李四", "E02", "技术部", "北京"], ["王五", "E03", "财务部", "广州"]], missingHeader],
+    [[["姓名", "", "出勤天数", "迟到次数"], ["张三", "销售部", "22", "1"], ["李四", "技术部", "21", "0"]], missingHeader],
+    [[["城市"], ["上海"], ["北京"], ["广州", "待核实"], ["深圳"], ["杭州"]], "CSV 第 4 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。"]
+  ];
+  for (const [rows, message] of cases) {
+    const scope = importCsvTextWithPapa(csvLines(rows));
+    assert.equal(scope.evaluate("state.rows.length"), 0);
+    assert.equal(scope.elements.get("statusPanel").textContent, message);
+  }
+});

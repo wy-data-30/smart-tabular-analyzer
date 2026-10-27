@@ -393,7 +393,9 @@ function showSheetSelectionError(message) {
   dom.sheetSelectionMessage.textContent = message;
 }
 
-function parseCsvText(text, sourceName, importId = beginImport()) {
+// retry is set only for the one re-parse below skipped title rows:
+// { lineOffset, headerDetection, firstError }.
+function parseCsvText(text, sourceName, importId = beginImport(), retry = null) {
   if (!isCurrentImport(importId)) return;
   assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
   Papa.parse(text, {
@@ -404,9 +406,60 @@ function parseCsvText(text, sourceName, importId = beginImport()) {
     // the main thread so protected and duplicate header handling remains intact.
     worker: false,
     transformHeader: encodeCsvHeaderForParser,
-    complete: (results) => handleParsedData(results, sourceName, importId),
-    error: (error) => showError(error.message, importId)
+    complete: (results) => handleParsedData(results, sourceName, importId, { text, retry }),
+    error: (error) => showError(retry ? retry.firstError : error.message, importId)
   });
+}
+
+// Finds the header below title rows of a CSV whose first row failed the header
+// checks. Returns { offset, lineOffset, headerDetection } where offset is the
+// header row's first character and lineOffset the physical lines above it, or null.
+function findCsvHeaderBelowTitleRows(text) {
+  const rows = [];
+  const starts = [];
+  let cursor = 0;
+  Papa.parse(text, {
+    header: false,
+    skipEmptyLines: false,
+    preview: HEADER_SCAN_ROWS + HEADER_DETECTION_DATA_ROWS,
+    worker: false,
+    step: (results) => {
+      rows.push(results.data);
+      starts.push(cursor);
+      cursor = results.meta.cursor;
+    }
+  });
+  const detection = detectHeaderRow(rows, "csv");
+  if (detection.status !== "skipped" || !detection.headerIndex) return null;
+  const lineNumberAt = (offset) => 1 + (text.slice(0, offset).match(/\r\n|\r|\n/g) || []).length;
+  const headerRowNumber = lineNumberAt(starts[detection.headerIndex]);
+  return {
+    offset: starts[detection.headerIndex],
+    lineOffset: headerRowNumber - 1,
+    headerDetection: {
+      headerRowNumber,
+      skippedRows: detection.skippedIndexes
+        .map((index) => ({
+          rowNumber: lineNumberAt(starts[index]),
+          cells: rows[index].filter((value) => !isMissing(value)).map(displayValue)
+        }))
+        .filter((row) => row.cells.length)
+    }
+  };
+}
+
+// On a CSV header error, re-parse once from the detected header row. Returns
+// false when no retry runs, so the caller shows its own error.
+function retryCsvBelowTitleRows(source, sourceName, importId, firstError) {
+  if (!source || source.retry) return false;
+  const found = findCsvHeaderBelowTitleRows(source.text);
+  if (!found) return false;
+  parseCsvText(source.text.slice(found.offset), sourceName, importId, {
+    lineOffset: found.lineOffset,
+    headerDetection: found.headerDetection,
+    firstError
+  });
+  return true;
 }
 
 const CSV_HEADER_KEY_PREFIX = "__SMART_CSV_HEADER__";
@@ -528,13 +581,22 @@ function decodeText(buffer, encoding, fatal = false) {
   }
 }
 
-function handleParsedData(results, sourceName, importId) {
+// source is { text, retry } from parseCsvText(); without it no header retry runs.
+function handleParsedData(results, sourceName, importId, source = null) {
   if (!isCurrentImport(importId)) return;
+  const retry = source?.retry || null;
+  // Physical lines skipped above the header, so row numbers match the file.
+  const lineOffset = retry?.lineOffset || 0;
+  // A failed re-parse below skipped title rows shows the first parse's error.
+  const fail = (message) => showError(retry ? retry.firstError : message, importId);
+  const failHeader = (message) => {
+    if (!retryCsvBelowTitleRows(source, sourceName, importId, message)) fail(message);
+  };
   const parseErrors = Array.isArray(results.errors) ? results.errors : [];
   const extraFieldError = parseErrors.find((error) => error.code === "TooManyFields");
   if (extraFieldError) {
-    const rowNumber = Number.isInteger(extraFieldError.row) ? extraFieldError.row + 2 : null;
-    showError(`CSV${rowNumber ? ` 第 ${rowNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`, importId);
+    const rowNumber = Number.isInteger(extraFieldError.row) ? extraFieldError.row + 2 + lineOffset : null;
+    failHeader(`CSV${rowNumber ? ` 第 ${rowNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`);
     return;
   }
   const fatalError = parseErrors.find((error) =>
@@ -542,7 +604,7 @@ function handleParsedData(results, sourceName, importId) {
     || (error.type === "Delimiter" && error.code !== "UndetectableDelimiter")
   );
   if (fatalError) {
-    showError(`CSV 解析失败：${fatalError.message}`, importId);
+    fail(`CSV 解析失败：${fatalError.message}`);
     return;
   }
 
@@ -551,7 +613,7 @@ function handleParsedData(results, sourceName, importId) {
     clean: normalizeFieldName(decodeCsvHeaderFromParser(rawField))
   }));
   if (allFieldPairs.length > IMPORT_LIMITS.maxColumns) {
-    showError(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`, importId);
+    fail(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`);
     return;
   }
   const fieldPairs = allFieldPairs.filter((pair) => pair.clean !== "");
@@ -560,13 +622,13 @@ function handleParsedData(results, sourceName, importId) {
   const duplicateFields = findDuplicateCsvHeaders(headerNames);
 
   if (duplicateFields.length) {
-    showError(`CSV 表头规范化后存在重复字段：${duplicateFields.join("、")}。请修改表头后重试。`, importId);
+    failHeader(`CSV 表头规范化后存在重复字段：${duplicateFields.join("、")}。请修改表头后重试。`);
     return;
   }
 
   const sourceRows = Array.isArray(results.data) ? results.data : [];
   if (sourceRows.length > IMPORT_LIMITS.maxRows) {
-    showError(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`, importId);
+    fail(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`);
     return;
   }
   const blankHeaderHasData = csvBlankHeaderHasData(
@@ -575,7 +637,7 @@ function handleParsedData(results, sourceName, importId) {
     (row, columnIndex) => row?.[allFieldPairs[columnIndex].raw]
   );
   if (blankHeaderHasData) {
-    showError("CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。", importId);
+    failHeader("CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。");
     return;
   }
 
@@ -583,7 +645,7 @@ function handleParsedData(results, sourceName, importId) {
     .filter((error) => !(error.code === "UndetectableDelimiter" && fields.length === 1))
     .slice(0, 20)
     .map((error) => ({
-      row: Number.isInteger(error.row) ? error.row + 2 : null,
+      row: Number.isInteger(error.row) ? error.row + 2 + lineOffset : null,
       code: error.code || "ParseWarning",
       message: error.message || "CSV 行结构异常"
     }));
@@ -596,7 +658,7 @@ function handleParsedData(results, sourceName, importId) {
   }, []);
 
   if (!fields.length || !rows.length) {
-    showError("CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", importId);
+    fail("CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。");
     return;
   }
 
