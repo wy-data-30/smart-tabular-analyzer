@@ -1,1 +1,2 @@
 vendor/** -text
+tests/fixtures/stage3/** -text

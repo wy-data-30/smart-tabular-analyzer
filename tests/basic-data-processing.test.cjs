@@ -1211,3 +1211,62 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
     "姓名,备注"
   );
 });
+
+// Stage 3 acceptance fixtures (tests/fixtures/stage3/, see known-issues.json)
+// imported through parseDataFile() with the real PapaParse and SheetJS.
+const STAGE3_FIXTURES = path.join(__dirname, "fixtures", "stage3");
+
+async function importStage3Fixture(fileName) {
+  const scope = createExcelContext();
+  let papaCalls = 0;
+  const countingPapa = Object.assign(Object.create(Papa), {
+    parse(...args) {
+      papaCalls += 1;
+      return Papa.parse(...args);
+    }
+  });
+  put(scope.context, "Papa", countingPapa);
+  scope.context.window.Papa = countingPapa;
+  const bytes = fs.readFileSync(path.join(STAGE3_FIXTURES, fileName));
+  // The VM has no FileReader, so readFileAsArrayBuffer() uses file.arrayBuffer().
+  put(scope.context, "__stage3File", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+  await scope.evaluate("parseDataFile(__stage3File)");
+  return { ...scope, papaCalls: () => papaCalls };
+}
+
+function importedSummary(evaluate) {
+  return JSON.parse(evaluate(`JSON.stringify({
+    rows: state.rows.length,
+    fields: state.fields,
+    types: state.profiles.map((profile) => profile.typeKey),
+    duplicateRows: state.duplicateRows,
+    totalMissing: state.totalMissing
+  })`));
+}
+
+test("a header in the first row of the order fixture imports as before", async () => {
+  const scope = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(importedSummary(scope.evaluate), {
+    rows: 30,
+    fields: ["订单号", "下单日期", "客户名称", "大区", "产品", "数量", "金额", "备注"],
+    types: ["id", "date", "category", "category", "category", "numeric", "numeric", "category"],
+    duplicateRows: 0,
+    totalMissing: 26
+  });
+  assert.equal(scope.papaCalls(), 1);
+});
+
+test("a header in the first row of the roster fixture imports as before", async () => {
+  const scope = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(importedSummary(scope.evaluate), {
+    rows: 30,
+    fields: ["工号", "姓名", "部门", "身份证号", "入职日期", "月薪", "手机号"],
+    types: ["id", "category", "category", "id", "date", "numeric", "id"],
+    duplicateRows: 1,
+    totalMissing: 2
+  });
+});
