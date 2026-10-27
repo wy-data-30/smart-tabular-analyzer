@@ -1325,6 +1325,9 @@ test("Excel header row numbers count leading blank rows and the !ref start", () 
   assert.deepEqual(table.headerDetection.skippedRows, [{ rowNumber: 4, cells: ["考勤表"] }]);
 });
 
+// Appended to a header error when the first non-empty row was a skippable title row.
+const TITLE_FALLBACK_HINT = "第 1 行看起来像标题。如果表头不在第 1 行，请删除表头上方的标题行后重新上传。";
+
 test("Excel detection falls back when a later data column has no header", async () => {
   // Column E is empty at the header and for the first 250 rows, so only the
   // full check after detection sees its data.
@@ -1334,19 +1337,20 @@ test("Excel detection falls back when a later data column has no header", async 
   }
   const scope = await importWorkbookFile(buildXlsxBuffer([{ name: "S1", rows }]));
   assert.equal(scope.evaluate("state.rows.length"), 0);
-  assert.equal(scope.elements.get("statusPanel").textContent, "工作表「S1」的第 2 列缺少表头，请补充字段名后重新上传。");
+  assert.equal(scope.elements.get("statusPanel").textContent, `工作表「S1」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
 });
 
 test("Excel sheets whose first row is not a title keep their header errors", async () => {
+  // A single-cell first row is skippable, so its error also carries the title hint.
   const cases = [
-    [[["姓名"], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], 2],
-    [[["姓名", "部门"], ["张三", "销售部", new Date(Date.UTC(2024, 0, 5)), 90], ["李四", "技术部", new Date(Date.UTC(2024, 1, 6)), 85], ["王五", "财务部", new Date(Date.UTC(2024, 2, 7)), 78]], 3],
-    [[["姓名", "", "出勤天数", "迟到次数"], ...STAGE3_ATTENDANCE_ROWS], 2]
+    [[["姓名"], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], 2, TITLE_FALLBACK_HINT],
+    [[["姓名", "部门"], ["张三", "销售部", new Date(Date.UTC(2024, 0, 5)), 90], ["李四", "技术部", new Date(Date.UTC(2024, 1, 6)), 85], ["王五", "财务部", new Date(Date.UTC(2024, 2, 7)), 78]], 3, ""],
+    [[["姓名", "", "出勤天数", "迟到次数"], ...STAGE3_ATTENDANCE_ROWS], 2, ""]
   ];
-  for (const [rows, column] of cases) {
+  for (const [rows, column, hint] of cases) {
     const scope = await importWorkbookFile(buildXlsxBuffer([{ name: "S1", rows }]));
     assert.equal(scope.evaluate("state.rows.length"), 0);
-    assert.equal(scope.elements.get("statusPanel").textContent, `工作表「S1」的第 ${column} 列缺少表头，请补充字段名后重新上传。`);
+    assert.equal(scope.elements.get("statusPanel").textContent, `工作表「S1」的第 ${column} 列缺少表头，请补充字段名后重新上传。${hint}`);
   }
 });
 
@@ -1413,7 +1417,7 @@ test("a CSV title row above a data row with an extra cell falls back to the firs
   rows[6].push("多出");
   const scope = importCsvTextWithPapa(csvLines([["期中成绩"], STAGE3_GRADE_HEADER, ...rows]));
   assert.equal(scope.evaluate("state.rows.length"), 0);
-  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。");
+  assert.equal(scope.elements.get("statusPanel").textContent, `CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。${TITLE_FALLBACK_HINT}`);
 });
 
 test("CSV parse warning row numbers include the skipped title lines", () => {
@@ -1425,17 +1429,111 @@ test("CSV parse warning row numbers include the skipped title lines", () => {
 
 test("CSV files whose first row is not a title keep their header errors", () => {
   const missingHeader = "CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。";
+  // A single-cell first row is skippable, so its error also carries the title hint.
   const cases = [
-    [[["姓名", ""], ["学生1", "61"], ["学生2", "75"], ["学生3", "82"], ["学生4", "90"], ["学生5", "68"]], missingHeader],
-    [[["姓名", ""], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], missingHeader],
+    [[["姓名", ""], ["学生1", "61"], ["学生2", "75"], ["学生3", "82"], ["学生4", "90"], ["学生5", "68"]], `${missingHeader}${TITLE_FALLBACK_HINT}`],
+    [[["姓名", ""], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]], `${missingHeader}${TITLE_FALLBACK_HINT}`],
     [[["姓名", "性别", "", ""], ["张三", "男", "90", "85"], ["李四", "女", "78", "92"], ["王五", "男", "88", "70"]], missingHeader],
     [[["姓名", "工号", "", ""], ["张三", "E01", "销售部", "上海"], ["李四", "E02", "技术部", "北京"], ["王五", "E03", "财务部", "广州"]], missingHeader],
     [[["姓名", "", "出勤天数", "迟到次数"], ["张三", "销售部", "22", "1"], ["李四", "技术部", "21", "0"]], missingHeader],
-    [[["城市"], ["上海"], ["北京"], ["广州", "待核实"], ["深圳"], ["杭州"]], "CSV 第 4 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。"]
+    [[["城市"], ["上海"], ["北京"], ["广州", "待核实"], ["深圳"], ["杭州"]], `CSV 第 4 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。${TITLE_FALLBACK_HINT}`]
   ];
   for (const [rows, message] of cases) {
     const scope = importCsvTextWithPapa(csvLines(rows));
     assert.equal(scope.evaluate("state.rows.length"), 0);
     assert.equal(scope.elements.get("statusPanel").textContent, message);
   }
+});
+
+const STORE_HEADER_NOTE = "表头在第 4 行，已跳过上方 3 行：「2024年各门店销售报表」「制表日期：2024-08-01」。";
+const GRADE_HEADER_NOTE = "表头在第 2 行，已跳过上方 1 行：「初二(3)班期中成绩」。";
+
+test("the status bar names the header row and the skipped title rows", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}`);
+  assert.deepEqual(JSON.parse(store.evaluate("JSON.stringify(state.headerDetection)")), {
+    headerRowNumber: 4,
+    skippedRows: [
+      { rowNumber: 1, preview: "2024年各门店销售报表" },
+      { rowNumber: 2, preview: "制表日期：2024-08-01" }
+    ]
+  });
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.equal(grades.elements.get("statusPanel").textContent, `${fileName} 已成功载入，分析结果已生成。${GRADE_HEADER_NOTE}`);
+  }
+});
+
+test("the header note follows the parse-warning status too", () => {
+  const rows = STAGE3_EIGHT_GRADE_ROWS.map((row) => [...row]);
+  rows[6].pop();
+  const scope = importCsvTextWithPapa(csvLines([["期中成绩"], STAGE3_GRADE_HEADER, ...rows]));
+  assert.equal(scope.elements.get("statusPanel").textContent,
+    "CSV 已载入，但发现 1 个解析警告，涉及 1 行。请核对数据预览和字段数量。表头在第 2 行，已跳过上方 1 行：「期中成绩」。");
+});
+
+test("reports carry the header note and a later first-row import clears it", async () => {
+  const scope = await importStage3Fixture("门店报表.xlsx");
+  put(scope.context, "__headerNote", STORE_HEADER_NOTE);
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.headerDetection, JSON.parse(scope.evaluate("JSON.stringify(state.headerDetection)")));
+  assert.ok(html.includes(`<div><dt>表头位置</dt><dd>${scope.evaluate("escapeHtml(__headerNote)")}</dd></div>`));
+  assert.ok(markdown.includes(`- 表头位置：${scope.evaluate("escapeMarkdownText(__headerNote)")}`));
+
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.equal(orders.evaluate("state.headerDetection"), null);
+  assert.doesNotMatch(orders.elements.get("statusPanel").textContent, /表头在第/);
+  const after = reportOf(orders);
+  assert.equal(after.report.headerDetection, null);
+  assert.doesNotMatch(after.html, /表头位置/);
+  assert.doesNotMatch(after.markdown, /表头位置/);
+
+  // The same scope importing again also replaces the previous detection.
+  const sameScope = await importStage3Fixture("门店报表.xlsx");
+  put(sameScope.context, "__orderRows", [{ 城市: "上海" }]);
+  sameScope.evaluate('commitTabularData(["城市"], __orderRows, "later.csv", beginImport())');
+  assert.equal(sameScope.evaluate("state.headerDetection"), null);
+});
+
+test("filtering and field configuration keep the header detection", async () => {
+  const scope = await importStage3Fixture("门店报表.xlsx");
+  const before = scope.evaluate("JSON.stringify(state.headerDetection)");
+  assert.equal(JSON.parse(before ?? "null")?.headerRowNumber, 4);
+  applyFilterState(scope, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(scope.evaluate("getAnalysisRows().length") < 29, true);
+  assert.equal(scope.evaluate("JSON.stringify(state.headerDetection)"), before);
+  scope.evaluate('stageFieldTypeChange("城市", "id"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate('getFieldProfile("城市").typeKey'), "id");
+  assert.equal(scope.evaluate("JSON.stringify(state.headerDetection)"), before);
+});
+
+test("legacy report snapshots without header detection still render", () => {
+  const scope = createScriptContext();
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).headerDetection"), null);
+  assert.doesNotMatch(scope.evaluate("buildHtmlReport({}, [])"), /表头位置/);
+  assert.doesNotMatch(scope.evaluate("buildMarkdownReport({})"), /表头位置/);
+});
+
+test("header errors add the title hint only when skipping was tried", async () => {
+  const numericTitle = importCsvTextWithPapa(csvLines([["2024", "", "", ""], STAGE3_GRADE_HEADER, ...STAGE3_GRADE_ROWS]));
+  assert.equal(numericTitle.elements.get("statusPanel").textContent, "CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。");
+
+  const vetoed = importCsvTextWithPapa(csvLines([["成绩单", ""], ["姓名", ""], ["学生1", "61"], ["学生2", "75"], ["学生3", "82"], ["学生4", "90"], ["学生5", "68"]]));
+  assert.equal(vetoed.elements.get("statusPanel").textContent, `CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。${TITLE_FALLBACK_HINT}`);
+
+  const excel = await importWorkbookFile(buildXlsxBuffer([{
+    name: "S1", rows: [["成绩单"], ["姓名"], ["学生1", 61], ["学生2", 75], ["学生3", 82], ["学生4", 90], ["学生5", 68]]
+  }]));
+  assert.equal(excel.elements.get("statusPanel").textContent, `工作表「S1」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
+});
+
+test("the title hint appears in the sheet selection panel for multi-sheet workbooks", async () => {
+  const scope = await importWorkbookFile(buildXlsxBuffer([
+    { name: "说明", rows: [["本工作簿为虚构数据"]] },
+    { name: "数据", rows: [["成绩单"], ["姓名"], ["学生1", 61], ["学生2", 75], ["学生3", 82], ["学生4", 90], ["学生5", 68]] }
+  ]));
+  scope.elements.get("excelSheetSelect").value = "数据";
+  scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.elements.get("sheetSelectionMessage").textContent,
+    `工作表「数据」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
 });

@@ -1031,3 +1031,23 @@ test("header detection skips a name row above distinct text pairs (已知残留�
   assert.equal(result.status, "skipped");
   assert.equal(result.headerRowNumber, 2);
 });
+
+test("skipped-row previews join non-empty cells and cut long text at 20 characters", () => {
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('formatSkippedRowPreview(["学校：一中", "日期：2024-06"])'), "学校：一中 日期：2024-06");
+  assert.equal(evaluate(`formatSkippedRowPreview(["${"表".repeat(20)}"])`), "表".repeat(20));
+  assert.equal(evaluate(`formatSkippedRowPreview(["${"表".repeat(21)}"])`), `${"表".repeat(20)}…`);
+  assert.equal(evaluate('formatSkippedRowPreview(["😀".repeat(21)])'), `${"😀".repeat(20)}…`);
+});
+
+test("the header note lists at most two skipped rows and adds 等 for more", () => {
+  const { evaluate } = createScriptContext();
+  const note = (detection) => evaluate(`formatHeaderDetectionNote(${JSON.stringify(detection)})`);
+  assert.equal(note(null), "");
+  assert.equal(note({ headerRowNumber: 2, skippedRows: [] }), "表头在第 2 行，已跳过上方 1 行。");
+  assert.equal(note({ headerRowNumber: 3, skippedRows: [{ rowNumber: 1, preview: "成绩单" }] }), "表头在第 3 行，已跳过上方 2 行：「成绩单」。");
+  assert.equal(
+    note({ headerRowNumber: 5, skippedRows: [{ rowNumber: 1, preview: "甲" }, { rowNumber: 2, preview: "乙" }, { rowNumber: 3, preview: "丙" }] }),
+    "表头在第 5 行，已跳过上方 4 行：「甲」「乙」等。"
+  );
+});

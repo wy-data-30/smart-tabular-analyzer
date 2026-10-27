@@ -122,12 +122,12 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const { fields, rows, numberFormatHints } = readExcelSheetTable(worksheet, sheetName);
+  const { fields, rows, numberFormatHints, headerDetection = null } = readExcelSheetTable(worksheet, sheetName);
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection);
 }
 
 // Reads one worksheet into { fields, rows, numberFormatHints } plus headerDetection
@@ -220,7 +220,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const headerPosition = findExcelHeaderPosition(rowPairs);
+  const { position: headerPosition, attempted: titleSkipAttempted } = findExcelHeaderPosition(rowPairs);
 
   // The row limit counts data rows below the header, not skipped title rows.
   if (rowPairs.length - 1 - headerPosition > IMPORT_LIMITS.maxRows) {
@@ -240,7 +240,12 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   }
 
   const headerCheck = checkExcelHeaderFields(headerPair, usedColumnIndexes);
-  if (headerCheck.error) throw new Error(excelHeaderErrorMessage(headerCheck.error, sheetName));
+  if (headerCheck.error) {
+    const message = excelHeaderErrorMessage(headerCheck.error, sheetName);
+    throw new Error(titleSkipAttempted
+      ? `${message}${formatTitleRowFallbackHint(firstRowNumber + headerPair.index)}`
+      : message);
+  }
   const { fields } = headerCheck;
 
   const rows = dataPairs
@@ -280,12 +285,20 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
 // Position in rowPairs of the header row. It stays 0 unless the first non-empty
 // row fails the header checks, detectHeaderRow() finds a header below title rows
 // within the first rows, and that row passes the same checks against every row.
+// attempted tells whether the first row was a skippable title row.
 function findExcelHeaderPosition(rowPairs) {
-  if (!findExcelHeaderErrorAt(rowPairs, 0)) return 0;
+  if (!findExcelHeaderErrorAt(rowPairs, 0)) return { position: 0, attempted: false };
   const sampleRows = rowPairs.slice(0, HEADER_SCAN_ROWS + HEADER_DETECTION_DATA_ROWS).map((pair) => pair.raw);
   const detection = detectHeaderRow(sampleRows, "excel");
-  if (detection.status !== "skipped" || !detection.headerIndex) return 0;
-  return findExcelHeaderErrorAt(rowPairs, detection.headerIndex) ? 0 : detection.headerIndex;
+  const accepted = detection.status === "skipped" && detection.headerIndex
+    && !findExcelHeaderErrorAt(rowPairs, detection.headerIndex);
+  return { position: accepted ? detection.headerIndex : 0, attempted: detection.attempted };
+}
+
+// Appended to a header error when the first non-empty row looked like a title
+// but no header row below it could be confirmed.
+function formatTitleRowFallbackHint(rowNumber) {
+  return `第 ${rowNumber} 行看起来像标题。如果表头不在第 ${rowNumber} 行，请删除表头上方的标题行后重新上传。`;
 }
 
 function findExcelHeaderErrorAt(rowPairs, position) {
@@ -412,8 +425,10 @@ function parseCsvText(text, sourceName, importId = beginImport(), retry = null) 
 }
 
 // Finds the header below title rows of a CSV whose first row failed the header
-// checks. Returns { offset, lineOffset, headerDetection } where offset is the
-// header row's first character and lineOffset the physical lines above it, or null.
+// checks. Returns { offset, lineOffset, headerDetection, titleHint }: offset is the
+// header row's first character and lineOffset the physical lines above it.
+// headerDetection is null when no header was found; titleHint is the fallback
+// hint for the first non-empty row, or "" when skipping was not tried.
 function findCsvHeaderBelowTitleRows(text) {
   const rows = [];
   const starts = [];
@@ -430,10 +445,13 @@ function findCsvHeaderBelowTitleRows(text) {
     }
   });
   const detection = detectHeaderRow(rows, "csv");
-  if (detection.status !== "skipped" || !detection.headerIndex) return null;
   const lineNumberAt = (offset) => 1 + (text.slice(0, offset).match(/\r\n|\r|\n/g) || []).length;
+  const firstIndex = Math.max(0, rows.findIndex((row) => countNonEmptyCells(row) > 0));
+  const titleHint = detection.attempted ? formatTitleRowFallbackHint(lineNumberAt(starts[firstIndex] ?? 0)) : "";
+  if (detection.status !== "skipped" || !detection.headerIndex) return { headerDetection: null, titleHint };
   const headerRowNumber = lineNumberAt(starts[detection.headerIndex]);
   return {
+    titleHint,
     offset: starts[detection.headerIndex],
     lineOffset: headerRowNumber - 1,
     headerDetection: {
@@ -448,18 +466,20 @@ function findCsvHeaderBelowTitleRows(text) {
   };
 }
 
-// On a CSV header error, re-parse once from the detected header row. Returns
-// false when no retry runs, so the caller shows its own error.
-function retryCsvBelowTitleRows(source, sourceName, importId, firstError) {
-  if (!source || source.retry) return false;
+// On a CSV header error, re-parse once from the detected header row. Returns the
+// error to show now (with the title hint when skipping was tried), or "" when the
+// re-parse took over; a failed re-parse then shows that same first error.
+function retryCsvBelowTitleRows(source, sourceName, importId, message) {
+  if (!source || source.retry) return message;
   const found = findCsvHeaderBelowTitleRows(source.text);
-  if (!found) return false;
+  const firstError = `${message}${found.titleHint}`;
+  if (!found.headerDetection) return firstError;
   parseCsvText(source.text.slice(found.offset), sourceName, importId, {
     lineOffset: found.lineOffset,
     headerDetection: found.headerDetection,
     firstError
   });
-  return true;
+  return "";
 }
 
 const CSV_HEADER_KEY_PREFIX = "__SMART_CSV_HEADER__";
@@ -590,7 +610,8 @@ function handleParsedData(results, sourceName, importId, source = null) {
   // A failed re-parse below skipped title rows shows the first parse's error.
   const fail = (message) => showError(retry ? retry.firstError : message, importId);
   const failHeader = (message) => {
-    if (!retryCsvBelowTitleRows(source, sourceName, importId, message)) fail(message);
+    const error = retryCsvBelowTitleRows(source, sourceName, importId, message);
+    if (error) fail(error);
   };
   const parseErrors = Array.isArray(results.errors) ? results.errors : [];
   const extraFieldError = parseErrors.find((error) => error.code === "TooManyFields");
@@ -662,7 +683,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
     return;
   }
 
-  commitTabularData(fields, rows, sourceName, importId, parseWarnings);
+  commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null);
 }
 
 // Header names that repeat after normalizing; blank names are never compared.
