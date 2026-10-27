@@ -33,11 +33,13 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | 路径 | 用途 |
 | --- | --- |
 | `tests/test-context.cjs` | 创建 VM 上下文和轻量 `FakeElement`，按 `index.html` 中的顺序逐个加载全部应用脚本（每个文件单独执行，共享同一个全局作用域）。返回的 `source` 是所有应用脚本按顺序拼接的文本，并导出文件列表 `APP_SCRIPT_FILES`。 |
-| `tests/data-processing.test.cjs` | 纯数据逻辑：数值/日期解析、字段与 ID 识别、缺失、重复、统计、IQR、筛选、去重和模板。 |
-| `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试。 |
+| `tests/data-processing.test.cjs` | 纯数据逻辑：数值/日期解析、字段与 ID 识别、缺失、重复、统计、IQR、筛选、去重、模板、`detectHeaderRow()` 的正例 / 反例 / 已知残留、Excel 行数上限，以及表头位置说明的摘要截断。 |
+| `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试；包括跳过表头上方标题行的端到端导入、文件行号换算、状态栏与报告的“表头位置”、`state.headerDetection` 的清空与保持，以及回退提示。 |
 | `tests/destructive-qa.test.cjs` | 空数据、异常表头、编码、极端数值、连续上传、反复筛选、报告后继续分析和 100,000 行压力测试。 |
 | `tests/core.test.cjs` | 启动自检、应用脚本顺序和顶层名字唯一性、DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
-| `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
+| `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；`stage3/` 见下文；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
+| `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，供人工核对，测试不读取。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 5 个夹具。 |
+| `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 5 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关。不在 CI 中运行。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
 测试环境不是完整浏览器：Chart.js、PapaParse、SheetJS、FileReader 或下载 API 会按测试需要注入替身。真实浏览器布局、触控交互、canvas 像素和 Excel/WPS 打开效果仍需手工回归。
@@ -69,6 +71,8 @@ test("new behavior", () => {
 ```
 
 如果新增 fixture，必须在测试中显式读取并断言；仅把文件放入 `tests/fixtures/` 不会让它进入 CI。
+
+`.gitattributes` 中的 `tests/fixtures/stage3/** -text` 不能删除：仓库设置了 `core.autocrlf=true` 时，Git 会把 CRLF 和 GBK 编码的 CSV 当作文本做换行转换，入库内容会变成 LF，CI（Linux）检出的字节就和本地不同，测试的前提也随之改变。新增需要保持原始字节的夹具时，放进这个目录，或在 `.gitattributes` 里为它单独加 `-text` 规则，并且要和夹具在同一个提交里、先改规则再 `git add`。提交后用 `git ls-files --eol <路径>` 确认显示 `attr/-text`，并用 sha256 比对提交前后的字节。
 
 ## 4. 常见失败原因
 

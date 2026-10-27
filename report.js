@@ -274,10 +274,16 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.1.5",
+    version: "v2.2.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
+    headerDetection: state.headerDetection
+      ? {
+        headerRowNumber: state.headerDetection.headerRowNumber,
+        skippedRows: state.headerDetection.skippedRows.map((row) => ({ ...row }))
+      }
+      : null,
     analysisTime: formatReportDateTime(analysisAt),
     analysisTimeIso: analysisAt.toISOString(),
     exportTime: formatReportDateTime(exportedAt),
@@ -482,9 +488,11 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.1.5",
+    version: reportData.version || "v2.2.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
+    // Snapshots from before v2.2.0 have no header detection.
+    headerDetection: reportData.headerDetection || null,
     analysisTime: reportData.analysisTime || "—",
     exportTime: reportData.exportTime || "—",
     dataScale: {
@@ -547,6 +555,10 @@ function buildHtmlReport(reportData, chartImages = []) {
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
   const sheetMeta = reportData.sheetName
     ? `<div><dt>工作表名称</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
+    : "";
+  const headerNote = formatHeaderDetectionNote(reportData.headerDetection);
+  const headerMeta = headerNote
+    ? `<div><dt>表头位置</dt><dd>${escapeHtml(headerNote)}</dd></div>`
     : "";
   const categorySections = reportData.categoryStats.length
     ? reportData.categoryStats.map((category) => `
@@ -632,6 +644,7 @@ function buildHtmlReport(reportData, chartImages = []) {
     <dl class="meta">
       <div><dt>文件名称</dt><dd>${escapeHtml(reportData.fileName)}</dd></div>
       ${sheetMeta}
+      ${headerMeta}
       <div><dt>分析时间</dt><dd>${escapeHtml(reportData.analysisTime)}</dd></div>
       <div><dt>报告生成时间</dt><dd>${escapeHtml(reportData.exportTime)}</dd></div>
     </dl>
@@ -744,6 +757,9 @@ function buildMarkdownReport(reportData) {
     "",
     `- 文件名称：${escapeMarkdownText(reportData.fileName)}`,
     ...(reportData.sheetName ? [`- 工作表名称：${escapeMarkdownText(reportData.sheetName)}`] : []),
+    ...(reportData.headerDetection
+      ? [`- 表头位置：${escapeMarkdownText(formatHeaderDetectionNote(reportData.headerDetection))}`]
+      : []),
     `- 分析时间：${escapeMarkdownText(reportData.analysisTime)}`,
     `- 报告生成时间：${escapeMarkdownText(reportData.exportTime)}`,
     "",

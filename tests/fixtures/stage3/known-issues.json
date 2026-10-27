@@ -1,0 +1,120 @@
+{
+  "_说明": "按构造方式手写，未参考任何工具输出。fileLine = 用户在 Excel/记事本里看到的第几行；dataRow = 表头以下从 1 开始的数据行序号（表头识别正确时）。",
+  "订单表.csv": {
+    "encoding": "GBK，无 BOM，CRLF",
+    "headerFileLine": 1,
+    "dataRows": 30,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "O1", "type": "重复主键", "field": "订单号", "value": "DD1005", "dataRows": [5, 18], "fileLines": [6, 19], "note": "两行数量/金额/备注不同，不是整行重复" },
+      { "id": "O2", "type": "带单位数字", "field": "金额", "value": "2200元", "dataRows": [4], "fileLines": [5] },
+      { "id": "O3", "type": "带单位数字", "field": "金额", "value": "3500元", "dataRows": [20], "fileLines": [21] },
+      { "id": "O4", "type": "货币格式（应正确转换）", "field": "金额", "value": "￥15,007 → 15007", "dataRows": [9], "fileLines": [10] },
+      { "id": "O5", "type": "货币格式（应正确转换）", "field": "金额", "value": "￥8,250 → 8250", "dataRows": [25], "fileLines": [26] },
+      { "id": "O6", "type": "占位符", "field": "数量", "value": "—", "dataRows": [11], "fileLines": [12] },
+      { "id": "O7", "type": "占位符", "field": "金额", "value": "N/A", "dataRows": [14], "fileLines": [15] },
+      { "id": "O8", "type": "占位符", "field": "下单日期", "value": "—", "dataRows": [16], "fileLines": [17] },
+      { "id": "O9", "type": "占位符", "field": "备注", "value": "N/A", "dataRows": [28], "fileLines": [29] },
+      { "id": "O10", "type": "占位符", "field": "备注", "value": "—", "dataRows": [29], "fileLines": [30] },
+      { "id": "O11", "type": "写法不一致", "field": "大区", "value": "华东 / 华东区", "dataRows": [4, 9, 13, 19, 25, 30], "fileLines": [5, 10, 14, 20, 26, 31], "note": "列出的是写成「华东区」的行" },
+      { "id": "O12", "type": "编码", "field": "（整个文件）", "value": "GBK 无 BOM，自动识别应回退到 GB18030 并正确显示中文", "dataRows": [], "fileLines": [] },
+      { "id": "O13", "type": "反例：表头在第 1 行", "field": "（整个文件）", "value": "不能误跳表头", "dataRows": [], "fileLines": [1] }
+    ],
+    "expectedTypes": [
+      { "field": "订单号", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "29/30=96.7%", "expected": "id", "reason": "字段名含「订单号」" },
+      { "field": "下单日期", "nonMissing": 30, "numericRate": "0/30", "dateRate": "29/30=96.7%", "uniqueRate": "21/30=70%", "expected": "date", "reason": "日期率≥80%；「—」1 个转换失败" },
+      { "field": "客户名称", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "6/30=20%", "expected": "category" },
+      { "field": "大区", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "5/30=16.7%", "expected": "category" },
+      { "field": "产品", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "5/30=16.7%", "expected": "category" },
+      { "field": "数量", "nonMissing": 30, "numericRate": "29/30=96.7%", "dateRate": "0/30", "uniqueRate": "29/30=96.7%", "expected": "numeric", "reason": "数值率≥80%（ID 规则要求数值率<70%）；「—」1 个转换失败" },
+      { "field": "金额", "nonMissing": 30, "numericRate": "27/30=90%", "dateRate": "0/30", "uniqueRate": "30/30=100%", "expected": "numeric", "reason": "2200元、3500元、N/A 转换失败，￥ 两个可转换" },
+      { "field": "备注", "nonMissing": 4, "numericRate": "0/4", "dateRate": "0/4", "uniqueRate": "4/4=100%", "expected": "category", "reason": "非空 4 个 <12，不触发唯一率 ID 规则；缺失 26" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 26, "formatProblems": 5 }
+  },
+  "成绩表.csv": {
+    "encoding": "UTF-8 BOM，CRLF",
+    "headerFileLine": 2,
+    "dataRows": 30,
+    "fileLineOf": "dataRow + 2",
+    "issues": [
+      { "id": "G1", "type": "标题行", "field": "（整行）", "value": "初二(3)班期中成绩,,,,,,,（补齐 7 个逗号）", "dataRows": [], "fileLines": [1] },
+      { "id": "G2", "type": "转换失败（文本占位）", "field": "数学", "value": "缺考", "dataRows": [12], "fileLines": [14] },
+      { "id": "G3", "type": "转换失败（文本占位）", "field": "物理", "value": "缺考", "dataRows": [7, 23], "fileLines": [9, 25] }
+    ],
+    "expectedTypes": [
+      { "field": "学号", "nonMissing": 30, "numericRate": "30/30", "dateRate": "0/30", "uniqueRate": "30/30=100%", "expected": "id", "reason": "字段名「学号」" },
+      { "field": "姓名", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "30/30=100%", "expected": "id", "reason": "唯一率规则：非空≥12、唯一率≥98%、数值率和日期率<70%" },
+      { "field": "性别", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "2/30", "expected": "category" },
+      { "field": "语文", "nonMissing": 30, "numericRate": "30/30", "dateRate": "0/30", "uniqueRate": "27/30=90%", "expected": "numeric" },
+      { "field": "数学", "nonMissing": 30, "numericRate": "29/30=96.7%", "dateRate": "0/30", "uniqueRate": "未预先计算（不影响结论：数值率≥70% 排除 ID）", "expected": "numeric" },
+      { "field": "英语", "nonMissing": 30, "numericRate": "30/30", "dateRate": "0/30", "uniqueRate": "未预先计算（同上）", "expected": "numeric" },
+      { "field": "物理", "nonMissing": 30, "numericRate": "28/30=93.3%", "dateRate": "0/30", "uniqueRate": "未预先计算（同上）", "expected": "numeric" },
+      { "field": "总分", "nonMissing": 30, "numericRate": "30/30", "dateRate": "0/30", "uniqueRate": "未预先计算（同上）", "expected": "numeric" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 0, "formatProblems": 3 }
+  },
+  "成绩表-标题无逗号.csv": {
+    "encoding": "UTF-8 BOM，CRLF",
+    "headerFileLine": 2,
+    "dataRows": 30,
+    "fileLineOf": "dataRow + 2",
+    "issues": [
+      { "id": "G1b", "type": "标题行", "field": "（整行）", "value": "初二(3)班期中成绩（不补逗号，该行只有 1 个字段）", "dataRows": [], "fileLines": [1] },
+      { "id": "G2", "type": "转换失败（文本占位）", "field": "数学", "value": "缺考", "dataRows": [12], "fileLines": [14] },
+      { "id": "G3", "type": "转换失败（文本占位）", "field": "物理", "value": "缺考", "dataRows": [7, 23], "fileLines": [9, 25] }
+    ],
+    "expectedTypes": "同 成绩表.csv",
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 0, "formatProblems": 3 }
+  },
+  "花名册.xlsx": {
+    "sheet": "花名册",
+    "headerFileLine": 1,
+    "dataRows": 30,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "R1", "type": "重复主键", "field": "工号", "value": "E1012 出现 3 次", "dataRows": [12, 13, 24], "fileLines": [13, 14, 25] },
+      { "id": "R2", "type": "整行重复", "field": "（全部字段）", "value": "第 13 个数据行与第 12 个完全相同", "dataRows": [13], "fileLines": [14] },
+      { "id": "R3", "type": "缺失", "field": "身份证号", "value": "空单元格", "dataRows": [8, 21], "fileLines": [9, 22] },
+      { "id": "R4", "type": "写法不一致（均可转换）", "field": "入职日期", "value": "文本 2021/3/5、2020/7/1", "dataRows": [5, 18], "fileLines": [6, 19] },
+      { "id": "R5", "type": "写法不一致（均可转换）", "field": "入职日期", "value": "文本 2021年3月5日、2019年12月2日", "dataRows": [9, 21], "fileLines": [10, 22] },
+      { "id": "R6", "type": "写法不一致（均可转换）", "field": "入职日期", "value": "文本 2021.03.05、2023.06.19", "dataRows": [14, 27], "fileLines": [15, 28] },
+      { "id": "R7", "type": "转换失败", "field": "月薪", "value": "面议", "dataRows": [3, 26], "fileLines": [4, 27] },
+      { "id": "R8", "type": "反例：表头在第 1 行", "field": "（整表）", "value": "不能误跳表头", "dataRows": [], "fileLines": [1] }
+    ],
+    "expectedTypes": [
+      { "field": "工号", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "28/30=93.3%", "expected": "id", "reason": "字段名「工号」" },
+      { "field": "姓名", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "28/30=93.3%", "expected": "category", "reason": "唯一率<98%" },
+      { "field": "部门", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "5/30", "expected": "category" },
+      { "field": "身份证号", "nonMissing": 28, "numericRate": "27/28=96.4%（末位 X 的 1 个不可转）", "dateRate": "0/28", "uniqueRate": "26/28（E1012 的 3 行同号）", "expected": "id", "reason": "字段名「身份证号」；缺失 2" },
+      { "field": "入职日期", "nonMissing": 30, "numericRate": "0/30", "dateRate": "30/30=100%", "uniqueRate": "未预先计算", "expected": "date", "reason": "24 个真日期 + 6 个可解析文本" },
+      { "field": "月薪", "nonMissing": 30, "numericRate": "28/30=93.3%", "dateRate": "0/30", "uniqueRate": "未预先计算", "expected": "numeric", "reason": "「面议」2 个转换失败" },
+      { "field": "手机号", "nonMissing": 30, "numericRate": "30/30", "dateRate": "0/30", "uniqueRate": "28/30", "expected": "id", "reason": "字段名「手机号」" }
+    ],
+    "expectedTotals": { "duplicateRows": 1, "totalMissing": 2, "formatProblems": 2 }
+  },
+  "门店报表.xlsx": {
+    "sheet": "销售汇总",
+    "headerFileLine": 4,
+    "dataRows": 29,
+    "fileLineOf": "dataRow + 4",
+    "issues": [
+      { "id": "S1", "type": "标题行（合并单元格 A1:H1）", "field": "（整行）", "value": "2024年各门店销售报表", "dataRows": [], "fileLines": [1] },
+      { "id": "S2", "type": "标题行（制表日期）", "field": "（整行）", "value": "制表日期：2024-08-01", "dataRows": [], "fileLines": [2] },
+      { "id": "S3", "type": "空行", "field": "（整行）", "value": "", "dataRows": [], "fileLines": [3] },
+      { "id": "S4", "type": "百分比格式（应识别为百分比）", "field": "毛利率", "value": "0.00% 格式", "dataRows": "1-29", "fileLines": "5-33" },
+      { "id": "S5", "type": "合计行（范围外，只记录现状）", "field": "门店编号 / 销售额 / 成本 / 毛利率", "value": "合计", "dataRows": [29], "fileLines": [33], "note": "会让销售额、成本各多 1 个异常值，并让门店名称、城市、开业日期、店长各多 1 个缺失" }
+    ],
+    "expectedTypes": [
+      { "field": "门店编号", "nonMissing": 29, "numericRate": "0/29", "dateRate": "0/29", "uniqueRate": "29/29", "expected": "id", "reason": "字段名含「编号」" },
+      { "field": "门店名称", "nonMissing": 28, "numericRate": "0/28", "dateRate": "0/28", "uniqueRate": "28/28=100%", "expected": "id", "reason": "唯一率规则" },
+      { "field": "城市", "nonMissing": 28, "numericRate": "0/28", "dateRate": "0/28", "uniqueRate": "5/28", "expected": "category" },
+      { "field": "开业日期", "nonMissing": 28, "numericRate": "0/28", "dateRate": "28/28", "uniqueRate": "28/28", "expected": "date" },
+      { "field": "销售额", "nonMissing": 29, "numericRate": "29/29", "dateRate": "0/29", "uniqueRate": "29/29", "expected": "numeric" },
+      { "field": "成本", "nonMissing": 29, "numericRate": "29/29", "dateRate": "0/29", "uniqueRate": "29/29", "expected": "numeric" },
+      { "field": "毛利率", "nonMissing": 29, "numericRate": "29/29", "dateRate": "0/29", "uniqueRate": "未预先计算", "expected": "numeric（numericFormat=percent）", "reason": "29 个数值单元格全是 0.00%" },
+      { "field": "店长", "nonMissing": 28, "numericRate": "0/28", "dateRate": "0/28", "uniqueRate": "26/28=92.9%", "expected": "category" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 4, "formatProblems": 0, "outliers": "销售额 1、成本 1（合计行）；毛利率未预先计算" }
+  }
+}

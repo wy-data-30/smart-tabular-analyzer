@@ -52,6 +52,28 @@ function numericAxisLabel(field, fallbackLabel) {
     : fallbackLabel;
 }
 
+// Longest preview of one skipped title row, counted in characters.
+const SKIPPED_ROW_PREVIEW_LENGTH = 20;
+// How many skipped rows the header note quotes before adding 等.
+const SKIPPED_ROW_PREVIEW_COUNT = 2;
+
+function formatSkippedRowPreview(cells) {
+  const characters = [...cells.join(" ")];
+  return characters.length > SKIPPED_ROW_PREVIEW_LENGTH
+    ? `${characters.slice(0, SKIPPED_ROW_PREVIEW_LENGTH).join("")}…`
+    : characters.join("");
+}
+
+// "表头在第 N 行，已跳过上方 K 行：「…」「…」。" for state.headerDetection, or "".
+// K counts every row above the header; only non-empty rows have a preview.
+function formatHeaderDetectionNote(headerDetection) {
+  if (!headerDetection) return "";
+  const { headerRowNumber, skippedRows = [] } = headerDetection;
+  const quoted = skippedRows.slice(0, SKIPPED_ROW_PREVIEW_COUNT).map((row) => `「${row.preview}」`).join("");
+  const more = skippedRows.length > SKIPPED_ROW_PREVIEW_COUNT ? "等" : "";
+  return `表头在第 ${headerRowNumber} 行，已跳过上方 ${headerRowNumber - 1} 行${quoted ? `：${quoted}${more}` : ""}。`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

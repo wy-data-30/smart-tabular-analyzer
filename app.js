@@ -13,6 +13,9 @@ const state = {
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
+  // null, or { headerRowNumber, skippedRows: [{ rowNumber, preview }] } when the
+  // import skipped title rows above the header. Only imports replace it.
+  headerDetection: null,
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -211,7 +214,9 @@ function updateWorkflowSteps() {
   setStep(dom.workflowStepExport, canExportReport() ? "current" : "pending", canExportReport() ? "可导出" : "等待分析");
 }
 
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null) {
+// headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
+// importer when title rows were skipped above the header, otherwise null.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -239,6 +244,15 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryFilterDraftValues = new Set();
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
+  state.headerDetection = headerDetection
+    ? {
+      headerRowNumber: headerDetection.headerRowNumber,
+      skippedRows: headerDetection.skippedRows.map((row) => ({
+        rowNumber: row.rowNumber,
+        preview: formatSkippedRowPreview(row.cells)
+      }))
+    }
+    : null;
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
@@ -254,11 +268,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.sourceName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
+  const headerNote = formatHeaderDetectionNote(state.headerDetection);
   if (state.parseWarnings.length) {
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter(Boolean)).size;
-    setStatus(`CSV 已载入，但发现 ${state.parseWarnings.length} 个解析警告${affectedRows ? `，涉及 ${affectedRows} 行` : ""}。请核对数据预览和字段数量。`, "warning");
+    setStatus(`CSV 已载入，但发现 ${state.parseWarnings.length} 个解析警告${affectedRows ? `，涉及 ${affectedRows} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning");
   } else {
-    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。`, "success");
+    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success");
   }
 
   renderOverview();
@@ -1500,6 +1515,7 @@ function resetAnalysisState() {
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);
+  state.headerDetection = null;
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
