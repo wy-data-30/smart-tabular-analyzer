@@ -218,11 +218,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
 
   const headerPair = rowPairs[0];
   const dataPairs = rowPairs.slice(1);
-  const maxColumns = rowPairs.reduce((max, pair) => Math.max(max, pair.formatted.length, pair.raw.length), 0);
-  const usedColumnIndexes = Array.from({ length: maxColumns }, (_, index) => index).filter((columnIndex) =>
-    !isMissing(headerPair.formatted[columnIndex])
-      || dataPairs.some((pair) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex]))
-  );
+  const usedColumnIndexes = getExcelUsedColumnIndexes(headerPair, dataPairs);
 
   if (usedColumnIndexes.length > IMPORT_LIMITS.maxColumns) {
     throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`);
@@ -232,22 +228,9 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const fields = usedColumnIndexes.map((columnIndex) => {
-    const formattedHeader = headerPair.formatted[columnIndex];
-    const rawHeader = headerPair.raw[columnIndex];
-    if (isMissing(formattedHeader)) {
-      throw new Error(`工作表「${sheetName}」的第 ${columnIndex + 1} 列缺少表头，请补充字段名后重新上传。`);
-    }
-    if (typeof rawHeader !== "string") {
-      throw new Error(`工作表「${sheetName}」未识别到有效文本表头；第 ${columnIndex + 1} 列首行不是字段名。`);
-    }
-    return normalizeFieldName(formattedHeader);
-  });
-
-  const duplicateFields = fields.filter((field, index) => fields.indexOf(field) !== index);
-  if (duplicateFields.length) {
-    throw new Error(`工作表「${sheetName}」包含重复表头「${duplicateFields[0]}」，请修改后重新上传。`);
-  }
+  const headerCheck = checkExcelHeaderFields(headerPair, usedColumnIndexes);
+  if (headerCheck.error) throw new Error(excelHeaderErrorMessage(headerCheck.error, sheetName));
+  const { fields } = headerCheck;
 
   const rows = dataPairs
     .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])))
@@ -270,6 +253,41 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     rows,
     numberFormatHints: buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readNumberFormats)
   };
+}
+
+// Columns that hold a header cell or any data value; empty trailing columns drop out.
+function getExcelUsedColumnIndexes(headerPair, dataPairs) {
+  const maxColumns = [headerPair, ...dataPairs]
+    .reduce((max, pair) => Math.max(max, pair.formatted.length, pair.raw.length), 0);
+  return Array.from({ length: maxColumns }, (_, index) => index).filter((columnIndex) =>
+    !isMissing(headerPair.formatted[columnIndex])
+      || dataPairs.some((pair) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex]))
+  );
+}
+
+// Excel header rules: every used column needs a non-empty text header, and the
+// trimmed names must be unique. Returns { fields } or { error }, checked column by column.
+function checkExcelHeaderFields(headerPair, usedColumnIndexes) {
+  const fields = [];
+  for (const columnIndex of usedColumnIndexes) {
+    const formattedHeader = headerPair.formatted[columnIndex];
+    if (isMissing(formattedHeader)) return { error: { code: "missingHeader", columnIndex } };
+    if (typeof headerPair.raw[columnIndex] !== "string") return { error: { code: "nonTextHeader", columnIndex } };
+    fields.push(normalizeFieldName(formattedHeader));
+  }
+  const duplicateFields = fields.filter((field, index) => fields.indexOf(field) !== index);
+  if (duplicateFields.length) return { error: { code: "duplicateHeader", field: duplicateFields[0] } };
+  return { fields };
+}
+
+function excelHeaderErrorMessage(error, sheetName) {
+  if (error.code === "missingHeader") {
+    return `工作表「${sheetName}」的第 ${error.columnIndex + 1} 列缺少表头，请补充字段名后重新上传。`;
+  }
+  if (error.code === "nonTextHeader") {
+    return `工作表「${sheetName}」未识别到有效文本表头；第 ${error.columnIndex + 1} 列首行不是字段名。`;
+  }
+  return `工作表「${sheetName}」包含重复表头「${error.field}」，请修改后重新上传。`;
 }
 
 function excelRowHasValue(row) {
@@ -497,9 +515,8 @@ function handleParsedData(results, sourceName, importId) {
   }
   const fieldPairs = allFieldPairs.filter((pair) => pair.clean !== "");
   const fields = fieldPairs.map((pair) => pair.clean);
-  const duplicateFields = [...new Set(
-    fields.filter((field, index) => fields.indexOf(field) !== index)
-  )];
+  const headerNames = allFieldPairs.map((pair) => pair.clean);
+  const duplicateFields = findDuplicateCsvHeaders(headerNames);
 
   if (duplicateFields.length) {
     showError(`CSV 表头规范化后存在重复字段：${duplicateFields.join("、")}。请修改表头后重试。`, importId);
@@ -511,9 +528,11 @@ function handleParsedData(results, sourceName, importId) {
     showError(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`, importId);
     return;
   }
-  const blankHeaderHasData = allFieldPairs
-    .filter((pair) => pair.clean === "")
-    .some((pair) => sourceRows.some((row) => !isMissing(row?.[pair.raw])));
+  const blankHeaderHasData = csvBlankHeaderHasData(
+    headerNames,
+    sourceRows,
+    (row, columnIndex) => row?.[allFieldPairs[columnIndex].raw]
+  );
   if (blankHeaderHasData) {
     showError("CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。", importId);
     return;
@@ -541,6 +560,130 @@ function handleParsedData(results, sourceName, importId) {
   }
 
   commitTabularData(fields, rows, sourceName, importId, parseWarnings);
+}
+
+// Header names that repeat after normalizing; blank names are never compared.
+function findDuplicateCsvHeaders(headerNames) {
+  const fields = headerNames.filter((name) => name !== "");
+  return [...new Set(fields.filter((field, index) => fields.indexOf(field) !== index))];
+}
+
+// Whether a column with a blank header holds data. readCell(row, columnIndex)
+// reads one cell, so parsed row objects and plain arrays share the rule.
+function csvBlankHeaderHasData(headerNames, dataRows, readCell) {
+  return headerNames.some((name, columnIndex) => name === ""
+    && dataRows.some((row) => !isMissing(readCell(row, columnIndex))));
+}
+
+// Header detection scans at most this many rows, starting at the first non-empty row.
+const HEADER_SCAN_ROWS = 10;
+// A column below a header candidate counts as numeric or date data from this share on.
+const HEADER_GUARD_TYPE_RATIO = 0.8;
+
+// Picks the header row when title rows sit above it. rows is a 2-D array: Excel
+// raw values, or CSV strings from PapaParse header:false. Pure: no DOM, no state.
+// - "unchanged": rows[0] passes the header checks and stays the header;
+// - "skipped": rows[headerIndex] is the header and every row above it is skipped;
+// - "fallback": keep the first non-empty row; attempted tells whether that row
+//   was a skippable title row, i.e. skipping was actually tried.
+function detectHeaderRow(rows, kind) {
+  const matrix = (Array.isArray(rows) ? rows : []).map((row) => (Array.isArray(row) ? row : []));
+  const firstIndex = Math.max(0, matrix.findIndex((row) => countNonEmptyCells(row) > 0));
+  const result = (status, headerIndex, attempted) => ({
+    status,
+    headerIndex,
+    skippedIndexes: status === "skipped" ? Array.from({ length: headerIndex }, (_, index) => index) : [],
+    attempted
+  });
+
+  if (!findHeaderRowError(matrix, firstIndex, kind)) {
+    return result(firstIndex === 0 ? "unchanged" : "skipped", firstIndex, false);
+  }
+  if (!isSkippableHeaderRow(matrix[firstIndex])) return result("fallback", firstIndex, false);
+
+  const lastIndex = Math.min(matrix.length, firstIndex + HEADER_SCAN_ROWS) - 1;
+  for (let index = firstIndex + 1; index <= lastIndex; index += 1) {
+    if (isSkippableHeaderRow(matrix[index])) continue;
+    const accepted = !findHeaderRowError(matrix, index, kind)
+      && modeNonEmptyCount(matrix.slice(index + 1)) >= 2
+      && !vetoesHeaderCandidate(matrix, index);
+    return accepted ? result("skipped", index, true) : result("fallback", firstIndex, true);
+  }
+  return result("fallback", firstIndex, true);
+}
+
+// The import's own header checks, applied with rows[headerIndex] as the header.
+// Returns an error code, or "" when the row would pass.
+function findHeaderRowError(rows, headerIndex, kind) {
+  const header = rows[headerIndex] || [];
+  const dataRows = rows.slice(headerIndex + 1);
+  if (kind === "excel") {
+    const toPair = (row) => ({ formatted: row, raw: row });
+    const headerPair = toPair(header);
+    const dataPairs = dataRows.map(toPair);
+    const usedColumnIndexes = getExcelUsedColumnIndexes(headerPair, dataPairs);
+    if (!usedColumnIndexes.length) return "emptySheet";
+    return checkExcelHeaderFields(headerPair, usedColumnIndexes).error?.code || "";
+  }
+  // PapaParse header mode reports TooManyFields for a row longer than the header.
+  if (dataRows.some((row) => row.length > header.length)) return "tooManyFields";
+  const headerNames = header.map(normalizeFieldName);
+  if (findDuplicateCsvHeaders(headerNames).length) return "duplicateHeader";
+  if (csvBlankHeaderHasData(headerNames, dataRows, (row, columnIndex) => row[columnIndex])) return "missingHeader";
+  return "";
+}
+
+// Rows a title area may hold: blank rows (CSV ",,," included), one text cell, or
+// two text cells where one is a "label：value" note. Numbers and dates are not text.
+function isSkippableHeaderRow(row) {
+  const values = (row || []).filter((value) => !isMissing(value));
+  if (values.length > 2 || !values.every(isHeaderTextValue)) return false;
+  return values.length < 2 || values.some((value) => /[:：]/.test(value));
+}
+
+function isHeaderTextValue(value) {
+  return typeof value === "string" && toNumber(value) === null && toDate(value) === null;
+}
+
+function countNonEmptyCells(row) {
+  return (row || []).filter((value) => !isMissing(value)).length;
+}
+
+// Most common non-empty cell count among non-blank rows; a tie takes the smaller count.
+function modeNonEmptyCount(rows) {
+  const frequencies = new Map();
+  rows.forEach((row) => {
+    const count = countNonEmptyCells(row);
+    if (count) frequencies.set(count, (frequencies.get(count) || 0) + 1);
+  });
+  let mode = 0;
+  let modeFrequency = 0;
+  frequencies.forEach((frequency, count) => {
+    if (frequency > modeFrequency || (frequency === modeFrequency && count < mode)) {
+      mode = count;
+      modeFrequency = frequency;
+    }
+  });
+  return mode;
+}
+
+// Rejects a data row taken for the header: a candidate cell that reads as a number
+// above a mostly numeric column, as a date above a mostly date column, or whose
+// trimmed value appears again in its column below.
+function vetoesHeaderCandidate(rows, headerIndex) {
+  const below = rows.slice(headerIndex + 1);
+  return rows[headerIndex].some((cell, columnIndex) => {
+    if (isMissing(cell)) return false;
+    const values = below.map((row) => row[columnIndex]).filter((value) => !isMissing(value));
+    if (!values.length) return false;
+    const mostly = (convert) => (
+      values.filter((value) => convert(value) !== null).length >= values.length * HEADER_GUARD_TYPE_RATIO
+    );
+    if (toNumber(cell) !== null && mostly(toNumber)) return true;
+    if (toDate(cell) !== null && mostly((value) => toDate(value))) return true;
+    const text = normalizeValue(cell);
+    return values.some((value) => normalizeValue(value) === text);
+  });
 }
 
 function normalizeFieldName(field) {

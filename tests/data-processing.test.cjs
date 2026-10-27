@@ -833,3 +833,158 @@ test("scenario templates use every selected mapping field", () => {
     ["channel", "device", "event"]
   );
 });
+
+// detectHeaderRow() only picks which row is the header; rows are written the way
+// PapaParse header:false (CSV strings) or sheet_to_json raw values (Excel) give them.
+function detectedHeader(matrix, kind) {
+  const { context, evaluate } = createScriptContext();
+  context.__headerMatrix = matrix;
+  context.__headerKind = kind;
+  const result = JSON.parse(evaluate("JSON.stringify(detectHeaderRow(__headerMatrix, __headerKind))"));
+  return { ...result, headerRowNumber: result.headerIndex + 1 };
+}
+
+const GRADE_HEADER = ["学号", "姓名", "语文", "数学"];
+const GRADE_ROWS = [["S01", "张三", "90", "85"], ["S02", "李四", "78", "92"], ["S03", "王五", "88", "70"]];
+const ATTENDANCE_HEADER = ["姓名", "部门", "出勤天数", "迟到次数"];
+const ATTENDANCE_ROWS = [["张三", "销售部", 22, 1], ["李四", "技术部", 21, 0], ["王五", "财务部", 20, 2]];
+
+test("header detection skips a CSV title row padded with commas", () => {
+  const result = detectedHeader([["初二(3)班期中成绩", "", "", ""], GRADE_HEADER, ...GRADE_ROWS], "csv");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 2);
+  assert.deepEqual(result.skippedIndexes, [0]);
+});
+
+test("header detection skips a CSV title row without commas", () => {
+  const result = detectedHeader([["初二(3)班期中成绩"], GRADE_HEADER, ...GRADE_ROWS], "csv");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 2);
+});
+
+test("header detection skips a title, a unit note and a blank row", () => {
+  const result = detectedHeader([["期中成绩", "", "", ""], ["单位：分", "", "", ""], ["", "", "", ""], GRADE_HEADER, ...GRADE_ROWS], "csv");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 4);
+  assert.deepEqual(result.skippedIndexes, [0, 1, 2]);
+});
+
+test("header detection skips an Excel merged title, report date and blank row", () => {
+  const result = detectedHeader([
+    ["门店报表", "", "", ""],
+    ["制表日期：2024-08-01", "", "", ""],
+    ["", "", "", ""],
+    ["门店", "城市", "销售额", "毛利率"],
+    ["A店", "上海", 862400, 0.3],
+    ["B店", "杭州", 735200, 0.28],
+    ["C店", "南京", 912800, 0.28]
+  ], "excel");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 4);
+});
+
+test("header detection skips a CSV row of delimiters only", () => {
+  const result = detectedHeader([["", "", "", ""], GRADE_HEADER, ...GRADE_ROWS], "csv");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 2);
+  assert.deepEqual(result.skippedIndexes, [0]);
+});
+
+test("header detection skips an Excel title row with a unit note", () => {
+  const result = detectedHeader([["考勤表", "单位：天", "", ""], ATTENDANCE_HEADER, ...ATTENDANCE_ROWS], "excel");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 2);
+});
+
+test("header detection skips an Excel title and a school/date row", () => {
+  const result = detectedHeader([
+    ["期末成绩", "", "", ""],
+    ["学校：一中", "日期：2024-06", "", ""],
+    ATTENDANCE_HEADER,
+    ...ATTENDANCE_ROWS
+  ], "excel");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 3);
+  assert.deepEqual(result.skippedIndexes, [0, 1]);
+});
+
+test("header detection keeps a valid first-row header and single-column files", () => {
+  const normal = detectedHeader([GRADE_HEADER, ...GRADE_ROWS], "csv");
+  assert.equal(normal.status, "unchanged");
+  assert.equal(normal.headerRowNumber, 1);
+  assert.deepEqual(normal.skippedIndexes, []);
+  const singleColumn = detectedHeader([["城市"], ["上海"], ["北京"], ["广州"]], "csv");
+  assert.equal(singleColumn.status, "unchanged");
+  assert.equal(singleColumn.headerRowNumber, 1);
+});
+
+test("header detection does not skip a header with one blank cell", () => {
+  const csv = detectedHeader([["姓名", "", "出勤天数", "迟到次数"], ["张三", "销售部", "22", "1"], ["李四", "技术部", "21", "0"]], "csv");
+  assert.equal(csv.status, "fallback");
+  assert.equal(csv.headerRowNumber, 1);
+  assert.equal(csv.attempted, false);
+});
+
+test("header detection falls back when the data below is a single column", () => {
+  const excel = detectedHeader([["城市", ""], ["上海", ""], ["北京", ""], ["广州", "待核实"], ["深圳", ""], ["杭州", ""]], "excel");
+  assert.equal(excel.status, "fallback");
+  assert.equal(excel.headerRowNumber, 1);
+  assert.equal(excel.attempted, true);
+  const csv = detectedHeader([["城市"], ["上海"], ["北京"], ["广州", "待核实"], ["深圳"], ["杭州"]], "csv");
+  assert.equal(csv.status, "fallback");
+  assert.equal(csv.headerRowNumber, 1);
+  assert.equal(csv.attempted, true);
+});
+
+test("header detection rejects a numeric candidate cell above a numeric column", () => {
+  const result = detectedHeader([["姓名", ""], ["学生1", "61"], ["学生2", "75"], ["学生3", "82"], ["学生4", "90"], ["学生5", "68"]], "csv");
+  assert.equal(result.status, "fallback");
+  assert.equal(result.headerRowNumber, 1);
+  assert.equal(result.attempted, true);
+});
+
+test("header detection rejects a candidate cell that repeats in its column", () => {
+  const departments = [["姓名", ""], ["学生1", "销售部"], ["学生2", "技术部"], ["学生3", "销售部"], ["学生4", "财务部"], ["学生5", "技术部"]];
+  for (const kind of ["csv", "excel"]) {
+    const result = detectedHeader(departments, kind);
+    assert.equal(result.status, "fallback", kind);
+    assert.equal(result.headerRowNumber, 1, kind);
+  }
+});
+
+test("header detection does not skip a two-cell first row without a colon", () => {
+  const blankScores = detectedHeader([["姓名", "性别", "", ""], ["张三", "男", "90", "85"], ["李四", "女", "78", "92"], ["王五", "男", "88", "70"]], "csv");
+  assert.equal(blankScores.status, "fallback");
+  assert.equal(blankScores.attempted, false);
+  const distinctText = detectedHeader([["姓名", "工号", "", ""], ["张三", "E01", "销售部", "上海"], ["李四", "E02", "技术部", "北京"], ["王五", "E03", "财务部", "广州"]], "csv");
+  assert.equal(distinctText.status, "fallback");
+  assert.equal(distinctText.attempted, false);
+  const dates = detectedHeader([
+    ["姓名", "部门", "", ""],
+    ["张三", "销售部", new Date(Date.UTC(2024, 0, 5)), 90],
+    ["李四", "技术部", new Date(Date.UTC(2024, 1, 6)), 85],
+    ["王五", "财务部", new Date(Date.UTC(2024, 2, 7)), 78]
+  ], "excel");
+  assert.equal(dates.status, "fallback");
+  assert.equal(dates.attempted, false);
+});
+
+test("header detection falls back when the header repeats on a later page", () => {
+  const result = detectedHeader([
+    ["期中成绩", "", "", ""],
+    GRADE_HEADER,
+    ...GRADE_ROWS,
+    GRADE_HEADER,
+    ["S04", "赵六", "81", "77"],
+    ["S05", "钱七", "69", "88"]
+  ], "csv");
+  assert.equal(result.status, "fallback");
+  assert.equal(result.headerRowNumber, 1);
+  assert.equal(result.attempted, true);
+});
+
+test("header detection skips a name row above distinct text pairs (已知残留，v2.3 手动选择表头行兜底)", () => {
+  const result = detectedHeader([["姓名", ""], ["学生1", "备注1"], ["学生2", "备注2"], ["学生3", "备注3"], ["学生4", "备注4"]], "csv");
+  assert.equal(result.status, "skipped");
+  assert.equal(result.headerRowNumber, 2);
+});
