@@ -23,7 +23,7 @@
 ### 导入状态
 
 - `beginImport()`、`activeImportId`、`activeFileReader` 和 `resetAnalysisState()` 防止连续上传时旧任务覆盖新数据。
-- `commitTabularData()` 是 CSV 和 Excel 的共同提交入口，负责建立所有派生状态。
+- `commitTabularData()` 是 CSV 和 Excel 的共同提交入口，负责建立所有派生状态。它的第 9 个参数 `rowNumbers` 与 `rows` 一一对应；新增生成行对象的导入路径时要同时产出文件行号，不要往行对象里加字段（行号存在 `state.sourceRowNumbers`，经 `getSourceRowNumber()` 读取）。
 - 修改这些函数必须覆盖空文件、多次上传、多工作表和运行时依赖失败。
 
 ### 原始数据与筛选数据
@@ -42,6 +42,7 @@
 ### 质量与统计
 
 - 重复行通过完整字段顺序和值类型生成精确键。
+- ID 字段重复值用 `normalizeValue()` 比较（去首尾空格、区分大小写），缺失值不参与，基于原始行，导入和字段配置变化时重算、筛选不重算。疑似非唯一的阈值（`ID_MOSTLY_REPEATED_*`）和列出上限（`ID_DUPLICATE_*`）是 `quality.js` 里的常量，修改时同步测试和 `docs/ARCHITECTURE.md`；“其中 N 行内容完全相同”复用 `buildExactRowKey()`，不要另写一套整行比较。
 - 异常值使用 `Q1 - 1.5 * IQR` 和 `Q3 + 1.5 * IQR`。
 - 标准差当前按总体标准差计算。
 - 极端有限数值通过缩放求和和直方图计算避免 `Infinity`；不要退回直接 `max - min` 或无保护求和。
@@ -76,7 +77,7 @@
    ```
 
 4. 从同一个包中取得许可证文件，替换 `vendor/licenses/` 中对应的文件并核对许可证类型。
-5. 同步修改 `tests/core.test.cjs` 中的文件名，运行完整回归，并在浏览器中实际加载页面。
+5. 同步修改 `tests/core.test.cjs` 中的文件名，运行完整回归，并在浏览器中实际加载页面。升级 PapaParse 时，还要对照新版源码确认 `findCsvRecordLineNumbers()` 依赖的两条行为没变：`skipEmptyLines: true` 跳过的是只有一个空字符串的记录、并且在取表头之前过滤；字符串输入时 `step` 同步调用，`meta.cursor` 是这条记录结束（含换行）之后的位置。stage3 夹具和行号测试要全部通过。
 6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
 
 不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。

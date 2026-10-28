@@ -274,7 +274,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.2.0",
+    version: "v2.3.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -320,6 +320,10 @@ function buildReportData(now = new Date()) {
         outlierCount: stat.outlierCount,
         lowerBound: formatFieldNumber(stat.field, stat.lowerBound),
         upperBound: formatFieldNumber(stat.field, stat.upperBound)
+      })),
+      idDuplicates: state.idDuplicates.map((item) => ({
+        ...item,
+        values: item.values.map((value) => ({ ...value, rowNumbers: [...value.rowNumbers] }))
       }))
     },
     numericStats,
@@ -488,7 +492,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.2.0",
+    version: reportData.version || "v2.3.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -529,7 +533,9 @@ function normalizeReportSnapshot(reportData = {}) {
       missingByField: Array.isArray(quality.missingByField)
         ? quality.missingByField
         : Array.isArray(quality.fields) ? quality.fields : [],
-      outliers: Array.isArray(quality.outliers) ? quality.outliers : []
+      outliers: Array.isArray(quality.outliers) ? quality.outliers : [],
+      // Snapshots from before v2.3.0 have no ID duplicate check: null leaves it out.
+      idDuplicates: Array.isArray(quality.idDuplicates) ? quality.idDuplicates : null
     },
     numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
       ...item,
@@ -550,6 +556,38 @@ function normalizeReportSnapshot(reportData = {}) {
   };
 }
 
+const REPORT_ID_DUPLICATE_HEADERS = ["字段", "重复值", "出现次数", "文件行号", "说明"];
+
+// Plain-text rows and notes of the report's ID duplicate section: listed values and
+// mostly repeated fields as table rows, then overflow and clean-field notes.
+function buildReportIdDuplicateSection(idDuplicates) {
+  if (!idDuplicates.length) return { rows: [], notes: ["未识别到 ID 字段。"] };
+  const rows = [];
+  const notes = [];
+  const cleanFields = [];
+  idDuplicates.forEach((item) => {
+    if (item.mostlyRepeated) {
+      rows.push([item.field, "—", "—", "—", formatMostlyRepeatedIdHint(item)]);
+      return;
+    }
+    if (!item.values.length) {
+      cleanFields.push(item.field);
+      return;
+    }
+    item.values.forEach((value) => rows.push([
+      item.field,
+      value.value,
+      value.count,
+      formatRowNumberList(value.rowNumbers, value.count),
+      formatIdenticalRows(value.identicalRowCount, value.identicalGroupCount)
+    ]));
+    const overflow = formatIdDuplicateOverflow(item.duplicateValueCount, item.values.length);
+    if (overflow) notes.push(`「${item.field}」${overflow}`);
+  });
+  if (cleanFields.length) notes.push(formatCleanIdFieldsNote(cleanFields, rows.length > 0));
+  return { rows, notes };
+}
+
 function buildHtmlReport(reportData, chartImages = []) {
   reportData = normalizeReportSnapshot(reportData);
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
@@ -559,6 +597,16 @@ function buildHtmlReport(reportData, chartImages = []) {
   const headerNote = formatHeaderDetectionNote(reportData.headerDetection);
   const headerMeta = headerNote
     ? `<div><dt>表头位置</dt><dd>${escapeHtml(headerNote)}</dd></div>`
+    : "";
+  const idDuplicates = reportData.quality.idDuplicates;
+  const idSummary = idDuplicates
+    ? `；ID 重复字段：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong>`
+    : "";
+  const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
+  const idSectionHtml = idSection
+    ? `<h3>ID 字段重复值</h3>
+    ${idSection.rows.length ? buildHtmlReportTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows, "") : ""}
+    ${idSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
     : "";
   const categorySections = reportData.categoryStats.length
     ? reportData.categoryStats.map((category) => `
@@ -692,7 +740,7 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>。</p>
+    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}。</p>
     <h3>各字段缺失情况</h3>
     ${buildHtmlReportTable(
       ["字段", "类型", "缺失值", "缺失率"],
@@ -705,6 +753,7 @@ function buildHtmlReport(reportData, chartImages = []) {
       reportData.quality.outliers.map((item) => [item.field, item.outlierCount, item.lowerBound, item.upperBound]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
+    ${idSectionHtml}
   </section>
   <section>
     <h2>数值字段描述性统计</h2>
@@ -752,6 +801,16 @@ function buildHtmlReportTable(headers, rows, emptyMessage) {
 
 function buildMarkdownReport(reportData) {
   reportData = normalizeReportSnapshot(reportData);
+  const idDuplicates = reportData.quality.idDuplicates;
+  const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
+  const idSectionLines = idSection
+    ? [
+      "### ID 字段重复值",
+      "",
+      ...(idSection.rows.length ? [buildMarkdownTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows), ""] : []),
+      ...idSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
+    ]
+    : [];
   const lines = [
     "# 数据分析报告",
     "",
@@ -812,6 +871,7 @@ function buildMarkdownReport(reportData) {
     `- 缺失值总数：${reportData.quality.totalMissing}`,
     `- 重复行：${reportData.quality.duplicateRows}`,
     `- 解析警告：${reportData.quality.parseWarningCount}`,
+    ...(idDuplicates ? [`- ID 重复字段：${countListedIdDuplicateFields(idDuplicates)}`] : []),
     "",
     "### 各字段缺失情况",
     "",
@@ -831,6 +891,7 @@ function buildMarkdownReport(reportData) {
       )
       : "未识别到数值字段，暂无可用数值统计。",
     "",
+    ...idSectionLines,
     "## 数值字段描述性统计",
     "",
     reportData.numericStats.length

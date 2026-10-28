@@ -62,6 +62,15 @@ test("CSV encoding and parsed rows preserve Chinese headers and values", () => {
 
   const papaStub = {
     parse(text, options) {
+      if (options.header === false) {
+        // The second, line-number pass: one synchronous step per line, like PapaParse.
+        let cursor = 0;
+        text.split("\n").forEach((line) => {
+          cursor = Math.min(text.length, cursor + line.length + 1);
+          options.step({ data: line.split(","), errors: [], meta: { cursor } });
+        });
+        return;
+      }
       context.__papaOptions = {
         header: options.header,
         skipEmptyLines: options.skipEmptyLines,
@@ -1219,9 +1228,11 @@ const STAGE3_FIXTURES = path.join(__dirname, "fixtures", "stage3");
 async function importStage3Fixture(fileName) {
   const scope = createExcelContext();
   let papaCalls = 0;
+  const papaHeaderOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
     parse(...args) {
       papaCalls += 1;
+      papaHeaderOptions.push(args[1]?.header);
       return Papa.parse(...args);
     }
   });
@@ -1235,7 +1246,7 @@ async function importStage3Fixture(fileName) {
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
   });
   await scope.evaluate("parseDataFile(__stage3File)");
-  return { ...scope, papaCalls: () => papaCalls };
+  return { ...scope, papaCalls: () => papaCalls, papaHeaderOptions: () => [...papaHeaderOptions] };
 }
 
 function importedSummary(evaluate) {
@@ -1257,7 +1268,8 @@ test("a header in the first row of the order fixture imports as before", async (
     duplicateRows: 0,
     totalMissing: 26
   });
-  assert.equal(scope.papaCalls(), 1);
+  assert.equal(scope.papaCalls(), 2);
+  assert.equal(scope.papaHeaderOptions()[1], false);
 });
 
 test("a header in the first row of the roster fixture imports as before", async () => {
@@ -1536,4 +1548,418 @@ test("the title hint appears in the sheet selection panel for multi-sheet workbo
   scope.evaluate("analyzeSelectedExcelSheet()");
   assert.equal(scope.elements.get("sheetSelectionMessage").textContent,
     `工作表「数据」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
+});
+
+// File line numbers of data rows: the row a user sees in Excel, or the physical
+// line (CR, LF and CRLF each end one) where a CSV record starts.
+function sourceRowNumbers(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.rows.map((row) => getSourceRowNumber(row)))"));
+}
+
+const lineRange = (first, last) => Array.from({ length: last - first + 1 }, (_, index) => first + index);
+
+async function importCsvFile(text, fileName = "lines.csv") {
+  const scope = createExcelContext();
+  let papaCalls = 0;
+  const countingPapa = Object.assign(Object.create(Papa), {
+    parse(...args) {
+      papaCalls += 1;
+      return Papa.parse(...args);
+    }
+  });
+  put(scope.context, "Papa", countingPapa);
+  scope.context.window.Papa = countingPapa;
+  const bytes = Buffer.from(text, "utf8");
+  put(scope.context, "__csvFile", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+  await scope.evaluate("parseDataFile(__csvFile)");
+  return { ...scope, papaCalls: () => papaCalls };
+}
+
+test("Excel row numbers follow the !ref start and skip blank rows inside the data", async () => {
+  const worksheet = XLSX.utils.aoa_to_sheet([["编号", "名称"], ["A1", "x"], ["A2", "y"], ["", ""], ["A1", "z"], ["A3", "w"]], { origin: "B5" });
+  worksheet["!ref"] = "B3:C10"; // rows 3-4 are blank inside the used range, row 8 is a blank data row
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S1");
+  const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+
+  const { context, evaluate } = createExcelContext();
+  put(context, "__offsetBuffer", buffer);
+  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheetTable(readExcelWorkbook(__offsetBuffer).Sheets.S1, \"S1\"))"));
+  assert.deepEqual(table.rowNumbers, [6, 7, 9, 10]);
+
+  const imported = await importWorkbookFile(buffer);
+  assert.deepEqual(sourceRowNumbers(imported.evaluate), [6, 7, 9, 10]);
+});
+
+test("stage3 Excel fixtures map every row to its worksheet row", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.deepEqual(sourceRowNumbers(store.evaluate), lineRange(5, 33));
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(sourceRowNumbers(roster.evaluate), lineRange(2, 31));
+});
+
+test("stage3 CSV fixtures map every row to its file line", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(sourceRowNumbers(orders.evaluate), lineRange(2, 31));
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.deepEqual(sourceRowNumbers(grades.evaluate), lineRange(3, 32), fileName);
+  }
+});
+
+// Title row, blank line under the header, a quoted line break, a delimiter-only row
+// and a whitespace-only row; the data rows start on lines 4, 5, 9 and 11.
+const LINE_NUMBER_CSV_LINES = [
+  "期中成绩",
+  "学号,姓名,备注",
+  "",
+  "S01,张三,",
+  "S02,李四,\"第一行",
+  "第二行\"",
+  ",,",
+  "   ",
+  "S01,张三,",
+  "",
+  "S03,王五,ok"
+];
+
+test("CSV row numbers are the same for LF, CR-only and CRLF with a BOM", async () => {
+  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "﻿"]]) {
+    const scope = await importCsvFile(`${bom}${LINE_NUMBER_CSV_LINES.join(linebreak)}${linebreak}`);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => row[\"学号\"]))")), ["S01", "S02", "S01", "S03"], label);
+    assert.deepEqual(sourceRowNumbers(scope.evaluate), [4, 5, 9, 11], label);
+  }
+});
+
+test("a quoted line break inside a CSV header moves the first data row to line 3", async () => {
+  const scope = await importCsvFile("\"a\nb\",c\n1,2\n3,4\n");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.fields)")), ["a\nb", "c"]);
+  assert.deepEqual(sourceRowNumbers(scope.evaluate), [3, 4]);
+});
+
+test("CSV row numbers are all null when the line pass does not match the parsed rows", () => {
+  const { context, evaluate } = createScriptContext();
+  const papaStub = {
+    parse(text, options) {
+      if (options.header === false) {
+        // One record fewer than the main parse returned.
+        options.step({ data: ["姓名"], errors: [], meta: { cursor: 3 } });
+        options.step({ data: ["张三"], errors: [], meta: { cursor: 6 } });
+        return;
+      }
+      const fields = ["姓名"].map(options.transformHeader);
+      options.complete({ errors: [], meta: { fields, delimiter: ",", linebreak: "\n" }, data: [{ [fields[0]]: "张三" }, { [fields[0]]: "李四" }] });
+    }
+  };
+  context.Papa = papaStub;
+  context.window.Papa = papaStub;
+  evaluate('parseCsvText("姓名\\n张三\\n李四\\n", "mismatch.csv", beginImport())');
+  assert.equal(evaluate("state.rows.length"), 2);
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, null]);
+});
+
+test("rows that did not come through an import have no row number", () => {
+  const { context, evaluate } = createScriptContext();
+  put(context, "__plainRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  evaluate('commitTabularData(["城市"], __plainRows, "plain.csv", beginImport())');
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, null]);
+
+  put(context, "__numberedRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  evaluate('commitTabularData(["城市"], __numberedRows, "numbered.csv", beginImport(), [], "", null, null, [7, 9])');
+  assert.deepEqual(sourceRowNumbers(evaluate), [7, 9]);
+
+  evaluate('state.rows = [{ 城市: "广州" }, __numberedRows[0]]');
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, 7]);
+  evaluate("resetAnalysisState()");
+  assert.equal(evaluate("getSourceRowNumber(__numberedRows[0])"), null);
+});
+
+// Guards recorded on the code before row numbers existed: these files must report
+// exactly the same errors and parse warnings, and an over-limit file is parsed once.
+test("CSV edge files keep their errors and parse warnings", () => {
+  const cases = [
+    ["a,b\r\n", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
+    ["", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
+    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 2 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
+      { row: null, code: "UndetectableDelimiter", message: "Unable to auto-detect delimiting character; defaulted to ','" },
+      { row: 2, code: "TooFewFields", message: "Too few fields: expected 2 fields but parsed 1" }
+    ]],
+    ["a,b\r\n1,2,3\r\n", "status-panel error", "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。", []]
+  ];
+  for (const [text, className, status, warnings] of cases) {
+    const scope = importCsvTextWithPapa(text);
+    const panel = scope.elements.get("statusPanel");
+    assert.equal(panel.className, className, JSON.stringify(text));
+    assert.equal(panel.textContent, status, JSON.stringify(text));
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)")), warnings, JSON.stringify(text));
+  }
+});
+
+// ID duplicate detection on the original rows (state.idDuplicates).
+function idDuplicates(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.idDuplicates)"));
+}
+
+const listedValues = (item) => item.values.map(({ value, count, rowNumbers, identicalRowCount }) => [value, count, rowNumbers, identicalRowCount]);
+
+test("the order fixture reports DD1005 twice on lines 6 and 19", async () => {
+  const { evaluate } = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(idDuplicates(evaluate), [{
+    field: "订单号",
+    nonMissingCount: 30,
+    distinctCount: 29,
+    uniqueRatio: 29 / 30,
+    mostlyRepeated: false,
+    duplicateValueCount: 1,
+    values: [{ value: "DD1005", count: 2, rowNumbers: [6, 19], identicalRowCount: 0, identicalGroupCount: 0 }]
+  }]);
+});
+
+test("the roster fixture reports one value three times in each ID field", async () => {
+  const { evaluate } = await importStage3Fixture("花名册.xlsx");
+  const summary = idDuplicates(evaluate);
+  assert.deepEqual(summary.map((item) => item.field), ["工号", "身份证号", "手机号"]);
+  assert.deepEqual(summary.map(listedValues), [
+    [["E1012", 3, [13, 14, 25], 2]],
+    [["990101199005160123", 3, [13, 14, 25], 2]],
+    [["13800010012", 3, [13, 14, 25], 2]]
+  ]);
+  assert.deepEqual(summary.map((item) => item.values[0].identicalGroupCount), [1, 1, 1]);
+});
+
+test("the grade and store fixtures have no ID duplicates", async () => {
+  for (const [fileName, fields] of [["成绩表.csv", ["学号", "姓名"]], ["成绩表-标题无逗号.csv", ["学号", "姓名"]], ["门店报表.xlsx", ["门店编号", "门店名称"]]]) {
+    const summary = idDuplicates((await importStage3Fixture(fileName)).evaluate);
+    assert.deepEqual(summary.map((item) => item.field), fields, fileName);
+    assert.ok(summary.every((item) => !item.mostlyRepeated && item.duplicateValueCount === 0 && !item.values.length), fileName);
+  }
+});
+
+test("user and session IDs in the behavior example are mostly repeated, event IDs are listed", async () => {
+  const text = fs.readFileSync(path.join(__dirname, "..", "examples", "sample-user-behavior.csv"), "utf8");
+  const summary = idDuplicates((await importCsvFile(text, "sample-user-behavior.csv")).evaluate);
+  assert.deepEqual(summary.map((item) => [item.field, item.mostlyRepeated, item.values.length]), [
+    ["事件ID", false, 2],
+    ["用户ID", true, 0],
+    ["会话ID", true, 0]
+  ]);
+  assert.deepEqual(listedValues(summary[0]), [["EV-00026", 2, [27, 120], 2], ["EV-00065", 2, [66, 121], 2]]);
+  assert.deepEqual(summary.slice(1).map((item) => [item.distinctCount, item.nonMissingCount]), [[46, 119], [30, 120]]);
+});
+
+test("an Excel number and the same text are one ID value", async () => {
+  const scope = await importWorkbookFile(buildXlsxBuffer([{
+    name: "S1", rows: [["工号", "部门"], [1012, "销售"], ["1012", "销售"], [1013, "技术"], ["001012", "销售"]]
+  }]));
+  assert.deepEqual(listedValues(idDuplicates(scope.evaluate)[0]), [["1012", 2, [2, 3], 2]]);
+});
+
+test("long ID duplicate lists stop at 10 values and 10 row numbers", async () => {
+  // 40 unique IDs keep the unique share at 52 / 77, so the field is not mostly repeated.
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const scope = await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`);
+  const [summary] = idDuplicates(scope.evaluate);
+  put(scope.context, "__longSummary", summary);
+  assert.equal(scope.evaluate("formatRowNumberList(__longSummary.values[0].rowNumbers, __longSummary.values[0].count)"), "2、3、4、5、6、7、8、9、10、11 等 15 个");
+  assert.equal(scope.evaluate("formatIdDuplicateOverflow(__longSummary.duplicateValueCount, __longSummary.values.length)"), "共 12 个重复值，只列出前 10 个");
+});
+
+// 工号 repeats once; 城市 has three values over 12 rows.
+const ID_CONFIG_CSV = ["工号,城市,金额", ...Array.from({ length: 12 }, (_, index) => `${index === 11 ? "E01" : `E${String(index + 1).padStart(2, "0")}`},${["上海", "北京", "广州"][index % 3]},${100 + index}`)].join("\r\n");
+
+test("ID duplicates follow field configuration but not filters", async () => {
+  const scope = await importCsvFile(`${ID_CONFIG_CSV}\r\n`);
+  const fieldsWithResults = () => idDuplicates(scope.evaluate).map((item) => item.field);
+  assert.deepEqual(fieldsWithResults(), ["工号"]);
+  assert.deepEqual(listedValues(idDuplicates(scope.evaluate)[0]), [["E01", 2, [2, 13], 0]]);
+
+  scope.evaluate('stageFieldTypeChange("城市", "id"); applyFieldConfiguration()');
+  assert.deepEqual(fieldsWithResults(), ["工号", "城市"]);
+  assert.equal(idDuplicates(scope.evaluate)[1].mostlyRepeated, true);
+
+  scope.evaluate('stageFieldTypeChange("工号", "category"); applyFieldConfiguration()');
+  assert.deepEqual(fieldsWithResults(), ["城市"]);
+
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fieldsWithResults(), ["工号"]);
+
+  const before = scope.evaluate("JSON.stringify(state.idDuplicates)");
+  applyFilterState(scope, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(scope.evaluate("getAnalysisRows().length"), 4);
+  assert.equal(scope.evaluate("JSON.stringify(state.idDuplicates)"), before);
+});
+
+test("a later import without ID fields clears the previous ID duplicates", async () => {
+  const scope = await importStage3Fixture("订单表.csv");
+  assert.equal(idDuplicates(scope.evaluate).length, 1);
+  put(scope.context, "__cityRows", [{ 城市: "上海" }, { 城市: "上海" }]);
+  scope.evaluate('commitTabularData(["城市"], __cityRows, "cities.csv", beginImport())');
+  assert.deepEqual(idDuplicates(scope.evaluate), []);
+  scope.evaluate("beginImport()");
+  assert.deepEqual(idDuplicates(scope.evaluate), []);
+});
+
+test("a CSV over the row limit still fails before any line-number pass", async () => {
+  const text = ["值", ...Array.from({ length: 100001 }, (_, index) => String(index))].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "over.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
+  assert.equal(scope.papaCalls(), 1);
+});
+
+// ID duplicates on the quality page (#idDuplicateDetails) and in reports.
+const idDetails = (scope) => scope.elements.get("idDuplicateDetails").innerHTML;
+const behaviorCsv = () => fs.readFileSync(path.join(__dirname, "..", "examples", "sample-user-behavior.csv"), "utf8");
+
+test("the quality page has a static ID duplicate container in the dom map", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
+  assert.match(quality, /<h3 class="subsection-title">ID 字段重复值<\/h3>\s*<div id="idDuplicateDetails"/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('Object.keys(dom).includes("idDuplicateDetails")'), true);
+});
+
+test("the ID duplicate pill counts listed fields after the existing pills", async () => {
+  const pillTexts = (scope) => [...scope.elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill[^"]*">([^<]*)<\/span>/g)].map((match) => match[1]);
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(pillTexts(orders).map((text) => text.split("：")[0]), ["缺失值总数", "重复行", "格式问题", "异常值字段", "ID 重复字段"]);
+  assert.deepEqual(qualityPill(orders.elements, "ID 重复字段"), { tone: "warning", text: "ID 重复字段：1" });
+  const grades = await importStage3Fixture("成绩表.csv");
+  assert.deepEqual(qualityPill(grades.elements, "ID 重复字段"), { tone: "success", text: "ID 重复字段：0" });
+  // 用户ID and 会话ID are mostly repeated, so only 事件ID counts.
+  const behavior = await importCsvFile(behaviorCsv(), "sample-user-behavior.csv");
+  assert.deepEqual(qualityPill(behavior.elements, "ID 重复字段"), { tone: "warning", text: "ID 重复字段：1" });
+});
+
+test("the quality page lists each ID field's duplicate values in its own table", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  const html = idDetails(roster);
+  ["工号", "身份证号", "手机号"].forEach((field) => assert.ok(html.includes(`<table aria-label="${field} 的重复值">`), field));
+  assert.match(html, /<th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
+  assert.ok(html.includes("<td>E1012</td><td>3</td><td>13、14、25</td><td>其中 2 行内容完全相同</td>"));
+
+  const behavior = await importCsvFile(behaviorCsv(), "sample-user-behavior.csv");
+  put(behavior.context, "__hintItem", idDuplicates(behavior.evaluate)[1]);
+  assert.ok(idDetails(behavior).includes(behavior.evaluate("escapeHtml(formatMostlyRepeatedIdHint(__hintItem))")));
+  assert.ok(!idDetails(behavior).includes('aria-label="用户ID 的重复值"'));
+
+  const grades = await importStage3Fixture("成绩表.csv");
+  assert.ok(idDetails(grades).includes("ID 字段没有重复值（已检查：学号、姓名）"));
+
+  const none = createScriptContext();
+  commitRows(none, ["城市"], [{ 城市: "上海" }, { 城市: "上海" }], "cities.csv");
+  assert.ok(idDetails(none).includes("未识别到 ID 字段。"));
+
+  const mixed = createScriptContext();
+  commitRows(mixed, ["学号", "订单号"], [{ 学号: "S1", 订单号: "D1" }, { 学号: "S2", 订单号: "D1" }], "mixed.csv");
+  assert.ok(idDetails(mixed).includes('<table aria-label="订单号 的重复值">'));
+  assert.ok(idDetails(mixed).includes("其余 ID 字段没有重复值（已检查：学号）"));
+  assert.ok(idDetails(mixed).includes("<td>D1</td><td>2</td><td>—</td><td></td>"));
+});
+
+test("ID duplicate details show without numeric fields, escape data and note long lists", async () => {
+  const textOnly = createScriptContext();
+  commitRows(textOnly, ["<i>编号</i>", "姓名"], [{ "<i>编号</i>": "<b>x</b>", 姓名: "甲" }, { "<i>编号</i>": "<b>x</b>", 姓名: "乙" }], "text-only.csv");
+  assert.match(textOnly.elements.get("outlierTable").innerHTML, /未识别到数值字段/);
+  const html = idDetails(textOnly);
+  assert.ok(html.includes("<td>&lt;b&gt;x&lt;/b&gt;</td><td>2</td>"));
+  assert.ok(html.includes("&lt;i&gt;编号&lt;/i&gt;"));
+  assert.doesNotMatch(html, /<b>x<\/b>|<i>编号/);
+
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const long = await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`);
+  assert.ok(idDetails(long).includes("<td>S000</td><td>15</td><td>2、3、4、5、6、7、8、9、10、11 等 15 个</td>"));
+  assert.ok(idDetails(long).includes("共 12 个重复值，只列出前 10 个"));
+
+  long.evaluate("beginImport()");
+  assert.equal(idDetails(long), "");
+});
+
+test("reports add an ID duplicate section after the outliers and count it in the summary", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  const { report, html, markdown } = reportOf(roster);
+  assert.deepEqual(report.quality.idDuplicates, idDuplicates(roster.evaluate));
+  assert.ok(html.includes("；解析警告：<strong>0</strong>；ID 重复字段：<strong>3</strong>。</p>"));
+  const htmlSection = html.slice(html.indexOf("<h3>ID 字段重复值</h3>"), html.indexOf("数值字段描述性统计"));
+  assert.ok(html.indexOf("<h3>数值异常值</h3>") < html.indexOf("<h3>ID 字段重复值</h3>"));
+  assert.match(htmlSection, /<th>字段<\/th><th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
+  assert.ok(htmlSection.includes("<td>工号</td><td>E1012</td><td>3</td><td>13、14、25</td><td>其中 2 行内容完全相同</td>"));
+
+  assert.ok(markdown.includes("- 解析警告：0\n- ID 重复字段：3\n"));
+  assert.ok(markdown.indexOf("### 数值异常值") < markdown.indexOf("### ID 字段重复值"));
+  assert.ok(markdown.indexOf("### ID 字段重复值") < markdown.indexOf("## 数值字段描述性统计"));
+  assert.ok(markdown.includes("| 字段 | 重复值 | 出现次数 | 文件行号 | 说明 |"));
+  assert.ok(markdown.includes("| 工号 | E1012 | 3 | 13、14、25 | 其中 2 行内容完全相同 |"));
+});
+
+test("report ID duplicates show mostly repeated fields, overflow, clean fields and no ID fields", async () => {
+  const behavior = await importCsvFile(behaviorCsv(), "sample-user-behavior.csv");
+  const behaviorReport = reportOf(behavior);
+  put(behavior.context, "__hintItem", idDuplicates(behavior.evaluate)[1]);
+  const hint = behavior.evaluate("formatMostlyRepeatedIdHint(__hintItem)");
+  assert.ok(behaviorReport.html.includes(`<td>用户ID</td><td>—</td><td>—</td><td>—</td><td>${behavior.evaluate("escapeHtml(formatMostlyRepeatedIdHint(__hintItem))")}</td>`));
+  assert.ok(behaviorReport.markdown.includes(`| 用户ID | — | — | — | ${behavior.evaluate(`escapeMarkdownCell(${JSON.stringify(hint)})`)} |`));
+  assert.ok(behaviorReport.html.includes("<td>事件ID</td><td>EV-00026</td><td>2</td><td>27、120</td><td>其中 2 行内容完全相同</td>"));
+  assert.ok(behaviorReport.html.includes("；ID 重复字段：<strong>1</strong>。"));
+
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const long = reportOf(await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`));
+  assert.ok(long.html.includes("<p>「学号」共 12 个重复值，只列出前 10 个</p>"));
+  assert.ok(long.markdown.includes("「学号」共 12 个重复值，只列出前 10 个"));
+
+  const grades = reportOf(await importStage3Fixture("成绩表.csv"));
+  const gradeSection = grades.html.slice(grades.html.indexOf("<h3>ID 字段重复值</h3>"), grades.html.indexOf("数值字段描述性统计"));
+  assert.ok(gradeSection.includes("<p>ID 字段没有重复值（已检查：学号、姓名）</p>"));
+  assert.doesNotMatch(gradeSection, /<table>/);
+  assert.ok(grades.markdown.includes("### ID 字段重复值\n\nID 字段没有重复值（已检查：学号、姓名）\n"));
+  assert.ok(grades.html.includes("；ID 重复字段：<strong>0</strong>。"));
+
+  const none = createScriptContext();
+  commitRows(none, ["城市"], [{ 城市: "上海" }, { 城市: "北京" }], "cities.csv");
+  const noneReport = reportOf(none);
+  assert.deepEqual(noneReport.report.quality.idDuplicates, []);
+  assert.ok(noneReport.html.includes("<p>未识别到 ID 字段。</p>"));
+  assert.ok(noneReport.markdown.includes("### ID 字段重复值\n\n未识别到 ID 字段。\n"));
+});
+
+test("report ID duplicate values are escaped for HTML and Markdown", () => {
+  const scope = createScriptContext();
+  const value = "<b>x</b>|y\nz";
+  commitRows(scope, ["编号", "姓名"], [{ 编号: value, 姓名: "甲" }, { 编号: value, 姓名: "乙" }], "escape.csv");
+  const { html, markdown } = reportOf(scope);
+  assert.ok(html.includes("<td>编号</td><td>&lt;b&gt;x&lt;/b&gt;|y\nz</td><td>2</td><td>—</td><td></td>"));
+  assert.doesNotMatch(html, /<b>x<\/b>/);
+  assert.ok(markdown.includes(`| 编号 | ${scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`)} | 2 | — |  |`));
+  assert.ok(markdown.includes("&lt;b&gt;x&lt;\\/b&gt;\\|y<br>z"));
+});
+
+test("legacy report snapshots without ID duplicates leave the section out", () => {
+  const scope = createScriptContext();
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).quality.idDuplicates"), null);
+  const legacy = { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0, outliers: [{ field: "金额", outlierCount: 1, lowerBound: "1", upperBound: "9" }] } };
+  put(scope.context, "__legacyQuality", legacy);
+  const html = scope.evaluate("buildHtmlReport(__legacyQuality, [])");
+  const markdown = scope.evaluate("buildMarkdownReport(__legacyQuality)");
+  assert.doesNotMatch(html, /ID 字段重复值|ID 重复字段/);
+  assert.doesNotMatch(markdown, /ID 字段重复值|ID 重复字段/);
+  assert.ok(html.includes("；解析警告：<strong>0</strong>。</p>"));
+  assert.ok(html.includes("<td>金额</td><td>1</td><td>1</td><td>9</td>"));
+  assert.ok(markdown.includes("- 解析警告：0\n\n### 各字段缺失情况"));
+  assert.ok(markdown.includes("| 金额 | 1 | 1 | 9 |"));
 });

@@ -10,12 +10,18 @@ const state = {
   qualityNumericStats: [],
   categoryStats: [],
   duplicateRows: 0,
+  // buildIdDuplicateSummary() of the original rows; imports and field
+  // configuration rebuild it, filters do not.
+  idDuplicates: [],
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
   // null, or { headerRowNumber, skippedRows: [{ rowNumber, preview }] } when the
   // import skipped title rows above the header. Only imports replace it.
   headerDetection: null,
+  // Row object -> file row (Excel row, or the CSV line where the record starts),
+  // set only by commitTabularData(); read it through getSourceRowNumber().
+  sourceRowNumbers: new WeakMap(),
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -86,6 +92,7 @@ const dom = {
   qualitySummary: document.getElementById("qualitySummary"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  idDuplicateDetails: document.getElementById("idDuplicateDetails"),
   numericStatsTable: document.getElementById("numericStatsTable"),
   categoryStats: document.getElementById("categoryStats"),
   numericChartField: document.getElementById("numericChartField"),
@@ -216,7 +223,8 @@ function updateWorkflowSteps() {
 
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null) {
+// rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -253,11 +261,16 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
       }))
     }
     : null;
+  state.sourceRowNumbers = new WeakMap();
+  if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
+    rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
+  }
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.duplicateRows = countDuplicateRows(rows, fields);
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -291,6 +304,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   resetTemplateResults("字段识别已完成。请选择分析模板并映射字段。");
   updateExportButtons();
   showResultsWorkspace();
+}
+
+// File row of a row object from the current import, or null for rows that did not
+// come through commitTabularData() or an import without row numbers.
+function getSourceRowNumber(row) {
+  return state.sourceRowNumbers.get(row) ?? null;
 }
 
 function renderOverview() {
@@ -919,6 +938,7 @@ function refreshFilteredAnalysis() {
 }
 
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -950,12 +970,16 @@ function renderQuality() {
   const duplicateClass = state.duplicateRows === 0 ? "success" : "warning";
   const conversionFailureTotal = state.profiles.reduce((sum, profile) => sum + (profile.conversionFailureCount || 0), 0);
   const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
+  const listedIdFieldCount = countListedIdDuplicateFields(state.idDuplicates);
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
     <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
+    <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">ID 重复字段：${formatInteger(listedIdFieldCount)}</span>
   `;
+  // Before the outlier table, which returns early when there is no numeric field.
+  renderIdDuplicateDetails();
 
   dom.qualityTable.innerHTML = `
     <thead>
@@ -1005,6 +1029,38 @@ function renderQuality() {
       `).join("")}
     </tbody>
   `;
+}
+
+// One table per ID field with listed duplicates, a hint per mostly repeated field,
+// and a closing note naming the ID fields without duplicates.
+function renderIdDuplicateDetails() {
+  if (!state.idDuplicates.length) {
+    dom.idDuplicateDetails.innerHTML = `<p class="id-duplicate-note">未识别到 ID 字段。</p>`;
+    return;
+  }
+  const reported = state.idDuplicates.filter((item) => item.mostlyRepeated || item.values.length);
+  const cleanFields = state.idDuplicates.filter((item) => !reported.includes(item)).map((item) => item.field);
+  dom.idDuplicateDetails.innerHTML = [
+    ...reported.map((item) => {
+      if (item.mostlyRepeated) {
+        return `<p class="id-duplicate-note warning">${escapeHtml(formatMostlyRepeatedIdHint(item))}</p>`;
+      }
+      const overflow = formatIdDuplicateOverflow(item.duplicateValueCount, item.values.length);
+      return `
+        <div class="id-duplicate-field">
+          <p class="id-duplicate-field-name">${escapeHtml(item.field)}</p>
+          <div class="table-wrap" tabindex="0" aria-label="${escapeHtml(item.field)} 的重复值表，可横向滚动">
+            <table aria-label="${escapeHtml(item.field)} 的重复值">
+              <thead><tr><th>重复值</th><th>出现次数</th><th>文件行号</th><th>说明</th></tr></thead>
+              <tbody>${item.values.map((value) => `<tr><td>${escapeHtml(value.value)}</td><td>${formatInteger(value.count)}</td><td>${escapeHtml(formatRowNumberList(value.rowNumbers, value.count))}</td><td>${escapeHtml(formatIdenticalRows(value.identicalRowCount, value.identicalGroupCount))}</td></tr>`).join("")}</tbody>
+            </table>
+          </div>
+          ${overflow ? `<p class="id-duplicate-note">${escapeHtml(overflow)}</p>` : ""}
+        </div>
+      `;
+    }),
+    cleanFields.length ? `<p class="id-duplicate-note">${escapeHtml(formatCleanIdFieldsNote(cleanFields, reported.length > 0))}</p>` : ""
+  ].join("");
 }
 
 function renderNumericStats() {
@@ -1512,10 +1568,12 @@ function resetAnalysisState() {
   state.qualityNumericStats = [];
   state.categoryStats = [];
   state.duplicateRows = 0;
+  state.idDuplicates = [];
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);
   state.headerDetection = null;
+  state.sourceRowNumbers = new WeakMap();
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
@@ -1564,6 +1622,7 @@ function resetAnalysisState() {
   dom.qualitySummary.innerHTML = "";
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
+  dom.idDuplicateDetails.innerHTML = "";
   dom.numericStatsTable.innerHTML = "";
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";

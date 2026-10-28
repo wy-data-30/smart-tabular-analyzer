@@ -363,7 +363,8 @@ assert.deepEqual(JSON.parse(excelData), {
   rows: [
     { 订单编号: "A-001", 地区: "华东", 销售额: "1200" },
     { 订单编号: "A-002", 地区: "华南", 销售额: "980" }
-  ]
+  ],
+  rowNumbers: [3, 4]
 });
 
 const excelPrecisionResult = JSON.parse(evaluate(`JSON.stringify(buildExcelTabularData(

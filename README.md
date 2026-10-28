@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.2.0
+**Current release:** v2.3.0
 
 ## Language
 
@@ -28,6 +28,7 @@ The project is a static website with no backend service, database, account syste
 - Preview the first 10 rows and summarize the dataset size, field composition, missing values, and duplicate rows.
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
 - Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
+- Check fields of type ID for duplicate values: the quality page and reports list up to 10 duplicate values per field with how often each appears, the file rows it appears on (the Excel row, or the CSV line where the record starts), and how many of those rows are identical. ID columns whose values mostly repeat, such as a user ID in an event log, get a short note instead of a list.
 - Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
 - Apply categorical, numeric, and date filters; run grouped analysis; or use scenario templates for common structured datasets.
 - Produce data-grounded observations without inferring external business context; trend observations compare record counts and flag a possibly incomplete last month or year, and the category observation skips fields whose values are too scattered.
@@ -46,7 +47,7 @@ Upload CSV or Excel files, or start immediately with the built-in sample data.
 
 ### Data Quality
 
-Review missing values, duplicate rows, format problems, and IQR-based numeric outliers in one view.
+Review missing values, duplicate rows, format problems, IQR-based numeric outliers, and duplicate ID values in one view.
 
 ![Smart Tabular Analyzer data quality checks](./assets/data-quality.png)
 
@@ -132,7 +133,7 @@ npm run test:regression
 ├── profiling.js                 # Field type detection and field profiles
 ├── format.js                    # Display formatting and HTML escaping
 ├── stats.js                     # Descriptive stats, IQR, grouping, trends
-├── quality.js                   # Conversion failures, duplicates, missing rates
+├── quality.js                   # Conversion failures, duplicates, ID duplicates, missing rates
 ├── app.js                       # State, DOM map, refresh paths, rendering
 ├── importer.js                  # CSV / Excel import
 ├── templates.js                 # Scenario templates
@@ -162,6 +163,9 @@ npm run test:regression
 - Multi-row headers are not supported, total rows such as “合计” are treated as data, and several tables on one worksheet are not supported.
 - The header itself must still be unique and non-empty for every column that holds data, and Excel headers must be text cells; empty, headerless, protected, or structurally irregular worksheets may be rejected.
 - Excel percentage formats are detected from the first 1,000 data rows below the header; other number formats such as currency are not read.
+- ID duplicates compare values after trimming spaces, with case kept. Placeholder text such as N/A or — in an ID column is not treated as missing, so repeated placeholders are listed as duplicate values.
+- Excel cells are read by their stored value: an ID shown as 001012 through a number format is checked and shown as 1012, and the number 1012 and the text 1012 count as the same ID.
+- CSV row numbers count text lines, as a plain-text editor shows them. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.

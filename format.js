@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -72,6 +72,34 @@ function formatHeaderDetectionNote(headerDetection) {
   const quoted = skippedRows.slice(0, SKIPPED_ROW_PREVIEW_COUNT).map((row) => `「${row.preview}」`).join("");
   const more = skippedRows.length > SKIPPED_ROW_PREVIEW_COUNT ? "等" : "";
   return `表头在第 ${headerRowNumber} 行，已跳过上方 ${headerRowNumber - 1} 行${quoted ? `：${quoted}${more}` : ""}。`;
+}
+
+// "6、19", plus " 等 15 个" when totalCount is more than the numbers shown. Any row
+// without a number shows "—" instead of a partial list.
+function formatRowNumberList(rowNumbers, totalCount = rowNumbers.length) {
+  if (!rowNumbers.length || rowNumbers.some((rowNumber) => rowNumber === null)) return "—";
+  const list = rowNumbers.join("、");
+  return totalCount > rowNumbers.length ? `${list} 等 ${totalCount} 个` : list;
+}
+
+// The note on one duplicate ID value: how many of its rows repeat a whole row.
+function formatIdenticalRows(rowCount, groupCount) {
+  if (!rowCount) return "";
+  return `其中 ${rowCount} 行内容完全相同${groupCount > 1 ? `（分 ${groupCount} 组）` : ""}`;
+}
+
+function formatIdDuplicateOverflow(totalCount, listedCount) {
+  return totalCount > listedCount ? `共 ${totalCount} 个重复值，只列出前 ${listedCount} 个` : "";
+}
+
+// Names the ID fields without duplicates; afterOthers when other ID fields were reported first.
+function formatCleanIdFieldsNote(fields, afterOthers = false) {
+  return `${afterOthers ? "其余 " : ""}ID 字段没有重复值（已检查：${fields.join("、")}）`;
+}
+
+// Shown instead of the value list for a mostly repeated ID field (plain text).
+function formatMostlyRepeatedIdHint({ field, distinctCount, nonMissingCount, uniqueRatio }) {
+  return `「${field}」的值大多重复出现（${formatInteger(distinctCount)} 个不同值，共 ${formatInteger(nonMissingCount)} 行，唯一率 ${formatPercent(uniqueRatio)}），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。`;
 }
 
 function escapeHtml(value) {
