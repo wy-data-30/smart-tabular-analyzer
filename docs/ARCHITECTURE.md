@@ -21,9 +21,9 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 | --- | --- | --- |
 | 1 | `parsing.js` | 单元格值的缺失判断与解析：把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
-| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，以及 HTML 转义。 |
+| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。 |
-| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、缺失率等级，以及质量页使用的原始数据数值统计。 |
+| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、缺失率等级，以及质量页使用的原始数据数值统计。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览、字段、质量、统计、图表和自定义分析的渲染。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。 |
 | 8 | `templates.js` | 场景模板：模板定义、字段映射表单、各模板的分析计算和结果渲染。 |
@@ -48,9 +48,9 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 ├── style.css                   # 页面样式与响应式规则
 ├── parsing.js                  # 缺失判断，数值和日期解析
 ├── profiling.js                # 字段类型识别和字段 profile
-├── format.js                   # 显示格式化和 HTML 转义
+├── format.js                   # 显示格式化、表头位置与 ID 重复值文字、HTML 转义
 ├── stats.js                    # 描述统计、IQR、分组、趋势、直方图
-├── quality.js                  # 转换失败、重复行、缺失率等级
+├── quality.js                  # 转换失败、重复行、ID 重复值、缺失率等级
 ├── app.js                      # state / dom、三条刷新路径、页面渲染
 ├── importer.js                 # CSV / Excel 导入和导入并发保护
 ├── templates.js                # 场景模板
@@ -100,7 +100,7 @@ flowchart LR
 
 1. `state.rows` 是导入后原始数据的事实来源；筛选和去重不得改写它。
 2. 普通分析统一通过 `getAnalysisRows()` 读取当前范围。
-3. 质量页始终基于原始 `state.rows`；筛选不会改变缺失、重复和异常值口径。
+3. 质量页始终基于原始 `state.rows`；筛选不会改变缺失、重复、ID 重复值和异常值口径。
 4. 字段类型修正只更新 profile，不改写原始单元格；转换发生在统计时。
 5. 每次新导入必须通过 `beginImport()` 生成新的导入 ID，旧异步结果不得提交。
 6. Chart.js 实例创建前必须销毁旧实例，全部实例统一登记在 `state.charts`。
@@ -123,7 +123,8 @@ flowchart LR
 | 当前分析范围 | `filteredRows`, `filterSourceRows`, `filters` | 当前筛选结果、来源身份保护和已应用条件 |
 | 字段配置 | `profiles`, `fieldTypeDrafts` | 自动识别结果、已应用类型和未应用草稿 |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照 |
-| 质量信息 | `duplicateRows`, `totalMissing`, `parseWarnings` | 原始数据重复、缺失和 CSV 解析警告 |
+| 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告 |
+| 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选和去重结果与 `rows` 共享行对象，所以同样能查到 |
 | 表头检测 | `headerDetection` | `null`，或 `{ headerRowNumber, skippedRows: [{ rowNumber, preview }] }`：导入时跳过了表头上方的标题行才有值。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 清空；筛选和字段配置两条刷新路径不改它 |
 | 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待状态、当前读取器和导入版本号 |
 | 来源与完成状态 | `sourceFileName`, `sourceSheetName`, `sourceType`, `analysisCompletedAt` | 报告元信息和导出门禁 |
@@ -134,7 +135,8 @@ flowchart LR
 - `beginImport()`：递增 `activeImportId`、取消旧读取、清空旧分析并锁定导入控件。
 - `isCurrentImport(importId)`：判断异步结果是否仍属于当前导入。
 - `abortActiveFileRead()`：中止仍在运行的 `FileReader`。
-- `commitTabularData(...)`：成功导入的统一提交点；写入状态、生成派生数据并触发首轮渲染。
+- `commitTabularData(...)`：成功导入的统一提交点；写入状态、生成派生数据并触发首轮渲染。第 9 个参数 `rowNumbers`（默认 `null`）与 `rows` 一一对应，长度一致时才写入 `sourceRowNumbers`。
+- `getSourceRowNumber(row)`：返回行对象的文件行号；没经过 `commitTabularData()`（例如测试直接给 `state.rows` 赋值）或导入没给行号时返回 `null`。
 - `getAnalysisRows()`：只有 `filterSourceRows === state.rows` 时才返回 `filteredRows`，否则回退到原始行。
 - `refreshFilteredAnalysis()`：筛选后重算当前范围的统计、结论、图表和导出状态。
 - `rebuildAnalysisFromProfiles()`：字段类型提交后清除筛选，并重建依赖字段类型的全部结果。
@@ -171,18 +173,22 @@ flowchart LR
 | `parseCsvText(text, sourceName, importId, retry)` | 以表头模式调用 PapaParse；`retry` 只在跳过标题行后的那一次重新解析时传入 |
 | `handleParsedData(results, sourceName, importId, source)` | 校验 PapaParse 结果，规范化字段和行；表头类错误时尝试跳过标题行重试一次 |
 | `findCsvHeaderBelowTitleRows(text)` / `retryCsvBelowTitleRows(...)` | CSV 的表头行检测和切片重试，见下文“表头行检测” |
+| `findCsvRecordLineNumbers(text, meta, dataRowCount)` | CSV 的第二遍扫描，求每条数据记录的起始文件行号，见下文“数据行的文件行号” |
+| `lineNumbersAtOffsets(text, offsets)` | 把文本偏移量换算成文件行号，表头检测和行号扫描共用 |
 | `detectHeaderRow(rows, kind)` | CSV 与 Excel 共用的表头行检测纯函数 |
 | `encodeCsvHeaderForParser()` / `decodeCsvHeaderFromParser()` | 用唯一内部键保护重复、空白及 `__proto__` 等特殊表头 |
 | `normalizeFieldName()` / `normalizeParsedRow()` | 去除表头 BOM 和空格，并生成无原型行对象 |
 | `readFileAsArrayBuffer(file, importId)` | 通过 `FileReader` 或 `file.arrayBuffer()` 读取完整文件 |
 | `commitTabularData(...)` | 接收最终标准化数据并提交到应用状态 |
 
-PapaParse 当前配置为：
+主解析的 PapaParse 配置为：
 
 - `header: true`
 - `skipEmptyLines: true`
 - `preview: 100001`
 - `worker: false`
+
+导入成功、即将提交的 CSV 还会再调用一次 `Papa.parse` 求文件行号（`header: false`，见下文“数据行的文件行号”）；主解析的选项和回调不变。
 
 关闭 Worker 是有意行为：`transformHeader` 是函数，无法由 PapaParse Worker 克隆；保留主线程解析可以继续执行项目自己的特殊表头和重复表头检查。
 
@@ -193,7 +199,7 @@ PapaParse 当前配置为：
 - 单列 CSV 的 `UndetectableDelimiter` 不作为错误。
 - 表头去 BOM、去首尾空格后必须唯一。
 - 空表头下存在数据时拒绝导入；完全空的尾列可忽略。
-- 空数据行被过滤；最终必须至少有一个字段和一行数据。
+- 空数据行被过滤，它们的行号也一起去掉；最终必须至少有一个字段和一行数据。
 - 非致命 PapaParse 问题最多保存 20 条到 `parseWarnings`。
 - 前三类表头错误（数据列多于表头、空表头下有数据、重复表头）会先尝试表头行检测，见下文。
 
@@ -201,17 +207,31 @@ PapaParse 当前配置为：
 
 表头上方的标题行、说明行和空行由 `detectHeaderRow()` 自动跳过，CSV 和 Excel 共用同一套规则：
 
-- **触发时机**：只有第一个非空行在现有表头校验中报错时才运行。Excel 是“缺少表头”“未识别到有效文本表头”“重复表头”；CSV 是 `TooManyFields`、“空表头下有数据”“重复表头”。第一个非空行能通过校验的文件完全走原来的路径，CSV 也只调用一次 `Papa.parse`。
+- **触发时机**：只有第一个非空行在现有表头校验中报错时才运行。Excel 是“缺少表头”“未识别到有效文本表头”“重复表头”；CSV 是 `TooManyFields`、“空表头下有数据”“重复表头”。第一个非空行能通过校验的文件完全走原来的路径：CSV 的主解析只调用一次 `Papa.parse`，不做表头检测的扫描（提交前另有一遍求行号的扫描，见下文“数据行的文件行号”）。
 - **输入 / 输出**：二维数组（Excel 传 `sheet_to_json` 的原始值，CSV 传 PapaParse `header: false` 的字符串）和 `kind`；返回 `{ status: "unchanged" | "skipped" | "fallback", headerIndex, skippedIndexes, attempted }`。它是纯函数，不碰 DOM 和 `state`。
 - **扫描范围**：从第一个非空行起，最多 `HEADER_SCAN_ROWS`（10）行。
 - **可跳过的行**：空行（含 CSV 里只有分隔符的行）；只有 1 个非空格且是文本；只有 2 个非空格、都是文本、且至少一格含 `:` 或 `：`。“文本”指值是字符串，并且 `toNumber()` 和 `toDate()` 都解析不出来；Excel 的数字和日期单元格不算文本。第一个非空行本身不可跳过时直接回退，`attempted` 为 `false`。
 - **候选表头**：第一个非空行之后第一个不可跳过的行，必须同时满足：通过与导入相同的表头校验（`findHeaderRowError()` 复用 `checkExcelHeaderFields()`、`findDuplicateCsvHeaders()`、`csvBlankHeaderHasData()`；CSV 另外要求下方各行的列数不超过表头，对应 PapaParse 的 `TooManyFields`）；下方数据行非空格数的众数不小于 2（并列时取较小值）；不被 `vetoesHeaderCandidate()` 的三条护栏否决——候选格能解析成数字而下方同列至少 80% 是数字、同样的日期规则、候选格去掉首尾空格后的值在下方同列出现过。
 - **检测与完整校验分开**：只把前 `HEADER_SCAN_ROWS + HEADER_DETECTION_DATA_ROWS`（10 + 200）行交给检测；选中后仍对全部行走现有的完整校验和构建，失败就显示原来那条报错。
 - **CSV 重试**：`retryCsvBelowTitleRows()` 调用 `findCsvHeaderBelowTitleRows()`，后者用 `header: false`、`preview: 210` 和 `step` 回调里的 `meta.cursor` 找到表头行的起始字符位置；然后从这里切开文本，用同一个 `importId` 再调用一次 `parseCsvText()`。`retry` 参数保证只重试一次，不会递归，也不调用 `beginImport()`；分隔符由第二次解析重新自动识别。重试中的任何失败都显示第一次的报错。
-- **行号**：一律用文件行号。Excel 是 `!ref` 起始行加 `sheet_to_json` 的原始下标（`buildExcelTabularData()` 去掉的开头空行也计算在内）；CSV 是解码后文本（不含 BOM）里表头行之前的物理换行数加 1。重试后，“CSV 第 N 行”报错和解析警告的行号会加上跳过的行数；表头以下的空行和跨行引号单元格造成的偏差仍未修正。
+- **行号**：一律用文件行号。Excel 是 `!ref` 起始行加 `sheet_to_json` 的原始下标（`buildExcelTabularData()` 去掉的开头空行也计算在内）；CSV 是解码后文本（不含 BOM）里表头行之前的物理换行数加 1，由 `lineNumbersAtOffsets()` 计算。数据行的行号是精确的，见下文“数据行的文件行号”。“CSV 第 N 行”报错和解析警告的行号仍按 `error.row + 2` 估算（重试后加上跳过的行数），表头以下的空行和跨行引号单元格造成的偏差仍未修正。
 - **结果**：导入层返回 `headerDetection = { headerRowNumber, skippedRows: [{ rowNumber, cells }] }`，`skippedRows` 只含非空行；`commitTabularData()` 用 `formatSkippedRowPreview()` 把 `cells` 转成 `preview`（非空格用空格连接，超过 20 个字符截断加“…”）后写入 `state.headerDetection`。跳过的行数 K 一律等于 `headerRowNumber − 1`，空行也计算在内。状态栏在成功和“有解析警告”两种文案后面追加 `formatHeaderDetectionNote()` 生成的“表头在第 N 行，已跳过上方 K 行：「…」「…」。”，最多列 2 行摘要，更多时加“等”。
 - **回退提示**：第一个非空行是可跳过的行（`attempted` 为 `true`）但没能确认表头时，在原报错后面追加 `formatTitleRowFallbackHint()` 的“第 N 行看起来像标题。如果表头不在第 N 行，请删除表头上方的标题行后重新上传。”，N 是第一个非空行的文件行号。多工作表时，这条报错显示在工作表选择面板里。
 - **已知残留**：两列文件的表头只写了第一列、第二列是互不相同的文本时，会把第一条数据当成表头（状态栏会写明跳过了哪一行）；手动指定表头行计划在后续版本提供。多行表头、“合计”行、一个工作表里的多块表格都不在处理范围内。
+
+### 数据行的文件行号（v2.3.0）
+
+每一条数据行都记下它在文件里的行号，供质量页和报告的“文件行号”使用：
+
+- **含义**：Excel 是工作表行号（`!ref` 起始行加 `sheet_to_json` 的原始下标），即在 Excel 左侧看到的行号；CSV 是这条记录开始的物理行（CR、LF、CRLF 各算一次换行），跨行的引号单元格按第一行算，与记事本显示的行号一致。用 Excel / WPS 打开含跨行单元格的 CSV 时，后面记录看到的行号会比这里小（Excel 按记录计行）。
+- **Excel**：`buildExcelTabularData()` 在过滤空行的 `.filter()` 之后、`.map()` 生成行对象的同时，产出 `rowNumbers = firstRowNumber + pair.index`；中间的空行被过滤后，它的行号也不会出现。
+- **CSV**：主解析的选项和回调不变。`handleParsedData()` 通过全部校验、确认有数据可提交之后，调用 `findCsvRecordLineNumbers()` 对同一份文本再做一次 `Papa.parse`：`header: false`、`skipEmptyLines: false`、`worker: false`，`delimiter` 和 `newline` 取主解析的 `meta.delimiter` / `meta.linebreak`，用同步的 `step`。每条记录的起点是上一条记录 step 的 `meta.cursor`（第一条从 0 开始）。先去掉 PapaParse 在 `skipEmptyLines: true` 下会跳过的记录（只有一个空字符串的记录，与 PapaParse 源码中的规则相同），再把剩下的第一条当作表头去掉，这与 PapaParse 先过滤空记录再取表头的顺序一致。剩下的记录与主解析的数据行一一对应，空数据行被过滤时行号一起去掉。
+- **对不上就不给**：第二遍的记录数和主解析的数据行数不一致时，整份文件都不给行号（全部为 `null`），不做部分对齐。
+- **重试路径**：跳过标题行后的重新解析，在切片文本上算出的行号再加上 `retry.lineOffset`。
+- **不做扫描的情况**：超过行数上限、表头类错误、只有表头或空文件，都在第二遍扫描之前就报错；只有直接调用 `handleParsedData()`、没有原文时（测试中常见）也不扫描。
+- **计数**：`lineNumbersAtOffsets(text, offsets)` 按偏移量升序增量计数，整份文件只扫一遍，规则与原来逐个用 `/\r\n|\r|\n/` 计数相同（`"\r\n"` 算一次换行）；偏移量变小时从头重数。
+- **存放**：导入器把 `rowNumbers` 传给 `commitTabularData()` 的第 9 个参数，提交时写进 `state.sourceRowNumbers`（WeakMap），由 `getSourceRowNumber(row)` 读取。
+- **代价**：10 万行 CSV 的完整导入约多 50–100 ms（Node 内测量）。
 
 **输入 / 输出**
 
@@ -287,7 +307,7 @@ UTF-8 BOM
 | `importExcelSheet(...)` | 校验 `!ref`，经 `readExcelSheetTable()` 读取所选工作表并提交 |
 | `readExcelSheetTable(worksheet, sheetName)` | 粗检上限、`sheet_to_json` 并调用 `buildExcelTabularData()`，传入 `!ref` 起始行号用于换算文件行号 |
 | `validateExcelWorksheetLimits()` | 根据工作表使用区域粗检行数和 200 列；行数额外留出 `HEADER_SCAN_ROWS` 行给表头上方的标题行 |
-| `buildExcelTabularData()` | 去除首尾空行、经 `findExcelHeaderPosition()` 确定表头行、按表头以下的数据行检查 100,000 行上限、识别使用列、验证表头并生成 `{ fields, rows }`，跳过标题行时另带 `headerDetection` |
+| `buildExcelTabularData()` | 去除首尾空行、经 `findExcelHeaderPosition()` 确定表头行、按表头以下的数据行检查 100,000 行上限、识别使用列、验证表头并生成 `{ fields, rows, rowNumbers }`，跳过标题行时另带 `headerDetection` |
 | `normalizeExcelCellValue()` | Date 转 `YYYY-MM-DD`，其他原始标量转字符串 |
 
 `readExcelSheetTable()` 当前使用：
@@ -380,6 +400,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 - 统计每列缺失值和缺失率。
 - 识别完全重复行。
+- 检查当前类型为 ID 的字段有没有重复值，并给出文件行号。
 - 对当前确认的数值字段执行 IQR 异常值检测。
 - 消费由 File Input & Parsing 生成的 CSV 解析警告，以及由 Field Profiling 生成的缺失和转换失败信号。
 - 保持质量页使用原始数据，不受筛选影响。
@@ -392,7 +413,9 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
 - `buildNumericStats(rows)`：同时生成 Q1、Q3、IQR 边界和异常值数量。
 - `getQualityNumericStats()`：返回基于原始 `state.rows` 的数值质量统计。
-- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表和数值异常值表。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。
+- `buildIdDuplicateSummary(rows, fields, profiles, getRowNumber)`：ID 字段重复值，见下文“ID 字段重复值”。
+- `countListedIdDuplicateFields(idDuplicates)`：逐值列出了重复值的 ID 字段数，质量页 pill 和报告摘要共用。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()`。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），最后一项是“ID 重复字段：N”（N > 0 为 warning，否则为 success）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。`renderIdDuplicateDetails()` 在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示 ID 重复值。
 
 异常值规则为：
 
@@ -406,7 +429,7 @@ upper = Q3 + 1.5 × IQR
 **输入 / 输出**
 
 - 输入：原始 `state.rows`、完整 `state.fields` 和当前已应用 profiles。
-- 输出：`totalMissing`、`duplicateRows`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题和异常值 DOM。
+- 输出：`totalMissing`、`duplicateRows`、`idDuplicates`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题、异常值和 ID 重复值 DOM。
 - `renderQuality()` 不展示 CSV 解析警告；它保存在 state 并进入报告。转换失败（格式问题）按原始数据显示在质量页，也显示在字段配置和报告字段类型部分。
 - 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但 `toNumber()` 失败的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
 
@@ -414,7 +437,7 @@ upper = Q3 + 1.5 × IQR
 
 - 初始质量计算发生在 `commitTabularData()`。
 - `refreshFilteredAnalysis()` 不重算质量页，因此筛选不会改变原始质量指标。
-- 字段类型真正提交后，`rebuildAnalysisFromProfiles()` 会按原始行重新计算哪些字段参与数值异常检测。
+- 字段类型真正提交后，`rebuildAnalysisFromProfiles()` 会按原始行重新计算哪些字段参与数值异常检测，并在开头重算 `idDuplicates`。
 - 报告质量部分使用相同的原始范围。
 - 缺失总数和原始重复数按全部导入字段计算；字段后来设为 `ignore` 不会把它们从原始质量口径中移除。
 
@@ -422,6 +445,19 @@ upper = Q3 + 1.5 × IQR
 
 - 质量页的 `state.duplicateRows` 使用全部原始字段和原始行。
 - `renderInsights()` 会基于当前筛选行和非 `ignore` 字段重新计算分析范围内的重复数。
+
+### ID 字段重复值（v2.3.0）
+
+`buildIdDuplicateSummary()` 检查当前已应用类型为 ID（`typeKey === "id"`）的每个字段，和整行重复互相独立，去重导出不变：
+
+- **范围**：原始 `state.rows`，不随筛选变化。`commitTabularData()` 在算完 profile 和重复行之后计算，`rebuildAnalysisFromProfiles()` 开头重算（“应用字段配置”和“恢复自动识别”都会经过它），所以手动改成 ID 的字段也查，改成其他类型或忽略的不查。`resetAnalysisState()` 把 `state.idDuplicates` 清成 `[]`，每次提交整体替换。
+- **比较**：值经 `normalizeValue()` 归一（去首尾空格，区分大小写，不做全角半角归一），归一后为空的缺失值不参与。显示用归一后的值。Excel 单元格在导入时已转成字符串，数字 1012 和文本 "1012" 是同一个值；用数字格式显示成 001012 的数字仍按原始值 1012 比较和显示。N/A、— 这类占位文字不算缺失，重复出现时会被列为重复值。
+- **结果**：按 `state.fields` 的顺序，每个 ID 字段一项 `{ field, nonMissingCount, distinctCount, uniqueRatio, mostlyRepeated, duplicateValueCount, values }`。`values` 里每项是 `{ value, count, rowNumbers, identicalRowCount, identicalGroupCount }`。
+- **疑似非唯一**：非空值至少 `ID_MOSTLY_REPEATED_MIN_VALUES`（12）个、且唯一率（不同值数 ÷ 非空数）低于 `ID_MOSTLY_REPEATED_UNIQUE_RATIO`（0.5）时，`mostlyRepeated` 为 `true`，`values` 为空，界面改为提示（`formatMostlyRepeatedIdHint()`）。按唯一率规则自动判成 ID 的字段，导入时唯一率至少 98%，不会落入这一类。
+- **列出规则**：重复值按出现次数从多到少排，次数相同按第一次出现的位置；最多列 `ID_DUPLICATE_VALUE_LIMIT`（10）个值，每个值最多列 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个行号。行号通过 `getSourceRowNumber()` 取得，查不到为 `null`，显示为“—”，不显示估算值。
+- **整行相同**：只给列出的值，用 `buildExactRowKey(row, state.fields)` 在同一个重复值的行里找完全相同的行；行键在字段之间缓存。`identicalRowCount` 是这些行的总数，`identicalGroupCount` 是组数。10 万行、4 个 ID 字段大量重复时约 160 ms（Node 内测量）。
+- **文字**：`format.js` 的 `formatRowNumberList()`（完整列出最多 10 个行号，总数更多时加“等 N 个”）、`formatIdenticalRows()`（“其中 2 行内容完全相同”，多组时加“（分 K 组）”）、`formatIdDuplicateOverflow()`（“共 N 个重复值，只列出前 10 个”）、`formatCleanIdFieldsNote()`（“ID 字段没有重复值（已检查：…）”，前面已有字段被列出时写“其余 ID 字段……”）和 `formatMostlyRepeatedIdHint()`，质量页和报告共用。
+- **质量页**：pill“ID 重复字段：N”中，N 是逐值列出了重复值的字段数，疑似非唯一的字段不计入。`#idDuplicateDetails` 里每个有重复值的字段一张“重复值 / 出现次数 / 文件行号 / 说明”表，疑似非唯一的字段显示提示，没有重复值的 ID 字段在最后用一句话列出；没有 ID 字段时写“未识别到 ID 字段。”。所有用户数据都经过 `escapeHtml()`。
 
 ## 7. Statistics（统计分析）
 
@@ -614,6 +650,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“无法转换”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
 - 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
 - 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
+- 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。HTML / Markdown 报告在“数值异常值”之后加“ID 字段重复值”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。HTML 质量摘要句末尾追加“；ID 重复字段：N”，Markdown 在“解析警告”后加一条“- ID 重复字段：N”。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
 
 **与其他模块的关系**
 
@@ -641,7 +678,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 | --- | --- |
 | 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()`, `updateWorkflowSteps()` |
 | 导入状态 | `setImportBusy()`, `setStatus()`, `showError()` |
-| 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderNumericStats()`, `renderCategoryStats()` |
+| 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderNumericStats()`, `renderCategoryStats()` |
 | 自动结论 | `renderInsights()`, `renderInsightGroups()` |
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
 | 自定义与模板 | `renderV2Analysis()` 及其子 renderer、`renderTemplateMappingForm()`, `renderTemplateResult()` |
@@ -674,7 +711,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 
 ## 当前脚本的技术债
 
-当前浏览器逻辑共约五千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 26 个顶层 state 字段和 104 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
+当前浏览器逻辑共约五千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 29 个顶层 state 字段和 105 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
 
 1. **全局可变状态是中心依赖。** 多个缓存必须由调用顺序保持一致，例如 `rows`、`filteredRows`、profiles、统计、图表和 `analysisCompletedAt`。
 2. **计算、状态写入和 DOM 副作用混合。** `renderInsights()`、`renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。
