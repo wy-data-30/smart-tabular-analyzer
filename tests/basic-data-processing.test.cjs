@@ -1830,7 +1830,7 @@ test("the quality page has a static ID duplicate container in the dom map", () =
 test("the ID duplicate pill counts listed fields after the existing pills", async () => {
   const pillTexts = (scope) => [...scope.elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill[^"]*">([^<]*)<\/span>/g)].map((match) => match[1]);
   const orders = await importStage3Fixture("订单表.csv");
-  assert.deepEqual(pillTexts(orders).map((text) => text.split("：")[0]), ["缺失值总数", "重复行", "格式问题", "异常值字段", "ID 重复字段"]);
+  assert.deepEqual(pillTexts(orders).map((text) => text.split("：")[0]), ["缺失值总数", "重复行", "格式问题", "异常值字段", "ID 重复字段", "疑似缺失值"]);
   assert.deepEqual(qualityPill(orders.elements, "ID 重复字段"), { tone: "warning", text: "ID 重复字段：1" });
   const grades = await importStage3Fixture("成绩表.csv");
   assert.deepEqual(qualityPill(grades.elements, "ID 重复字段"), { tone: "success", text: "ID 重复字段：0" });
@@ -2370,4 +2370,177 @@ test("applying the configuration for another field keeps a manual type set befor
   scope.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
   assert.deepEqual([scope.evaluate('getFieldProfile("金额").typeKey'), scope.evaluate('getFieldProfile("金额").inferredTypeKey')], ["numeric", "category"]);
   assert.deepEqual(manualFieldTypes(scope.evaluate), { 金额: "numeric", 备注: "ignore" });
+});
+
+// Placeholder candidates on the quality page (#placeholderDetails) and in reports.
+const placeholderDetails = (scope) => scope.elements.get("placeholderDetails").innerHTML;
+const PLACEHOLDER_MAYBE_NOTE_TEXT = "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。";
+
+test("the quality page has a static placeholder subsection before the ID duplicates", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
+  const placeholderSection = quality.slice(quality.indexOf("疑似缺失值"), quality.indexOf("ID 字段重复值"));
+  assert.ok(quality.indexOf('<h3 class="subsection-title">疑似缺失值</h3>') < quality.indexOf('<h3 class="subsection-title">ID 字段重复值</h3>'));
+  assert.ok(placeholderSection.includes("这些写法常被用来表示“没有数据”。确认后按缺失值处理：不再算作转换失败，也不参与统计、Top 10、分组、筛选选项和 ID 重复检查。原始数据、数据预览和导出的 CSV 不变。"));
+  // The message sits outside the container that renderPlaceholderDetails() rewrites.
+  assert.match(placeholderSection, /<div id="placeholderDetails" class="placeholder-details"><\/div>/);
+  assert.match(placeholderSection, /<p id="placeholderMessage" class="placeholder-message" role="status" tabindex="-1"><\/p>/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('["placeholderDetails", "placeholderMessage"].every((id) => Object.keys(dom).includes(id))'), true);
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8"), /dom\.placeholderDetails\.addEventListener\("click", handlePlaceholderClick\);/);
+});
+
+test("the placeholder pill counts fields with unconfirmed keys after the ID duplicate pill", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(qualityPill(orders.elements, "疑似缺失值"), { tone: "warning", text: "疑似缺失值：4 个字段" });
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.deepEqual(qualityPill(orders.elements, "疑似缺失值"), { tone: "warning", text: "疑似缺失值：3 个字段" });
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(qualityPill(orders.elements, "疑似缺失值"), { tone: "success", text: "疑似缺失值：0 个字段" });
+  const grades = await importStage3Fixture("成绩表.csv");
+  assert.deepEqual(qualityPill(grades.elements, "疑似缺失值"), { tone: "success", text: "疑似缺失值：0 个字段" });
+});
+
+test("placeholder details show each key with its rows and effect, one button each and a whole-field line", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const html = placeholderDetails(orders);
+  for (const text of [
+    "「下单日期」：「—」1 个（第 17 行）。确认后缺失值 0 → 1，类型仍为日期。",
+    "「数量」：「—」1 个（第 12 行）。确认后缺失值 0 → 1，类型仍为数值。",
+    "「金额」：「N/A」1 个（第 15 行）。确认后缺失值 0 → 1，类型仍为数值。",
+    "「备注」：「N/A」1 个（第 29 行）。确认后缺失值 26 → 27，类型仍为分类。",
+    "「备注」：「—」1 个（第 30 行）。确认后缺失值 26 → 27，类型仍为分类。",
+    "「备注」全部确认后：缺失值 26 → 28，类型仍为分类。"
+  ]) assert.ok(html.includes(text), text);
+  assert.deepEqual([...html.matchAll(/data-placeholder-index="(\d+)"[^>]*>按缺失处理</g)].map((match) => match[1]), ["0", "1", "2", "3", "4"]);
+  assert.ok(html.includes("全部确认常见写法（5 处）"));
+  assert.doesNotMatch(html, /确认后类型会变/);
+  assert.doesNotMatch(html, /也可能是有效值/);
+
+  const grades = await importStage3Fixture("成绩表.csv");
+  assert.ok(placeholderDetails(grades).includes("没有发现疑似缺失值。"));
+});
+
+test("placeholder details name raw texts, maybe-valid keys, type changes and missing row numbers", () => {
+  const amount = commitColumns({ 金额: ["100", "200", "N/A", "约500", "300", "400", "500"], 年份: YEARS_WITH_DASHES });
+  const amountHtml = placeholderDetails(amount);
+  assert.ok(amountHtml.includes("「金额」：「N/A」1 个（行号：—）。确认后缺失值 0 → 1，「金额」会识别为数值（现在是分类）。"));
+  assert.ok(amountHtml.includes("「年份」：「—」3 个（行号：—）。确认后缺失值 0 → 3，「年份」会识别为日期（现在是分类）。"));
+  assert.ok(amountHtml.includes("全部确认常见写法（2 处）"));
+  assert.ok(amountHtml.includes("确认后类型会变：「金额」「年份」"));
+
+  const raw = commitColumns({ 备注: ["Ｎ／Ａ", "－－", "好", "N/A", " N/A "] });
+  const rawHtml = placeholderDetails(raw);
+  assert.ok(rawHtml.includes("「备注」：「N/A」（原文：Ｎ／Ａ、N/A）3 个（行号：—）。确认后缺失值 0 → 3，类型仍为分类。"));
+  assert.ok(rawHtml.includes("「备注」：「--」（原文：－－）1 个（行号：—）。确认后缺失值 0 → 1，类型仍为分类。"));
+  assert.ok(rawHtml.includes("「备注」全部确认后：缺失值 0 → 4，类型仍为分类。"));
+
+  const maybe = commitColumns({ 是否会员: ["有", "无", "有", "无", "有", "有"], 金额: ["1,200", "-", " - ", "3,400", "560", "(200)"] });
+  const maybeHtml = placeholderDetails(maybe);
+  assert.ok(maybeHtml.includes("「是否会员」：「无」2 个（行号：—）。确认后缺失值 0 → 2，类型仍为分类。"));
+  assert.equal(maybeHtml.split(PLACEHOLDER_MAYBE_NOTE_TEXT).length - 1, 2);
+  assert.ok(maybeHtml.includes(`${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`));
+  assert.equal(maybeHtml.split("在会计格式里").length - 1, 1);
+  // No common key, so no confirm-all button.
+  assert.doesNotMatch(maybeHtml, /全部确认常见写法/);
+
+  const escaped = commitColumns({ "<b>x</b>": ["N/A", "1", "2"] });
+  assert.ok(placeholderDetails(escaped).includes("「&lt;b&gt;x&lt;/b&gt;」：「N/A」1 个"));
+  assert.doesNotMatch(placeholderDetails(escaped), /<b>x<\/b>/);
+});
+
+test("confirmed keys show an undo button, ignored fields are marked, and more than ten rows end with 等", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "N/A")');
+  orders.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  const html = placeholderDetails(orders);
+  assert.ok(html.includes("「金额」：「N/A」已按缺失处理（1 个）。"));
+  assert.ok(html.includes("「备注」（字段已忽略）：「N/A」已按缺失处理（1 个）。"));
+  assert.deepEqual([...html.matchAll(/data-placeholder-index="(\d+)"[^>]*>撤销</g)].map((match) => match[1]), ["2", "3"]);
+  assert.ok(html.includes("全部确认常见写法（2 处）"));
+
+  const many = await importCsvFile(`编号,备注\r\n${Array.from({ length: 12 }, (_, index) => `A${index},N/A`).join("\r\n")}\r\nA99,好\r\n`);
+  assert.ok(placeholderDetails(many).includes("「备注」：「N/A」12 个（第 2、3、4、5、6、7、8、9、10、11 行等）。"));
+});
+
+test("placeholder buttons confirm, undo and confirm all through one delegated click handler", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const click = (dataset) => {
+    put(orders.context, "__placeholderButton", dataset ? { dataset } : null);
+    orders.evaluate("handlePlaceholderClick({ target: { closest: () => __placeholderButton } })");
+  };
+  click(null);
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), {});
+  click({ placeholderIndex: "2" });
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), { 金额: ["N/A"] });
+  click({ placeholderIndex: "2" });
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), {});
+  click({ placeholderAll: "" });
+  assert.equal(orders.evaluate("state.placeholders.every((entry) => entry.confirmed)"), true);
+});
+
+test("reports list confirmed and pending placeholders after the missing values and count pending fields", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const before = reportOf(orders);
+  assert.deepEqual(before.report.quality.placeholders.confirmed, []);
+  assert.deepEqual(before.report.quality.placeholders.pending[2], { field: "金额", key: "N/A", tier: "common", rawValues: ["N/A"], count: 1, rowNumbers: [15], effect: "确认后缺失值 0 → 1，类型仍为数值" });
+  assert.equal(before.report.quality.placeholders.pending.length, 5);
+  assert.ok(before.html.includes("；ID 重复字段：<strong>1</strong>；疑似缺失值：<strong>4</strong> 个字段。</p>"));
+  const htmlSection = before.html.slice(before.html.indexOf("<h3>疑似缺失值</h3>"), before.html.indexOf("<h3>数值异常值</h3>"));
+  assert.ok(before.html.indexOf("<h3>各字段缺失情况</h3>") < before.html.indexOf("<h3>疑似缺失值</h3>"));
+  assert.match(htmlSection, /<th>字段<\/th><th>写法<\/th><th>档位<\/th><th>出现次数<\/th><th>文件行号<\/th><th>确认后的影响<\/th>/);
+  assert.ok(htmlSection.includes("<td>金额</td><td>「N/A」</td><td>常见</td><td>1</td><td>15</td><td>确认后缺失值 0 → 1，类型仍为数值</td>"));
+  assert.ok(before.markdown.includes("- ID 重复字段：1\n- 疑似缺失值：4 个字段\n"));
+  assert.ok(before.markdown.indexOf("### 各字段缺失情况") < before.markdown.indexOf("### 疑似缺失值"));
+  assert.ok(before.markdown.indexOf("### 疑似缺失值") < before.markdown.indexOf("### 数值异常值"));
+  const cell = (value) => orders.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
+  assert.ok(before.markdown.includes(`| 金额 | ${cell("「N/A」")} | 常见 | 1 | 15 | 确认后缺失值 0 → 1，类型仍为数值 |`));
+
+  orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "N/A")');
+  orders.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  const after = reportOf(orders);
+  assert.deepEqual(after.report.quality.placeholders.confirmed, [
+    { field: "金额", key: "N/A", rawValues: ["N/A"], count: 1, fieldIgnored: false },
+    { field: "备注", key: "N/A", rawValues: ["N/A"], count: 1, fieldIgnored: true }
+  ]);
+  assert.ok(after.html.includes("；疑似缺失值：<strong>2</strong> 个字段。</p>"));
+  assert.ok(after.html.includes("<td>金额</td><td>「N/A」</td><td>1</td><td>已按缺失处理</td>"));
+  assert.ok(after.html.includes("<td>备注</td><td>「N/A」</td><td>1</td><td>已按缺失处理（字段已忽略）</td>"));
+  assert.ok(after.markdown.includes(`| 备注 | ${cell("「N/A」")} | 1 | 已按缺失处理（字段已忽略） |`));
+});
+
+test("report placeholder summaries appear only with candidates, and legacy snapshots leave the section out", async () => {
+  for (const scope of [await importStage3Fixture("花名册.xlsx"), await importStage3Fixture("成绩表.csv"), await importCsvFile(behaviorCsv(), "sample-user-behavior.csv")]) {
+    const { report, html, markdown } = reportOf(scope);
+    assert.deepEqual(report.quality.placeholders, { confirmed: [], pending: [] });
+    assert.doesNotMatch(html, /疑似缺失值：/);
+    assert.doesNotMatch(markdown, /疑似缺失值：/);
+    assert.ok(html.includes("<p>没有发现疑似缺失值。</p>"));
+    assert.ok(markdown.includes("### 疑似缺失值\n\n没有发现疑似缺失值。\n"));
+  }
+  const scope = createScriptContext();
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).quality.placeholders"), null);
+  assert.equal(scope.evaluate("normalizeReportSnapshot({ quality: { placeholders: { confirmed: [] } } }).quality.placeholders"), null);
+  put(scope.context, "__legacyPlaceholders", { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0 } });
+  assert.doesNotMatch(scope.evaluate("buildHtmlReport(__legacyPlaceholders, [])"), /疑似缺失值/);
+  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__legacyPlaceholders)"), /疑似缺失值/);
+});
+
+test("report placeholder sections escape field names and keep Markdown lines from starting with user text", () => {
+  const scope = commitColumns({ "<b>备注</b>|x": ["N/A", "好", "-", "好"], "-前缀": ["—", "甲", "乙", "丙"] });
+  const { html, markdown } = reportOf(scope);
+  const section = html.slice(html.indexOf("<h3>疑似缺失值</h3>"), html.indexOf("<h3>数值异常值</h3>"));
+  assert.ok(section.includes("<td>&lt;b&gt;备注&lt;/b&gt;|x</td><td>「N/A」</td>"));
+  assert.ok(section.includes("<td>-前缀</td><td>「—」</td>"));
+  assert.doesNotMatch(html, /<b>备注<\/b>/);
+  assert.ok(section.includes(`<p>说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。</p>`));
+  const markdownSection = markdown.slice(markdown.indexOf("### 疑似缺失值"), markdown.indexOf("### 数值异常值"));
+  const cell = (value) => scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
+  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「N/A」")} |`));
+  assert.ok(markdownSection.includes(`| ${cell("-前缀")} | ${cell("「—」")} |`));
+  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「-」")} | 可能是有效值 |`));
+  for (const line of markdownSection.split("\n")) {
+    assert.ok(!line.startsWith("-") && !line.startsWith("<"), line);
+  }
+  assert.ok(markdownSection.includes(scope.evaluate(`escapeMarkdownText(${JSON.stringify(`说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`)})`)));
 });

@@ -101,6 +101,7 @@ const dom = {
   qualitySummary: document.getElementById("qualitySummary"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  placeholderDetails: document.getElementById("placeholderDetails"),
   placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
   numericStatsTable: document.getElementById("numericStatsTable"),
@@ -1093,15 +1094,18 @@ function renderQuality() {
   const conversionFailureTotal = state.profiles.reduce((sum, profile) => sum + (profile.conversionFailureCount || 0), 0);
   const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
   const listedIdFieldCount = countListedIdDuplicateFields(state.idDuplicates);
+  const pendingPlaceholderFieldCount = countPendingPlaceholderFields(state.placeholders);
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
     <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
     <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">ID 重复字段：${formatInteger(listedIdFieldCount)}</span>
+    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">疑似缺失值：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
   `;
   // Before the outlier table, which returns early when there is no numeric field.
   renderIdDuplicateDetails();
+  renderPlaceholderDetails();
 
   dom.qualityTable.innerHTML = `
     <thead>
@@ -1183,6 +1187,57 @@ function renderIdDuplicateDetails() {
     }),
     cleanFields.length ? `<p class="id-duplicate-note">${escapeHtml(formatCleanIdFieldsNote(cleanFields, reported.length > 0))}</p>` : ""
   ].join("");
+}
+
+// One item per field and key (state.placeholders order): pending keys with their
+// effect and a confirm button, confirmed keys with an undo button, a whole-field
+// line for fields with two or more pending keys, and the confirm-all button.
+// Buttons carry indexes into state.placeholders for handlePlaceholderClick().
+function renderPlaceholderDetails() {
+  if (!state.placeholders.length) {
+    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现疑似缺失值。</p>`;
+    return;
+  }
+  const commonCount = getPendingCommonPlaceholders().length;
+  const typeChanges = commonCount ? previewAllCommonPlaceholders() : [];
+  const items = state.placeholders.map((entry, index) => {
+    const textId = `placeholderText${index}`;
+    const profile = getFieldProfile(entry.field);
+    let item;
+    if (entry.confirmed) {
+      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">撤销</button></li>`;
+    } else {
+      const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, [entry.key]));
+      const notes = formatPlaceholderNotes([entry.key]);
+      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按缺失处理</button></li>`;
+    }
+    if (state.placeholders[index + 1]?.field === entry.field) return item;
+    const pendingKeys = state.placeholders.filter((other) => other.field === entry.field && !other.confirmed).map((other) => other.key);
+    if (pendingKeys.length < 2) return item;
+    const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, pendingKeys));
+    return `${item}<li class="placeholder-field-summary">${escapeHtml(`「${entry.field}」全部确认后：${change}。`)}</li>`;
+  });
+  const typeChangeNote = typeChanges.length
+    ? `<span class="placeholder-note">${escapeHtml(`确认后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
+    : "";
+  dom.placeholderDetails.innerHTML = `
+    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>全部确认常见写法（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
+    <ul class="placeholder-list">${items.join("")}</ul>
+  `;
+}
+
+// Delegated click handler of #placeholderDetails, bound in script.js.
+function handlePlaceholderClick(event) {
+  const button = event.target.closest("button[data-placeholder-index], button[data-placeholder-all]");
+  if (!button) return;
+  if (button.dataset.placeholderAll !== undefined) {
+    confirmAllCommonPlaceholders();
+    return;
+  }
+  const entry = state.placeholders[Number(button.dataset.placeholderIndex)];
+  if (!entry) return;
+  if (entry.confirmed) undoPlaceholderConfirmation(entry.field, entry.key);
+  else confirmPlaceholder(entry.field, entry.key);
 }
 
 function renderNumericStats() {
@@ -1748,6 +1803,7 @@ function resetAnalysisState() {
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
   dom.idDuplicateDetails.innerHTML = "";
+  dom.placeholderDetails.innerHTML = "";
   setPlaceholderMessage("");
   dom.numericStatsTable.innerHTML = "";
   dom.categoryStats.innerHTML = "";

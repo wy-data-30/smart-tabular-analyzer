@@ -137,6 +137,12 @@ function countListedIdDuplicateFields(idDuplicates) {
   return idDuplicates.filter((item) => item.values.length).length;
 }
 
+// Fields with a placeholder key still to confirm; ignored fields do not count.
+// Report snapshots list pending entries only, which have neither flag.
+function countPendingPlaceholderFields(entries) {
+  return new Set(entries.filter((entry) => !entry.confirmed && !entry.fieldIgnored).map((entry) => entry.field)).size;
+}
+
 // Placeholder keys confirmed as missing for a field (an empty array when none).
 function getConfirmedPlaceholderKeys(field, confirmations = state.placeholderConfirmations) {
   return Object.prototype.hasOwnProperty.call(confirmations, field) ? confirmations[field] : [];

@@ -324,13 +324,40 @@ function buildReportData(now = new Date()) {
       idDuplicates: state.idDuplicates.map((item) => ({
         ...item,
         values: item.values.map((value) => ({ ...value, rowNumbers: [...value.rowNumbers] }))
-      }))
+      })),
+      placeholders: buildReportPlaceholders()
     },
     numericStats,
     categoryStats,
     dateTrends: buildReportDateTrends(),
     customAnalysis: buildReportCustomAnalysis(),
     insights: [...state.insights]
+  };
+}
+
+// Confirmed keys, and pending keys with the effect text of the quality page.
+function buildReportPlaceholders() {
+  return {
+    confirmed: state.placeholders.filter((entry) => entry.confirmed).map((entry) => ({
+      field: entry.field,
+      key: entry.key,
+      rawValues: [...entry.rawValues],
+      count: entry.count,
+      fieldIgnored: entry.fieldIgnored
+    })),
+    pending: state.placeholders.filter((entry) => !entry.confirmed).map((entry) => {
+      const profile = getFieldProfile(entry.field);
+      const preview = previewPlaceholderConfirmation(entry.field, [entry.key]);
+      return {
+        field: entry.field,
+        key: entry.key,
+        tier: entry.tier,
+        rawValues: [...entry.rawValues],
+        count: entry.count,
+        rowNumbers: [...entry.rowNumbers],
+        effect: `确认后${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`
+      };
+    })
   };
 }
 
@@ -535,7 +562,11 @@ function normalizeReportSnapshot(reportData = {}) {
         : Array.isArray(quality.fields) ? quality.fields : [],
       outliers: Array.isArray(quality.outliers) ? quality.outliers : [],
       // Snapshots from before v2.3.0 have no ID duplicate check: null leaves it out.
-      idDuplicates: Array.isArray(quality.idDuplicates) ? quality.idDuplicates : null
+      idDuplicates: Array.isArray(quality.idDuplicates) ? quality.idDuplicates : null,
+      // Snapshots from before v2.4.0 have no placeholder check: null leaves it out.
+      placeholders: Array.isArray(quality.placeholders?.confirmed) && Array.isArray(quality.placeholders?.pending)
+        ? quality.placeholders
+        : null
     },
     numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
       ...item,
@@ -588,6 +619,34 @@ function buildReportIdDuplicateSection(idDuplicates) {
   return { rows, notes };
 }
 
+const REPORT_PLACEHOLDER_CONFIRMED_HEADERS = ["字段", "写法", "出现次数", "状态"];
+const REPORT_PLACEHOLDER_PENDING_HEADERS = ["字段", "写法", "档位", "出现次数", "文件行号", "确认后的影响"];
+const REPORT_PLACEHOLDER_TIER_LABELS = { common: "常见", maybe: "可能是有效值" };
+
+// Plain-text tables and notes of the report's placeholder section. Every note
+// starts with fixed text, never with a field name or value.
+function buildReportPlaceholderSection({ confirmed, pending }) {
+  if (!confirmed.length && !pending.length) return { confirmedRows: [], pendingRows: [], notes: ["没有发现疑似缺失值。"] };
+  const notes = formatPlaceholderNotes(pending.map((entry) => entry.key));
+  return {
+    confirmedRows: confirmed.map((entry) => [
+      entry.field,
+      formatPlaceholderValue(entry),
+      entry.count,
+      entry.fieldIgnored ? "已按缺失处理（字段已忽略）" : "已按缺失处理"
+    ]),
+    pendingRows: pending.map((entry) => [
+      entry.field,
+      formatPlaceholderValue(entry),
+      REPORT_PLACEHOLDER_TIER_LABELS[entry.tier] || "—",
+      entry.count,
+      formatRowNumberList(entry.rowNumbers, entry.count),
+      entry.effect
+    ]),
+    notes: notes ? [`说明：${notes}`] : []
+  };
+}
+
 function buildHtmlReport(reportData, chartImages = []) {
   reportData = normalizeReportSnapshot(reportData);
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
@@ -603,6 +662,17 @@ function buildHtmlReport(reportData, chartImages = []) {
     ? `；ID 重复字段：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong>`
     : "";
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
+  const placeholders = reportData.quality.placeholders;
+  const placeholderSummary = placeholders && (placeholders.confirmed.length || placeholders.pending.length)
+    ? `；疑似缺失值：<strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> 个字段`
+    : "";
+  const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
+  const placeholderSectionHtml = placeholderSection
+    ? `<h3>疑似缺失值</h3>
+    ${placeholderSection.confirmedRows.length ? `<p>已按缺失处理的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows, "")}` : ""}
+    ${placeholderSection.pendingRows.length ? `<p>还没确认的疑似值：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows, "")}` : ""}
+    ${placeholderSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
+    : "";
   const idSectionHtml = idSection
     ? `<h3>ID 字段重复值</h3>
     ${idSection.rows.length ? buildHtmlReportTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows, "") : ""}
@@ -740,13 +810,14 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}。</p>
+    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}。</p>
     <h3>各字段缺失情况</h3>
     ${buildHtmlReportTable(
       ["字段", "类型", "缺失值", "缺失率"],
       reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate]),
       "无字段质量结果。"
     )}
+    ${placeholderSectionHtml}
     <h3>数值异常值</h3>
     ${buildHtmlReportTable(
       ["字段", "异常值数量", "下界", "上界"],
@@ -811,6 +882,17 @@ function buildMarkdownReport(reportData) {
       ...idSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
     ]
     : [];
+  const placeholders = reportData.quality.placeholders;
+  const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
+  const placeholderSectionLines = placeholderSection
+    ? [
+      "### 疑似缺失值",
+      "",
+      ...(placeholderSection.confirmedRows.length ? ["已按缺失处理的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows), ""] : []),
+      ...(placeholderSection.pendingRows.length ? ["还没确认的疑似值：", "", buildMarkdownTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows), ""] : []),
+      ...placeholderSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
+    ]
+    : [];
   const lines = [
     "# 数据分析报告",
     "",
@@ -872,6 +954,9 @@ function buildMarkdownReport(reportData) {
     `- 重复行：${reportData.quality.duplicateRows}`,
     `- 解析警告：${reportData.quality.parseWarningCount}`,
     ...(idDuplicates ? [`- ID 重复字段：${countListedIdDuplicateFields(idDuplicates)}`] : []),
+    ...(placeholders && (placeholders.confirmed.length || placeholders.pending.length)
+      ? [`- 疑似缺失值：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
+      : []),
     "",
     "### 各字段缺失情况",
     "",
@@ -882,6 +967,7 @@ function buildMarkdownReport(reportData) {
       )
       : "无字段质量结果。",
     "",
+    ...placeholderSectionLines,
     "### 数值异常值",
     "",
     reportData.quality.outliers.length

@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值的说明文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -100,6 +100,44 @@ function formatCleanIdFieldsNote(fields, afterOthers = false) {
 // Shown instead of the value list for a mostly repeated ID field (plain text).
 function formatMostlyRepeatedIdHint({ field, distinctCount, nonMissingCount, uniqueRatio }) {
   return `「${field}」的值大多重复出现（${formatInteger(distinctCount)} 个不同值，共 ${formatInteger(nonMissingCount)} 行，唯一率 ${formatPercent(uniqueRatio)}），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。`;
+}
+
+// Shown with every maybe-valid placeholder key; the dash note only for 「-」.
+const PLACEHOLDER_MAYBE_NOTE = "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。";
+const PLACEHOLDER_DASH_NOTE = "在会计格式里，「-」通常表示 0。";
+
+// 「N/A」, plus "（原文：Ｎ／Ａ、N/A）" when a raw text differs from the key.
+function formatPlaceholderValue({ key, rawValues }) {
+  return rawValues.some((value) => value !== key) ? `「${key}」（原文：${rawValues.join("、")}）` : `「${key}」`;
+}
+
+// "（第 15 行）", "（第 2、…、11 行等）" when more rows hold the key, "（行号：—）" without row numbers.
+function formatPlaceholderRows(rowNumbers, count) {
+  const list = formatRowNumberList(rowNumbers);
+  if (list === "—") return "（行号：—）";
+  return `（第 ${list} 行${count > rowNumbers.length ? "等" : ""}）`;
+}
+
+// "缺失值 0 → 1，类型仍为数值", or the new type when the confirmation changes it.
+function formatPlaceholderChange(field, missingBefore, typeKeyBefore, preview) {
+  const typeText = preview.typeKey === typeKeyBefore
+    ? `类型仍为${FIELD_TYPE_LABELS[typeKeyBefore]}`
+    : `「${field}」会识别为${FIELD_TYPE_LABELS[preview.typeKey]}（现在是${FIELD_TYPE_LABELS[typeKeyBefore]}）`;
+  return `缺失值 ${formatInteger(missingBefore)} → ${formatInteger(preview.missingCount)}，${typeText}`;
+}
+
+function formatPendingPlaceholder(entry, change) {
+  return `「${entry.field}」：${formatPlaceholderValue(entry)}${formatInteger(entry.count)} 个${formatPlaceholderRows(entry.rowNumbers, entry.count)}。确认后${change}。`;
+}
+
+function formatConfirmedPlaceholder(entry) {
+  return `「${entry.field}」${entry.fieldIgnored ? "（字段已忽略）" : ""}：${formatPlaceholderValue(entry)}已按缺失处理（${formatInteger(entry.count)} 个）。`;
+}
+
+function formatPlaceholderNotes(keys) {
+  return keys.some((key) => placeholderTier(key) === "maybe")
+    ? `${PLACEHOLDER_MAYBE_NOTE}${keys.includes("-") ? PLACEHOLDER_DASH_NOTE : ""}`
+    : "";
 }
 
 function escapeHtml(value) {
