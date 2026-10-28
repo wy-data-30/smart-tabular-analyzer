@@ -16,6 +16,9 @@ const state = {
   // null, or { headerRowNumber, skippedRows: [{ rowNumber, preview }] } when the
   // import skipped title rows above the header. Only imports replace it.
   headerDetection: null,
+  // Row object -> file row (Excel row, or the CSV line where the record starts),
+  // set only by commitTabularData(); read it through getSourceRowNumber().
+  sourceRowNumbers: new WeakMap(),
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -216,7 +219,8 @@ function updateWorkflowSteps() {
 
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null) {
+// rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -253,6 +257,10 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
       }))
     }
     : null;
+  state.sourceRowNumbers = new WeakMap();
+  if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
+    rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
+  }
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
@@ -291,6 +299,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   resetTemplateResults("字段识别已完成。请选择分析模板并映射字段。");
   updateExportButtons();
   showResultsWorkspace();
+}
+
+// File row of a row object from the current import, or null for rows that did not
+// come through commitTabularData() or an import without row numbers.
+function getSourceRowNumber(row) {
+  return state.sourceRowNumbers.get(row) ?? null;
 }
 
 function renderOverview() {
@@ -1516,6 +1530,7 @@ function resetAnalysisState() {
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);
   state.headerDetection = null;
+  state.sourceRowNumbers = new WeakMap();
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";

@@ -122,16 +122,17 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const { fields, rows, numberFormatHints, headerDetection = null } = readExcelSheetTable(worksheet, sheetName);
+  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null } = readExcelSheetTable(worksheet, sheetName);
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers);
 }
 
-// Reads one worksheet into { fields, rows, numberFormatHints } plus headerDetection
-// when title rows above the header were skipped. Row numbers follow the !ref start.
+// Reads one worksheet into { fields, rows, rowNumbers, numberFormatHints } plus
+// headerDetection when title rows above the header were skipped. Row numbers
+// follow the !ref start.
 function readExcelSheetTable(worksheet, sheetName) {
   validateExcelWorksheetLimits(worksheet, sheetName);
 
@@ -200,7 +201,8 @@ function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readN
   return hints;
 }
 
-// firstRowNumber is the worksheet row number of formattedRows[0] (the !ref start row).
+// firstRowNumber is the worksheet row number of formattedRows[0] (the !ref start row);
+// rowNumbers[i] is the worksheet row of rows[i].
 function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
@@ -248,8 +250,9 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   }
   const { fields } = headerCheck;
 
-  const rows = dataPairs
-    .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])))
+  const keptPairs = dataPairs
+    .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])));
+  const rows = keptPairs
     .map((pair) => fields.reduce((row, field, fieldIndex) => {
       const columnIndex = usedColumnIndexes[fieldIndex];
       row[field] = normalizeExcelCellValue(
@@ -263,7 +266,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     throw new Error(`工作表「${sheetName}」只有表头，没有可分析的数据行。`);
   }
 
-  const result = { fields, rows };
+  const result = { fields, rows, rowNumbers: keptPairs.map((pair) => firstRowNumber + pair.index) };
   if (headerPosition) {
     // Rows above the header count as headerRowNumber - 1; only non-empty ones are kept.
     result.headerDetection = {
@@ -445,11 +448,12 @@ function findCsvHeaderBelowTitleRows(text) {
     }
   });
   const detection = detectHeaderRow(rows, "csv");
-  const lineNumberAt = (offset) => 1 + (text.slice(0, offset).match(/\r\n|\r|\n/g) || []).length;
+  const lineNumbers = lineNumbersAtOffsets(text, starts);
+  const lineNumberAt = (index) => lineNumbers[index] ?? 1;
   const firstIndex = Math.max(0, rows.findIndex((row) => countNonEmptyCells(row) > 0));
-  const titleHint = detection.attempted ? formatTitleRowFallbackHint(lineNumberAt(starts[firstIndex] ?? 0)) : "";
+  const titleHint = detection.attempted ? formatTitleRowFallbackHint(lineNumberAt(firstIndex)) : "";
   if (detection.status !== "skipped" || !detection.headerIndex) return { headerDetection: null, titleHint };
-  const headerRowNumber = lineNumberAt(starts[detection.headerIndex]);
+  const headerRowNumber = lineNumberAt(detection.headerIndex);
   return {
     titleHint,
     offset: starts[detection.headerIndex],
@@ -458,12 +462,57 @@ function findCsvHeaderBelowTitleRows(text) {
       headerRowNumber,
       skippedRows: detection.skippedIndexes
         .map((index) => ({
-          rowNumber: lineNumberAt(starts[index]),
+          rowNumber: lineNumberAt(index),
           cells: rows[index].filter((value) => !isMissing(value)).map(displayValue)
         }))
         .filter((row) => row.cells.length)
     }
   };
+}
+
+// File line (1-based) at each text offset: the line breaks before it plus one,
+// where "\r\n", a lone "\r" and a lone "\n" each end one line. Counting carries on
+// from the previous offset, so ascending offsets cost one pass over the text.
+function lineNumbersAtOffsets(text, offsets) {
+  let position = 0;
+  let breaks = 0;
+  return offsets.map((offset) => {
+    if (offset < position) {
+      position = 0;
+      breaks = 0;
+    }
+    for (; position < offset; position += 1) {
+      const code = text.charCodeAt(position);
+      // A "\n" right after "\r" closes the same line break.
+      if (code === 13 || (code === 10 && text.charCodeAt(position - 1) !== 13)) breaks += 1;
+    }
+    return breaks + 1;
+  });
+}
+
+// File line where each data record of a parsed CSV starts. A second PapaParse pass
+// (header:false, synchronous step) reads the same text with the main parse's
+// delimiter and line break; a record starts at the previous step's cursor.
+// Records that skipEmptyLines:true drops (a single empty cell) are dropped here
+// too, before the first remaining one is taken as the header, as PapaParse does.
+// Returns null when the record count differs from dataRowCount.
+function findCsvRecordLineNumbers(text, meta, dataRowCount) {
+  const starts = [];
+  let cursor = 0;
+  Papa.parse(text, {
+    header: false,
+    skipEmptyLines: false,
+    worker: false,
+    delimiter: meta?.delimiter,
+    newline: meta?.linebreak,
+    step: (results) => {
+      const record = results.data;
+      if (!(record.length === 1 && record[0] === "")) starts.push(cursor);
+      cursor = results.meta.cursor;
+    }
+  });
+  starts.shift();
+  return starts.length === dataRowCount ? lineNumbersAtOffsets(text, starts) : null;
 }
 
 // On a CSV header error, re-parse once from the detected header row. Returns the
@@ -670,10 +719,13 @@ function handleParsedData(results, sourceName, importId, source = null) {
       code: error.code || "ParseWarning",
       message: error.message || "CSV 行结构异常"
     }));
-  const rows = sourceRows.reduce((normalizedRows, row) => {
+  // Indexes into sourceRows of the kept rows, so row numbers drop with blank rows.
+  const keptIndexes = [];
+  const rows = sourceRows.reduce((normalizedRows, row, index) => {
     const normalized = normalizeParsedRow(row, fieldPairs);
     if (fields.some((field) => !isMissing(normalized[field]))) {
       normalizedRows.push(normalized);
+      keptIndexes.push(index);
     }
     return normalizedRows;
   }, []);
@@ -683,7 +735,11 @@ function handleParsedData(results, sourceName, importId, source = null) {
     return;
   }
 
-  commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null);
+  // Only a file about to be committed gets the line-number pass; a re-parse below
+  // skipped title rows adds the physical lines above its header.
+  const recordLineNumbers = source ? findCsvRecordLineNumbers(source.text, results.meta, sourceRows.length) : null;
+  const rowNumbers = recordLineNumbers ? keptIndexes.map((index) => recordLineNumbers[index] + lineOffset) : null;
+  commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null, rowNumbers);
 }
 
 // Header names that repeat after normalizing; blank names are never compared.

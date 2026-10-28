@@ -1051,3 +1051,29 @@ test("the header note lists at most two skipped rows and adds 等 for more", () 
     "表头在第 5 行，已跳过上方 4 行：「甲」「乙」等。"
   );
 });
+
+test("line numbers at offsets count CR, LF and CRLF like the header row numbers did", () => {
+  const { context, evaluate } = createScriptContext();
+  const texts = ["", "a", "a\nb", "a\r\nb", "a\rb", "\r\n\r\n", "\r\r\n\n", "x\n\ry\r\n", "\"q\r\nq\",1\n2\r3"];
+  let seed = 20261028;
+  const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+  for (let index = 0; index < 200; index += 1) {
+    let text = "";
+    for (let length = next() % 40; length > 0; length -= 1) text += ["a", ",", "\r", "\n", "\r\n", "\""][next() % 6];
+    texts.push(text);
+  }
+  // The rule findCsvHeaderBelowTitleRows() used per offset before the counter was shared.
+  const lineNumberAt = (text, offset) => 1 + (text.slice(0, offset).match(/\r\n|\r|\n/g) || []).length;
+  texts.forEach((text) => {
+    const offsets = Array.from({ length: text.length + 1 }, (_, offset) => offset);
+    context.__lineText = text;
+    context.__lineOffsets = offsets;
+    assert.deepEqual(
+      JSON.parse(evaluate("JSON.stringify(lineNumbersAtOffsets(__lineText, __lineOffsets))")),
+      offsets.map((offset) => lineNumberAt(text, offset)),
+      JSON.stringify(text)
+    );
+  });
+  context.__lineOffsets = [5, 2, 7];
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(lineNumbersAtOffsets("a\\r\\nb\\nc\\rd", __lineOffsets))')), [3, 2, 4]);
+});

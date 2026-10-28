@@ -62,6 +62,15 @@ test("CSV encoding and parsed rows preserve Chinese headers and values", () => {
 
   const papaStub = {
     parse(text, options) {
+      if (options.header === false) {
+        // The second, line-number pass: one synchronous step per line, like PapaParse.
+        let cursor = 0;
+        text.split("\n").forEach((line) => {
+          cursor = Math.min(text.length, cursor + line.length + 1);
+          options.step({ data: line.split(","), errors: [], meta: { cursor } });
+        });
+        return;
+      }
       context.__papaOptions = {
         header: options.header,
         skipEmptyLines: options.skipEmptyLines,
@@ -1219,9 +1228,11 @@ const STAGE3_FIXTURES = path.join(__dirname, "fixtures", "stage3");
 async function importStage3Fixture(fileName) {
   const scope = createExcelContext();
   let papaCalls = 0;
+  const papaHeaderOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
     parse(...args) {
       papaCalls += 1;
+      papaHeaderOptions.push(args[1]?.header);
       return Papa.parse(...args);
     }
   });
@@ -1235,7 +1246,7 @@ async function importStage3Fixture(fileName) {
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
   });
   await scope.evaluate("parseDataFile(__stage3File)");
-  return { ...scope, papaCalls: () => papaCalls };
+  return { ...scope, papaCalls: () => papaCalls, papaHeaderOptions: () => [...papaHeaderOptions] };
 }
 
 function importedSummary(evaluate) {
@@ -1257,7 +1268,8 @@ test("a header in the first row of the order fixture imports as before", async (
     duplicateRows: 0,
     totalMissing: 26
   });
-  assert.equal(scope.papaCalls(), 1);
+  assert.equal(scope.papaCalls(), 2);
+  assert.equal(scope.papaHeaderOptions()[1], false);
 });
 
 test("a header in the first row of the roster fixture imports as before", async () => {
@@ -1536,4 +1548,161 @@ test("the title hint appears in the sheet selection panel for multi-sheet workbo
   scope.evaluate("analyzeSelectedExcelSheet()");
   assert.equal(scope.elements.get("sheetSelectionMessage").textContent,
     `工作表「数据」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
+});
+
+// File line numbers of data rows: the row a user sees in Excel, or the physical
+// line (CR, LF and CRLF each end one) where a CSV record starts.
+function sourceRowNumbers(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.rows.map((row) => getSourceRowNumber(row)))"));
+}
+
+const lineRange = (first, last) => Array.from({ length: last - first + 1 }, (_, index) => first + index);
+
+async function importCsvFile(text, fileName = "lines.csv") {
+  const scope = createExcelContext();
+  let papaCalls = 0;
+  const countingPapa = Object.assign(Object.create(Papa), {
+    parse(...args) {
+      papaCalls += 1;
+      return Papa.parse(...args);
+    }
+  });
+  put(scope.context, "Papa", countingPapa);
+  scope.context.window.Papa = countingPapa;
+  const bytes = Buffer.from(text, "utf8");
+  put(scope.context, "__csvFile", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+  await scope.evaluate("parseDataFile(__csvFile)");
+  return { ...scope, papaCalls: () => papaCalls };
+}
+
+test("Excel row numbers follow the !ref start and skip blank rows inside the data", async () => {
+  const worksheet = XLSX.utils.aoa_to_sheet([["编号", "名称"], ["A1", "x"], ["A2", "y"], ["", ""], ["A1", "z"], ["A3", "w"]], { origin: "B5" });
+  worksheet["!ref"] = "B3:C10"; // rows 3-4 are blank inside the used range, row 8 is a blank data row
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S1");
+  const buffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+
+  const { context, evaluate } = createExcelContext();
+  put(context, "__offsetBuffer", buffer);
+  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheetTable(readExcelWorkbook(__offsetBuffer).Sheets.S1, \"S1\"))"));
+  assert.deepEqual(table.rowNumbers, [6, 7, 9, 10]);
+
+  const imported = await importWorkbookFile(buffer);
+  assert.deepEqual(sourceRowNumbers(imported.evaluate), [6, 7, 9, 10]);
+});
+
+test("stage3 Excel fixtures map every row to its worksheet row", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.deepEqual(sourceRowNumbers(store.evaluate), lineRange(5, 33));
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(sourceRowNumbers(roster.evaluate), lineRange(2, 31));
+});
+
+test("stage3 CSV fixtures map every row to its file line", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(sourceRowNumbers(orders.evaluate), lineRange(2, 31));
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.deepEqual(sourceRowNumbers(grades.evaluate), lineRange(3, 32), fileName);
+  }
+});
+
+// Title row, blank line under the header, a quoted line break, a delimiter-only row
+// and a whitespace-only row; the data rows start on lines 4, 5, 9 and 11.
+const LINE_NUMBER_CSV_LINES = [
+  "期中成绩",
+  "学号,姓名,备注",
+  "",
+  "S01,张三,",
+  "S02,李四,\"第一行",
+  "第二行\"",
+  ",,",
+  "   ",
+  "S01,张三,",
+  "",
+  "S03,王五,ok"
+];
+
+test("CSV row numbers are the same for LF, CR-only and CRLF with a BOM", async () => {
+  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "﻿"]]) {
+    const scope = await importCsvFile(`${bom}${LINE_NUMBER_CSV_LINES.join(linebreak)}${linebreak}`);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => row[\"学号\"]))")), ["S01", "S02", "S01", "S03"], label);
+    assert.deepEqual(sourceRowNumbers(scope.evaluate), [4, 5, 9, 11], label);
+  }
+});
+
+test("a quoted line break inside a CSV header moves the first data row to line 3", async () => {
+  const scope = await importCsvFile("\"a\nb\",c\n1,2\n3,4\n");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.fields)")), ["a\nb", "c"]);
+  assert.deepEqual(sourceRowNumbers(scope.evaluate), [3, 4]);
+});
+
+test("CSV row numbers are all null when the line pass does not match the parsed rows", () => {
+  const { context, evaluate } = createScriptContext();
+  const papaStub = {
+    parse(text, options) {
+      if (options.header === false) {
+        // One record fewer than the main parse returned.
+        options.step({ data: ["姓名"], errors: [], meta: { cursor: 3 } });
+        options.step({ data: ["张三"], errors: [], meta: { cursor: 6 } });
+        return;
+      }
+      const fields = ["姓名"].map(options.transformHeader);
+      options.complete({ errors: [], meta: { fields, delimiter: ",", linebreak: "\n" }, data: [{ [fields[0]]: "张三" }, { [fields[0]]: "李四" }] });
+    }
+  };
+  context.Papa = papaStub;
+  context.window.Papa = papaStub;
+  evaluate('parseCsvText("姓名\\n张三\\n李四\\n", "mismatch.csv", beginImport())');
+  assert.equal(evaluate("state.rows.length"), 2);
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, null]);
+});
+
+test("rows that did not come through an import have no row number", () => {
+  const { context, evaluate } = createScriptContext();
+  put(context, "__plainRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  evaluate('commitTabularData(["城市"], __plainRows, "plain.csv", beginImport())');
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, null]);
+
+  put(context, "__numberedRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  evaluate('commitTabularData(["城市"], __numberedRows, "numbered.csv", beginImport(), [], "", null, null, [7, 9])');
+  assert.deepEqual(sourceRowNumbers(evaluate), [7, 9]);
+
+  evaluate('state.rows = [{ 城市: "广州" }, __numberedRows[0]]');
+  assert.deepEqual(sourceRowNumbers(evaluate), [null, 7]);
+  evaluate("resetAnalysisState()");
+  assert.equal(evaluate("getSourceRowNumber(__numberedRows[0])"), null);
+});
+
+// Guards recorded on the code before row numbers existed: these files must report
+// exactly the same errors and parse warnings, and an over-limit file is parsed once.
+test("CSV edge files keep their errors and parse warnings", () => {
+  const cases = [
+    ["a,b\r\n", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
+    ["", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
+    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 2 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
+      { row: null, code: "UndetectableDelimiter", message: "Unable to auto-detect delimiting character; defaulted to ','" },
+      { row: 2, code: "TooFewFields", message: "Too few fields: expected 2 fields but parsed 1" }
+    ]],
+    ["a,b\r\n1,2,3\r\n", "status-panel error", "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。", []]
+  ];
+  for (const [text, className, status, warnings] of cases) {
+    const scope = importCsvTextWithPapa(text);
+    const panel = scope.elements.get("statusPanel");
+    assert.equal(panel.className, className, JSON.stringify(text));
+    assert.equal(panel.textContent, status, JSON.stringify(text));
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)")), warnings, JSON.stringify(text));
+  }
+});
+
+test("a CSV over the row limit still fails before any line-number pass", async () => {
+  const text = ["值", ...Array.from({ length: 100001 }, (_, index) => String(index))].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "over.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
+  assert.equal(scope.papaCalls(), 1);
 });
