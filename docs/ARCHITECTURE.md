@@ -19,11 +19,11 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 | 顺序 | 文件 | 职责 |
 | --- | --- | --- |
-| 1 | `parsing.js` | 单元格值的缺失判断与解析：把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。 |
+| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
-| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，以及 HTML 转义。 |
+| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值的说明文字，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。 |
-| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、缺失率等级，以及质量页使用的原始数据数值统计。 |
+| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览、字段、质量、统计、图表和自定义分析的渲染。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。 |
 | 8 | `templates.js` | 场景模板：模板定义、字段映射表单、各模板的分析计算和结果渲染。 |
@@ -46,11 +46,11 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 .
 ├── index.html                  # 页面结构、控件和 vendor/ 依赖引用
 ├── style.css                   # 页面样式与响应式规则
-├── parsing.js                  # 缺失判断，数值和日期解析
+├── parsing.js                  # 缺失判断与疑似缺失值清单，数值和日期解析
 ├── profiling.js                # 字段类型识别和字段 profile
-├── format.js                   # 显示格式化、表头位置与 ID 重复值文字、HTML 转义
+├── format.js                   # 显示格式化、表头位置 / ID 重复值 / 疑似缺失值文字、HTML 转义
 ├── stats.js                    # 描述统计、IQR、分组、趋势、直方图
-├── quality.js                  # 转换失败、重复行、ID 重复值、缺失率等级
+├── quality.js                  # 转换失败、重复行、ID 重复值、疑似缺失值、缺失率等级
 ├── app.js                      # state / dom、三条刷新路径、页面渲染
 ├── importer.js                 # CSV / Excel 导入和导入并发保护
 ├── templates.js                # 场景模板
@@ -100,7 +100,7 @@ flowchart LR
 
 1. `state.rows` 是导入后原始数据的事实来源；筛选和去重不得改写它。
 2. 普通分析统一通过 `getAnalysisRows()` 读取当前范围。
-3. 质量页始终基于原始 `state.rows`；筛选不会改变缺失、重复、ID 重复值和异常值口径。
+3. 质量页始终基于原始 `state.rows`；筛选不会改变缺失、重复、ID 重复值、疑似缺失值和异常值口径。
 4. 字段类型修正只更新 profile，不改写原始单元格；转换发生在统计时。
 5. 每次新导入必须通过 `beginImport()` 生成新的导入 ID，旧异步结果不得提交。
 6. Chart.js 实例创建前必须销毁旧实例，全部实例统一登记在 `state.charts`。
@@ -121,7 +121,8 @@ flowchart LR
 | --- | --- | --- |
 | 原始数据 | `rows`, `fields` | 完整原始记录和固定字段顺序 |
 | 当前分析范围 | `filteredRows`, `filterSourceRows`, `filters` | 当前筛选结果、来源身份保护和已应用条件 |
-| 字段配置 | `profiles`, `fieldTypeDrafts` | 自动识别结果、已应用类型和未应用草稿 |
+| 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
+| 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告 |
 | 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选和去重结果与 `rows` 共享行对象，所以同样能查到 |
@@ -139,7 +140,8 @@ flowchart LR
 - `getSourceRowNumber(row)`：返回行对象的文件行号；没经过 `commitTabularData()`（例如测试直接给 `state.rows` 赋值）或导入没给行号时返回 `null`。
 - `getAnalysisRows()`：只有 `filterSourceRows === state.rows` 时才返回 `filteredRows`，否则回退到原始行。
 - `refreshFilteredAnalysis()`：筛选后重算当前范围的统计、结论、图表和导出状态。
-- `rebuildAnalysisFromProfiles()`：字段类型提交后清除筛选，并重建依赖字段类型的全部结果。
+- `rebuildAnalysisFromProfiles(message, setMessage)`：字段类型提交或疑似缺失值确认后清除筛选，并重建依赖字段类型的全部结果；`setMessage` 决定结果消息写到哪里，默认是字段配置区。
+- `updatePlaceholderConfirmations()`：第 4 条刷新路径，疑似缺失值的确认、撤销和全部确认都经过它（见“疑似缺失值”）。
 - `resetAnalysisState()`：销毁图表，同时清空领域状态和结果 DOM；不会把 `activeImportId` 重置为旧值。
 
 **输入 / 输出**
@@ -351,7 +353,8 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 | 函数 | 职责 |
 | --- | --- |
-| `buildColumnProfile(field, rows, numberFormatHint)` | 生成完整 profile；第三个参数可选，是 Excel 导入时该列的格式提示（目前只有 `"percent"`），CSV 不传 |
+| `buildColumnProfile(field, rows, numberFormatHint, confirmedKeys)` | 生成完整 profile；第三个参数可选，是 Excel 导入时该列的格式提示（目前只有 `"percent"`），CSV 不传；第四个参数可选，是该字段已确认按缺失处理的疑似缺失值写法 |
+| `inferFieldTypeKey(field, counts)` | 按下面的优先级从非空数、唯一值数、数值数和日期数得出自动类型；`buildColumnProfile()` 和疑似缺失值的预估共用 |
 | `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称；整个字段名等于序号、行号、行序号、index、idx、No.、Row No.、Row No 或 `#`（不区分大小写），以及以"中文字符 + ID"结尾（如 学生ID、客户 ID）的名称也判为 ID |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
 | `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
@@ -359,8 +362,8 @@ XLSX.utils.sheet_to_json(worksheet, {
 | `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
 | `countFieldConversionFailures()` | 取得指定字段按数值或日期解释时的失败数量 |
 | `stageFieldTypeChange()` | 只更新未应用草稿和提示 |
-| `applyFieldConfiguration()` | 把草稿提交到 `profile.typeKey` 并触发重建 |
-| `restoreAutomaticFieldTypes()` | 恢复 `inferredTypeKey` |
+| `applyFieldConfiguration()` | 把草稿提交到 `profile.typeKey`，更新手动类型记录并触发重建 |
+| `restoreAutomaticFieldTypes()` | 恢复 `inferredTypeKey`，清空手动类型记录；不撤销疑似缺失值的确认 |
 
 自动识别按以下优先级执行：
 
@@ -369,14 +372,14 @@ XLSX.utils.sheet_to_json(worksheet, {
 3. 数值转换成功率至少 80%。
 4. 其他字段归为分类。
 
-唯一率、日期转换率和数值转换率都以非缺失值数 `nonMissingCount` 为分母；缺失值不计入转换失败。
+唯一率、日期转换率和数值转换率都以非缺失值数 `nonMissingCount` 为分母；缺失值不计入转换失败。已确认按缺失处理的疑似缺失值写法同样不计入（见“疑似缺失值”）；没确认的仍算非空值。
 
 每个 profile 包含：
 
 - 字段名、自动类型和当前应用类型。
 - 总数、非空数、缺失数和缺失率。
 - 唯一值数量和唯一率。
-- 数值率、日期率、日期策略和数值格式。
+- 能转成数值和日期的个数（`numericCount`、`dateCount`）、数值率、日期率、日期策略和数值格式。
 - 最多 3 个去重后的示例值。
 - 数值与日期两种解释下的转换失败数（`conversionFailuresByType`）和各自最多 3 个去重后的失败样例（`conversionFailureSamplesByType`）。
 - 当前类型对应的 `conversionFailureCount` 与 `conversionFailureSamples`；分类、ID 和忽略字段均为 0 与空数组。`applyFieldConfiguration()` / `restoreAutomaticFieldTypes()` 改类型时通过 `countFieldConversionFailures()` 与 `getFieldConversionFailureSamples()` 同步更新。
@@ -401,21 +404,23 @@ XLSX.utils.sheet_to_json(worksheet, {
 - 统计每列缺失值和缺失率。
 - 识别完全重复行。
 - 检查当前类型为 ID 的字段有没有重复值，并给出文件行号。
+- 列出 N/A、— 这类疑似缺失值，由用户按“字段 × 写法”确认是否按缺失处理。
 - 对当前确认的数值字段执行 IQR 异常值检测。
 - 消费由 File Input & Parsing 生成的 CSV 解析警告，以及由 Field Profiling 生成的缺失和转换失败信号。
 - 保持质量页使用原始数据，不受筛选影响。
 
 **主要函数**
 
-- `isMissing(value)`：`null`、`undefined` 或 trim 后空字符串均视为缺失。
+- `isMissing(value)`：`null`、`undefined` 或 trim 后空字符串均视为缺失。分析和质量口径改用 `isMissingOrConfirmed(value, keys)`，已确认的疑似缺失值写法也算缺失；`importer.js` 仍用 `isMissing()`。
 - `countDuplicateRows(rows, fields)`：统计每组首次出现之后的重复记录数。
 - `buildExactRowKey(row, fields)`：区分 absent、undefined、null、值类型和值字符串。
 - `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
 - `buildNumericStats(rows)`：同时生成 Q1、Q3、IQR 边界和异常值数量。
 - `getQualityNumericStats()`：返回基于原始 `state.rows` 的数值质量统计。
-- `buildIdDuplicateSummary(rows, fields, profiles, getRowNumber)`：ID 字段重复值，见下文“ID 字段重复值”。
+- `buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations)`：ID 字段重复值，见下文“ID 字段重复值”。
 - `countListedIdDuplicateFields(idDuplicates)`：逐值列出了重复值的 ID 字段数，质量页 pill 和报告摘要共用。
-- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()`。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），最后一项是“ID 重复字段：N”（N > 0 为 warning，否则为 success）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。`renderIdDuplicateDetails()` 在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示 ID 重复值。
+- `buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` / `countPendingPlaceholderFields(entries)`：疑似缺失值和还有待确认写法的字段数，见下文“疑似缺失值”。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()` 和 `renderPlaceholderDetails()`。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），之后是“ID 重复字段：N”（N > 0 为 warning，否则为 success），最后一项是“疑似缺失值：N 个字段”（同样的颜色规则）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。两个详情 renderer 都在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示 ID 重复值和疑似缺失值。
 
 异常值规则为：
 
@@ -429,7 +434,7 @@ upper = Q3 + 1.5 × IQR
 **输入 / 输出**
 
 - 输入：原始 `state.rows`、完整 `state.fields` 和当前已应用 profiles。
-- 输出：`totalMissing`、`duplicateRows`、`idDuplicates`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题、异常值和 ID 重复值 DOM。
+- 输出：`totalMissing`、`duplicateRows`、`idDuplicates`、`placeholders`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题、异常值、ID 重复值和疑似缺失值 DOM。
 - `renderQuality()` 不展示 CSV 解析警告；它保存在 state 并进入报告。转换失败（格式问题）按原始数据显示在质量页，也显示在字段配置和报告字段类型部分。
 - 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但 `toNumber()` 失败的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
 
@@ -437,7 +442,7 @@ upper = Q3 + 1.5 × IQR
 
 - 初始质量计算发生在 `commitTabularData()`。
 - `refreshFilteredAnalysis()` 不重算质量页，因此筛选不会改变原始质量指标。
-- 字段类型真正提交后，`rebuildAnalysisFromProfiles()` 会按原始行重新计算哪些字段参与数值异常检测，并在开头重算 `idDuplicates`。
+- 字段类型真正提交后，`rebuildAnalysisFromProfiles()` 会按原始行重新计算哪些字段参与数值异常检测，并在开头重算 `idDuplicates` 和 `placeholders`。
 - 报告质量部分使用相同的原始范围。
 - 缺失总数和原始重复数按全部导入字段计算；字段后来设为 `ignore` 不会把它们从原始质量口径中移除。
 
@@ -451,13 +456,38 @@ upper = Q3 + 1.5 × IQR
 `buildIdDuplicateSummary()` 检查当前已应用类型为 ID（`typeKey === "id"`）的每个字段，和整行重复互相独立，去重导出不变：
 
 - **范围**：原始 `state.rows`，不随筛选变化。`commitTabularData()` 在算完 profile 和重复行之后计算，`rebuildAnalysisFromProfiles()` 开头重算（“应用字段配置”和“恢复自动识别”都会经过它），所以手动改成 ID 的字段也查，改成其他类型或忽略的不查。`resetAnalysisState()` 把 `state.idDuplicates` 清成 `[]`，每次提交整体替换。
-- **比较**：值经 `normalizeValue()` 归一（去首尾空格，区分大小写，不做全角半角归一），归一后为空的缺失值不参与。显示用归一后的值。Excel 单元格在导入时已转成字符串，数字 1012 和文本 "1012" 是同一个值；用数字格式显示成 001012 的数字仍按原始值 1012 比较和显示。N/A、— 这类占位文字不算缺失，重复出现时会被列为重复值。
+- **比较**：值经 `normalizeValue()` 归一（去首尾空格，区分大小写，不做全角半角归一），归一后为空的缺失值不参与。显示用归一后的值。Excel 单元格在导入时已转成字符串，数字 1012 和文本 "1012" 是同一个值；用数字格式显示成 001012 的数字仍按原始值 1012 比较和显示。N/A、— 这类疑似缺失值没确认时不算缺失，重复出现时会被列为重复值；确认按缺失处理后不再参与比较（第 5 个参数 `confirmations`，默认没有确认）。
 - **结果**：按 `state.fields` 的顺序，每个 ID 字段一项 `{ field, nonMissingCount, distinctCount, uniqueRatio, mostlyRepeated, duplicateValueCount, values }`。`values` 里每项是 `{ value, count, rowNumbers, identicalRowCount, identicalGroupCount }`。
 - **疑似非唯一**：非空值至少 `ID_MOSTLY_REPEATED_MIN_VALUES`（12）个、且唯一率（不同值数 ÷ 非空数）低于 `ID_MOSTLY_REPEATED_UNIQUE_RATIO`（0.5）时，`mostlyRepeated` 为 `true`，`values` 为空，界面改为提示（`formatMostlyRepeatedIdHint()`）。按唯一率规则自动判成 ID 的字段，导入时唯一率至少 98%，不会落入这一类。
 - **列出规则**：重复值按出现次数从多到少排，次数相同按第一次出现的位置；最多列 `ID_DUPLICATE_VALUE_LIMIT`（10）个值，每个值最多列 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个行号。行号通过 `getSourceRowNumber()` 取得，查不到为 `null`，显示为“—”，不显示估算值。
 - **整行相同**：只给列出的值，用 `buildExactRowKey(row, state.fields)` 在同一个重复值的行里找完全相同的行；行键在字段之间缓存。`identicalRowCount` 是这些行的总数，`identicalGroupCount` 是组数。10 万行、4 个 ID 字段大量重复时约 160 ms（Node 内测量）。
 - **文字**：`format.js` 的 `formatRowNumberList()`（完整列出最多 10 个行号，总数更多时加“等 N 个”）、`formatIdenticalRows()`（“其中 2 行内容完全相同”，多组时加“（分 K 组）”）、`formatIdDuplicateOverflow()`（“共 N 个重复值，只列出前 10 个”）、`formatCleanIdFieldsNote()`（“ID 字段没有重复值（已检查：…）”，前面已有字段被列出时写“其余 ID 字段……”）和 `formatMostlyRepeatedIdHint()`，质量页和报告共用。
 - **质量页**：pill“ID 重复字段：N”中，N 是逐值列出了重复值的字段数，疑似非唯一的字段不计入。`#idDuplicateDetails` 里每个有重复值的字段一张“重复值 / 出现次数 / 文件行号 / 说明”表，疑似非唯一的字段显示提示，没有重复值的 ID 字段在最后用一句话列出；没有 ID 字段时写“未识别到 ID 字段。”。所有用户数据都经过 `escapeHtml()`。
+
+### 疑似缺失值（v2.4.0）
+
+N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时一律按普通值处理：仍算非空，仍进类型判断的分母，在数值和日期列里仍算转换失败。质量页把它们列出来，由用户按“字段 × 写法”确认；确认后，这些单元格在分析和质量口径里按缺失处理，原始数据不变。
+
+- **清单和两档**（`parsing.js` 的 `PLACEHOLDER_VALUES`）：
+  - 常见（`common`）：N/A、n/a、#N/A、NULL、null、Null、None、none、NaN、nan、NAN、—、——、--。
+  - 可能是有效值（`maybe`）：无、暂无、-、/、NA。这些也可能是“有/无”选项、北美地区的缩写，或会计格式里表示 0 的「-」，所以不进“全部确认常见写法”，每条都附提示。
+  - 不在清单里的文字（缺考、未知、0 等）不检出。
+- **匹配**：`placeholderKey(value)` 只看字符串单元格：去首尾空格 → NFKC → 再去首尾空格，整格等于清单里的某个写法才算，不做子串匹配；得到的写法就是 key，确认的粒度是“字段 × key”。全角的「Ｎ／Ａ」「－－」、康熙部首「⽆」、小号的「﹘」「﹣」等经 NFKC 变成清单写法，和半角写法是同一个 key。去首尾空格后超过 8 个 UTF-16 单位的单元格直接判为不匹配，不做 NFKC（清单最长 4 个字符；NFKC 不会把字符映射成空，清单字符也不是组合的结果）。零宽空格（U+200B）不是 JS 的空白字符，带它的写法匹配不上；BOM（U+FEFF）会被 `trim()` 去掉。
+- **检出**：`buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` 基于原始 `state.rows`，按字段顺序、同一字段内按 key 第一次出现的位置，每个“字段 × key”一项 `{ field, key, tier, count, rawValues, rowNumbers, confirmed, fieldIgnored }`。`rawValues` 是去首尾空格后的不同原文；`rowNumbers` 最多 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个，经 `getSourceRowNumber()` 取得，查不到为 `null`。被忽略的字段不检出新的疑似值，但已经确认的 key 仍列出（`fieldIgnored: true`），照样计入该字段的缺失数，仍可撤销。`commitTabularData()` 在算完 profile 之后、`renderQuality()` 之前计算，`rebuildAnalysisFromProfiles()` 开头重算（字段配置的变化会改变哪些字段被检查），筛选不重算。结果存在 `state.placeholders`。
+- **确认的状态**：`state.placeholderConfirmations` 是“字段 → 已确认的 key 数组”（`Object.create(null)`）。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它；确认和撤销时也整体替换。通过 `getConfirmedPlaceholderKeys(field)` 读取（用 `hasOwnProperty`，字段名叫 `constructor` 之类也安全）。
+- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 17 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、三个分组函数（`groupNumericFieldByCategory()`、`aggregateByCategory()`、模板用的 `groupMetricRowsByField()`，显示为“未填写”）、模板用的 `countNonMissingValues()` 和去重用户数、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览和结论里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7；`renderInsights()` 里的“重复行”也按原值）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期，所以只调用 `toNumber()` / `parseFieldDate()` 的地方不用改。分组显示“未填写”、筛选显示“（空值）”是现有的不一致，这一版没有统一。
+- **第 4 条刷新路径**：`confirmPlaceholder(field, key)`、`undoPlaceholderConfirmation(field, key)` 和 `confirmAllCommonPlaceholders()`（只覆盖未忽略字段里待确认的常见写法）都经过 `updatePlaceholderConfirmations(keysByField, message)`，顺序是：
+  1. 字段配置有未应用的草稿时拒绝，状态不变，在字段配置区和 `#placeholderMessage` 写“字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。”。没有可做的事（key 不在待确认列表里，或要撤销的 key 没确认过）时也返回 `false`。
+  2. 整体替换 `state.placeholderConfirmations`。
+  3. `rebuildConfirmedFieldProfile()` 用确认的 key 重建受影响字段的 profile：有手动记录的字段保留手动类型（转换失败按这个类型重取），其余字段的 `typeKey` 跟随新的 `inferredTypeKey`；同步 `state.fieldTypeDrafts[field]`，所以确认后没有未应用的草稿。
+  4. 重算 `state.totalMissing`。
+  5. `rebuildAnalysisFromProfiles(message, setPlaceholderMessage)`：内部用确认重算 `idDuplicates` 和疑似值摘要并清除筛选，结果消息写到 `#placeholderMessage`。之后焦点移到这条消息上。
+
+  `commitTabularData()`、`refreshFilteredAnalysis()` 和字段配置三条路径的顺序不变：导入在 profile 之后算摘要，筛选不碰确认和摘要，字段配置经 rebuild 重算摘要。
+- **手动类型记录**：`state.manualFieldTypes` 是“字段 → 用户应用的类型”，只记和自动识别不同的类型，每次提交整体替换为空，`resetAnalysisState()` 清空。`applyFieldConfiguration()` 以现有记录为起点，只重新判定草稿和应用前 `typeKey` 不同的字段：草稿 ≠ `inferredTypeKey` 就记录，否则删除（选了和自动识别一样的类型不算手动）；其余字段保留原记录。这一点是必要的：确认可能让手动类型恰好等于新的自动识别结果，此时对别的字段应用配置不能把记录清掉，否则撤销确认后字段会回到自动识别的类型。没做过确认时，这和“当前类型 ≠ 自动识别类型”完全等价。`restoreAutomaticFieldTypes()` 清空记录，但不撤销确认；`hasAutomaticTypeDifferences()` 在有记录时也返回 `true`。记录只在确认路径和“恢复自动识别”按钮的可用性上被读到。
+- **确认后的影响（预估）**：`inferFieldTypeKey(field, { nonMissingCount, uniqueCount, numericCount, dateCount })` 是从 `buildColumnProfile()` 抽出来的类型判断，两边共用，不另写一份规则；profile 为此新增 `numericCount`、`dateCount`。`previewPlaceholderConfirmation(field, keys)` 以当前已确认的状态为基础，经 `estimateConfirmedProfile()` 走算术捷径：确认的写法都不能转数值或日期，所以数值数、日期数不变；非空数减去被去掉的单元格数，唯一值数减去被去掉的不同 `normalizeValue()` 值的个数（「Ｎ／Ａ」和「N/A」是同一个 key，但在 `normalizeValue()` 下是两个值）。写法不提供 dmy / mdy 证据，只有年份名字段（`isYearFieldName()`）的 `allowYearOnly` 会因为非空数变化而改变；对年份名字段，对剩下的值重算 `buildDateStrategy()`，和原策略不同就完整跑一次 `buildColumnProfile()`，其余字段直接走捷径。结果是 `{ typeKey, inferredTypeKey, missingCount, uniqueCount, conversionFailureCount, estimated }`，有手动记录时 `typeKey` 取手动类型。`previewAllCommonPlaceholders()` 列出全部确认常见写法后类型会变的字段。10 万行 × 20 列、7 条待确认时，逐条预估共约 0.43 s（完整重跑约 3.1 s），导入因此多出约 0.7 s（Node 内测量）。
+- **质量页**：pill“疑似缺失值：N 个字段”放在“ID 重复字段”之后，N 是还有待确认写法的非忽略字段数（`countPendingPlaceholderFields()`），N > 0 为 warning，否则为 success。`#placeholderDetails` 由 `renderPlaceholderDetails()` 写入：每个“字段 × key”一行。待确认的写出次数、行号、确认后缺失值的变化和类型，按钮“按缺失处理”；已确认的写“已按缺失处理”，被忽略的字段在字段名后标“（字段已忽略）”，按钮“撤销”。一个字段有两条以上待确认时，加一行“全部确认后”。第二档写法下附“也可能是有效值”的提示，写法是「-」时再加会计格式的说明。顶部是“全部确认常见写法（N 处）”按钮（N 是待确认的常见“字段 × 写法”条数），旁边列出类型会变的字段。没有检出时写“没有发现疑似缺失值。”。文字由 `format.js` 的 `formatPlaceholderValue()`（key 加「」，原文和 key 不同时附“（原文：…）”）、`formatPlaceholderRows()`（“（第 15 行）”，超过 10 行时“（第 2、…、11 行等）”，没有行号时“（行号：—）”）、`formatPlaceholderChange()`、`formatPendingPlaceholder()`、`formatConfirmedPlaceholder()` 和 `formatPlaceholderNotes()` 生成，写入页面前都经过 `escapeHtml()`。按钮带 `data-placeholder-index`（`state.placeholders` 的下标）或 `data-placeholder-all`，`aria-describedby` 指向这一行的文字；属性里不写字段名。`script.js` 给 `#placeholderDetails` 绑一个委托的 click（`handlePlaceholderClick()`）。`#placeholderMessage`（`role="status"`）在 `#placeholderDetails` 之外，重绘不会把消息清掉。
+- **Excel 公式错误单元格**：SheetJS 按 `raw: true, defval: ""` 读出时，#NULL! 为 `null`，#DIV/0!、#VALUE!、#REF!、#NAME?、#NUM!、#N/A 为 `""`，导入后都已经是缺失值，不会出现在疑似值列表里；CSV 里写成文本的 "#N/A" 则是常见写法，要用户确认。
 
 ## 7. Statistics（统计分析）
 
@@ -651,6 +681,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
 - 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
 - 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。HTML / Markdown 报告在“数值异常值”之后加“ID 字段重复值”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。HTML 质量摘要句末尾追加“；ID 重复字段：N”，Markdown 在“解析警告”后加一条“- ID 重复字段：N”。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
+- 报告快照的 `quality.placeholders` 由 `buildReportPlaceholders()` 生成：`{ confirmed: [{ field, key, rawValues, count, fieldIgnored }], pending: [{ field, key, tier, rawValues, count, rowNumbers, effect }] }`，`effect` 是质量页上同样的“确认后缺失值 0 → 1，类型仍为数值”文字。HTML / Markdown 报告在“各字段缺失情况”之后加“疑似缺失值”一节：由 `buildReportPlaceholderSection()` 生成同一份内容，已确认的写成“字段 / 写法 / 出现次数 / 状态”表（被忽略的字段状态为“已按缺失处理（字段已忽略）”），待确认的写成“字段 / 写法 / 档位 / 出现次数 / 文件行号 / 确认后的影响”表，有第二档写法时表后加一条以“说明：”开头的提示；快照存在但没有检出时写“没有发现疑似缺失值。”。只有有检出或有确认时，HTML 质量摘要句才追加“；疑似缺失值：N 个字段”，Markdown 在“ID 重复字段”后加一条“- 疑似缺失值：N 个字段”（N 同质量页 pill）。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义，Markdown 的说明文字经 `escapeMarkdownText()`，每行都以固定文字开头，不以用户的字段名或值开头。`normalizeReportSnapshot()` 遇到缺少这个字段或 `confirmed` / `pending` 不是数组的快照取 `null`，这一节和摘要里的这一项都不输出。
 
 **与其他模块的关系**
 
@@ -678,7 +709,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 | --- | --- |
 | 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()`, `updateWorkflowSteps()` |
 | 导入状态 | `setImportBusy()`, `setStatus()`, `showError()` |
-| 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderNumericStats()`, `renderCategoryStats()` |
+| 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderPlaceholderDetails()`, `renderNumericStats()`, `renderCategoryStats()` |
 | 自动结论 | `renderInsights()`, `renderInsightGroups()` |
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
 | 自定义与模板 | `renderV2Analysis()` 及其子 renderer、`renderTemplateMappingForm()`, `renderTemplateResult()` |
@@ -694,7 +725,7 @@ refreshFilteredAnalysis()       # 筛选变化
 rebuildAnalysisFromProfiles()   # 字段类型变化
 ```
 
-三者都按各自场景手工组合“重算 → render → 图表 → 自定义分析 → 导出状态”。执行顺序是当前行为契约的一部分。
+三者都按各自场景手工组合“重算 → render → 图表 → 自定义分析 → 导出状态”。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。
 
 **输入 / 输出**
 
@@ -711,7 +742,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 
 ## 当前脚本的技术债
 
-当前浏览器逻辑共约五千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 29 个顶层 state 字段和 105 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
+当前浏览器逻辑共约五千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 32 个顶层 state 字段和 107 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
 
 1. **全局可变状态是中心依赖。** 多个缓存必须由调用顺序保持一致，例如 `rows`、`filteredRows`、profiles、统计、图表和 `analysisCompletedAt`。
 2. **计算、状态写入和 DOM 副作用混合。** `renderInsights()`、`renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。
