@@ -128,6 +128,11 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber) {
   });
 }
 
+// ID fields that list duplicate values; mostly repeated fields do not count.
+function countListedIdDuplicateFields(idDuplicates) {
+  return idDuplicates.filter((item) => item.values.length).length;
+}
+
 function missingRateLevel() {
   const denominator = state.rows.length * state.fields.length;
   const rate = denominator ? state.totalMissing / denominator : 0;

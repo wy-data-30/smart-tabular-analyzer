@@ -92,6 +92,11 @@ function formatIdDuplicateOverflow(totalCount, listedCount) {
   return totalCount > listedCount ? `共 ${totalCount} 个重复值，只列出前 ${listedCount} 个` : "";
 }
 
+// Names the ID fields without duplicates; afterOthers when other ID fields were reported first.
+function formatCleanIdFieldsNote(fields, afterOthers = false) {
+  return `${afterOthers ? "其余 " : ""}ID 字段没有重复值（已检查：${fields.join("、")}）`;
+}
+
 // Shown instead of the value list for a mostly repeated ID field (plain text).
 function formatMostlyRepeatedIdHint({ field, distinctCount, nonMissingCount, uniqueRatio }) {
   return `「${field}」的值大多重复出现（${formatInteger(distinctCount)} 个不同值，共 ${formatInteger(nonMissingCount)} 行，唯一率 ${formatPercent(uniqueRatio)}），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。`;

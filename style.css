@@ -969,6 +969,43 @@ tbody tr:hover {
   color: var(--warning);
 }
 
+.id-duplicate-field + .id-duplicate-field,
+.id-duplicate-field + .id-duplicate-note,
+.id-duplicate-note + .id-duplicate-field,
+.id-duplicate-note + .id-duplicate-note {
+  margin-top: 14px;
+}
+
+.id-duplicate-field-name {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.id-duplicate-field table {
+  min-width: 500px;
+}
+
+.id-duplicate-note {
+  margin-bottom: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.id-duplicate-field .id-duplicate-note {
+  margin-top: 8px;
+}
+
+.id-duplicate-note.warning {
+  padding: 10px 12px;
+  border: 1px solid #fedf89;
+  border-radius: var(--radius-sm);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .filter-count-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
