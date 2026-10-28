@@ -277,7 +277,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.duplicateRows = countDuplicateRows(rows, fields);
-  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber);
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
@@ -325,8 +325,9 @@ function renderOverview() {
   const activeProfiles = getActiveProfiles();
   const numericCount = getProfilesByType("numeric").length;
   const categoryCount = getProfilesByType("category").length;
+  const activeKeys = activeProfiles.map((profile) => getConfirmedPlaceholderKeys(profile.field));
   const activeMissing = analysisRows.reduce((total, row) => (
-    total + activeProfiles.filter((profile) => isMissing(row[profile.field])).length
+    total + activeProfiles.filter((profile, index) => isMissingOrConfirmed(row[profile.field], activeKeys[index])).length
   ), 0);
   const rowValue = hasActiveFilters()
     ? `${formatInteger(state.rows.length)} → ${formatInteger(analysisRows.length)}`
@@ -353,8 +354,9 @@ function renderInsights() {
   const activeProfiles = getActiveProfiles();
   const activeFields = activeProfiles.map((profile) => profile.field);
   const ignoredCount = state.profiles.length - activeProfiles.length;
+  const activeKeys = activeFields.map((field) => getConfirmedPlaceholderKeys(field));
   const activeMissing = analysisRows.reduce((sum, row) => (
-    sum + activeFields.filter((field) => isMissing(row[field])).length
+    sum + activeFields.filter((field, index) => isMissingOrConfirmed(row[field], activeKeys[index])).length
   ), 0);
   const analysisDuplicates = activeFields.length ? countDuplicateRows(analysisRows, activeFields) : 0;
   const missingRate = analysisRows.length && activeFields.length
@@ -684,9 +686,11 @@ function initializeFilterControls() {
 
 function getCategoryFilterOptions(field) {
   if (!field) return [];
+  // Confirmed placeholders join the empty value, as in filterRowsByConfig().
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const counts = new Map();
   state.rows.forEach((row) => {
-    const value = normalizeValue(row[field]);
+    const value = analysisValue(row[field], confirmedKeys);
     counts.set(value, (counts.get(value) || 0) + 1);
   });
   return Array.from(counts.entries())
@@ -840,12 +844,13 @@ function readFilterConfig() {
 
 function filterRowsByConfig(rows, filters) {
   const categoryValues = filters.category ? new Set(filters.category.values) : null;
+  const categoryKeys = filters.category ? getConfirmedPlaceholderKeys(filters.category.field) : [];
   const startTime = filters.date ? Date.parse(`${filters.date.start}T00:00:00Z`) : null;
   const endTime = filters.date ? Date.parse(`${filters.date.end}T23:59:59.999Z`) : null;
 
   return rows.filter((row) => {
     if (filters.category) {
-      const value = normalizeValue(row[filters.category.field]);
+      const value = analysisValue(row[filters.category.field], categoryKeys);
       if (!categoryValues.has(value)) return false;
     }
     if (filters.numeric) {
@@ -946,7 +951,7 @@ function refreshFilteredAnalysis() {
 }
 
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
-  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber);
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.analysisCompletedAt = null;
   updateExportButtons();

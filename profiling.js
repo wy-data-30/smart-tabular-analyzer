@@ -8,9 +8,10 @@ const FIELD_TYPE_LABELS = {
   ignore: "忽略"
 };
 
-function buildColumnProfile(field, rows, numberFormatHint = "") {
+// confirmedKeys: placeholder keys of this field that count as missing.
+function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = []) {
   const values = rows.map((row) => row[field]);
-  const nonMissingValues = values.filter((value) => !isMissing(value));
+  const nonMissingValues = values.filter((value) => !isMissingOrConfirmed(value, confirmedKeys));
   const total = rows.length;
   const nonMissingCount = nonMissingValues.length;
   const uniqueValues = new Set(nonMissingValues.map((value) => normalizeValue(value)));

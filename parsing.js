@@ -52,6 +52,17 @@ function placeholderTier(key) {
   return PLACEHOLDER_TIER_BY_KEY.get(key) || "";
 }
 
+// Missing for analysis and quality: isMissing(), or a placeholder key confirmed
+// for the value's field (confirmedKeys, empty when none).
+function isMissingOrConfirmed(value, confirmedKeys) {
+  return isMissing(value) || (confirmedKeys.length > 0 && confirmedKeys.includes(placeholderKey(value)));
+}
+
+// normalizeValue() / displayValue() for analysis: "" also for a confirmed placeholder.
+function analysisValue(value, confirmedKeys) {
+  return isMissingOrConfirmed(value, confirmedKeys) ? "" : String(value).trim();
+}
+
 function isPlausibleYear(value) {
   if (!/^\d{4}$/.test(value)) return false;
   const year = Number(value);
