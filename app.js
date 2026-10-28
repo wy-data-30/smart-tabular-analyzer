@@ -13,6 +13,15 @@ const state = {
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
+  // Field -> placeholder keys confirmed as missing. Every commit replaces it with
+  // an empty object; filters never change it.
+  placeholderConfirmations: Object.create(null),
+  // buildPlaceholderSummary() of the original rows; imports and field
+  // configuration rebuild it, filters do not.
+  placeholders: [],
+  // Field -> typeKey applied by the user that differs from the automatic type.
+  // Placeholder confirmations keep these types; "恢复自动识别" clears them.
+  manualFieldTypes: Object.create(null),
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
@@ -92,6 +101,8 @@ const dom = {
   qualitySummary: document.getElementById("qualitySummary"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  placeholderDetails: document.getElementById("placeholderDetails"),
+  placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
   numericStatsTable: document.getElementById("numericStatsTable"),
   categoryStats: document.getElementById("categoryStats"),
@@ -265,12 +276,15 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
   }
+  state.placeholderConfirmations = Object.create(null);
+  state.manualFieldTypes = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.duplicateRows = countDuplicateRows(rows, fields);
-  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber);
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -317,8 +331,9 @@ function renderOverview() {
   const activeProfiles = getActiveProfiles();
   const numericCount = getProfilesByType("numeric").length;
   const categoryCount = getProfilesByType("category").length;
+  const activeKeys = activeProfiles.map((profile) => getConfirmedPlaceholderKeys(profile.field));
   const activeMissing = analysisRows.reduce((total, row) => (
-    total + activeProfiles.filter((profile) => isMissing(row[profile.field])).length
+    total + activeProfiles.filter((profile, index) => isMissingOrConfirmed(row[profile.field], activeKeys[index])).length
   ), 0);
   const rowValue = hasActiveFilters()
     ? `${formatInteger(state.rows.length)} → ${formatInteger(analysisRows.length)}`
@@ -345,8 +360,9 @@ function renderInsights() {
   const activeProfiles = getActiveProfiles();
   const activeFields = activeProfiles.map((profile) => profile.field);
   const ignoredCount = state.profiles.length - activeProfiles.length;
+  const activeKeys = activeFields.map((field) => getConfirmedPlaceholderKeys(field));
   const activeMissing = analysisRows.reduce((sum, row) => (
-    sum + activeFields.filter((field) => isMissing(row[field])).length
+    sum + activeFields.filter((field, index) => isMissingOrConfirmed(row[field], activeKeys[index])).length
   ), 0);
   const analysisDuplicates = activeFields.length ? countDuplicateRows(analysisRows, activeFields) : 0;
   const missingRate = analysisRows.length && activeFields.length
@@ -563,13 +579,21 @@ function updateSchemaDraftRow(field, typeKey) {
 
 function applyFieldConfiguration() {
   if (!state.rows.length) return;
+  // Only fields whose type changes now are judged again; the others keep their
+  // record, which a placeholder confirmation may have made equal to the automatic type.
+  const manualFieldTypes = Object.assign(Object.create(null), state.manualFieldTypes);
   state.profiles.forEach((profile) => {
     const typeKey = getDraftTypeKey(profile);
+    if (typeKey !== profile.typeKey) {
+      if (typeKey !== profile.inferredTypeKey) manualFieldTypes[profile.field] = typeKey;
+      else delete manualFieldTypes[profile.field];
+    }
     profile.typeKey = typeKey;
     profile.type = FIELD_TYPE_LABELS[typeKey];
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, typeKey);
     profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, typeKey);
   });
+  state.manualFieldTypes = manualFieldTypes;
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.typeKey])
   );
@@ -592,6 +616,7 @@ function restoreAutomaticFieldTypes() {
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
+  state.manualFieldTypes = Object.create(null);
   rebuildAnalysisFromProfiles("已恢复自动识别，统计、图表和分析结论已重新计算。");
 }
 
@@ -600,6 +625,7 @@ function hasFieldConfigDraftChanges() {
 }
 
 function hasAutomaticTypeDifferences() {
+  if (Object.keys(state.manualFieldTypes).length) return true;
   return state.profiles.some((profile) => (
     profile.typeKey !== profile.inferredTypeKey
       || getDraftTypeKey(profile) !== profile.inferredTypeKey
@@ -621,6 +647,97 @@ function ensureFieldConfigurationApplied(actionLabel) {
   if (!hasFieldConfigDraftChanges()) return true;
   setFieldConfigMessage(`字段配置有未应用的修改。请先点击“应用字段配置”，再${actionLabel}。`, "warning");
   return false;
+}
+
+function setPlaceholderMessage(message, tone = "") {
+  dom.placeholderMessage.className = `placeholder-message${tone ? ` ${tone}` : ""}`;
+  dom.placeholderMessage.textContent = message;
+}
+
+// Pending common keys of fields that are not ignored: what "全部确认常见写法" covers.
+function getPendingCommonPlaceholders() {
+  return state.placeholders.filter((entry) => entry.tier === "common" && !entry.confirmed && !entry.fieldIgnored);
+}
+
+// Profile figures if keys were confirmed for field on top of its confirmed keys.
+function previewPlaceholderConfirmation(field, keys) {
+  const currentKeys = getConfirmedPlaceholderKeys(field);
+  const nextKeys = [...currentKeys, ...keys.filter((key) => !currentKeys.includes(key))];
+  return estimateConfirmedProfile(getFieldProfile(field), state.rows, currentKeys, nextKeys, state.numberFormatHints[field], state.manualFieldTypes[field]);
+}
+
+// Fields whose type would change if every pending common key were confirmed.
+function previewAllCommonPlaceholders() {
+  const keysByField = new Map();
+  getPendingCommonPlaceholders().forEach((entry) => keysByField.set(entry.field, [...(keysByField.get(entry.field) || []), entry.key]));
+  return [...keysByField].flatMap(([field, keys]) => {
+    const previousTypeKey = getFieldProfile(field).typeKey;
+    const { typeKey } = previewPlaceholderConfirmation(field, keys);
+    return typeKey === previousTypeKey ? [] : [{ field, typeKey, previousTypeKey }];
+  });
+}
+
+function confirmPlaceholder(field, key) {
+  const pending = state.placeholders.some((entry) => entry.field === field && entry.key === key && !entry.confirmed && !entry.fieldIgnored);
+  const keysByField = Object.create(null);
+  if (pending) keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
+  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按缺失处理，统计、图表和分析结论已重新计算。`);
+}
+
+function undoPlaceholderConfirmation(field, key) {
+  const keys = getConfirmedPlaceholderKeys(field);
+  const keysByField = Object.create(null);
+  if (keys.includes(key)) keysByField[field] = keys.filter((item) => item !== key);
+  return updatePlaceholderConfirmations(keysByField, `已撤销「${field}」的「${key}」，统计、图表和分析结论已重新计算。`);
+}
+
+function confirmAllCommonPlaceholders() {
+  const entries = getPendingCommonPlaceholders();
+  const keysByField = Object.create(null);
+  entries.forEach((entry) => {
+    keysByField[entry.field] ??= [...getConfirmedPlaceholderKeys(entry.field)];
+    keysByField[entry.field].push(entry.key);
+  });
+  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按缺失处理，统计、图表和分析结论已重新计算。`);
+}
+
+// The fourth refresh path. keysByField replaces the confirmed keys of each listed
+// field; refused while the field configuration has unapplied drafts.
+function updatePlaceholderConfirmations(keysByField, message) {
+  if (!state.rows.length) return false;
+  if (!ensureFieldConfigurationApplied("处理疑似缺失值")) {
+    setPlaceholderMessage("字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。", "warning");
+    return false;
+  }
+  const fields = Object.keys(keysByField).filter((field) => getFieldProfile(field));
+  if (!fields.length) return false;
+  const confirmations = Object.assign(Object.create(null), state.placeholderConfirmations);
+  fields.forEach((field) => {
+    if (keysByField[field].length) confirmations[field] = keysByField[field];
+    else delete confirmations[field];
+  });
+  state.placeholderConfirmations = confirmations;
+  fields.forEach(rebuildConfirmedFieldProfile);
+  state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
+  rebuildAnalysisFromProfiles(message, setPlaceholderMessage);
+  dom.placeholderMessage.focus();
+  return true;
+}
+
+// Re-profiles a field with its confirmed keys. A manual type stays; any other field
+// takes the new automatic type. Its draft follows, so nothing is left unapplied.
+function rebuildConfirmedFieldProfile(field) {
+  const index = state.profiles.findIndex((profile) => profile.field === field);
+  const profile = buildColumnProfile(field, state.rows, state.numberFormatHints[field], getConfirmedPlaceholderKeys(field));
+  const manualTypeKey = state.manualFieldTypes[field];
+  if (manualTypeKey) {
+    profile.typeKey = manualTypeKey;
+    profile.type = FIELD_TYPE_LABELS[manualTypeKey];
+    profile.conversionFailureCount = profile.conversionFailuresByType[manualTypeKey] || 0;
+    profile.conversionFailureSamples = [...(profile.conversionFailureSamplesByType[manualTypeKey] || [])];
+  }
+  state.profiles[index] = profile;
+  state.fieldTypeDrafts[field] = profile.typeKey;
 }
 
 function createEmptyFilterConfig() {
@@ -676,9 +793,11 @@ function initializeFilterControls() {
 
 function getCategoryFilterOptions(field) {
   if (!field) return [];
+  // Confirmed placeholders join the empty value, as in filterRowsByConfig().
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const counts = new Map();
   state.rows.forEach((row) => {
-    const value = normalizeValue(row[field]);
+    const value = analysisValue(row[field], confirmedKeys);
     counts.set(value, (counts.get(value) || 0) + 1);
   });
   return Array.from(counts.entries())
@@ -832,12 +951,13 @@ function readFilterConfig() {
 
 function filterRowsByConfig(rows, filters) {
   const categoryValues = filters.category ? new Set(filters.category.values) : null;
+  const categoryKeys = filters.category ? getConfirmedPlaceholderKeys(filters.category.field) : [];
   const startTime = filters.date ? Date.parse(`${filters.date.start}T00:00:00Z`) : null;
   const endTime = filters.date ? Date.parse(`${filters.date.end}T23:59:59.999Z`) : null;
 
   return rows.filter((row) => {
     if (filters.category) {
-      const value = normalizeValue(row[filters.category.field]);
+      const value = analysisValue(row[filters.category.field], categoryKeys);
       if (!categoryValues.has(value)) return false;
     }
     if (filters.numeric) {
@@ -937,8 +1057,11 @@ function refreshFilteredAnalysis() {
   updateExportButtons();
 }
 
-function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
-  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber);
+// setMessage shows the outcome: the field configuration area by default, the
+// placeholder subsection for placeholder confirmations.
+function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -959,7 +1082,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   resetV2AnalysisState();
   renderTemplateMappingForm();
   resetTemplateResults("字段类型已更新。请重新选择分析字段或模板映射。");
-  setFieldConfigMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
+  setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
 }
@@ -971,15 +1094,18 @@ function renderQuality() {
   const conversionFailureTotal = state.profiles.reduce((sum, profile) => sum + (profile.conversionFailureCount || 0), 0);
   const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
   const listedIdFieldCount = countListedIdDuplicateFields(state.idDuplicates);
+  const pendingPlaceholderFieldCount = countPendingPlaceholderFields(state.placeholders);
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
     <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
     <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">ID 重复字段：${formatInteger(listedIdFieldCount)}</span>
+    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">疑似缺失值：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
   `;
   // Before the outlier table, which returns early when there is no numeric field.
   renderIdDuplicateDetails();
+  renderPlaceholderDetails();
 
   dom.qualityTable.innerHTML = `
     <thead>
@@ -1061,6 +1187,57 @@ function renderIdDuplicateDetails() {
     }),
     cleanFields.length ? `<p class="id-duplicate-note">${escapeHtml(formatCleanIdFieldsNote(cleanFields, reported.length > 0))}</p>` : ""
   ].join("");
+}
+
+// One item per field and key (state.placeholders order): pending keys with their
+// effect and a confirm button, confirmed keys with an undo button, a whole-field
+// line for fields with two or more pending keys, and the confirm-all button.
+// Buttons carry indexes into state.placeholders for handlePlaceholderClick().
+function renderPlaceholderDetails() {
+  if (!state.placeholders.length) {
+    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现疑似缺失值。</p>`;
+    return;
+  }
+  const commonCount = getPendingCommonPlaceholders().length;
+  const typeChanges = commonCount ? previewAllCommonPlaceholders() : [];
+  const items = state.placeholders.map((entry, index) => {
+    const textId = `placeholderText${index}`;
+    const profile = getFieldProfile(entry.field);
+    let item;
+    if (entry.confirmed) {
+      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">撤销</button></li>`;
+    } else {
+      const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, [entry.key]));
+      const notes = formatPlaceholderNotes([entry.key]);
+      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按缺失处理</button></li>`;
+    }
+    if (state.placeholders[index + 1]?.field === entry.field) return item;
+    const pendingKeys = state.placeholders.filter((other) => other.field === entry.field && !other.confirmed).map((other) => other.key);
+    if (pendingKeys.length < 2) return item;
+    const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, pendingKeys));
+    return `${item}<li class="placeholder-field-summary">${escapeHtml(`「${entry.field}」全部确认后：${change}。`)}</li>`;
+  });
+  const typeChangeNote = typeChanges.length
+    ? `<span class="placeholder-note">${escapeHtml(`确认后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
+    : "";
+  dom.placeholderDetails.innerHTML = `
+    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>全部确认常见写法（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
+    <ul class="placeholder-list">${items.join("")}</ul>
+  `;
+}
+
+// Delegated click handler of #placeholderDetails, bound in script.js.
+function handlePlaceholderClick(event) {
+  const button = event.target.closest("button[data-placeholder-index], button[data-placeholder-all]");
+  if (!button) return;
+  if (button.dataset.placeholderAll !== undefined) {
+    confirmAllCommonPlaceholders();
+    return;
+  }
+  const entry = state.placeholders[Number(button.dataset.placeholderIndex)];
+  if (!entry) return;
+  if (entry.confirmed) undoPlaceholderConfirmation(entry.field, entry.key);
+  else confirmPlaceholder(entry.field, entry.key);
 }
 
 function renderNumericStats() {
@@ -1569,6 +1746,9 @@ function resetAnalysisState() {
   state.categoryStats = [];
   state.duplicateRows = 0;
   state.idDuplicates = [];
+  state.placeholderConfirmations = Object.create(null);
+  state.placeholders = [];
+  state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);
@@ -1623,6 +1803,8 @@ function resetAnalysisState() {
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
   dom.idDuplicateDetails.innerHTML = "";
+  dom.placeholderDetails.innerHTML = "";
+  setPlaceholderMessage("");
   dom.numericStatsTable.innerHTML = "";
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";

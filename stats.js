@@ -2,18 +2,20 @@
 
 // Non-missing values in `rows` that toNumber() cannot convert.
 function countInvalidNumericValues(field, rows = getAnalysisRows()) {
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   return rows.reduce((count, row) => (
-    count + (!isMissing(row[field]) && toNumber(row[field]) === null ? 1 : 0)
+    count + (!isMissingOrConfirmed(row[field], confirmedKeys) && toNumber(row[field]) === null ? 1 : 0)
   ), 0);
 }
 
 function buildNumericStats(rows = getAnalysisRows()) {
   return getProfilesByType("numeric").flatMap((profile) => {
+    const confirmedKeys = getConfirmedPlaceholderKeys(profile.field);
     const values = [];
     let invalidCount = 0;
     rows.forEach((row) => {
       const value = row[profile.field];
-      if (isMissing(value)) return;
+      if (isMissingOrConfirmed(value, confirmedKeys)) return;
       const number = toNumber(value);
       if (number === null) invalidCount += 1;
       else values.push(number);
@@ -51,7 +53,8 @@ function buildNumericStats(rows = getAnalysisRows()) {
 function buildCategoryStats(rows = getAnalysisRows()) {
   return getProfilesByType("category").map((profile) => {
     const counts = countValues(profile.field, rows);
-    const nonMissingCount = rows.filter((row) => !isMissing(row[profile.field])).length;
+    const confirmedKeys = getConfirmedPlaceholderKeys(profile.field);
+    const nonMissingCount = rows.filter((row) => !isMissingOrConfirmed(row[profile.field], confirmedKeys)).length;
     const top = Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
@@ -85,11 +88,12 @@ function buildMetricDateTrend(dateField, metricField, aggregateMethod = "sum") {
 }
 
 function groupNumericFieldByCategory(metricField, groupField) {
+  const groupKeys = getConfirmedPlaceholderKeys(groupField);
   const groups = new Map();
   getAnalysisRows().forEach((row) => {
     const value = toNumber(row[metricField]);
     if (value === null) return;
-    const groupName = displayValue(row[groupField]) || "未填写";
+    const groupName = analysisValue(row[groupField], groupKeys) || "未填写";
     if (!groups.has(groupName)) groups.set(groupName, []);
     groups.get(groupName).push(value);
   });
@@ -97,9 +101,10 @@ function groupNumericFieldByCategory(metricField, groupField) {
 }
 
 function groupMetricRowsByField(metricRows, groupField) {
+  const groupKeys = getConfirmedPlaceholderKeys(groupField);
   const groups = new Map();
   metricRows.forEach((item) => {
-    const groupName = displayValue(item.row[groupField]) || "未填写";
+    const groupName = analysisValue(item.row[groupField], groupKeys) || "未填写";
     if (!groups.has(groupName)) groups.set(groupName, []);
     groups.get(groupName).push(item.value);
   });
@@ -189,7 +194,8 @@ function fieldHasDateData(field, rows = getAnalysisRows()) {
 }
 
 function countNonMissingValues(field, rows = getAnalysisRows()) {
-  return rows.filter((row) => !isMissing(row[field])).length;
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
+  return rows.filter((row) => !isMissingOrConfirmed(row[field], confirmedKeys)).length;
 }
 
 // The trend conclusion always compares record counts; numeric fields and the
@@ -282,9 +288,10 @@ function buildDateTrend(dateField, numericField) {
 }
 
 function aggregateByCategory(metricField, groupField, method) {
+  const groupKeys = getConfirmedPlaceholderKeys(groupField);
   const groups = new Map();
   getAnalysisRows().forEach((row) => {
-    const group = displayValue(row[groupField]) || "未填写";
+    const group = analysisValue(row[groupField], groupKeys) || "未填写";
     const value = toNumber(row[metricField]);
     if (value === null) return;
     if (!groups.has(group)) groups.set(group, []);
@@ -354,9 +361,10 @@ function buildHistogram(values, binCount, field = "") {
 }
 
 function countValues(field, rows = getAnalysisRows()) {
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const counts = new Map();
   rows.forEach((row) => {
-    if (isMissing(row[field])) return;
+    if (isMissingOrConfirmed(row[field], confirmedKeys)) return;
     const value = displayValue(row[field]);
     counts.set(value, (counts.get(value) || 0) + 1);
   });

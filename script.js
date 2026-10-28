@@ -144,6 +144,8 @@ dom.applyFieldConfig.addEventListener("click", applyFieldConfiguration);
 
 dom.restoreAutoFieldTypes.addEventListener("click", restoreAutomaticFieldTypes);
 
+dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);
+
 dom.categoryFilterField.addEventListener("change", updateCategoryFilterField);
 
 dom.categoryFilterSearch.addEventListener("input", renderCategoryFilterValues);

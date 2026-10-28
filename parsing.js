@@ -1,4 +1,4 @@
-// 单元格值的缺失判断与解析：把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。
+// 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。
 
 const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
@@ -19,6 +19,48 @@ function normalizeValue(value) {
 
 function displayValue(value) {
   return isMissing(value) ? "" : String(value).trim();
+}
+
+// Cell texts often used for "no data". They stay ordinary values until the user
+// confirms them per field and key. "common" keys can be confirmed together;
+// "maybe" keys are also real answers in some columns (有/无, 北美 NA).
+const PLACEHOLDER_VALUES = Object.freeze({
+  common: Object.freeze(["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"]),
+  maybe: Object.freeze(["无", "暂无", "-", "/", "NA"])
+});
+
+const PLACEHOLDER_TIER_BY_KEY = new Map([
+  ...PLACEHOLDER_VALUES.common.map((key) => [key, "common"]),
+  ...PLACEHOLDER_VALUES.maybe.map((key) => [key, "maybe"])
+]);
+
+// NFKC never maps a code point to nothing and no key character is a composition
+// result, so a cell longer than two UTF-16 units per key character cannot match.
+const PLACEHOLDER_MAX_CELL_LENGTH = 2 * Math.max(...[...PLACEHOLDER_TIER_BY_KEY.keys()].map((key) => key.length));
+
+// The list key of a text cell (trimmed, NFKC, trimmed again), or "" when the
+// whole cell is not on the list.
+function placeholderKey(value) {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > PLACEHOLDER_MAX_CELL_LENGTH) return "";
+  const key = trimmed.normalize("NFKC").trim();
+  return PLACEHOLDER_TIER_BY_KEY.has(key) ? key : "";
+}
+
+function placeholderTier(key) {
+  return PLACEHOLDER_TIER_BY_KEY.get(key) || "";
+}
+
+// Missing for analysis and quality: isMissing(), or a placeholder key confirmed
+// for the value's field (confirmedKeys, empty when none).
+function isMissingOrConfirmed(value, confirmedKeys) {
+  return isMissing(value) || (confirmedKeys.length > 0 && confirmedKeys.includes(placeholderKey(value)));
+}
+
+// normalizeValue() / displayValue() for analysis: "" also for a confirmed placeholder.
+function analysisValue(value, confirmedKeys) {
+  return isMissingOrConfirmed(value, confirmedKeys) ? "" : String(value).trim();
 }
 
 function isPlausibleYear(value) {

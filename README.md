@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.3.0
+**Current release:** v2.4.0
 
 ## Language
 
@@ -29,6 +29,7 @@ The project is a static website with no backend service, database, account syste
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
 - Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
 - Check fields of type ID for duplicate values: the quality page and reports list up to 10 duplicate values per field with how often each appears, the file rows it appears on (the Excel row, or the CSV line where the record starts), and how many of those rows are identical. ID columns whose values mostly repeat, such as a user ID in an event log, get a short note instead of a list.
+- Find values such as N/A, NULL, or — that are often written for “no data” (suspected missing values): the quality page lists each one per field with its count, file rows, and how the missing count and the field type would change once it is confirmed. Nothing changes until you confirm; after confirming one value in one field (or all common values at once), it is treated as missing, so it no longer counts as a conversion failure and stays out of statistics, Top 10 lists, groups, filter options, and the ID duplicate check. Every confirmation can be undone. The original data, the data preview, and exported CSV files keep the original text, and reports list which values were treated as missing and which are still unconfirmed.
 - Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
 - Apply categorical, numeric, and date filters; run grouped analysis; or use scenario templates for common structured datasets.
 - Produce data-grounded observations without inferring external business context; trend observations compare record counts and flag a possibly incomplete last month or year, and the category observation skips fields whose values are too scattered.
@@ -163,7 +164,10 @@ npm run test:regression
 - Multi-row headers are not supported, total rows such as “合计” are treated as data, and several tables on one worksheet are not supported.
 - The header itself must still be unique and non-empty for every column that holds data, and Excel headers must be text cells; empty, headerless, protected, or structurally irregular worksheets may be rejected.
 - Excel percentage formats are detected from the first 1,000 data rows below the header; other number formats such as currency are not read.
-- ID duplicates compare values after trimming spaces, with case kept. Placeholder text such as N/A or — in an ID column is not treated as missing, so repeated placeholders are listed as duplicate values.
+- ID duplicates compare values after trimming spaces, with case kept. Placeholder text such as N/A or — in an ID column is not treated as missing until it is confirmed on the quality page, so repeated unconfirmed placeholders are listed as duplicate values.
+- Suspected missing values come from a fixed list and must match the whole cell (after trimming spaces and folding full-width characters); other text such as “缺考” or “未知” is not listed. Values that contain a zero-width space (U+200B) do not match.
+- “无”, “暂无”, “-”, “/”, and “NA” can also be real values, so they are not included when confirming all common values. In accounting formats “-” usually means 0; check what the column means before confirming it.
+- Excel formula error cells (#N/A, #DIV/0!, and so on) are imported as missing values directly and do not appear in the suspected missing values list.
 - Excel cells are read by their stored value: an ID shown as 001012 through a number format is checked and shown as 1012, and the number 1012 and the text 1012 count as the same ID.
 - CSV row numbers count text lines, as a plain-text editor shows them. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.

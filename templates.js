@@ -444,7 +444,8 @@ function analyzeSurveyTemplate(mappings) {
 function analyzeBehaviorTemplate(mappings) {
   const eventRows = frequencyRows(mappings.event);
   const userCounts = countNonMissingValues(mappings.userId);
-  const uniqueUsers = new Set(getAnalysisRows().map((row) => displayValue(row[mappings.userId])).filter(Boolean)).size;
+  const userIdKeys = getConfirmedPlaceholderKeys(mappings.userId);
+  const uniqueUsers = new Set(getAnalysisRows().map((row) => analysisValue(row[mappings.userId], userIdKeys)).filter(Boolean)).size;
   const avgEventsPerUser = uniqueUsers ? userCounts / uniqueUsers : 0;
   const secondaryResults = [...new Set([mappings.channel, mappings.device].filter(Boolean))]
     .map((field) => ({ field, rows: frequencyRows(field) }));

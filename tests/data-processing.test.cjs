@@ -342,14 +342,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.3.0", () => {
+test("public current version markers agree on v2.4.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.3.0");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.3\.0/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.3\.0/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.4.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.4\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.4\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.3.0");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.3.0");
+  assert.equal(evaluate("buildReportData().version"), "v2.4.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.4.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -1175,4 +1175,95 @@ test("ID duplicate texts: row numbers, identical rows, overflow and the repeated
     evaluate('formatMostlyRepeatedIdHint({ field: "会话ID", distinctCount: 30, nonMissingCount: 120, uniqueRatio: 0.25 })'),
     "「会话ID」的值大多重复出现（30 个不同值，共 120 行，唯一率 25.0%），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。"
   );
+});
+
+test("the placeholder list has a common tier and a maybe-valid tier", () => {
+  const { evaluate } = createScriptContext();
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(PLACEHOLDER_VALUES)")), {
+    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"],
+    maybe: ["无", "暂无", "-", "/", "NA"]
+  });
+  assert.equal(evaluate('placeholderTier("N/A")'), "common");
+  assert.equal(evaluate('placeholderTier("——")'), "common");
+  assert.equal(evaluate('placeholderTier("无")'), "maybe");
+  assert.equal(evaluate('placeholderTier("NA")'), "maybe");
+  assert.equal(evaluate('placeholderTier("缺考")'), "");
+});
+
+test("placeholder keys trim, apply NFKC and trim again, then match the whole cell", () => {
+  const { context, evaluate } = createScriptContext();
+  const key = (value) => {
+    context.__placeholderValue = value;
+    return evaluate("placeholderKey(__placeholderValue)");
+  };
+  for (const value of JSON.parse(evaluate("JSON.stringify([...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe])"))) {
+    assert.equal(key(value), value);
+    assert.equal(key(` ${value}\t`), value);
+  }
+  assert.equal(key("Ｎ／Ａ"), "N/A");
+  const ideographicSpace = String.fromCharCode(0x3000);
+  assert.equal(key(`${ideographicSpace}N/A${ideographicSpace}`), "N/A");
+  assert.equal(key("－－"), "--");
+  assert.equal(key("ＮａＮ"), "NaN");
+  assert.equal(key("／"), "/");
+  // Not on the list, or only part of the cell.
+  for (const value of ["Nan", "NAn", "na", "缺考", "未知", "面议", "0", "N/A 待补", "NA/", "---", "–", "", "  ", null, undefined, 0, false]) {
+    assert.equal(key(value), "", String(value));
+  }
+});
+
+test("placeholder summaries list each field and key with tier, raw texts and first rows", () => {
+  const { context, evaluate } = createScriptContext();
+  const amounts = ["100", "N/A", "Ｎ／Ａ", " N/A ", "—", "缺考", ...Array.from({ length: 10 }, () => "N/A"), "200"];
+  context.__placeholderRows = amounts.map((amount, index) => ({
+    金额: amount,
+    备注: index === 0 ? "N/A" : index === 1 ? "无" : "好",
+    姓名: index === 2 ? "Nan" : `学生${index}`
+  }));
+  const summary = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = __placeholderRows;
+    const fields = ["金额", "备注", "姓名"];
+    const profiles = fields.map((field) => buildColumnProfile(field, rows));
+    profiles[1].typeKey = "ignore";
+    const rowNumber = new Map(rows.map((row, index) => [row, index === 4 ? null : index + 2]));
+    return buildPlaceholderSummary(rows, fields, profiles, { 金额: ["—"], 备注: ["无"] }, (row) => rowNumber.get(row) ?? null);
+  })())`));
+  assert.deepEqual(summary, [
+    { field: "金额", key: "N/A", tier: "common", count: 13, rawValues: ["N/A", "Ｎ／Ａ"], rowNumbers: [3, 4, 5, 8, 9, 10, 11, 12, 13, 14], confirmed: false, fieldIgnored: false },
+    { field: "金额", key: "—", tier: "common", count: 1, rawValues: ["—"], rowNumbers: [null], confirmed: true, fieldIgnored: false },
+    // An ignored field shows only the keys confirmed before it was ignored.
+    { field: "备注", key: "无", tier: "maybe", count: 1, rawValues: ["无"], rowNumbers: [3], confirmed: true, fieldIgnored: true }
+  ]);
+});
+
+test("placeholders never change the date strategy of a field without a year name", () => {
+  const { context, evaluate } = createScriptContext();
+  // Full-width and compatibility forms that NFKC turns into list keys:
+  // Ｎ／Ａ － ／ －－ ＮａＮ ⽆ ﹘ ﹣
+  const compatibilityForms = [[0xff2e, 0xff0f, 0xff21], [0xff0d], [0xff0f], [0xff0d, 0xff0d], [0xff2e, 0xff41, 0xff2e], [0x2f46], [0xfe58], [0xfe63]]
+    .map((codePoints) => String.fromCodePoint(...codePoints));
+  context.__compatibilityForms = compatibilityForms;
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__compatibilityForms.map(placeholderKey))")), ["N/A", "-", "/", "--", "NaN", "无", "—", "-"]);
+  context.__dateSets = [
+    ["13/02/2024", "14/03/2024", "2024-01-05"], // dmy evidence
+    ["02/13/2024", "03/14/2024", "2024年1月5日"], // mdy evidence
+    ["13/02/2024", "02/14/2024", "05/06/2024", "2024"] // both, plus a bare year
+  ];
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const placeholders = [...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe, ...__compatibilityForms];
+    return __dateSets.map((dates) => {
+      const base = buildDateStrategy("日期", dates);
+      return {
+        order: base.order,
+        changed: placeholders.filter((value) => JSON.stringify(buildDateStrategy("日期", [...dates, value])) !== JSON.stringify(base)),
+        allowYearOnly: placeholders.some((value) => buildDateStrategy("日期", [...dates, value]).allowYearOnly),
+        allAtOnce: JSON.stringify(buildDateStrategy("日期", [...dates, ...placeholders])) === JSON.stringify(base)
+      };
+    });
+  })())`));
+  assert.deepEqual(result, [
+    { order: "dmy", changed: [], allowYearOnly: false, allAtOnce: true },
+    { order: "mdy", changed: [], allowYearOnly: false, allAtOnce: true },
+    { order: "conflict", changed: [], allowYearOnly: false, allAtOnce: true }
+  ]);
 });

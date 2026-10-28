@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、缺失率等级，以及质量页使用的原始数据数值统计。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。
 
 function countConversionFailuresForValues(values, typeKey) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -14,8 +14,9 @@ function countFieldConversionFailures(field, typeKey) {
   if (profile?.conversionFailuresByType) {
     return profile.conversionFailuresByType[typeKey] || 0;
   }
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   return countConversionFailuresForValues(
-    state.rows.map((row) => row[field]).filter((value) => !isMissing(value)),
+    state.rows.map((row) => row[field]).filter((value) => !isMissingOrConfirmed(value, confirmedKeys)),
     typeKey
   );
 }
@@ -27,9 +28,10 @@ function getFieldConversionFailureSamples(field, typeKey) {
     return [...(profile.conversionFailureSamplesByType[typeKey] || [])];
   }
   const convert = typeKey === "numeric" ? toNumber : toDate;
+  const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const samples = [];
   state.rows.forEach((row) => {
-    if (!isMissing(row[field]) && convert(row[field]) === null) addConversionFailureSample(samples, row[field]);
+    if (!isMissingOrConfirmed(row[field], confirmedKeys) && convert(row[field]) === null) addConversionFailureSample(samples, row[field]);
   });
   return samples;
 }
@@ -81,19 +83,21 @@ const ID_DUPLICATE_VALUE_LIMIT = 10;
 const ID_DUPLICATE_ROW_NUMBER_LIMIT = 10;
 
 // Duplicate values of every ID field (typeKey "id"), in field order. Values compare
-// after normalizeValue() (trimmed, case kept); missing values are skipped. Listed
-// values run from most to least frequent, ties by first appearance; the
-// identical-row counts (buildExactRowKey over all fields) cover listed values only.
-// getRowNumber(row) gives a row's file row or null.
-function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber) {
+// after normalizeValue() (trimmed, case kept); missing values and placeholder keys
+// confirmed in confirmations are skipped. Listed values run from most to least
+// frequent, ties by first appearance; the identical-row counts (buildExactRowKey
+// over all fields) cover listed values only. getRowNumber(row) gives a row's file
+// row or null.
+function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations = {}) {
   const rowKeys = new Array(rows.length);
   const rowKeyAt = (index) => (rowKeys[index] ??= buildExactRowKey(rows[index], fields));
   const idFields = fields.filter((field) => profiles.some((profile) => profile.field === field && profile.typeKey === "id"));
   return idFields.map((field) => {
+    const confirmedKeys = getConfirmedPlaceholderKeys(field, confirmations);
     const indexesByValue = new Map();
     let nonMissingCount = 0;
     rows.forEach((row, index) => {
-      const value = normalizeValue(row[field]);
+      const value = analysisValue(row[field], confirmedKeys);
       if (value === "") return;
       nonMissingCount += 1;
       const indexes = indexesByValue.get(value);
@@ -131,6 +135,94 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber) {
 // ID fields that list duplicate values; mostly repeated fields do not count.
 function countListedIdDuplicateFields(idDuplicates) {
   return idDuplicates.filter((item) => item.values.length).length;
+}
+
+// Fields with a placeholder key still to confirm; ignored fields do not count.
+// Report snapshots list pending entries only, which have neither flag.
+function countPendingPlaceholderFields(entries) {
+  return new Set(entries.filter((entry) => !entry.confirmed && !entry.fieldIgnored).map((entry) => entry.field)).size;
+}
+
+// Placeholder keys confirmed as missing for a field (an empty array when none).
+function getConfirmedPlaceholderKeys(field, confirmations = state.placeholderConfirmations) {
+  return Object.prototype.hasOwnProperty.call(confirmations, field) ? confirmations[field] : [];
+}
+
+// Placeholder candidates of the original rows: one entry per field and
+// placeholderKey(), in field order, keys by first appearance. Ignored fields add no
+// new candidates but keep the keys confirmed before. confirmations maps a field to
+// its confirmed keys; getRowNumber(row) gives a row's file row or null.
+function buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber) {
+  return fields.flatMap((field) => {
+    const profile = profiles.find((item) => item.field === field);
+    if (!profile) return [];
+    const fieldIgnored = profile.typeKey === "ignore";
+    const confirmedKeys = getConfirmedPlaceholderKeys(field, confirmations);
+    if (fieldIgnored && !confirmedKeys.length) return [];
+    const entries = new Map();
+    rows.forEach((row) => {
+      const key = placeholderKey(row[field]);
+      if (!key || (fieldIgnored && !confirmedKeys.includes(key))) return;
+      let entry = entries.get(key);
+      if (!entry) {
+        entry = { field, key, tier: placeholderTier(key), count: 0, rawValues: [], rowNumbers: [], confirmed: confirmedKeys.includes(key), fieldIgnored };
+        entries.set(key, entry);
+      }
+      entry.count += 1;
+      const rawValue = row[field].trim();
+      if (!entry.rawValues.includes(rawValue)) entry.rawValues.push(rawValue);
+      if (entry.rowNumbers.length < ID_DUPLICATE_ROW_NUMBER_LIMIT) entry.rowNumbers.push(getRowNumber(row));
+    });
+    return [...entries.values()];
+  });
+}
+
+// A field's profile figures if nextKeys (currentKeys plus more) were confirmed.
+// Placeholders never convert to numbers or dates, so the numeric and date counts
+// stay and only the non-missing and unique counts drop. Placeholders give no date
+// order evidence, and only a year-named field can allow bare years, whose share
+// depends on the non-missing count: such a field is re-profiled when its date
+// strategy changes.
+function estimateConfirmedProfile(profile, rows, currentKeys, nextKeys, numberFormatHint = "", manualTypeKey = "") {
+  const field = profile.field;
+  const yearField = isYearFieldName(field);
+  const remainingValues = [];
+  const removedValues = new Set();
+  let removedCount = 0;
+  rows.forEach((row) => {
+    const value = row[field];
+    if (isMissingOrConfirmed(value, currentKeys)) return;
+    if (isMissingOrConfirmed(value, nextKeys)) {
+      removedCount += 1;
+      removedValues.add(normalizeValue(value));
+    } else if (yearField) {
+      remainingValues.push(value);
+    }
+  });
+  let counts;
+  if (!yearField || JSON.stringify(buildDateStrategy(field, remainingValues)) === JSON.stringify(profile.dateStrategy)) {
+    counts = {
+      nonMissingCount: profile.nonMissingCount - removedCount,
+      uniqueCount: profile.uniqueCount - removedValues.size,
+      numericCount: profile.numericCount,
+      dateCount: profile.dateCount,
+      estimated: true
+    };
+  } else {
+    const full = buildColumnProfile(field, rows, numberFormatHint, nextKeys);
+    counts = { nonMissingCount: full.nonMissingCount, uniqueCount: full.uniqueCount, numericCount: full.numericCount, dateCount: full.dateCount, estimated: false };
+  }
+  const inferredTypeKey = inferFieldTypeKey(field, counts);
+  const typeKey = manualTypeKey || inferredTypeKey;
+  const convertedCount = { numeric: counts.numericCount, date: counts.dateCount }[typeKey];
+  return {
+    typeKey,
+    inferredTypeKey,
+    missingCount: rows.length - counts.nonMissingCount,
+    uniqueCount: counts.uniqueCount,
+    conversionFailureCount: convertedCount === undefined ? 0 : counts.nonMissingCount - convertedCount,
+    estimated: counts.estimated
+  };
 }
 
 function missingRateLevel() {
