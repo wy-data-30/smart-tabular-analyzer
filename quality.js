@@ -171,6 +171,54 @@ function buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNu
   });
 }
 
+// A field's profile figures if nextKeys (currentKeys plus more) were confirmed.
+// Placeholders never convert to numbers or dates, so the numeric and date counts
+// stay and only the non-missing and unique counts drop. Placeholders give no date
+// order evidence, and only a year-named field can allow bare years, whose share
+// depends on the non-missing count: such a field is re-profiled when its date
+// strategy changes.
+function estimateConfirmedProfile(profile, rows, currentKeys, nextKeys, numberFormatHint = "", manualTypeKey = "") {
+  const field = profile.field;
+  const yearField = isYearFieldName(field);
+  const remainingValues = [];
+  const removedValues = new Set();
+  let removedCount = 0;
+  rows.forEach((row) => {
+    const value = row[field];
+    if (isMissingOrConfirmed(value, currentKeys)) return;
+    if (isMissingOrConfirmed(value, nextKeys)) {
+      removedCount += 1;
+      removedValues.add(normalizeValue(value));
+    } else if (yearField) {
+      remainingValues.push(value);
+    }
+  });
+  let counts;
+  if (!yearField || JSON.stringify(buildDateStrategy(field, remainingValues)) === JSON.stringify(profile.dateStrategy)) {
+    counts = {
+      nonMissingCount: profile.nonMissingCount - removedCount,
+      uniqueCount: profile.uniqueCount - removedValues.size,
+      numericCount: profile.numericCount,
+      dateCount: profile.dateCount,
+      estimated: true
+    };
+  } else {
+    const full = buildColumnProfile(field, rows, numberFormatHint, nextKeys);
+    counts = { nonMissingCount: full.nonMissingCount, uniqueCount: full.uniqueCount, numericCount: full.numericCount, dateCount: full.dateCount, estimated: false };
+  }
+  const inferredTypeKey = inferFieldTypeKey(field, counts);
+  const typeKey = manualTypeKey || inferredTypeKey;
+  const convertedCount = { numeric: counts.numericCount, date: counts.dateCount }[typeKey];
+  return {
+    typeKey,
+    inferredTypeKey,
+    missingCount: rows.length - counts.nonMissingCount,
+    uniqueCount: counts.uniqueCount,
+    conversionFailureCount: convertedCount === undefined ? 0 : counts.nonMissingCount - convertedCount,
+    estimated: counts.estimated
+  };
+}
+
 function missingRateLevel() {
   const denominator = state.rows.length * state.fields.length;
   const rate = denominator ? state.totalMissing / denominator : 0;

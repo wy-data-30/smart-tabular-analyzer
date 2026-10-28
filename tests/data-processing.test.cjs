@@ -1235,3 +1235,35 @@ test("placeholder summaries list each field and key with tier, raw texts and fir
     { field: "备注", key: "无", tier: "maybe", count: 1, rawValues: ["无"], rowNumbers: [3], confirmed: true, fieldIgnored: true }
   ]);
 });
+
+test("placeholders never change the date strategy of a field without a year name", () => {
+  const { context, evaluate } = createScriptContext();
+  // Full-width and compatibility forms that NFKC turns into list keys:
+  // Ｎ／Ａ － ／ －－ ＮａＮ ⽆ ﹘ ﹣
+  const compatibilityForms = [[0xff2e, 0xff0f, 0xff21], [0xff0d], [0xff0f], [0xff0d, 0xff0d], [0xff2e, 0xff41, 0xff2e], [0x2f46], [0xfe58], [0xfe63]]
+    .map((codePoints) => String.fromCodePoint(...codePoints));
+  context.__compatibilityForms = compatibilityForms;
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__compatibilityForms.map(placeholderKey))")), ["N/A", "-", "/", "--", "NaN", "无", "—", "-"]);
+  context.__dateSets = [
+    ["13/02/2024", "14/03/2024", "2024-01-05"], // dmy evidence
+    ["02/13/2024", "03/14/2024", "2024年1月5日"], // mdy evidence
+    ["13/02/2024", "02/14/2024", "05/06/2024", "2024"] // both, plus a bare year
+  ];
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const placeholders = [...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe, ...__compatibilityForms];
+    return __dateSets.map((dates) => {
+      const base = buildDateStrategy("日期", dates);
+      return {
+        order: base.order,
+        changed: placeholders.filter((value) => JSON.stringify(buildDateStrategy("日期", [...dates, value])) !== JSON.stringify(base)),
+        allowYearOnly: placeholders.some((value) => buildDateStrategy("日期", [...dates, value]).allowYearOnly),
+        allAtOnce: JSON.stringify(buildDateStrategy("日期", [...dates, ...placeholders])) === JSON.stringify(base)
+      };
+    });
+  })())`));
+  assert.deepEqual(result, [
+    { order: "dmy", changed: [], allowYearOnly: false, allAtOnce: true },
+    { order: "mdy", changed: [], allowYearOnly: false, allAtOnce: true },
+    { order: "conflict", changed: [], allowYearOnly: false, allAtOnce: true }
+  ]);
+});

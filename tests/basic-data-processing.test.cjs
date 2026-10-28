@@ -2014,3 +2014,360 @@ test("placeholder candidates and confirmations are cleared on reset and replaced
   assert.equal(orders.evaluate("JSON.stringify(state.placeholderConfirmations)"), "{}");
   assert.deepEqual(placeholderEntries(orders.evaluate), []);
 });
+
+// Confirming placeholders (stage 3 item 3): the field's profile, analysis and
+// quality treat the confirmed key as missing; the original rows never change.
+const placeholderConfirmations = (evaluate) => JSON.parse(evaluate("JSON.stringify(state.placeholderConfirmations)"));
+const manualFieldTypes = (evaluate) => JSON.parse(evaluate("JSON.stringify(state.manualFieldTypes)"));
+const fieldFigures = (evaluate, field) => JSON.parse(evaluate(`JSON.stringify((({ typeKey, inferredTypeKey, missingCount, uniqueCount, conversionFailureCount }) => ({ typeKey, inferredTypeKey, missingCount, uniqueCount, conversionFailureCount }))(getFieldProfile(${JSON.stringify(field)})))`));
+const placeholderMessage = (scope) => scope.elements.get("placeholderMessage").textContent;
+
+function commitColumns(columns, fileName = "placeholders.csv") {
+  const scope = createScriptContext();
+  const fields = Object.keys(columns);
+  const rows = columns[fields[0]].map((_, index) => Object.fromEntries(fields.map((field) => [field, columns[field][index]])));
+  commitRows(scope, fields, rows, fileName);
+  return scope;
+}
+
+const AMOUNT_WITH_NA = ["100", "200", "N/A", "约500", "300", "400"];
+const YEARS_WITH_DASHES = ["2020", "2021", "—", "—", "2022", "2023", "—"];
+
+test("confirming a placeholder re-profiles its field: 4 of 5 amounts make it numeric", () => {
+  const scope = commitColumns({ 金额: AMOUNT_WITH_NA });
+  assert.deepEqual(fieldFigures(scope.evaluate, "金额"), { typeKey: "category", inferredTypeKey: "category", missingCount: 0, uniqueCount: 6, conversionFailureCount: 0 });
+  assert.equal(scope.evaluate('confirmPlaceholder("金额", "N/A")'), true);
+  assert.deepEqual(fieldFigures(scope.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 5, conversionFailureCount: 1 });
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").conversionFailureSamples)')), ["约500"]);
+  assert.deepEqual(placeholderConfirmations(scope.evaluate), { 金额: ["N/A"] });
+  assert.equal(scope.evaluate('state.fieldTypeDrafts["金额"]'), "numeric");
+  assert.equal(scope.evaluate("hasFieldConfigDraftChanges()"), false);
+  assert.equal(scope.evaluate("state.totalMissing"), 1);
+  assert.equal(scope.evaluate("state.placeholders[0].confirmed"), true);
+  assert.equal(placeholderMessage(scope), "已把「金额」的「N/A」按缺失处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+});
+
+test("the order fixture goes from 26 to 27 missing values with one confirmation and to 31 with all five", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const missingByField = () => JSON.parse(orders.evaluate("JSON.stringify(Object.fromEntries(state.profiles.map((profile) => [profile.field, profile.missingCount])))"));
+  const types = () => JSON.parse(orders.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))"));
+  const orderTypes = ["id", "date", "category", "category", "category", "numeric", "numeric", "category"];
+  assert.deepEqual(missingByField(), { 订单号: 0, 下单日期: 0, 客户名称: 0, 大区: 0, 产品: 0, 数量: 0, 金额: 0, 备注: 26 });
+
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(orders.evaluate("state.totalMissing"), 27);
+  assert.deepEqual(fieldFigures(orders.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 29, conversionFailureCount: 2 });
+
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(orders.evaluate("state.totalMissing"), 31);
+  assert.deepEqual(missingByField(), { 订单号: 0, 下单日期: 1, 客户名称: 0, 大区: 0, 产品: 0, 数量: 1, 金额: 1, 备注: 28 });
+  assert.deepEqual(types(), orderTypes);
+  assert.equal(orders.evaluate('getFieldProfile("下单日期").conversionFailureCount'), 0);
+  assert.equal(orders.evaluate('getFieldProfile("数量").conversionFailureCount'), 0);
+  assert.equal(orders.evaluate("state.placeholders.every((entry) => entry.confirmed)"), true);
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), { 下单日期: ["—"], 数量: ["—"], 金额: ["N/A"], 备注: ["N/A", "—"] });
+});
+
+test("confirming all common placeholders skips maybe-valid keys and ignored fields and names type changes first", () => {
+  const scope = commitColumns({
+    金额: ["100", "200", "N/A", "约500", "300", "400", "500"],
+    年份: YEARS_WITH_DASHES,
+    是否会员: ["有", "无", "有", "无", "有", "有", "有"],
+    说明: ["N/A", "甲", "乙", "丙", "丁", "戊", "己"]
+  });
+  scope.evaluate('stageFieldTypeChange("说明", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(previewAllCommonPlaceholders())")), [
+    { field: "金额", typeKey: "numeric", previousTypeKey: "category" },
+    { field: "年份", typeKey: "date", previousTypeKey: "category" }
+  ]);
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(placeholderConfirmations(scope.evaluate), { 金额: ["N/A"], 年份: ["—"] });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["numeric", "date", "category", "ignore"]);
+  assert.equal(placeholderMessage(scope), "已把 2 处常见写法按缺失处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+});
+
+test("confirmed placeholders leave Top 10, filter options, filter matches and groups as empty values", () => {
+  const scope = commitColumns({ 城市: ["上海", "N/A", "北京", "N/A", "上海", ""], 金额: ["10", "20", "30", "40", "50", "60"] });
+  const { evaluate } = scope;
+  const cityStats = () => JSON.parse(evaluate('JSON.stringify(buildCategoryStats().find((item) => item.field === "城市"))'));
+  assert.deepEqual(cityStats().top.map((item) => item.name), ["上海", "N/A", "北京"]);
+
+  evaluate('confirmPlaceholder("城市", "N/A")');
+  const stats = cityStats();
+  assert.deepEqual(stats.top.map((item) => [item.name, item.count]), [["上海", 2], ["北京", 1]]);
+  assert.equal(stats.total, 3);
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify([...countValues("城市")])')), [["上海", 2], ["北京", 1]]);
+  assert.deepEqual(
+    JSON.parse(evaluate('JSON.stringify(Object.fromEntries(getCategoryFilterOptions("城市").map((option) => [option.label, option.count])))')),
+    { "（空值）": 3, 上海: 2, 北京: 1 }
+  );
+  assert.deepEqual(
+    JSON.parse(evaluate('JSON.stringify(filterRowsByConfig(state.rows, { category: { field: "城市", values: [""] }, numeric: null, date: null }).map((row) => row["金额"]))')),
+    ["20", "40", "60"]
+  );
+  assert.deepEqual(
+    JSON.parse(evaluate('JSON.stringify(groupNumericFieldByCategory("金额", "城市").map((group) => [group.name, group.count, group.sum]))')),
+    [["未填写", 3, 120], ["上海", 2, 60], ["北京", 1, 30]]
+  );
+  assert.deepEqual(
+    JSON.parse(evaluate('JSON.stringify(aggregateByCategory("金额", "城市", "sum").map((group) => [group.name, group.value]))')),
+    [["未填写", 120], ["上海", 60], ["北京", 30]]
+  );
+});
+
+test("a confirmed placeholder is no longer an ID duplicate, and undoing lists it again", () => {
+  const scope = commitColumns({ 工号: ["E1", "E2", "N/A", "E3", "N/A"] });
+  const listed = () => JSON.parse(scope.evaluate("JSON.stringify(state.idDuplicates[0].values.map((value) => [value.value, value.count]))"));
+  assert.deepEqual(listed(), [["N/A", 2]]);
+  scope.evaluate('confirmPlaceholder("工号", "N/A")');
+  assert.deepEqual(listed(), []);
+  assert.equal(scope.evaluate('getFieldProfile("工号").typeKey'), "id");
+  scope.evaluate('undoPlaceholderConfirmation("工号", "N/A")');
+  assert.deepEqual(listed(), [["N/A", 2]]);
+});
+
+test("confirming dashes in a year column changes its date strategy and type", () => {
+  const scope = commitColumns({ 年份: YEARS_WITH_DASHES });
+  assert.equal(scope.evaluate('getFieldProfile("年份").typeKey'), "category");
+  const preview = JSON.parse(scope.evaluate('JSON.stringify(previewPlaceholderConfirmation("年份", ["—"]))'));
+  assert.equal(preview.typeKey, "date");
+  assert.equal(preview.estimated, false);
+  scope.evaluate('confirmPlaceholder("年份", "—")');
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("年份").dateStrategy)')), { order: "none", allowYearOnly: true, granularity: "year", dmyEvidence: 0, mdyEvidence: 0 });
+  assert.deepEqual(fieldFigures(scope.evaluate, "年份"), { typeKey: "date", inferredTypeKey: "date", missingCount: 3, uniqueCount: 4, conversionFailureCount: 0 });
+});
+
+test("undoing confirmations restores profiles, missing totals, ID duplicates and candidates exactly", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const snapshot = () => orders.evaluate("JSON.stringify({ profiles: state.profiles, totalMissing: state.totalMissing, idDuplicates: state.idDuplicates, placeholders: state.placeholders, drafts: state.fieldTypeDrafts, confirmations: state.placeholderConfirmations })");
+  const before = snapshot();
+  orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "—"); confirmPlaceholder("备注", "N/A")');
+  assert.notEqual(snapshot(), before);
+  orders.evaluate('undoPlaceholderConfirmation("备注", "N/A"); undoPlaceholderConfirmation("金额", "N/A"); undoPlaceholderConfirmation("备注", "—")');
+  assert.equal(snapshot(), before);
+  assert.equal(placeholderMessage(orders), "已撤销「备注」的「—」，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+});
+
+test("manual field types survive confirmations; a type equal to the automatic one is not manual", () => {
+  // 9a: inferred numeric, manually category.
+  const counts = commitColumns({ 数量: ["1", "2", "N/A", "3", "4", "5"] });
+  counts.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.deepEqual(manualFieldTypes(counts.evaluate), { 数量: "category" });
+  counts.evaluate('confirmPlaceholder("数量", "N/A")');
+  assert.deepEqual(fieldFigures(counts.evaluate, "数量"), { typeKey: "category", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 5, conversionFailureCount: 0 });
+  assert.equal(counts.evaluate('state.fieldTypeDrafts["数量"]'), "category");
+  assert.equal(counts.evaluate("hasFieldConfigDraftChanges()"), false);
+
+  // 9b: choosing the automatic type is not a manual type, so the field follows the new inference.
+  const same = commitColumns({ 金额: AMOUNT_WITH_NA });
+  same.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.deepEqual(manualFieldTypes(same.evaluate), {});
+  same.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(same.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+
+  // 9c: a manual type that the confirmation makes automatic stays manual through the undo.
+  const manual = commitColumns({ 金额: AMOUNT_WITH_NA });
+  manual.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(manualFieldTypes(manual.evaluate), { 金额: "numeric" });
+  manual.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.deepEqual([manual.evaluate('getFieldProfile("金额").typeKey'), manual.evaluate('getFieldProfile("金额").inferredTypeKey')], ["numeric", "numeric"]);
+  assert.equal(manual.evaluate("hasAutomaticTypeDifferences()"), true);
+  manual.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.deepEqual([manual.evaluate('getFieldProfile("金额").typeKey'), manual.evaluate('getFieldProfile("金额").inferredTypeKey')], ["numeric", "category"]);
+  manual.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(manualFieldTypes(manual.evaluate), {});
+  assert.equal(manual.evaluate('getFieldProfile("金额").typeKey'), "category");
+});
+
+test("placeholder actions are refused while the field configuration has unapplied drafts", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('stageFieldTypeChange("数量", "category")');
+  const snapshot = () => orders.evaluate("JSON.stringify({ profiles: state.profiles, totalMissing: state.totalMissing, placeholders: state.placeholders, confirmations: state.placeholderConfirmations, drafts: state.fieldTypeDrafts })");
+  const before = snapshot();
+  const refusal = "字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。";
+  assert.equal(orders.evaluate('confirmPlaceholder("金额", "N/A")'), false);
+  assert.equal(orders.evaluate("confirmAllCommonPlaceholders()"), false);
+  assert.equal(orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")'), false);
+  assert.equal(snapshot(), before);
+  assert.equal(placeholderMessage(orders), refusal);
+  assert.equal(orders.elements.get("fieldConfigMessage").textContent, refusal);
+});
+
+test("restoring automatic types keeps confirmations; ignored fields keep and can undo theirs", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "N/A")');
+  orders.evaluate('stageFieldTypeChange("数量", "category"); stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(manualFieldTypes(orders.evaluate), { 数量: "category", 备注: "ignore" });
+  // The ignored field lists its confirmed key only; its other placeholder is not checked.
+  assert.deepEqual(placeholderEntries(orders.evaluate).filter(([field]) => field === "备注"), [["备注", "N/A", "common", 1, [29]]]);
+  assert.equal(orders.evaluate('state.placeholders.find((entry) => entry.field === "备注").fieldIgnored'), true);
+  assert.equal(orders.evaluate('getFieldProfile("备注").missingCount'), 27);
+
+  orders.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.deepEqual(placeholderEntries(orders.evaluate).filter(([field]) => field === "备注"), []);
+  assert.equal(orders.evaluate('getFieldProfile("备注").typeKey'), "ignore");
+  assert.equal(orders.evaluate('getFieldProfile("备注").missingCount'), 26);
+
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), { 金额: ["N/A"] });
+  assert.equal(orders.evaluate("state.totalMissing"), 27);
+  assert.equal(fieldFigures(orders.evaluate, "金额").missingCount, 1);
+  assert.equal(orders.evaluate('getFieldProfile("数量").typeKey'), "numeric");
+});
+
+test("filters keep confirmations, a confirmation clears filters, and a new import clears both records", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  orders.evaluate(`(() => {
+    state.filters = { category: { field: "大区", values: ["华东"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(state.rows, state.filters);
+    refreshFilteredAnalysis();
+  })()`);
+  assert.ok(orders.evaluate("getAnalysisRows().length") < 30);
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), { 金额: ["N/A"] });
+  assert.equal(orders.evaluate("state.totalMissing"), 27);
+
+  orders.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(orders.evaluate("hasActiveFilters()"), false);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 30);
+  assert.match(placeholderMessage(orders), /已清除现有筛选条件。$/);
+
+  orders.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  commitRows(orders, ["城市"], [{ 城市: "上海" }, { 城市: "N/A" }], "cities.csv");
+  assert.deepEqual(placeholderConfirmations(orders.evaluate), {});
+  assert.deepEqual(manualFieldTypes(orders.evaluate), {});
+  assert.equal(orders.evaluate("hasAutomaticTypeDifferences()"), false);
+});
+
+// Previews are arithmetic on the current profile; they must equal a full re-profile.
+function comparePlaceholderPreviews(scope) {
+  return JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const result = { checked: 0, estimated: 0, mismatches: [] };
+    const fields = [...new Set(state.placeholders.filter((entry) => !entry.confirmed && !entry.fieldIgnored).map((entry) => entry.field))];
+    fields.forEach((field) => {
+      const pending = state.placeholders.filter((entry) => entry.field === field && !entry.confirmed).map((entry) => entry.key);
+      const keySets = pending.length > 1 ? [...pending.map((key) => [key]), pending] : [pending];
+      keySets.forEach((keys) => {
+        const preview = previewPlaceholderConfirmation(field, keys);
+        const full = buildColumnProfile(field, state.rows, state.numberFormatHints[field], [...getConfirmedPlaceholderKeys(field), ...keys]);
+        const typeKey = state.manualFieldTypes[field] || full.inferredTypeKey;
+        const expected = { typeKey, missingCount: full.missingCount, uniqueCount: full.uniqueCount, conversionFailureCount: full.conversionFailuresByType[typeKey] || 0 };
+        const actual = { typeKey: preview.typeKey, missingCount: preview.missingCount, uniqueCount: preview.uniqueCount, conversionFailureCount: preview.conversionFailureCount };
+        result.checked += 1;
+        if (preview.estimated) result.estimated += 1;
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) result.mismatches.push({ field, keys, actual, expected });
+      });
+    });
+    return result;
+  })())`));
+}
+
+test("placeholder previews equal a full re-profile for single keys and whole fields", async () => {
+  const cases = [
+    { 金额: AMOUNT_WITH_NA },
+    { 是否会员: ["有", "无", "有", "无", "有", "有"] },
+    { 金额: ["1,200", "-", " - ", "3,400", "560", "(200)"] },
+    { 地区: ["NA", "EU", "APAC", "NA", "EU", "LATAM"] },
+    { 姓名: ["张三", "Nan", "李四", "王五"] },
+    { 备注: ["Ｎ／Ａ", "－－", "好", "N/A", " N/A "] },
+    { 折扣: ["N/A", "N/A", "N/A", "N/A", "N/A"] },
+    { 工号: ["E1", "E2", "N/A", "E3", "N/A"] },
+    { 日期: ["2024-01-01", "2024-01-02", "—", "2024-01-04", "2024-01-05"] },
+    { 年份: YEARS_WITH_DASHES },
+    { 姓名: ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "N/A", "N/A", "A12"] },
+    { 金额: ["100", "200", "300", "400", "500", "600", "700", "N/A", "—", "约500"] }
+  ];
+  let checked = 0;
+  let estimated = 0;
+  for (const columns of cases) {
+    const result = comparePlaceholderPreviews(commitColumns(columns));
+    assert.deepEqual(result.mismatches, [], JSON.stringify(columns));
+    checked += result.checked;
+    estimated += result.estimated;
+  }
+  // 9a: a manual type wins over the inferred one in the preview too.
+  const manual = commitColumns({ 数量: ["1", "2", "N/A", "3", "4", "5"] });
+  manual.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.deepEqual(comparePlaceholderPreviews(manual).mismatches, []);
+  // Previews start from what is already confirmed: one of two keys tips the amounts to numeric.
+  const combined = commitColumns({ 金额: ["100", "200", "300", "400", "500", "600", "700", "N/A", "—", "约500"] });
+  assert.equal(combined.evaluate('previewPlaceholderConfirmation("金额", ["—"]).typeKey'), "category");
+  combined.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(combined.evaluate('previewPlaceholderConfirmation("金额", ["—"]).typeKey'), "numeric");
+  assert.deepEqual(comparePlaceholderPreviews(combined).mismatches, []);
+
+  const orders = await importStage3Fixture("订单表.csv");
+  const orderResult = comparePlaceholderPreviews(orders);
+  assert.deepEqual(orderResult.mismatches, []);
+  // Four fields: 备注 has two keys, so its whole-field preview is checked as well.
+  assert.equal(orderResult.checked, 6);
+  // Every key set but the year column's took the arithmetic path.
+  assert.ok(checked >= 15);
+  assert.equal(checked - estimated, 1);
+});
+
+test("confirmations never change the original rows, the data preview, CSV exports or duplicate rows", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const { evaluate } = orders;
+  evaluate("globalThis.__rowsBefore = state.rows");
+  const snapshot = () => evaluate(`JSON.stringify({
+    rows: state.rows,
+    duplicateRows: state.duplicateRows,
+    csv: buildCsvExportContent(state.rows, state.fields),
+    filtered: buildCsvExportContent(getProcessedExportRows("filtered"), state.fields),
+    deduplicated: buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)
+  })`);
+  const before = snapshot();
+  evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(evaluate("state.placeholders.every((entry) => entry.confirmed)"), true);
+  assert.equal(snapshot(), before);
+  assert.equal(evaluate("state.rows === __rowsBefore"), true);
+  // The preview shows the first ten analysis rows; the last ones hold the 备注 placeholders.
+  evaluate("state.filteredRows = state.rows.slice(27); renderPreview()");
+  const preview = orders.elements.get("previewTable").innerHTML;
+  assert.ok(preview.includes("<td>N/A</td>"));
+  assert.ok(preview.includes("<td>—</td>"));
+});
+
+test("after confirming every order placeholder, no analysis output shows N/A or a placeholder dash", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const charts = [];
+  orders.context.Chart = orders.context.window.Chart = class {
+    constructor(canvas, config) { charts.push(config); }
+    destroy() {}
+  };
+  const renderEverything = () => {
+    charts.length = 0;
+    orders.evaluate(`
+      dom.categoryFilterField.value = "备注"; updateCategoryFilterField();
+      dom.categoryChartField.value = "备注";
+      dom.metricField.value = "金额"; dom.groupField.value = "备注"; dom.aggregateMethod.value = "sum";
+      dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "备注"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+      renderCharts(); renderV2Analysis();
+    `);
+    const skipped = new Set(["previewTable", "placeholderDetails", "placeholderMessage"]);
+    // The only dash the app writes itself here: the conversion column of types without conversion.
+    const html = [...orders.elements].filter(([id]) => !skipped.has(id))
+      .map(([id, element]) => `${id}:${element.innerHTML}${element.textContent}`).join("\n")
+      .replace(/当前类型无需转换">—<\/span>/g, "");
+    return `${html}\n${JSON.stringify(charts.map((config) => config.data.labels))}`;
+  };
+  const before = renderEverything();
+  assert.ok(before.includes("N/A") && before.includes("—"));
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  const after = renderEverything();
+  assert.equal(after.includes("N/A"), false, after.split("\n").filter((line) => line.includes("N/A")).join("\n").slice(0, 600));
+  assert.equal(after.includes("—"), false, after.split("\n").filter((line) => line.includes("—")).join("\n").slice(0, 600));
+});
+
+test("applying the configuration for another field keeps a manual type set before a confirmation", () => {
+  const scope = commitColumns({ 金额: AMOUNT_WITH_NA, 备注: ["好", "差", "好", "差", "好", "中"] });
+  scope.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  scope.evaluate('confirmPlaceholder("金额", "N/A")');
+  // The confirmation makes numeric automatic for 金额; applying 备注 must not drop its manual record.
+  scope.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(manualFieldTypes(scope.evaluate), { 金额: "numeric", 备注: "ignore" });
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.deepEqual([scope.evaluate('getFieldProfile("金额").typeKey'), scope.evaluate('getFieldProfile("金额").inferredTypeKey')], ["numeric", "category"]);
+  assert.deepEqual(manualFieldTypes(scope.evaluate), { 金额: "numeric", 备注: "ignore" });
+});

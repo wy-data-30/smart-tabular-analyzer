@@ -33,18 +33,12 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
   });
   const numericRatio = nonMissingCount ? numericValues.length / nonMissingCount : 0;
   const dateRatio = nonMissingCount ? dateValues.length / nonMissingCount : 0;
-  const idName = isIdFieldName(field);
-
-  let typeKey = "category";
-
-  if (idName || (uniqueRatio >= 0.98 && nonMissingCount >= 12 && numericRatio < 0.7 && dateRatio < 0.7)) {
-    typeKey = "id";
-  } else if (dateRatio >= 0.8) {
-    typeKey = "date";
-  } else if (numericRatio >= 0.8) {
-    typeKey = "numeric";
-  }
-
+  const typeKey = inferFieldTypeKey(field, {
+    nonMissingCount,
+    uniqueCount,
+    numericCount: numericValues.length,
+    dateCount: dateValues.length
+  });
   const type = FIELD_TYPE_LABELS[typeKey];
   const conversionFailuresByType = {
     numeric: nonMissingCount - numericValues.length,
@@ -76,6 +70,8 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     missingRate: total ? (total - nonMissingCount) / total : 0,
     uniqueCount,
     uniqueRatio,
+    numericCount: numericValues.length,
+    dateCount: dateValues.length,
     numericRatio,
     dateRatio,
     dateStrategy,
@@ -86,6 +82,19 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     conversionFailureCount: conversionFailuresByType[typeKey] || 0,
     conversionFailureSamples: [...(conversionFailureSamplesByType[typeKey] || [])]
   };
+}
+
+// The automatic type from a field's counts, shared by buildColumnProfile() and the
+// placeholder preview: ID by name, or by at least 12 values that are 98% unique and
+// below 70% numbers and dates; then date or numeric at 80%; otherwise category.
+function inferFieldTypeKey(field, { nonMissingCount, uniqueCount, numericCount, dateCount }) {
+  const uniqueRatio = nonMissingCount ? uniqueCount / nonMissingCount : 0;
+  const numericRatio = nonMissingCount ? numericCount / nonMissingCount : 0;
+  const dateRatio = nonMissingCount ? dateCount / nonMissingCount : 0;
+  if (isIdFieldName(field) || (uniqueRatio >= 0.98 && nonMissingCount >= 12 && numericRatio < 0.7 && dateRatio < 0.7)) return "id";
+  if (dateRatio >= 0.8) return "date";
+  if (numericRatio >= 0.8) return "numeric";
+  return "category";
 }
 
 // Keeps up to three distinct (trimmed) raw values that failed conversion.

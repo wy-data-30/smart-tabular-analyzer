@@ -19,6 +19,9 @@ const state = {
   // buildPlaceholderSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   placeholders: [],
+  // Field -> typeKey applied by the user that differs from the automatic type.
+  // Placeholder confirmations keep these types; "恢复自动识别" clears them.
+  manualFieldTypes: Object.create(null),
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
@@ -98,6 +101,7 @@ const dom = {
   qualitySummary: document.getElementById("qualitySummary"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
   numericStatsTable: document.getElementById("numericStatsTable"),
   categoryStats: document.getElementById("categoryStats"),
@@ -272,6 +276,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
   }
   state.placeholderConfirmations = Object.create(null);
+  state.manualFieldTypes = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
@@ -573,13 +578,21 @@ function updateSchemaDraftRow(field, typeKey) {
 
 function applyFieldConfiguration() {
   if (!state.rows.length) return;
+  // Only fields whose type changes now are judged again; the others keep their
+  // record, which a placeholder confirmation may have made equal to the automatic type.
+  const manualFieldTypes = Object.assign(Object.create(null), state.manualFieldTypes);
   state.profiles.forEach((profile) => {
     const typeKey = getDraftTypeKey(profile);
+    if (typeKey !== profile.typeKey) {
+      if (typeKey !== profile.inferredTypeKey) manualFieldTypes[profile.field] = typeKey;
+      else delete manualFieldTypes[profile.field];
+    }
     profile.typeKey = typeKey;
     profile.type = FIELD_TYPE_LABELS[typeKey];
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, typeKey);
     profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, typeKey);
   });
+  state.manualFieldTypes = manualFieldTypes;
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.typeKey])
   );
@@ -602,6 +615,7 @@ function restoreAutomaticFieldTypes() {
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
+  state.manualFieldTypes = Object.create(null);
   rebuildAnalysisFromProfiles("已恢复自动识别，统计、图表和分析结论已重新计算。");
 }
 
@@ -610,6 +624,7 @@ function hasFieldConfigDraftChanges() {
 }
 
 function hasAutomaticTypeDifferences() {
+  if (Object.keys(state.manualFieldTypes).length) return true;
   return state.profiles.some((profile) => (
     profile.typeKey !== profile.inferredTypeKey
       || getDraftTypeKey(profile) !== profile.inferredTypeKey
@@ -631,6 +646,97 @@ function ensureFieldConfigurationApplied(actionLabel) {
   if (!hasFieldConfigDraftChanges()) return true;
   setFieldConfigMessage(`字段配置有未应用的修改。请先点击“应用字段配置”，再${actionLabel}。`, "warning");
   return false;
+}
+
+function setPlaceholderMessage(message, tone = "") {
+  dom.placeholderMessage.className = `placeholder-message${tone ? ` ${tone}` : ""}`;
+  dom.placeholderMessage.textContent = message;
+}
+
+// Pending common keys of fields that are not ignored: what "全部确认常见写法" covers.
+function getPendingCommonPlaceholders() {
+  return state.placeholders.filter((entry) => entry.tier === "common" && !entry.confirmed && !entry.fieldIgnored);
+}
+
+// Profile figures if keys were confirmed for field on top of its confirmed keys.
+function previewPlaceholderConfirmation(field, keys) {
+  const currentKeys = getConfirmedPlaceholderKeys(field);
+  const nextKeys = [...currentKeys, ...keys.filter((key) => !currentKeys.includes(key))];
+  return estimateConfirmedProfile(getFieldProfile(field), state.rows, currentKeys, nextKeys, state.numberFormatHints[field], state.manualFieldTypes[field]);
+}
+
+// Fields whose type would change if every pending common key were confirmed.
+function previewAllCommonPlaceholders() {
+  const keysByField = new Map();
+  getPendingCommonPlaceholders().forEach((entry) => keysByField.set(entry.field, [...(keysByField.get(entry.field) || []), entry.key]));
+  return [...keysByField].flatMap(([field, keys]) => {
+    const previousTypeKey = getFieldProfile(field).typeKey;
+    const { typeKey } = previewPlaceholderConfirmation(field, keys);
+    return typeKey === previousTypeKey ? [] : [{ field, typeKey, previousTypeKey }];
+  });
+}
+
+function confirmPlaceholder(field, key) {
+  const pending = state.placeholders.some((entry) => entry.field === field && entry.key === key && !entry.confirmed && !entry.fieldIgnored);
+  const keysByField = Object.create(null);
+  if (pending) keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
+  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按缺失处理，统计、图表和分析结论已重新计算。`);
+}
+
+function undoPlaceholderConfirmation(field, key) {
+  const keys = getConfirmedPlaceholderKeys(field);
+  const keysByField = Object.create(null);
+  if (keys.includes(key)) keysByField[field] = keys.filter((item) => item !== key);
+  return updatePlaceholderConfirmations(keysByField, `已撤销「${field}」的「${key}」，统计、图表和分析结论已重新计算。`);
+}
+
+function confirmAllCommonPlaceholders() {
+  const entries = getPendingCommonPlaceholders();
+  const keysByField = Object.create(null);
+  entries.forEach((entry) => {
+    keysByField[entry.field] ??= [...getConfirmedPlaceholderKeys(entry.field)];
+    keysByField[entry.field].push(entry.key);
+  });
+  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按缺失处理，统计、图表和分析结论已重新计算。`);
+}
+
+// The fourth refresh path. keysByField replaces the confirmed keys of each listed
+// field; refused while the field configuration has unapplied drafts.
+function updatePlaceholderConfirmations(keysByField, message) {
+  if (!state.rows.length) return false;
+  if (!ensureFieldConfigurationApplied("处理疑似缺失值")) {
+    setPlaceholderMessage("字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。", "warning");
+    return false;
+  }
+  const fields = Object.keys(keysByField).filter((field) => getFieldProfile(field));
+  if (!fields.length) return false;
+  const confirmations = Object.assign(Object.create(null), state.placeholderConfirmations);
+  fields.forEach((field) => {
+    if (keysByField[field].length) confirmations[field] = keysByField[field];
+    else delete confirmations[field];
+  });
+  state.placeholderConfirmations = confirmations;
+  fields.forEach(rebuildConfirmedFieldProfile);
+  state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
+  rebuildAnalysisFromProfiles(message, setPlaceholderMessage);
+  dom.placeholderMessage.focus();
+  return true;
+}
+
+// Re-profiles a field with its confirmed keys. A manual type stays; any other field
+// takes the new automatic type. Its draft follows, so nothing is left unapplied.
+function rebuildConfirmedFieldProfile(field) {
+  const index = state.profiles.findIndex((profile) => profile.field === field);
+  const profile = buildColumnProfile(field, state.rows, state.numberFormatHints[field], getConfirmedPlaceholderKeys(field));
+  const manualTypeKey = state.manualFieldTypes[field];
+  if (manualTypeKey) {
+    profile.typeKey = manualTypeKey;
+    profile.type = FIELD_TYPE_LABELS[manualTypeKey];
+    profile.conversionFailureCount = profile.conversionFailuresByType[manualTypeKey] || 0;
+    profile.conversionFailureSamples = [...(profile.conversionFailureSamplesByType[manualTypeKey] || [])];
+  }
+  state.profiles[index] = profile;
+  state.fieldTypeDrafts[field] = profile.typeKey;
 }
 
 function createEmptyFilterConfig() {
@@ -950,7 +1056,9 @@ function refreshFilteredAnalysis() {
   updateExportButtons();
 }
 
-function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
+// setMessage shows the outcome: the field configuration area by default, the
+// placeholder subsection for placeholder confirmations.
+function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.analysisCompletedAt = null;
@@ -973,7 +1081,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   resetV2AnalysisState();
   renderTemplateMappingForm();
   resetTemplateResults("字段类型已更新。请重新选择分析字段或模板映射。");
-  setFieldConfigMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
+  setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
 }
@@ -1585,6 +1693,7 @@ function resetAnalysisState() {
   state.idDuplicates = [];
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
+  state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);
@@ -1639,6 +1748,7 @@ function resetAnalysisState() {
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
   dom.idDuplicateDetails.innerHTML = "";
+  setPlaceholderMessage("");
   dom.numericStatsTable.innerHTML = "";
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";
