@@ -1963,3 +1963,54 @@ test("legacy report snapshots without ID duplicates leave the section out", () =
   assert.ok(markdown.includes("- 解析警告：0\n\n### 各字段缺失情况"));
   assert.ok(markdown.includes("| 金额 | 1 | 1 | 9 |"));
 });
+
+// Placeholder missing values (stage 3 item 3): candidates from the original rows.
+const placeholderEntries = (evaluate) => JSON.parse(evaluate("JSON.stringify(state.placeholders.map(({ field, key, tier, count, rowNumbers }) => [field, key, tier, count, rowNumbers]))"));
+
+test("the order fixture lists its five placeholder cells with tiers and file rows", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  // known-issues.json O6-O10.
+  assert.deepEqual(placeholderEntries(orders.evaluate), [
+    ["下单日期", "—", "common", 1, [17]],
+    ["数量", "—", "common", 1, [12]],
+    ["金额", "N/A", "common", 1, [15]],
+    ["备注", "N/A", "common", 1, [29]],
+    ["备注", "—", "common", 1, [30]]
+  ]);
+  assert.equal(orders.evaluate("JSON.stringify(state.placeholderConfirmations)"), "{}");
+});
+
+test("the grade fixtures and the bundled examples have no placeholder candidates", async () => {
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const scope = await importStage3Fixture(fileName);
+    assert.equal(scope.evaluate("state.rows.length"), 30, fileName);
+    assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
+  }
+  const examples = fs.readdirSync(path.join(__dirname, "..", "examples")).filter((fileName) => fileName.endsWith(".csv"));
+  assert.equal(examples.length, 6);
+  for (const fileName of examples) {
+    const scope = await importCsvFile(fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8"), fileName);
+    assert.ok(scope.evaluate("state.rows.length") > 0, fileName);
+    assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
+  }
+});
+
+test("ignored fields are not checked for placeholders", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(placeholderEntries(orders.evaluate).map(([field, key]) => [field, key]), [["下单日期", "—"], ["数量", "—"], ["金额", "N/A"]]);
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(placeholderEntries(orders.evaluate).length, 5);
+});
+
+test("placeholder candidates and confirmations are cleared on reset and replaced on every import", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('state.placeholderConfirmations = { 金额: ["N/A"] }');
+  commitRows(orders, ["城市"], [{ 城市: "上海" }, { 城市: "N/A" }], "cities.csv");
+  assert.equal(orders.evaluate("JSON.stringify(state.placeholderConfirmations)"), "{}");
+  assert.deepEqual(placeholderEntries(orders.evaluate), [["城市", "N/A", "common", 1, [null]]]);
+
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.evaluate("JSON.stringify(state.placeholderConfirmations)"), "{}");
+  assert.deepEqual(placeholderEntries(orders.evaluate), []);
+});

@@ -13,6 +13,12 @@ const state = {
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
+  // Field -> placeholder keys confirmed as missing. Every commit replaces it with
+  // an empty object; filters never change it.
+  placeholderConfirmations: Object.create(null),
+  // buildPlaceholderSummary() of the original rows; imports and field
+  // configuration rebuild it, filters do not.
+  placeholders: [],
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
@@ -265,12 +271,14 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
   }
+  state.placeholderConfirmations = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.duplicateRows = countDuplicateRows(rows, fields);
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber);
+  state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -939,6 +947,7 @@ function refreshFilteredAnalysis() {
 
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber);
+  state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1569,6 +1578,8 @@ function resetAnalysisState() {
   state.categoryStats = [];
   state.duplicateRows = 0;
   state.idDuplicates = [];
+  state.placeholderConfirmations = Object.create(null);
+  state.placeholders = [];
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);

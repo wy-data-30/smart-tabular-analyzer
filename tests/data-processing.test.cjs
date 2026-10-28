@@ -1176,3 +1176,62 @@ test("ID duplicate texts: row numbers, identical rows, overflow and the repeated
     "「会话ID」的值大多重复出现（30 个不同值，共 120 行，唯一率 25.0%），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。"
   );
 });
+
+test("the placeholder list has a common tier and a maybe-valid tier", () => {
+  const { evaluate } = createScriptContext();
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(PLACEHOLDER_VALUES)")), {
+    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"],
+    maybe: ["无", "暂无", "-", "/", "NA"]
+  });
+  assert.equal(evaluate('placeholderTier("N/A")'), "common");
+  assert.equal(evaluate('placeholderTier("——")'), "common");
+  assert.equal(evaluate('placeholderTier("无")'), "maybe");
+  assert.equal(evaluate('placeholderTier("NA")'), "maybe");
+  assert.equal(evaluate('placeholderTier("缺考")'), "");
+});
+
+test("placeholder keys trim, apply NFKC and trim again, then match the whole cell", () => {
+  const { context, evaluate } = createScriptContext();
+  const key = (value) => {
+    context.__placeholderValue = value;
+    return evaluate("placeholderKey(__placeholderValue)");
+  };
+  for (const value of JSON.parse(evaluate("JSON.stringify([...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe])"))) {
+    assert.equal(key(value), value);
+    assert.equal(key(` ${value}\t`), value);
+  }
+  assert.equal(key("Ｎ／Ａ"), "N/A");
+  const ideographicSpace = String.fromCharCode(0x3000);
+  assert.equal(key(`${ideographicSpace}N/A${ideographicSpace}`), "N/A");
+  assert.equal(key("－－"), "--");
+  assert.equal(key("ＮａＮ"), "NaN");
+  assert.equal(key("／"), "/");
+  // Not on the list, or only part of the cell.
+  for (const value of ["Nan", "NAn", "na", "缺考", "未知", "面议", "0", "N/A 待补", "NA/", "---", "–", "", "  ", null, undefined, 0, false]) {
+    assert.equal(key(value), "", String(value));
+  }
+});
+
+test("placeholder summaries list each field and key with tier, raw texts and first rows", () => {
+  const { context, evaluate } = createScriptContext();
+  const amounts = ["100", "N/A", "Ｎ／Ａ", " N/A ", "—", "缺考", ...Array.from({ length: 10 }, () => "N/A"), "200"];
+  context.__placeholderRows = amounts.map((amount, index) => ({
+    金额: amount,
+    备注: index === 0 ? "N/A" : index === 1 ? "无" : "好",
+    姓名: index === 2 ? "Nan" : `学生${index}`
+  }));
+  const summary = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = __placeholderRows;
+    const fields = ["金额", "备注", "姓名"];
+    const profiles = fields.map((field) => buildColumnProfile(field, rows));
+    profiles[1].typeKey = "ignore";
+    const rowNumber = new Map(rows.map((row, index) => [row, index === 4 ? null : index + 2]));
+    return buildPlaceholderSummary(rows, fields, profiles, { 金额: ["—"], 备注: ["无"] }, (row) => rowNumber.get(row) ?? null);
+  })())`));
+  assert.deepEqual(summary, [
+    { field: "金额", key: "N/A", tier: "common", count: 13, rawValues: ["N/A", "Ｎ／Ａ"], rowNumbers: [3, 4, 5, 8, 9, 10, 11, 12, 13, 14], confirmed: false, fieldIgnored: false },
+    { field: "金额", key: "—", tier: "common", count: 1, rawValues: ["—"], rowNumbers: [null], confirmed: true, fieldIgnored: false },
+    // An ignored field shows only the keys confirmed before it was ignored.
+    { field: "备注", key: "无", tier: "maybe", count: 1, rawValues: ["无"], rowNumbers: [3], confirmed: true, fieldIgnored: true }
+  ]);
+});

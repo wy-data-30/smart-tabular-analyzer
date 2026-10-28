@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、缺失率等级，以及质量页使用的原始数据数值统计。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。
 
 function countConversionFailuresForValues(values, typeKey) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -131,6 +131,35 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber) {
 // ID fields that list duplicate values; mostly repeated fields do not count.
 function countListedIdDuplicateFields(idDuplicates) {
   return idDuplicates.filter((item) => item.values.length).length;
+}
+
+// Placeholder candidates of the original rows: one entry per field and
+// placeholderKey(), in field order, keys by first appearance. Ignored fields add no
+// new candidates but keep the keys confirmed before. confirmations maps a field to
+// its confirmed keys; getRowNumber(row) gives a row's file row or null.
+function buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber) {
+  return fields.flatMap((field) => {
+    const profile = profiles.find((item) => item.field === field);
+    if (!profile) return [];
+    const fieldIgnored = profile.typeKey === "ignore";
+    const confirmedKeys = Object.prototype.hasOwnProperty.call(confirmations, field) ? confirmations[field] : [];
+    if (fieldIgnored && !confirmedKeys.length) return [];
+    const entries = new Map();
+    rows.forEach((row) => {
+      const key = placeholderKey(row[field]);
+      if (!key || (fieldIgnored && !confirmedKeys.includes(key))) return;
+      let entry = entries.get(key);
+      if (!entry) {
+        entry = { field, key, tier: placeholderTier(key), count: 0, rawValues: [], rowNumbers: [], confirmed: confirmedKeys.includes(key), fieldIgnored };
+        entries.set(key, entry);
+      }
+      entry.count += 1;
+      const rawValue = row[field].trim();
+      if (!entry.rawValues.includes(rawValue)) entry.rawValues.push(rawValue);
+      if (entry.rowNumbers.length < ID_DUPLICATE_ROW_NUMBER_LIMIT) entry.rowNumbers.push(getRowNumber(row));
+    });
+    return [...entries.values()];
+  });
 }
 
 function missingRateLevel() {
