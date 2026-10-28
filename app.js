@@ -10,6 +10,9 @@ const state = {
   qualityNumericStats: [],
   categoryStats: [],
   duplicateRows: 0,
+  // buildIdDuplicateSummary() of the original rows; imports and field
+  // configuration rebuild it, filters do not.
+  idDuplicates: [],
   totalMissing: 0,
   parseWarnings: [],
   numberFormatHints: Object.create(null),
@@ -266,6 +269,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.duplicateRows = countDuplicateRows(rows, fields);
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -933,6 +937,7 @@ function refreshFilteredAnalysis() {
 }
 
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。") {
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1526,6 +1531,7 @@ function resetAnalysisState() {
   state.qualityNumericStats = [];
   state.categoryStats = [];
   state.duplicateRows = 0;
+  state.idDuplicates = [];
   state.totalMissing = 0;
   state.parseWarnings = [];
   state.numberFormatHints = Object.create(null);

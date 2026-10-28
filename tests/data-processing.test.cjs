@@ -1077,3 +1077,102 @@ test("line numbers at offsets count CR, LF and CRLF like the header row numbers 
   context.__lineOffsets = [5, 2, 7];
   assert.deepEqual(JSON.parse(evaluate('JSON.stringify(lineNumbersAtOffsets("a\\r\\nb\\nc\\rd", __lineOffsets))')), [3, 2, 4]);
 });
+
+// buildIdDuplicateSummary() on plain rows; a row's "line" is its index + 2, as if
+// the header sat on line 1.
+function idDuplicateSummary(rows, typeKeys, getRowNumber = "(row) => __idRows.indexOf(row) + 2") {
+  const { context, evaluate } = createScriptContext();
+  context.__idRows = rows;
+  context.__idFields = Object.keys(typeKeys);
+  context.__idProfiles = Object.entries(typeKeys).map(([field, typeKey]) => ({ field, typeKey }));
+  return JSON.parse(evaluate(`JSON.stringify(buildIdDuplicateSummary(__idRows, __idFields, __idProfiles, ${getRowNumber}))`));
+}
+
+test("ID duplicates trim values, keep case and skip missing values", () => {
+  const rows = [" E1012", "E1012", "E1012 ", "e1012", "", "  ", undefined].map((工号) => ({ 工号, 姓名: "张三" }));
+  assert.deepEqual(idDuplicateSummary(rows, { 工号: "id", 姓名: "category" }), [{
+    field: "工号",
+    nonMissingCount: 4,
+    distinctCount: 2,
+    uniqueRatio: 0.5,
+    mostlyRepeated: false,
+    duplicateValueCount: 1,
+    values: [{ value: "E1012", count: 3, rowNumbers: [2, 3, 4], identicalRowCount: 0, identicalGroupCount: 0 }]
+  }]);
+});
+
+test("ID duplicates follow the field order and only check ID fields", () => {
+  const rows = [{ a: "1", b: "x", c: "k" }, { a: "1", b: "x", c: "k" }];
+  assert.deepEqual(idDuplicateSummary(rows, { b: "id", c: "category", a: "id" }).map((item) => item.field), ["b", "a"]);
+  assert.deepEqual(idDuplicateSummary(rows, { a: "numeric", b: "ignore" }), []);
+});
+
+test("ID duplicates sort by count, then by first appearance", () => {
+  const rows = ["A", "B", "B", "B", "C", "A", "C", "D"].map((id) => ({ id }));
+  const [summary] = idDuplicateSummary(rows, { id: "id" });
+  assert.deepEqual(summary.values.map((item) => [item.value, item.count, item.rowNumbers]), [
+    ["B", 3, [3, 4, 5]],
+    ["A", 2, [2, 7]],
+    ["C", 2, [6, 8]]
+  ]);
+});
+
+test("mostly repeated ID fields need 12 values and a unique share under one half", () => {
+  const field = (values) => idDuplicateSummary(values.map((id) => ({ id })), { id: "id" })[0];
+  const fiveOfTwelve = field(Array.from({ length: 12 }, (_, index) => `U${index % 5}`));
+  assert.equal(fiveOfTwelve.mostlyRepeated, true);
+  assert.equal(fiveOfTwelve.duplicateValueCount, 5);
+  assert.deepEqual(fiveOfTwelve.values, []);
+  const sixOfTwelve = field(Array.from({ length: 12 }, (_, index) => `U${index % 6}`));
+  assert.equal(sixOfTwelve.mostlyRepeated, false);
+  assert.equal(sixOfTwelve.values.length, 6);
+  const oneOfEleven = field(Array.from({ length: 11 }, () => "U0"));
+  assert.equal(oneOfEleven.mostlyRepeated, false);
+  assert.deepEqual(oneOfEleven.values.map((item) => item.count), [11]);
+});
+
+test("ID duplicates count identical whole rows per value, in groups", () => {
+  const rows = [["1012", "销售"], ["1012", "销售"], ["1012", "财务"], ["1012", "销售"], ["1012", "财务"], ["1013", "技术"], ["1013", "市场"], ["1014", "技术"], ["1014", "技术"]]
+    .map(([工号, 部门]) => ({ 工号, 部门 }));
+  const [summary] = idDuplicateSummary(rows, { 工号: "id", 部门: "category" });
+  assert.deepEqual(summary.values.map((item) => [item.value, item.identicalRowCount, item.identicalGroupCount]), [
+    ["1012", 5, 2],
+    ["1013", 0, 0],
+    ["1014", 2, 1]
+  ]);
+});
+
+test("ID duplicates list at most 10 values with at most 10 row numbers each", () => {
+  // 40 unique IDs keep the unique share at 52 / 77, so the field is not mostly repeated.
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const [summary] = idDuplicateSummary(ids.map((id) => ({ id })), { id: "id" });
+  assert.equal(summary.duplicateValueCount, 12);
+  assert.equal(summary.values.length, 10);
+  assert.equal(summary.values[0].count, 15);
+  assert.deepEqual(summary.values[0].rowNumbers, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+});
+
+test("ID duplicates keep null for rows without a row number", () => {
+  const [summary] = idDuplicateSummary([{ id: "A" }, { id: "A" }], { id: "id" }, "() => null");
+  assert.deepEqual(summary.values[0].rowNumbers, [null, null]);
+});
+
+test("ID duplicate texts: row numbers, identical rows, overflow and the repeated-field hint", () => {
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate("formatRowNumberList([6, 19], 2)"), "6、19");
+  assert.equal(evaluate("formatRowNumberList([2, 3, 4, 5, 6, 7, 8, 9, 10, 11], 15)"), "2、3、4、5、6、7、8、9、10、11 等 15 个");
+  assert.equal(evaluate("formatRowNumberList([null, null], 2)"), "—");
+  assert.equal(evaluate("formatIdenticalRows(0, 0)"), "");
+  assert.equal(evaluate("formatIdenticalRows(2, 1)"), "其中 2 行内容完全相同");
+  assert.equal(evaluate("formatIdenticalRows(5, 2)"), "其中 5 行内容完全相同（分 2 组）");
+  assert.equal(evaluate("formatIdDuplicateOverflow(10, 10)"), "");
+  assert.equal(evaluate("formatIdDuplicateOverflow(12, 10)"), "共 12 个重复值，只列出前 10 个");
+  assert.equal(
+    evaluate('formatMostlyRepeatedIdHint({ field: "会话ID", distinctCount: 30, nonMissingCount: 120, uniqueRatio: 0.25 })'),
+    "「会话ID」的值大多重复出现（30 个不同值，共 120 行，唯一率 25.0%），像是同一对象的多条记录，不逐个列出。如果这一列应该每行唯一，请检查数据；不需要检查的话，可以在字段配置里改类型。"
+  );
+});

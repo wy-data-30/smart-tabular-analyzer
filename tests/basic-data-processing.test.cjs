@@ -1699,6 +1699,114 @@ test("CSV edge files keep their errors and parse warnings", () => {
   }
 });
 
+// ID duplicate detection on the original rows (state.idDuplicates).
+function idDuplicates(evaluate) {
+  return JSON.parse(evaluate("JSON.stringify(state.idDuplicates)"));
+}
+
+const listedValues = (item) => item.values.map(({ value, count, rowNumbers, identicalRowCount }) => [value, count, rowNumbers, identicalRowCount]);
+
+test("the order fixture reports DD1005 twice on lines 6 and 19", async () => {
+  const { evaluate } = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(idDuplicates(evaluate), [{
+    field: "订单号",
+    nonMissingCount: 30,
+    distinctCount: 29,
+    uniqueRatio: 29 / 30,
+    mostlyRepeated: false,
+    duplicateValueCount: 1,
+    values: [{ value: "DD1005", count: 2, rowNumbers: [6, 19], identicalRowCount: 0, identicalGroupCount: 0 }]
+  }]);
+});
+
+test("the roster fixture reports one value three times in each ID field", async () => {
+  const { evaluate } = await importStage3Fixture("花名册.xlsx");
+  const summary = idDuplicates(evaluate);
+  assert.deepEqual(summary.map((item) => item.field), ["工号", "身份证号", "手机号"]);
+  assert.deepEqual(summary.map(listedValues), [
+    [["E1012", 3, [13, 14, 25], 2]],
+    [["990101199005160123", 3, [13, 14, 25], 2]],
+    [["13800010012", 3, [13, 14, 25], 2]]
+  ]);
+  assert.deepEqual(summary.map((item) => item.values[0].identicalGroupCount), [1, 1, 1]);
+});
+
+test("the grade and store fixtures have no ID duplicates", async () => {
+  for (const [fileName, fields] of [["成绩表.csv", ["学号", "姓名"]], ["成绩表-标题无逗号.csv", ["学号", "姓名"]], ["门店报表.xlsx", ["门店编号", "门店名称"]]]) {
+    const summary = idDuplicates((await importStage3Fixture(fileName)).evaluate);
+    assert.deepEqual(summary.map((item) => item.field), fields, fileName);
+    assert.ok(summary.every((item) => !item.mostlyRepeated && item.duplicateValueCount === 0 && !item.values.length), fileName);
+  }
+});
+
+test("user and session IDs in the behavior example are mostly repeated, event IDs are listed", async () => {
+  const text = fs.readFileSync(path.join(__dirname, "..", "examples", "sample-user-behavior.csv"), "utf8");
+  const summary = idDuplicates((await importCsvFile(text, "sample-user-behavior.csv")).evaluate);
+  assert.deepEqual(summary.map((item) => [item.field, item.mostlyRepeated, item.values.length]), [
+    ["事件ID", false, 2],
+    ["用户ID", true, 0],
+    ["会话ID", true, 0]
+  ]);
+  assert.deepEqual(listedValues(summary[0]), [["EV-00026", 2, [27, 120], 2], ["EV-00065", 2, [66, 121], 2]]);
+  assert.deepEqual(summary.slice(1).map((item) => [item.distinctCount, item.nonMissingCount]), [[46, 119], [30, 120]]);
+});
+
+test("an Excel number and the same text are one ID value", async () => {
+  const scope = await importWorkbookFile(buildXlsxBuffer([{
+    name: "S1", rows: [["工号", "部门"], [1012, "销售"], ["1012", "销售"], [1013, "技术"], ["001012", "销售"]]
+  }]));
+  assert.deepEqual(listedValues(idDuplicates(scope.evaluate)[0]), [["1012", 2, [2, 3], 2]]);
+});
+
+test("long ID duplicate lists stop at 10 values and 10 row numbers", async () => {
+  // 40 unique IDs keep the unique share at 52 / 77, so the field is not mostly repeated.
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const scope = await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`);
+  const [summary] = idDuplicates(scope.evaluate);
+  put(scope.context, "__longSummary", summary);
+  assert.equal(scope.evaluate("formatRowNumberList(__longSummary.values[0].rowNumbers, __longSummary.values[0].count)"), "2、3、4、5、6、7、8、9、10、11 等 15 个");
+  assert.equal(scope.evaluate("formatIdDuplicateOverflow(__longSummary.duplicateValueCount, __longSummary.values.length)"), "共 12 个重复值，只列出前 10 个");
+});
+
+// 工号 repeats once; 城市 has three values over 12 rows.
+const ID_CONFIG_CSV = ["工号,城市,金额", ...Array.from({ length: 12 }, (_, index) => `${index === 11 ? "E01" : `E${String(index + 1).padStart(2, "0")}`},${["上海", "北京", "广州"][index % 3]},${100 + index}`)].join("\r\n");
+
+test("ID duplicates follow field configuration but not filters", async () => {
+  const scope = await importCsvFile(`${ID_CONFIG_CSV}\r\n`);
+  const fieldsWithResults = () => idDuplicates(scope.evaluate).map((item) => item.field);
+  assert.deepEqual(fieldsWithResults(), ["工号"]);
+  assert.deepEqual(listedValues(idDuplicates(scope.evaluate)[0]), [["E01", 2, [2, 13], 0]]);
+
+  scope.evaluate('stageFieldTypeChange("城市", "id"); applyFieldConfiguration()');
+  assert.deepEqual(fieldsWithResults(), ["工号", "城市"]);
+  assert.equal(idDuplicates(scope.evaluate)[1].mostlyRepeated, true);
+
+  scope.evaluate('stageFieldTypeChange("工号", "category"); applyFieldConfiguration()');
+  assert.deepEqual(fieldsWithResults(), ["城市"]);
+
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fieldsWithResults(), ["工号"]);
+
+  const before = scope.evaluate("JSON.stringify(state.idDuplicates)");
+  applyFilterState(scope, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(scope.evaluate("getAnalysisRows().length"), 4);
+  assert.equal(scope.evaluate("JSON.stringify(state.idDuplicates)"), before);
+});
+
+test("a later import without ID fields clears the previous ID duplicates", async () => {
+  const scope = await importStage3Fixture("订单表.csv");
+  assert.equal(idDuplicates(scope.evaluate).length, 1);
+  put(scope.context, "__cityRows", [{ 城市: "上海" }, { 城市: "上海" }]);
+  scope.evaluate('commitTabularData(["城市"], __cityRows, "cities.csv", beginImport())');
+  assert.deepEqual(idDuplicates(scope.evaluate), []);
+  scope.evaluate("beginImport()");
+  assert.deepEqual(idDuplicates(scope.evaluate), []);
+});
+
 test("a CSV over the row limit still fails before any line-number pass", async () => {
   const text = ["值", ...Array.from({ length: 100001 }, (_, index) => String(index))].join("\r\n");
   const scope = await importCsvFile(`${text}\r\n`, "over.csv");
