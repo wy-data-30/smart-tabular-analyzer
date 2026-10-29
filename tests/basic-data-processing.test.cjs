@@ -1561,9 +1561,11 @@ const lineRange = (first, last) => Array.from({ length: last - first + 1 }, (_, 
 async function importCsvFile(text, fileName = "lines.csv") {
   const scope = createExcelContext();
   let papaCalls = 0;
+  const papaOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
     parse(...args) {
       papaCalls += 1;
+      papaOptions.push({ header: args[1]?.header, preview: args[1]?.preview });
       return Papa.parse(...args);
     }
   });
@@ -1576,7 +1578,7 @@ async function importCsvFile(text, fileName = "lines.csv") {
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
   });
   await scope.evaluate("parseDataFile(__csvFile)");
-  return { ...scope, papaCalls: () => papaCalls };
+  return { ...scope, papaCalls: () => papaCalls, papaOptions: () => papaOptions.map((options) => ({ ...options })) };
 }
 
 test("Excel row numbers follow the !ref start and skip blank rows inside the data", async () => {
@@ -1684,9 +1686,8 @@ test("CSV edge files keep their errors and parse warnings", () => {
   const cases = [
     ["a,b\r\n", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
     ["", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
-    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 2 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
-      { row: null, code: "UndetectableDelimiter", message: "Unable to auto-detect delimiting character; defaulted to ','" },
-      { row: 2, code: "TooFewFields", message: "Too few fields: expected 2 fields but parsed 1" }
+    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 1 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
+      { row: 2, code: "TooFewFields", message: "第 2 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。" }
     ]],
     ["a,b\r\n1,2,3\r\n", "status-panel error", "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。", []]
   ];
@@ -1697,6 +1698,153 @@ test("CSV edge files keep their errors and parse warnings", () => {
     assert.equal(panel.textContent, status, JSON.stringify(text));
     assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)")), warnings, JSON.stringify(text));
   }
+});
+
+// Exact file lines for CSV warnings and "CSV 第 N 行" errors: FieldMismatch rows index
+// the data records, Quotes rows every record read (header and blank records too).
+const lineWarnings = (scope) => JSON.parse(scope.evaluate(
+  'JSON.stringify(state.parseWarnings.filter((warning) => warning.code !== "UndetectableDelimiter").map((warning) => [warning.code, warning.row]))'
+));
+const EXTRA_CELL_ERROR = "的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。";
+const exactGradeRow = (index) => `S${String(index).padStart(3, "0")},学生${index},80,90`;
+
+test("CSV warnings name the exact line after blank lines, quoted line breaks and any line break", async () => {
+  const cases = [
+    ["blank line under the header", "a,b\n1,2\n\n3\n4,5\n", [["TooFewFields", 4]]],
+    ["quoted line break", "a,b\n\"x\ny\",2\n3\n4,5\n", [["TooFewFields", 4]]],
+    ["blank line under the header, CRLF", "a,b\r\n1,2\r\n\r\n3\r\n4,5\r\n", [["TooFewFields", 4]]],
+    ["quoted line break, lone CR", "a,b\r\"x\ry\",2\r3\r4,5\r", [["TooFewFields", 4]]],
+    ["whitespace-only row after a blank line (dropped from the rows)", "a,b\n1,2\n\n \n3,4\n", [["TooFewFields", 4]]],
+    ["malformed quote", "a,b\n1,2\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 3]]],
+    ["malformed quote after a blank line", "a,b\n1,2\n\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 4]]],
+    ["malformed quote on the first data line", "a,b\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 2]]],
+    ["title row, blank line under the header, short row (retry)", `期中成绩\n学号,姓名,语文,数学\n\n${[1, 2, 3, 4, 5].map(exactGradeRow).join("\n")}\nS006,学生6,80\n${exactGradeRow(7)}\n${exactGradeRow(8)}\n`, [["TooFewFields", 9]]]
+  ];
+  for (const [label, text, expected] of cases) {
+    const scope = await importCsvFile(text);
+    assert.deepEqual(lineWarnings(scope), expected, label);
+  }
+});
+
+test("CSV errors name the exact line of an extra cell or an unclosed quote", async () => {
+  const cases = [
+    ["extra cell after a blank line", "a,b\n1,2\n\n3,4,5\n6,7\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["extra cell after a quoted line break", "a,b\n\"x\ny\",2\n3,4,5\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["extra cell after a blank line, CRLF", "a,b\r\n1,2\r\n\r\n3,4,5\r\n6,7\r\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["title row, blank line, then the header", `期中成绩\n\n学号,姓名,语文,数学\n${[1, 2, 3, 4, 5, 6].map(exactGradeRow).join("\n")}\nS007,学生7,80,90,多出\n`, `CSV 第 3 行${EXTRA_CELL_ERROR}${TITLE_FALLBACK_HINT}`],
+    ["unclosed quote", "a,b\n1,2\n\"x,3\n4,5\n", "CSV 第 3 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。"],
+    ["unclosed quote after a blank line", "a,b\n\n1,2\n\"x,3\n", "CSV 第 4 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。"]
+  ];
+  for (const [label, text, status] of cases) {
+    const scope = await importCsvFile(text);
+    assert.equal(scope.evaluate("state.rows.length"), 0, label);
+    assert.equal(scope.elements.get("statusPanel").textContent, status, label);
+  }
+});
+
+test("an extra cell found only after skipping title rows shows the re-parse's own line and header note", async () => {
+  // Header detection reads 210 rows, so the extra cell on line 253 is found by the re-parse.
+  const rows = Array.from({ length: 250 }, (_, index) => exactGradeRow(index + 1));
+  const scope = await importCsvFile(`期中成绩\n学号,姓名,语文,数学\n${rows.join("\n")}\nS251,学生251,80,90,多出\n`);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, `表头在第 2 行，已跳过上方 1 行：「期中成绩」。CSV 第 253 行${EXTRA_CELL_ERROR}`);
+});
+
+test("every CSV warning is counted, with thousands separators in the status", async () => {
+  const shortRows = (count) => `a,b\r\n${Array.from({ length: 10 }, (_, index) => `${index},${index}`).join("\r\n")}\r\n${Array.from({ length: count }, (_, index) => String(100 + index)).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(shortRows(25));
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 已载入，但发现 25 个解析警告，涉及 25 行。请核对数据预览和字段数量。");
+  assert.equal(scope.evaluate("state.parseWarnings.length"), 25);
+  assert.equal(scope.evaluate("state.parseWarnings[24].row"), 36);
+  assert.equal(reportOf(scope).report.quality.parseWarningCount, 25);
+
+  const many = await importCsvFile(shortRows(1000));
+  assert.equal(many.elements.get("statusPanel").textContent, "CSV 已载入，但发现 1,000 个解析警告，涉及 1,000 行。请核对数据预览和字段数量。");
+});
+
+test("CSV warnings get no line when the line pass does not match the parsed rows", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const papaStub = {
+    parse(text, options) {
+      if (options.header === false) {
+        // One record fewer than the main parse returned.
+        options.step({ data: ["姓名", "城市"], errors: [], meta: { cursor: 6 } }, { abort() {} });
+        options.step({ data: ["张三"], errors: [], meta: { cursor: 9 } }, { abort() {} });
+        return;
+      }
+      const fields = ["姓名", "城市"].map(options.transformHeader);
+      options.complete({
+        errors: [{ type: "FieldMismatch", code: "TooFewFields", message: "Too few fields", row: 1 }],
+        meta: { fields, delimiter: ",", linebreak: "\n" },
+        data: [{ [fields[0]]: "张三", [fields[1]]: "上海" }, { [fields[0]]: "李四" }]
+      });
+    }
+  };
+  context.Papa = papaStub;
+  context.window.Papa = papaStub;
+  evaluate('parseCsvText("姓名,城市\\n张三,上海\\n李四\\n", "mismatch.csv", beginImport())');
+  assert.equal(evaluate("state.rows.length"), 2);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings.map((warning) => warning.row))")), [null]);
+  assert.equal(elements.get("statusPanel").textContent, "CSV 已载入，但发现 1 个解析警告。请核对数据预览和字段数量。");
+});
+
+test("guard: imports that skip title rows or need no error line call Papa.parse as often as before", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.equal(orders.papaCalls(), 2);
+  // 成绩表-标题无逗号.csv fails its first parse with an extra cell, but the retry takes over.
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.equal(grades.evaluate("state.rows.length"), 30, fileName);
+    assert.equal(grades.papaCalls(), 4, fileName);
+  }
+});
+
+test("a shown extra-cell error adds one line pass after the main parse and header detection", async () => {
+  const extra = await importCsvFile("a,b\r\n1,2,3\r\n");
+  assert.equal(extra.elements.get("statusPanel").textContent, `CSV 第 2 行${EXTRA_CELL_ERROR}`);
+  assert.deepEqual(extra.papaOptions().map((options) => options.header), [true, false, false]);
+});
+
+const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(({ row, code, message }) => [row, code, message]))"));
+
+test("imported CSV warnings carry Chinese messages and keep their codes", async () => {
+  const short = await importCsvFile("a,b,c\n1,2,3\n4\n5,6,7\n");
+  assert.deepEqual(codedWarnings(short), [[3, "TooFewFields", "第 3 行只有 1 列（表头有 3 列），缺少的单元格按空值处理。"]]);
+  const quote = await importCsvFile("a,b\n1,2\n\"x\"y\",3\n4,5\n");
+  assert.deepEqual(codedWarnings(quote), [[3, "InvalidQuotes", "第 3 行有不规范的引号（引号后面紧跟了其他字符），这一行可能被读错。"]]);
+
+  // Without the source text there is no line; the cell count still comes from the row.
+  const { evaluate } = createScriptContext();
+  evaluate(`handleParsedData({
+    errors: [{ type: "FieldMismatch", code: "TooFewFields", message: "Too few fields", row: 1 }],
+    meta: { fields: ["a", "b", "c"] },
+    data: [{ a: "1", b: "2", c: "3" }, { a: "4" }]
+  }, "no-source.csv", beginImport())`);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings)")), [
+    { row: null, code: "TooFewFields", message: "有一条记录的列数少于表头（只有 1 列，表头有 3 列），缺少的单元格按空值处理。" }
+  ]);
+});
+
+test("a one-column CSV whose header holds a semicolon, tab or bar gets one Chinese delimiter warning", async () => {
+  for (const [separator, name, short] of [[";", "分号（；）", "分号"], ["\t", "制表符", "制表符"], ["|", "竖线（|）", "竖线"]]) {
+    const scope = await importCsvFile(["a", "b"].join(separator) + `\n1${separator}2\n3\n5${separator}6\n`);
+    assert.equal(scope.evaluate("state.fields.length"), 1, name);
+    assert.deepEqual(codedWarnings(scope), [
+      [null, "UndetectableDelimiter", `整份文件只读出 1 列，但表头里有${name}。如果原文件是用${short}分隔的，请另存为逗号分隔的 CSV 后重新上传。`]
+    ], name);
+    assert.equal(scope.elements.get("statusPanel").textContent, "CSV 已载入，但发现 1 个解析警告。请核对数据预览和字段数量。", name);
+  }
+});
+
+test("guard: a plain one-column CSV still gets no delimiter warning", async () => {
+  const scope = await importCsvFile("字段\n1\n2\n");
+  assert.deepEqual(codedWarnings(scope), []);
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success");
+});
+
+test("a comma CSV with several columns no longer lists the delimiter guess as a warning", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n3\n5,6\n");
+  assert.deepEqual(codedWarnings(scope).map(([row, code]) => [row, code]), [[3, "TooFewFields"]]);
 });
 
 // ID duplicate detection on the original rows (state.idDuplicates).
@@ -1813,6 +1961,51 @@ test("a CSV over the row limit still fails before any line-number pass", async (
   assert.equal(scope.evaluate("state.rows.length"), 0);
   assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
   assert.equal(scope.papaCalls(), 1);
+});
+
+// The row preview (maxRows + 1) counts blank records too, so blank lines used to
+// leave a truncated parse under the limit and drop the rows after it silently.
+const blankLineRows = (count) => Array.from({ length: count }, (_, index) => `R${index},${index}\r\n\r\n`).join("");
+
+test("a CSV whose blank lines fill the row preview imports every row", async () => {
+  const scope = await importCsvFile(`编号,值\r\n${blankLineRows(60000)}`, "blank-lines.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 60000);
+  assert.equal(scope.evaluate('state.rows[59999]["编号"]'), "R59999");
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[0])"), 2);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[59999])"), 120000);
+  assert.equal(scope.evaluate("state.rows.every((row) => getSourceRowNumber(row) !== null)"), true);
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success");
+  // Guard: the first parse keeps its row preview; the whole text is parsed again only after the count.
+  assert.deepEqual(scope.papaOptions(), [
+    { header: true, preview: 100001 },
+    { header: false, preview: undefined },
+    { header: true, preview: undefined },
+    { header: false, preview: undefined }
+  ]);
+});
+
+test("a CSV over the row limit fails even when blank lines fill the row preview", async () => {
+  const text = ["值", "", "", "", "", "", ...Array.from({ length: 100001 }, (_, index) => String(index))].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "over-with-blanks.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
+  assert.equal(scope.papaCalls(), 2);
+});
+
+test("guard: a CSV with exactly 100,000 rows and trailing blank lines imports all of them", async () => {
+  const text = ["值", ...Array.from({ length: 100000 }, (_, index) => String(index)), "", "", ""].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "exact-with-blanks.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 100000);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[99999])"), 100001);
+});
+
+test("a titled CSV whose blank lines fill the row preview imports every row after the retry", async () => {
+  const scope = await importCsvFile(`成绩单\r\n编号,值\r\n${blankLineRows(60000)}`, "titled-blank-lines.csv");
+  assert.equal(scope.evaluate('state.fields.join(",")'), "编号,值");
+  assert.equal(scope.evaluate("state.rows.length"), 60000);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[0])"), 3);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[59999])"), 120001);
+  assert.match(scope.elements.get("statusPanel").textContent, /表头在第 2 行，已跳过上方 1 行：「成绩单」。$/);
 });
 
 // ID duplicates on the quality page (#idDuplicateDetails) and in reports.
@@ -2980,4 +3173,802 @@ test("number sections and unit labels escape field names in HTML and Markdown", 
   for (const line of markdown.split("\n")) {
     assert.ok(!line.startsWith("<") && !line.startsWith("-楼层") && !line.startsWith("量"), line);
   }
+});
+
+// v2.6.0: the checks behind the quality counts, shared with the problem-row lists.
+const STAGE3_IMPORT_FILES = fs.readdirSync(STAGE3_FIXTURES).filter((fileName) => /\.(csv|xlsx)$/.test(fileName)).sort();
+const EXAMPLE_CSV_FILES = fs.readdirSync(path.join(__dirname, "..", "examples")).filter((fileName) => /\.csv$/.test(fileName)).sort();
+
+async function importEveryQualityFile() {
+  const scopes = [];
+  for (const fileName of STAGE3_IMPORT_FILES) scopes.push([fileName, await importStage3Fixture(fileName)]);
+  for (const fileName of EXAMPLE_CSV_FILES) {
+    scopes.push([fileName, await importCsvFile(fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8"), fileName)]);
+  }
+  return scopes;
+}
+
+// [field, type, failures counted by the shared check, profile count] per field and type.
+const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringify(state.profiles.flatMap((profile) => ["numeric", "date"].map((typeKey) => {
+  const fails = getProfileConversionCheck(profile, typeKey);
+  const count = state.rows.filter((row) => !isMissingOrConfirmed(row[profile.field], profile.confirmedKeys) && fails(row[profile.field])).length;
+  return [profile.field, typeKey, count, profile.conversionFailuresByType[typeKey]];
+})))`));
+
+test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.equal(scopes.length, 11);
+  const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  scopes.push(["订单表.csv（全部确认后）", orders]);
+  for (const [fileName, scope] of scopes) {
+    const counts = conversionCheckCounts(scope);
+    assert.ok(counts.length >= 2, fileName);
+    for (const [field, typeKey, count, expected] of counts) assert.equal(count, expected, `${fileName} ${field} ${typeKey}`);
+  }
+  assert.equal(orders.evaluate("getProfileConversionCheck(state.profiles[0], \"category\")"), null);
+});
+
+test("guard: profiles keep the placeholder keys they counted as missing", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const keys = () => JSON.parse(orders.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.confirmedKeys, getConfirmedPlaceholderKeys(profile.field)]))"));
+  assert.ok(keys().every(([, kept, current]) => kept.length === 0 && current.length === 0));
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  for (const [field, kept, current] of keys()) assert.deepEqual(kept, current, field);
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["N/A", "—"]);
+  orders.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["—"]);
+  // A copy: changing the confirmations later never changes a built profile.
+  orders.evaluate('state.placeholderConfirmations["备注"].push("x")');
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["—"]);
+});
+
+test("guard: ID grouping lists each value's rows in first-appearance order", () => {
+  const { evaluate } = createScriptContext();
+  const groups = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = ["B", " A", "", "B", "N/A", "A ", "C", "N/A", "B"].map((value) => ({ 编号: value }));
+    const plain = groupIdValueIndexes(rows, "编号", []);
+    const confirmed = groupIdValueIndexes(rows, "编号", ["N/A"]);
+    return { plain: [...plain.indexesByValue], plainCount: plain.nonMissingCount, confirmed: [...confirmed.indexesByValue], sorted: sortIdDuplicates(plain.indexesByValue) };
+  })())`));
+  assert.deepEqual(groups.plain, [["B", [0, 3, 8]], ["A", [1, 5]], ["N/A", [4, 7]], ["C", [6]]]);
+  assert.equal(groups.plainCount, 8);
+  assert.deepEqual(groups.confirmed, [["B", [0, 3, 8]], ["A", [1, 5]], ["C", [6]]]);
+  assert.deepEqual(groups.sorted, [["B", [0, 3, 8]], ["A", [1, 5]], ["N/A", [4, 7]]]);
+
+  // The most frequent value is not the first one here, so the order tells the rule apart:
+  // B (3 times) first, then A and C (2 times each) by first appearance.
+  const ordered = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = ["A", "B", "A", "B", "C", "B", "C"].map((value) => ({ 编号: value }));
+    const { indexesByValue } = groupIdValueIndexes(rows, "编号", []);
+    const summary = buildIdDuplicateSummary(rows, ["编号"], [{ field: "编号", typeKey: "id" }], () => null);
+    return { sorted: sortIdDuplicates(indexesByValue).map(([value]) => value), summary: summary[0].values.map((item) => item.value), mostlyRepeated: summary[0].mostlyRepeated };
+  })())`));
+  assert.deepEqual(ordered.sorted, ["B", "A", "C"]);
+  assert.equal(ordered.mostlyRepeated, false);
+  assert.deepEqual(ordered.summary, ["B", "A", "C"]);
+});
+
+// v2.6.0: the rows behind each quality count (listProblemCategories / listProblemRows).
+// Checks every category against the figure the quality page shows, and the order:
+// file order, or by group for the two duplicate kinds.
+const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((() => {
+  const mismatches = [];
+  const names = [];
+  const ascending = (list) => list.every((value, index) => index === 0 || value > list[index - 1]);
+  listProblemCategories().forEach((category) => {
+    const name = [category.kind, category.field, category.key].filter((part) => part !== undefined).join(" / ");
+    const result = listProblemRows(category);
+    if (!result) {
+      mismatches.push(name + ": no list");
+      return;
+    }
+    names.push(name + " = " + result.items.length);
+    const items = result.items;
+    let expected;
+    if (category.kind === "missing") expected = getFieldProfile(category.field).missingCount;
+    if (category.kind === "conversion") expected = getFieldProfile(category.field).conversionFailureCount;
+    if (category.kind === "outlier") expected = getQualityNumericStats().find((stat) => stat.field === category.field).outlierCount;
+    if (category.kind === "placeholder") expected = state.placeholders.find((entry) => entry.field === category.field && entry.key === category.key).count;
+    if (category.kind === "parseWarnings") expected = state.parseWarnings.length;
+    if (category.kind === "duplicateRows") {
+      // The quality count leaves out the first row of each group, which is kept.
+      expected = state.duplicateRows + result.groupCount;
+      if (items.filter((item) => item.kept).length !== result.groupCount) mismatches.push(name + ": kept rows");
+    }
+    if (category.kind === "idDuplicate") {
+      const summary = state.idDuplicates.find((item) => item.field === category.field);
+      const groups = new Map();
+      items.forEach((item) => groups.set(item.value, [...(groups.get(item.value) || []), item]));
+      if (groups.size !== summary.duplicateValueCount) mismatches.push(name + ": " + groups.size + " values, summary " + summary.duplicateValueCount);
+      summary.values.forEach((value, position) => {
+        const rows = groups.get(value.value) || [];
+        if ([...groups.keys()][position] !== value.value) mismatches.push(name + ": value order at " + position);
+        if (rows.length !== value.count) mismatches.push(name + ": " + value.value + " has " + rows.length + " rows, summary " + value.count);
+        if (JSON.stringify(rows.slice(0, 10).map((item) => item.line)) !== JSON.stringify(value.rowNumbers)) mismatches.push(name + ": " + value.value + " row numbers");
+      });
+      expected = [...groups.values()].reduce((sum, rows) => sum + rows.length, 0);
+    }
+    if (items.length !== expected) mismatches.push(name + ": listed " + items.length + ", quality page " + expected);
+    if (category.kind === "duplicateRows" || category.kind === "idDuplicate") {
+      const firsts = [];
+      items.forEach((item, index) => {
+        if (index === 0 || item.group !== items[index - 1].group) firsts.push(item.index);
+        else if (item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
+      });
+      if (category.kind === "duplicateRows" && !ascending(firsts)) mismatches.push(name + ": groups not by first appearance");
+    } else if (category.kind !== "parseWarnings" && !ascending(items.map((item) => item.index))) {
+      mismatches.push(name + ": not in file order");
+    }
+    if (items.some((item) => item.index !== null && item.line !== getSourceRowNumber(state.rows[item.index]))) mismatches.push(name + ": line numbers");
+  });
+  return { names, mismatches };
+})())`));
+
+test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.equal(scopes.length, 11);
+  for (const [fileName, scope] of scopes) {
+    const { names, mismatches } = problemRowCheck(scope);
+    assert.deepEqual(mismatches, [], fileName);
+    assert.ok(names.length > 0, fileName);
+  }
+  const names = (fileName) => problemRowCheck(scopes.find(([name]) => name === fileName)[1]).names;
+  assert.deepEqual(names("订单表.csv"), [
+    "missing / 备注 = 26",
+    "conversion / 下单日期 = 1", "conversion / 数量 = 1", "conversion / 金额 = 1",
+    "outlier / 数量 = 1", "outlier / 金额 = 1",
+    "idDuplicate / 订单号 = 2",
+    "placeholder / 下单日期 / — = 1", "placeholder / 数量 / — = 1", "placeholder / 金额 / N/A = 1",
+    "placeholder / 备注 / N/A = 1", "placeholder / 备注 / — = 1"
+  ]);
+  assert.deepEqual(names("花名册.xlsx"), [
+    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "outlier / 月薪 = 3", "duplicateRows = 2",
+    "idDuplicate / 工号 = 3", "idDuplicate / 身份证号 = 3", "idDuplicate / 手机号 = 3"
+  ]);
+  // 用户ID and 会话ID are mostly repeated: no entry for them.
+  assert.deepEqual(names("sample-user-behavior.csv").filter((name) => name.startsWith("idDuplicate")), ["idDuplicate / 事件ID = 4"]);
+});
+
+test("problem-row lists follow confirmations, manual types, ignored fields and undo", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const check = () => {
+    const result = problemRowCheck(orders);
+    assert.deepEqual(result.mismatches, []);
+    return result.names;
+  };
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(check().filter((name) => !name.startsWith("placeholder")), [
+    "missing / 下单日期 = 1", "missing / 数量 = 1", "missing / 金额 = 1", "missing / 备注 = 28",
+    "outlier / 数量 = 1", "outlier / 金额 = 1", "idDuplicate / 订单号 = 2"
+  ]);
+  const confirmedNotes = JSON.parse(orders.evaluate('JSON.stringify(listProblemRows({ kind: "placeholder", field: "金额", key: "N/A" }).items.map((item) => [item.line, item.note]))'));
+  assert.deepEqual(confirmedNotes, [[15, "已按缺失处理"]]);
+
+  // 客户名称 becomes a mostly repeated ID field; 备注 is ignored but keeps its missing values.
+  orders.evaluate('stageFieldTypeChange("金额", "category"); stageFieldTypeChange("客户名称", "id"); stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  const ignored = check();
+  assert.ok(ignored.includes("missing / 备注 = 28"));
+  assert.ok(!ignored.some((name) => name.startsWith("outlier / 金额") || name.startsWith("idDuplicate / 客户名称")));
+  assert.ok(ignored.includes("placeholder / 备注 / N/A = 1"));
+
+  orders.evaluate('stageFieldTypeChange("金额", "numeric"); stageFieldTypeChange("数量", "date"); applyFieldConfiguration()');
+  assert.ok(check().includes("conversion / 数量 = 29"));
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  const undone = check();
+  assert.ok(undone.includes("conversion / 金额 = 1"));
+  assert.ok(!undone.includes("missing / 金额 = 1"));
+  assert.equal(orders.evaluate('state.manualFieldTypes["金额"]'), undefined);
+  assert.equal(orders.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+});
+
+test("ID duplicate rows follow the quality table's order, with every value and row", async () => {
+  const ordered = await importCsvFile(`编号,值\r\n${["A", "B", "A", "B", "C", "B", "C"].map((id, index) => `${id},${index}`).join("\r\n")}\r\n`);
+  const items = JSON.parse(ordered.evaluate('JSON.stringify(listProblemRows({ kind: "idDuplicate", field: "编号" }).items.map((item) => [item.value, item.line, item.note]))'));
+  assert.deepEqual(items, [
+    ["B", 3, "第 1 组：「B」出现 3 次"], ["B", 5, "第 1 组：「B」出现 3 次"], ["B", 7, "第 1 组：「B」出现 3 次"],
+    ["A", 2, "第 2 组：「A」出现 2 次"], ["A", 4, "第 2 组：「A」出现 2 次"],
+    ["C", 6, "第 3 组：「C」出现 2 次"], ["C", 8, "第 3 组：「C」出现 2 次"]
+  ]);
+
+  // More than 10 duplicate values: the summary lists 10, the problem rows every one.
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const long = await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`);
+  assert.deepEqual(problemRowCheck(long).mismatches, []);
+  const result = JSON.parse(long.evaluate('JSON.stringify(listProblemRows({ kind: "idDuplicate", field: "学号" }))'));
+  assert.equal(result.items.length, 37);
+  assert.equal(new Set(result.items.map((item) => item.value)).size, 12);
+  assert.equal(result.items.filter((item) => item.value === "S000").length, 15);
+  assert.equal(long.evaluate('state.idDuplicates[0].values.length'), 10);
+});
+
+test("duplicate-row lists mark the kept first row of each group", async () => {
+  const scope = await importCsvFile("城市,值\r\n上海,1\r\n北京,2\r\n上海,1\r\n北京,2\r\n上海,1\r\n广州,3\r\n");
+  const result = JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "duplicateRows" }))'));
+  assert.equal(result.groupCount, 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 3);
+  assert.deepEqual(result.items.map((item) => [item.line, item.group, item.kept, item.note]), [
+    [2, 1, true, "第 1 组（保留）"], [4, 1, false, "第 1 组"], [6, 1, false, "第 1 组"],
+    [3, 2, true, "第 2 组（保留）"], [5, 2, false, "第 2 组"]
+  ]);
+});
+
+test("missing, conversion and outlier lists explain each row", async () => {
+  const scope = await importCsvFile("金额,备注\r\n10,a\r\n12,N/A\r\n,b\r\n11,c\r\n待定,d\r\n13,e\r\n9,f\r\n10,g\r\n11,h\r\n12,i\r\n500,j\r\n");
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  const notes = (category) => JSON.parse(scope.evaluate(`JSON.stringify(listProblemRows(${JSON.stringify(category)}).items.map((item) => [item.line, item.note]))`));
+  assert.deepEqual(notes({ kind: "missing", field: "金额" }), [[4, "空值"]]);
+  assert.deepEqual(notes({ kind: "missing", field: "备注" }), [[3, "已按缺失处理"]]);
+  assert.deepEqual(notes({ kind: "conversion", field: "金额" }), [[6, "无法转换为数值"]]);
+  const bounds = JSON.parse(scope.evaluate('JSON.stringify(getQualityNumericStats().find((stat) => stat.field === "金额"))'));
+  assert.deepEqual(notes({ kind: "outlier", field: "金额" }), [[12, `高于上界 ${scope.evaluate(`formatFieldNumber("金额", ${bounds.upperBound})`)}`]]);
+  assert.equal(scope.evaluate('listProblemRows({ kind: "conversion", field: "备注" })'), null);
+  assert.equal(scope.evaluate('listProblemRows({ kind: "missing", field: "不存在" })'), null);
+});
+
+test("parse-warning lists show rows that were imported and say when there is none", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n");
+  const items = JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "parseWarnings" }).items)'));
+  assert.deepEqual(items.map(({ index, line }) => [index, line]), [[null, 4], [1, 5]]);
+  assert.equal(items[0].note, "第 4 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。（这一行没有可分析的数据，未导入）");
+  assert.equal(items[1].note, "第 5 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。");
+  assert.deepEqual(problemRowCheck(scope).mismatches, []);
+
+  const oneColumn = await importCsvFile("a;b\n1;2\n3\n5;6\n");
+  const [warning] = JSON.parse(oneColumn.evaluate('JSON.stringify(listProblemRows({ kind: "parseWarnings" }).items)'));
+  assert.equal(warning.index, null);
+  assert.match(warning.note, /（没有行号）$/);
+
+  const clean = await importStage3Fixture("订单表.csv");
+  assert.equal(clean.evaluate('listProblemRows({ kind: "parseWarnings" })'), null);
+  assert.equal(clean.evaluate('listProblemCategories().some((category) => category.kind === "parseWarnings")'), false);
+});
+
+// v2.6.0: the data preview pages through the analysis rows, 50 at a time, with the
+// file row of each row in front.
+const PREVIEW_CITIES = ["上海", "北京", "广州"];
+const previewCsv = () => `编号,城市\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${PREVIEW_CITIES[index % 3]}`).join("\r\n")}\r\n`;
+// [file row, 编号] of each preview row, and the pager.
+const previewState = (scope) => ({
+  rows: [...scope.elements.get("previewTable").innerHTML.matchAll(/<tr><td>([^<]*)<\/td><td>([^<]*)<\/td>/g)].map((match) => [match[1], match[2]]),
+  info: scope.elements.get("previewPageInfo").textContent,
+  disabled: ["previewFirstPage", "previewPrevPage", "previewNextPage", "previewLastPage"].map((id) => scope.elements.get(id).disabled)
+});
+
+test("the data preview shows 50 rows a page with file rows and moves between pages", async () => {
+  const scope = await importCsvFile(previewCsv(), "preview.csv");
+  let shown = previewState(scope);
+  assert.equal(shown.rows.length, 50);
+  assert.deepEqual(shown.rows[0], ["2", "R1"]);
+  assert.deepEqual(shown.rows[49], ["51", "R50"]);
+  assert.equal(shown.info, "第 1 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [true, true, false, false]);
+  assert.match(scope.elements.get("previewTable").innerHTML, /<th>文件行号<\/th><th>编号<\/th><th>城市<\/th>/);
+
+  scope.evaluate('goToPreviewPage("next")');
+  shown = previewState(scope);
+  assert.deepEqual([shown.rows[0], shown.rows[49]], [["52", "R51"], ["101", "R100"]]);
+  assert.equal(shown.info, "第 2 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [false, false, false, false]);
+
+  scope.evaluate('goToPreviewPage("last")');
+  shown = previewState(scope);
+  assert.equal(shown.rows.length, 20);
+  assert.deepEqual(shown.rows[19], ["121", "R120"]);
+  assert.equal(shown.info, "第 3 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [false, false, true, true]);
+  scope.evaluate('goToPreviewPage("next")');
+  assert.equal(previewState(scope).info, "第 3 / 3 页，共 120 行");
+
+  scope.evaluate('goToPreviewPage("prev")');
+  assert.equal(previewState(scope).info, "第 2 / 3 页，共 120 行");
+  scope.evaluate('goToPreviewPage("first")');
+  assert.equal(previewState(scope).info, "第 1 / 3 页，共 120 行");
+});
+
+test("the data preview follows filters from page 1 and keeps the original file rows", async () => {
+  const scope = await importCsvFile(previewCsv(), "preview.csv");
+  // From the last page to a filter that still has two pages: page 1, not a clamped page 2.
+  scope.evaluate('goToPreviewPage("last")');
+  assert.equal(previewState(scope).info, "第 3 / 3 页，共 120 行");
+  applyFilterState(scope, { category: { field: "城市", values: ["北京", "上海"] } });
+  const twoPages = previewState(scope);
+  assert.equal(twoPages.info, "第 1 / 2 页，共 80 行");
+  assert.deepEqual(twoPages.rows[0], ["2", "R1"]);
+  assert.deepEqual(twoPages.disabled, [true, true, false, false]);
+
+  scope.evaluate('goToPreviewPage("last")');
+  applyFilterState(scope, { category: { field: "城市", values: ["北京"] } });
+  const shown = previewState(scope);
+  assert.equal(shown.info, "第 1 / 1 页，共 40 行");
+  assert.deepEqual(shown.rows.slice(0, 2), [["3", "R2"], ["6", "R5"]]);
+  assert.deepEqual(shown.rows[39], ["120", "R119"]);
+  assert.deepEqual(shown.disabled, [true, true, true, true]);
+
+  applyFilterState(scope, { category: { field: "城市", values: [] } });
+  assert.match(scope.elements.get("previewTable").innerHTML, /当前筛选条件下没有可预览的数据。/);
+  assert.equal(previewState(scope).info, "第 1 / 1 页，共 0 行");
+
+  // A field configuration rebuild clears the filters and goes back to page 1 too.
+  applyFilterState(scope, { category: null });
+  scope.evaluate('goToPreviewPage("next")');
+  scope.evaluate('stageFieldTypeChange("城市", "ignore"); applyFieldConfiguration()');
+  assert.equal(previewState(scope).info, "第 1 / 3 页，共 120 行");
+});
+
+test("renderPreview() clamps the page and works without a page in the state", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  put(context, "__rows", Array.from({ length: 60 }, (_, index) => ({ 值: String(index) })));
+  evaluate('commitTabularData(["值"], __rows, "plain.csv", beginImport())');
+  for (const [page, info] of [[99, "第 2 / 2 页，共 60 行"], [0, "第 1 / 2 页，共 60 行"], [-3, "第 1 / 2 页，共 60 行"], [undefined, "第 1 / 2 页，共 60 行"], ["x", "第 1 / 2 页，共 60 行"]]) {
+    put(context, "__page", page);
+    evaluate("state.previewPage = __page; renderPreview()");
+    assert.equal(elements.get("previewPageInfo").textContent, info, String(page));
+  }
+  // Rows that did not come through an import have no file row: "—".
+  assert.match(elements.get("previewTable").innerHTML, /<tr><td>—<\/td><td>0<\/td><\/tr>/);
+  evaluate("beginImport()");
+  assert.equal(evaluate("state.previewPage"), 1);
+});
+
+test("the preview heading, pager and its buttons are static in index.html and bound in script.js", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assert.match(overview, /<h3 class="subsection-title">数据预览<\/h3>/);
+  assert.match(overview, /<table id="previewTable" aria-label="数据预览"><\/table>/);
+  assert.doesNotMatch(overview, /前 10 行/);
+  const ids = ["previewPageInfo", "previewFirstPage", "previewPrevPage", "previewNextPage", "previewLastPage"];
+  ids.forEach((id) => assert.match(overview, new RegExp(`id="${id}"`), id));
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate(`${JSON.stringify(ids)}.every((id) => Object.keys(dom).includes(id))`), true);
+  const script = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  for (const [id, action] of [["previewFirstPage", "first"], ["previewPrevPage", "prev"], ["previewNextPage", "next"], ["previewLastPage", "last"]]) {
+    assert.ok(script.includes(`dom.${id}.addEventListener("click", () => goToPreviewPage("${action}"));`), id);
+  }
+});
+
+// v2.6.0: the problem-row viewer on the quality page.
+const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails"];
+// Every "查看" button: its container, data-problem-index, aria-label and other data attributes.
+const problemButtons = (scope) => PROBLEM_ENTRY_CONTAINERS.flatMap((id) => [...scope.elements.get(id).innerHTML.matchAll(/<button\b[^>]*\bdata-problem-index="(\d+)"[^>]*>/g)]
+  .map((match) => ({
+    container: id,
+    index: Number(match[1]),
+    label: (match[0].match(/aria-label="([^"]*)"/) || [])[1],
+    dataAttributes: [...match[0].matchAll(/\b(data-[a-z-]+)=/g)].map((attribute) => attribute[1])
+  })));
+const clickProblemButton = (scope, index) => {
+  put(scope.context, "__problemButton", index === null ? null : { dataset: { problemIndex: String(index) } });
+  scope.evaluate("handleProblemViewClick({ target: { closest: () => __problemButton } })");
+};
+const openCategory = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.problemView && state.problemView.category)"));
+const categoryAt = (scope, index) => JSON.parse(scope.evaluate(`JSON.stringify(state.problemCategories[${index}])`));
+const viewerState = (scope) => ({
+  hidden: scope.elements.get("problemRowsSection").classList.contains("hidden"),
+  summary: scope.elements.get("problemRowsSummary").textContent,
+  message: scope.elements.get("problemRowsMessage").textContent,
+  disabled: ["problemRowsFirstPage", "problemRowsPrevPage", "problemRowsNextPage", "problemRowsLastPage"].map((id) => scope.elements.get(id).disabled),
+  lines: [...scope.elements.get("problemRowsTable").innerHTML.matchAll(/<tr><td>([^<]*)<\/td><td>/g)].map((match) => match[1])
+});
+const sameCategory = (category) => ({ kind: category.kind, field: category.field, key: category.key });
+
+test("every 查看 button opens its own category and carries only its index", async () => {
+  const scopes = [await importStage3Fixture("订单表.csv"), await importStage3Fixture("花名册.xlsx"), await importCsvFile("a,b\n1,2\n3\n4,5\n", "warnings.csv")];
+  for (const scope of scopes) {
+    const buttons = problemButtons(scope);
+    const categoryCount = scope.evaluate("state.problemCategories.length");
+    assert.ok(categoryCount > 0);
+    // Each category has a button, and every button names what it shows.
+    assert.deepEqual([...new Set(buttons.map((button) => button.index))].sort((a, b) => a - b), Array.from({ length: categoryCount }, (_, index) => index));
+    for (const button of buttons) {
+      assert.deepEqual(button.dataAttributes, ["data-problem-index"], button.label);
+      assert.match(button.label, /^查看/);
+      clickProblemButton(scope, button.index);
+      assert.deepEqual(sameCategory(openCategory(scope)), sameCategory(categoryAt(scope, button.index)), button.label);
+      assert.equal(scope.elements.get("problemRowsCategory").value, String(button.index));
+      assert.equal(viewerState(scope).hidden, false);
+    }
+  }
+  const [orders, roster, warnings] = scopes;
+  const label = (scope, container) => problemButtons(scope).filter((button) => button.container === container).map((button) => button.label);
+  assert.deepEqual(label(orders, "qualityTable").slice(0, 2), ["查看「下单日期」的格式问题", "查看「数量」的格式问题"]);
+  assert.ok(label(orders, "qualityTable").includes("查看「备注」的缺失行"));
+  assert.deepEqual(label(orders, "outlierTable"), ["查看「数量」的异常值", "查看「金额」的异常值"]);
+  assert.deepEqual(label(orders, "idDuplicateDetails"), ["查看「订单号」的重复行"]);
+  assert.ok(label(orders, "placeholderDetails").includes("查看「金额」中「N/A」所在的行"));
+  assert.deepEqual(label(roster, "qualitySummary"), ["查看重复行"]);
+  assert.deepEqual(label(warnings, "parseWarningSummary"), ["查看解析警告"]);
+  assert.equal(warnings.elements.get("parseWarningSummary").classList.contains("hidden"), false);
+  assert.match(warnings.elements.get("parseWarningSummary").innerHTML, /CSV 解析警告：1 条，涉及 1 行/);
+  assert.equal(orders.elements.get("parseWarningSummary").classList.contains("hidden"), true);
+
+  // A click outside a button, or on a stale index, changes nothing.
+  clickProblemButton(orders, null);
+  clickProblemButton(orders, 99);
+  assert.equal(viewerState(orders).hidden, false);
+});
+
+test("the 查看 columns keep a cell element in every row and leave the count cells as they were", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  for (const id of ["qualityTable", "outlierTable"]) {
+    const html = orders.elements.get(id).innerHTML;
+    assert.match(html, /<th>查看<\/th>/, id);
+    const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((row) => row.includes("<td"));
+    for (const row of rows) {
+      const lastCell = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].pop()[1];
+      assert.match(lastCell, /^<(button|span)\b/, `${id}: ${row.slice(0, 60)}`);
+    }
+  }
+  assert.deepEqual(qualityRow(orders.elements, "金额").slice(-1)[0].text, "1（N/A）");
+});
+
+test("the viewer lists rows with their file rows, notes and highlighted cells, 50 a page", async () => {
+  const csv = `编号,备注\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${index % 2 ? "" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "notes.csv");
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  let view = viewerState(scope);
+  assert.equal(view.summary, "共 60 行，第 1 / 2 页");
+  assert.deepEqual(view.disabled, [true, true, false, false]);
+  assert.equal(view.lines.length, 50);
+  assert.deepEqual(view.lines.slice(0, 2), ["3", "5"]);
+  const html = scope.elements.get("problemRowsTable").innerHTML;
+  assert.match(html, /<th>文件行号<\/th><th>说明<\/th><th>编号<\/th><th>备注<\/th>/);
+  assert.match(html, /<tr><td>3<\/td><td>空值<\/td><td>R2<\/td><td class="cell-problem"><\/td><\/tr>/);
+
+  scope.evaluate('goToProblemRowsPage("next")');
+  view = viewerState(scope);
+  assert.equal(view.summary, "共 60 行，第 2 / 2 页");
+  assert.deepEqual(view.disabled, [false, false, true, true]);
+  assert.equal(view.lines.length, 10);
+  assert.equal(view.lines[9], "121");
+  scope.evaluate('goToProblemRowsPage("first")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Filters do not touch the viewer: it stays on the original rows and its page.
+  scope.evaluate('goToProblemRowsPage("last")');
+  applyFilterState(scope, { category: { field: "编号", values: ["R1"] } });
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+  assert.equal(openCategory(scope).kind, "missing");
+});
+
+test("viewer summaries name the unit of each kind of count", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  assert.equal(viewerState(orders).summary, "共 26 行，第 1 / 1 页");
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  assert.equal(viewerState(orders).summary, "共 1 个值，第 1 / 1 页");
+  const roster = await importStage3Fixture("花名册.xlsx");
+  roster.evaluate('openProblemView({ kind: "duplicateRows" })');
+  assert.equal(viewerState(roster).summary, "重复 1 行（1 组，共 2 行，每组第一行保留），第 1 / 1 页");
+  assert.doesNotMatch(roster.elements.get("problemRowsTable").innerHTML, /cell-problem/);
+  const warnings = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n", "warnings.csv");
+  warnings.evaluate('openProblemView({ kind: "parseWarnings" })');
+  assert.equal(viewerState(warnings).summary, "共 2 条警告，第 1 / 1 页");
+  assert.deepEqual(viewerState(warnings).lines, ["4", "5"]);
+  // The dropped whitespace row has no cells; the imported one shows its values.
+  assert.match(warnings.elements.get("problemRowsTable").innerHTML, /<tr><td>4<\/td><td>[^<]*（这一行没有可分析的数据，未导入）<\/td><td><\/td><td><\/td><\/tr>/);
+  assert.match(warnings.elements.get("problemRowsTable").innerHTML, /<tr><td>5<\/td><td>[^<]*<\/td><td>3<\/td><td><\/td><\/tr>/);
+});
+
+test("the category list switches categories and labels each count", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  const options = [...orders.elements.get("problemRowsCategory").innerHTML.matchAll(/<option value="(\d+)"( selected)?>([^<]*)<\/option>/g)].map((match) => [match[1], Boolean(match[2]), match[3]]);
+  assert.deepEqual(options.slice(0, 7), [
+    ["0", true, "缺失 · 备注（26 行）"],
+    ["1", false, "格式问题 · 下单日期（1 个值）"],
+    ["2", false, "格式问题 · 数量（1 个值）"],
+    ["3", false, "格式问题 · 金额（1 个值）"],
+    ["4", false, "异常值 · 数量（1 行）"],
+    ["5", false, "异常值 · 金额（1 行）"],
+    ["6", false, "ID 重复 · 订单号（1 个重复值）"]
+  ]);
+  assert.equal(options[9][2], "疑似缺失值 · 金额 · 「N/A」（1 行）");
+  orders.evaluate('selectProblemCategory("6")');
+  assert.deepEqual(sameCategory(openCategory(orders)), { kind: "idDuplicate", field: "订单号", key: undefined });
+  assert.equal(viewerState(orders).summary, "共 2 行，第 1 / 1 页");
+  const roster = await importStage3Fixture("花名册.xlsx");
+  roster.evaluate('openProblemView({ kind: "duplicateRows" })');
+  assert.match(roster.elements.get("problemRowsCategory").innerHTML, />整行重复（1 行）</);
+  const warnings = await importCsvFile("a,b\n1,2\n3\n4,5\n", "warnings.csv");
+  warnings.evaluate('openProblemView({ kind: "parseWarnings" })');
+  assert.match(warnings.elements.get("problemRowsCategory").innerHTML, />解析警告（1 条）</);
+});
+
+test("opening the viewer moves focus to its title, and closing hides it", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  let focused = 0;
+  orders.elements.get("problemRowsTitle").focus = () => { focused += 1; };
+  clickProblemButton(orders, 0);
+  assert.equal(focused, 1);
+  orders.evaluate("closeProblemView()");
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(orders.evaluate("state.problemView"), null);
+  assert.equal(orders.elements.get("problemRowsTable").innerHTML, "");
+  assert.equal(orders.elements.get("problemRowsCategory").innerHTML, "");
+});
+
+test("the viewer finds its category again after field configuration, confirmation and undo", async () => {
+  const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "refind.csv");
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+
+  // Confirming N/A keeps the category with more rows, back on page 1.
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  assert.equal(viewerState(scope).hidden, false);
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Ignoring the field keeps its missing rows; a field configuration rebuild goes back to page 1.
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('stageFieldTypeChange("备注", "ignore")');
+  assert.equal(scope.elements.get("problemRowsDraftNote").classList.contains("hidden"), false);
+  scope.evaluate("applyFieldConfiguration()");
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+  assert.equal(scope.elements.get("problemRowsDraftNote").classList.contains("hidden"), true);
+
+  // A category that is gone closes the viewer with a note.
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(viewerState(orders).message, "这一类已经没有问题行。");
+  orders.evaluate('openProblemView({ kind: "outlier", field: "金额" })');
+  assert.equal(viewerState(orders).message, "");
+  orders.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(viewerState(orders).message, "这一类已经没有问题行。");
+});
+
+test("a new import closes the viewer and clears its state", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  put(orders.context, "__cityRows", [{ 城市: "上海" }, { 城市: "" }]);
+  orders.evaluate('commitTabularData(["城市"], __cityRows, "cities.csv", beginImport())');
+  assert.equal(orders.evaluate("state.problemView"), null);
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(orders.elements.get("problemRowsTable").innerHTML, "");
+  orders.evaluate("beginImport()");
+  assert.equal(orders.evaluate("state.problemCategories.length"), 0);
+});
+
+test("the viewer escapes field names, values and labels", async () => {
+  const field = '<b>备&注"</b>';
+  const scope = await importCsvFile(`编号,"${field.replace(/"/g, '""')}",其他\r\nR1,<i>x</i>,a\r\nR2,,<i>y</i>&'q'\r\nR3,'&',c\r\n`, "escape.csv");
+  scope.evaluate(`openProblemView({ kind: "missing", field: ${JSON.stringify(field)} })`);
+  const html = ["problemRowsTable", "problemRowsCategory", "qualityTable"].map((id) => scope.elements.get(id).innerHTML).join("\n");
+  assert.doesNotMatch(html, /<b>|<i>/);
+  assert.ok(html.includes("&lt;b&gt;备&amp;注&quot;&lt;/b&gt;"));
+  assert.ok(scope.elements.get("problemRowsTable").innerHTML.includes("<td>&lt;i&gt;y&lt;/i&gt;&amp;&#039;q&#039;</td>"));
+  assert.ok(scope.elements.get("qualityTable").innerHTML.includes('aria-label="查看「&lt;b&gt;备&amp;注&quot;&lt;/b&gt;」的缺失行"'));
+  // A category with nothing to show (编号 has no duplicates) leaves the open view as it is.
+  scope.evaluate('openProblemView({ kind: "idDuplicate", field: "编号" })');
+  assert.equal(openCategory(scope).kind, "missing");
+});
+
+test("the problem-row viewer is static in index.html, in the dom map and bound in script.js", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
+  const order = ['id="qualitySummary"', 'id="parseWarningSummary"', 'id="outlierTable"', 'id="problemRowsSection"', 'id="numberConversionSection"'].map((marker) => quality.indexOf(marker));
+  assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
+  assert.match(quality, /<p id="parseWarningSummary" class="[^"]*\bhidden\b[^"]*"/);
+  assert.match(quality, /<div id="problemRowsSection" class="[^"]*\bhidden\b[^"]*"/);
+  assert.match(quality, /<h3 id="problemRowsTitle" class="subsection-title" tabindex="-1">/);
+  assert.match(quality, /<p id="problemRowsSummary" class="[^"]*" aria-live="polite"><\/p>/);
+  const ids = ["qualitySection", "parseWarningSummary", "problemRowsSection", "problemRowsTitle", "problemRowsCategory", "problemRowsSummary", "problemRowsDraftNote", "problemRowsTable",
+    "problemRowsFirstPage", "problemRowsPrevPage", "problemRowsNextPage", "problemRowsLastPage", "problemRowsClose", "problemRowsMessage"];
+  ids.forEach((id) => assert.match(html, new RegExp(`id="${id}"`), id));
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate(`${JSON.stringify(ids)}.every((id) => Object.keys(dom).includes(id))`), true);
+  const script = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  assert.ok(script.includes('dom.qualitySection.addEventListener("click", handleProblemViewClick);'));
+  assert.ok(script.includes('dom.problemRowsCategory.addEventListener("change", () => selectProblemCategory(dom.problemRowsCategory.value));'));
+  assert.ok(script.includes('dom.problemRowsClose.addEventListener("click", closeProblemView);'));
+  for (const [id, action] of [["problemRowsFirstPage", "first"], ["problemRowsPrevPage", "prev"], ["problemRowsNextPage", "next"], ["problemRowsLastPage", "last"]]) {
+    assert.ok(script.includes(`dom.${id}.addEventListener("click", () => goToProblemRowsPage("${action}"));`), id);
+  }
+  // The placeholder buttons keep their own handler, untouched.
+  assert.ok(script.includes('dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);'));
+});
+
+test("without numeric fields the viewer still lists its category again or closes", async () => {
+  // renderQuality() returns early when there is no numeric field: the viewer must refresh before that.
+  const csv = `城市,备注\r\n${Array.from({ length: 120 }, (_, index) => `${PREVIEW_CITIES[index % 3]},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "categories.csv");
+  assert.match(scope.elements.get("outlierTable").innerHTML, /未识别到数值字段/);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "category"]);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Ignoring 备注 drops its pending N/A entry, so that category closes with the note.
+  scope.evaluate('openProblemView({ kind: "placeholder", field: "备注", key: "N/A" })');
+  assert.equal(viewerState(scope).summary, "共 30 行，第 1 / 1 页");
+  scope.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.equal(viewerState(scope).hidden, true);
+  assert.equal(viewerState(scope).message, "这一类已经没有问题行。");
+});
+
+test("closing the viewer gives focus back to the 查看 button that opened it", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const document = orders.context.document;
+  const fakeButton = (index, connected = true) => ({
+    dataset: { problemIndex: String(index) },
+    isConnected: connected,
+    focus() { document.activeElement = this; }
+  });
+  document.activeElement = null;
+  const opener = fakeButton(0);
+  put(orders.context, "__opener", opener);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  orders.evaluate("closeProblemView()");
+  assert.equal(orders.evaluate("document.activeElement === __opener"), true);
+
+  // The opener was rendered away (a confirmation re-renders the quality page): the new
+  // button of the same category takes the focus.
+  const stale = fakeButton(0);
+  put(orders.context, "__opener", stale);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  stale.isConnected = false;
+  const fresh = fakeButton(0);
+  const selectors = [];
+  orders.elements.get("qualitySection").querySelector = (selector) => {
+    selectors.push(selector);
+    return selector === 'button[data-problem-index="0"]' ? fresh : null;
+  };
+  orders.evaluate("closeProblemView()");
+  assert.equal(document.activeElement, fresh);
+  assert.deepEqual(selectors, ['button[data-problem-index="0"]']);
+
+  // No button for the category any more: the focus stays where it was.
+  document.activeElement = null;
+  const gone = fakeButton(0);
+  put(orders.context, "__opener", gone);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  gone.isConnected = false;
+  orders.elements.get("qualitySection").querySelector = () => null;
+  orders.evaluate("closeProblemView()");
+  assert.equal(document.activeElement, null);
+  assert.equal(viewerState(orders).hidden, true);
+});
+
+// v2.6.0: "导出这一类" writes the whole open category as CSV through the existing
+// download path (BOM, formula neutralizing, file name sanitizing).
+function captureDownloads(scope) {
+  const downloads = [];
+  scope.context.URL = {
+    createObjectURL: (blob) => {
+      downloads.push({ blob });
+      return "blob:problem-rows";
+    },
+    revokeObjectURL() {}
+  };
+  scope.context.document.createElement = () => ({
+    click() { downloads[downloads.length - 1].fileName = this.download; },
+    remove() {}
+  });
+  return async () => Promise.all(downloads.map(async ({ blob, fileName }) => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    return { fileName, type: blob.type, bom: Array.from(bytes.slice(0, 3)), text: new TextDecoder("utf-8").decode(bytes.slice(3)) };
+  }));
+}
+
+const EXPORT_CSV = "编号,金额,备注,说明,文件行号,=x\r\nR1,100,=1+1,s1,f1,a\r\nR2,,=cmd,s2,f2,b\r\nR3,-2200元,,s3,f3,c\r\nR4,-42,,s4,f4,d\r\n";
+
+test("exporting a problem category writes its rows with file rows, notes and every field", async () => {
+  const scope = await importCsvFile(EXPORT_CSV, "导出.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate("exportProblemRows()");
+  scope.evaluate('openProblemView({ kind: "missing", field: "金额" })');
+  scope.evaluate("exportProblemRows()");
+  const [remarks, amounts] = await downloads();
+  const day = scope.evaluate("formatReportFileDate(new Date())");
+  assert.deepEqual(remarks.bom, [0xef, 0xbb, 0xbf]);
+  assert.equal(remarks.type, "text/csv;charset=utf-8");
+  assert.equal(remarks.fileName, `导出_问题行_缺失_备注_${day}.csv`);
+  // Extra columns that clash with field names get （2）; formulas, headers included, are
+  // neutralized, and -2200元 keeps its apostrophe while -42 stays a number.
+  assert.equal(remarks.text, [
+    "文件行号（2）,说明（2）,编号,金额,备注,说明,文件行号,'=x",
+    "4,空值,R3,'-2200元,,s3,f3,c",
+    "5,空值,R4,-42,,s4,f4,d"
+  ].join("\r\n"));
+  assert.equal(amounts.text.split("\r\n")[1], "3,空值,R2,,'=cmd,s2,f2,b");
+  assert.equal(scope.elements.get("problemRowsExportStatus").textContent, `已导出 1 条：导出_问题行_缺失_金额_${day}.csv`);
+  assert.match(scope.elements.get("problemRowsExportStatus").className, /success/);
+});
+
+test("problem-row exports cover the whole category, not the current page", async () => {
+  const csv = `编号,备注\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${index % 2 ? "" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "notes.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("last")');
+  scope.evaluate("exportProblemRows()");
+  const [download] = await downloads();
+  const lines = download.text.split("\r\n");
+  assert.equal(lines.length, 61);
+  assert.equal(lines[1], "3,空值,R2,");
+  assert.equal(lines[60], "121,空值,R120,");
+  assert.equal(scope.elements.get("problemRowsExportStatus").textContent.startsWith("已导出 60 条："), true);
+});
+
+test("parse warnings without an imported row export with empty fields", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n", "warnings.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "parseWarnings" })');
+  scope.evaluate("exportProblemRows()");
+  const [download] = await downloads();
+  assert.deepEqual(download.text.split("\r\n"), [
+    "文件行号,说明,a,b",
+    "4,第 4 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。（这一行没有可分析的数据，未导入）,,",
+    "5,第 5 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。,3,"
+  ]);
+  assert.equal(download.fileName, `warnings_问题行_解析警告_${scope.evaluate("formatReportFileDate(new Date())")}.csv`);
+});
+
+test("problem-row export names keep the date after sanitizing and shortening the rest", () => {
+  const { evaluate } = createScriptContext();
+  evaluate('state.sourceFileName = "订单表.csv"');
+  const name = (category) => evaluate(`buildProblemRowsFileName(${JSON.stringify(category)}, new Date(2026, 9, 29))`);
+  assert.equal(name({ kind: "placeholder", field: "金额", key: "N/A" }), "订单表_问题行_疑似缺失值_金额_N-A_20261029.csv");
+  assert.equal(name({ kind: "duplicateRows" }), "订单表_问题行_整行重复_20261029.csv");
+  assert.equal(name({ kind: "idDuplicate", field: "订单号" }), "订单表_问题行_ID重复_订单号_20261029.csv");
+  assert.equal(name({ kind: "conversion", field: "a:b" }), "订单表_问题行_格式问题_a-b_20261029.csv");
+  const long = name({ kind: "outlier", field: "长".repeat(100) });
+  assert.ok(long.endsWith("_20261029.csv"), long);
+  assert.equal(long, `${`订单表_问题行_异常值_${"长".repeat(100)}`.slice(0, 80)}_20261029.csv`);
+});
+
+test("problem-row export headers number the extra columns past every clashing field name", () => {
+  const { evaluate } = createScriptContext();
+  const headers = (fields) => JSON.parse(evaluate(`JSON.stringify(buildProblemRowsCsvHeaders(${JSON.stringify(fields)}))`));
+  assert.deepEqual(headers(["a", "b"]), ["文件行号", "说明", "a", "b"]);
+  assert.deepEqual(headers(["文件行号", "文件行号（2）", "说明"]), ["文件行号（3）", "说明（2）", "文件行号", "文件行号（2）", "说明"]);
+});
+
+test("guard: the data exports keep their exact output through the shared CSV builder", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const expected = (rows) => orders.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: ${rows}.map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
+  for (const mode of ["filtered", "deduplicated"]) {
+    assert.equal(orders.evaluate(`buildCsvExportContent(getProcessedExportRows("${mode}"), state.fields)`), expected(`getProcessedExportRows("${mode}")`), mode);
+  }
+});
+
+test("the export button needs an open category and its status clears with the viewer", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const downloads = captureDownloads(orders);
+  orders.evaluate("exportProblemRows()");
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "请先打开一类问题行。");
+  assert.deepEqual(await downloads(), []);
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  orders.evaluate("exportProblemRows()");
+  assert.match(orders.elements.get("problemRowsExportStatus").textContent, /^已导出 26 条：/);
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
+  orders.evaluate("exportProblemRows(); closeProblemView()");
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
+
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const section = html.slice(html.indexOf('id="problemRowsSection"'), html.indexOf('id="numberConversionSection"'));
+  assert.match(section, /<button id="problemRowsExport" class="secondary-button" type="button">导出这一类<\/button>/);
+  assert.match(section, /<p id="problemRowsExportStatus" class="inline-status" aria-live="polite"><\/p>/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('["problemRowsExport", "problemRowsExportStatus"].every((id) => Object.keys(dom).includes(id))'), true);
+  assert.ok(fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8").includes('dom.problemRowsExport.addEventListener("click", exportProblemRows);'));
 });

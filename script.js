@@ -134,6 +134,14 @@ dom.excelSheetSelect.addEventListener("change", () => {
   dom.sheetSelectionMessage.textContent = "";
 });
 
+dom.previewFirstPage.addEventListener("click", () => goToPreviewPage("first"));
+
+dom.previewPrevPage.addEventListener("click", () => goToPreviewPage("prev"));
+
+dom.previewNextPage.addEventListener("click", () => goToPreviewPage("next"));
+
+dom.previewLastPage.addEventListener("click", () => goToPreviewPage("last"));
+
 dom.schemaTable.addEventListener("change", (event) => {
   const select = event.target.closest("select[data-field-type]");
   if (!select) return;
@@ -145,6 +153,22 @@ dom.applyFieldConfig.addEventListener("click", applyFieldConfiguration);
 dom.restoreAutoFieldTypes.addEventListener("click", restoreAutomaticFieldTypes);
 
 dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);
+
+dom.qualitySection.addEventListener("click", handleProblemViewClick);
+
+dom.problemRowsCategory.addEventListener("change", () => selectProblemCategory(dom.problemRowsCategory.value));
+
+dom.problemRowsClose.addEventListener("click", closeProblemView);
+
+dom.problemRowsExport.addEventListener("click", exportProblemRows);
+
+dom.problemRowsFirstPage.addEventListener("click", () => goToProblemRowsPage("first"));
+
+dom.problemRowsPrevPage.addEventListener("click", () => goToProblemRowsPage("prev"));
+
+dom.problemRowsNextPage.addEventListener("click", () => goToProblemRowsPage("next"));
+
+dom.problemRowsLastPage.addEventListener("click", () => goToProblemRowsPage("last"));
 
 dom.categoryFilterField.addEventListener("change", updateCategoryFilterField);
 

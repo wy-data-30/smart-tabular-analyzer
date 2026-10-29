@@ -342,14 +342,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.5.0", () => {
+test("public current version markers agree on v2.6.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.5.0");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.5\.0/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.5\.0/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.6.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.6\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.6\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.5.0");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.5.0");
+  assert.equal(evaluate("buildReportData().version"), "v2.6.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.6.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -1169,6 +1169,21 @@ test("the header note lists at most two skipped rows and adds 等 for more", () 
     note({ headerRowNumber: 5, skippedRows: [{ rowNumber: 1, preview: "甲" }, { rowNumber: 2, preview: "乙" }, { rowNumber: 3, preview: "丙" }] }),
     "表头在第 5 行，已跳过上方 4 行：「甲」「乙」等。"
   );
+});
+
+test("CSV parse warnings read in Chinese by code, with and without a line", () => {
+  const { evaluate } = createScriptContext();
+  const message = (code, details) => evaluate(`formatCsvWarningMessage(${JSON.stringify(code)}, ${JSON.stringify(details)})`);
+  assert.equal(message("TooFewFields", { line: 3, cellCount: 1, headerCount: 3 }), "第 3 行只有 1 列（表头有 3 列），缺少的单元格按空值处理。");
+  assert.equal(message("TooFewFields", { line: 3, cellCount: null, headerCount: 3 }), "第 3 行的列数少于表头，缺少的单元格按空值处理。");
+  assert.equal(message("TooFewFields", { line: null, cellCount: 1, headerCount: 3 }), "有一条记录的列数少于表头（只有 1 列，表头有 3 列），缺少的单元格按空值处理。");
+  assert.equal(message("TooFewFields", { line: null, cellCount: null, headerCount: 3 }), "有一条记录的列数少于表头，缺少的单元格按空值处理。");
+  assert.equal(message("InvalidQuotes", { line: 7 }), "第 7 行有不规范的引号（引号后面紧跟了其他字符），这一行可能被读错。");
+  assert.equal(message("InvalidQuotes", { line: null }), "有一处不规范的引号（引号后面紧跟了其他字符），所在的记录可能被读错。");
+  assert.equal(message("UndetectableDelimiter", { separator: ";" }), "整份文件只读出 1 列，但表头里有分号（；）。如果原文件是用分号分隔的，请另存为逗号分隔的 CSV 后重新上传。");
+  assert.equal(message("UndetectableDelimiter", { separator: "\t" }), "整份文件只读出 1 列，但表头里有制表符。如果原文件是用制表符分隔的，请另存为逗号分隔的 CSV 后重新上传。");
+  assert.equal(message("UndetectableDelimiter", { separator: "|" }), "整份文件只读出 1 列，但表头里有竖线（|）。如果原文件是用竖线分隔的，请另存为逗号分隔的 CSV 后重新上传。");
+  assert.equal(message("SomethingElse", {}), "");
 });
 
 test("line numbers at offsets count CR, LF and CRLF like the header row numbers did", () => {

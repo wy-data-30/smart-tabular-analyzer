@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -109,6 +109,69 @@ function formatHeaderDetectionNote(headerDetection) {
   const quoted = skippedRows.slice(0, SKIPPED_ROW_PREVIEW_COUNT).map((row) => `「${row.preview}」`).join("");
   const more = skippedRows.length > SKIPPED_ROW_PREVIEW_COUNT ? "等" : "";
   return `表头在第 ${headerRowNumber} 行，已跳过上方 ${headerRowNumber - 1} 行${quoted ? `：${quoted}${more}` : ""}。`;
+}
+
+// Chinese text of a kept CSV parse warning by its PapaParse code, or "" for other
+// codes. line is the warning's file line or null; for TooFewFields cellCount and
+// headerCount are the cells of the row and of the header (cellCount null when
+// unknown); for UndetectableDelimiter separator is the character found in the header
+// of a one-column file.
+function formatCsvWarningMessage(code, { line = null, cellCount = null, headerCount = null, separator = "" } = {}) {
+  if (code === "TooFewFields") {
+    const missingCells = "缺少的单元格按空值处理。";
+    if (line && cellCount !== null) return `第 ${line} 行只有 ${cellCount} 列（表头有 ${headerCount} 列），${missingCells}`;
+    if (line) return `第 ${line} 行的列数少于表头，${missingCells}`;
+    if (cellCount !== null) return `有一条记录的列数少于表头（只有 ${cellCount} 列，表头有 ${headerCount} 列），${missingCells}`;
+    return `有一条记录的列数少于表头，${missingCells}`;
+  }
+  if (code === "InvalidQuotes") {
+    return line
+      ? `第 ${line} 行有不规范的引号（引号后面紧跟了其他字符），这一行可能被读错。`
+      : "有一处不规范的引号（引号后面紧跟了其他字符），所在的记录可能被读错。";
+  }
+  if (code === "UndetectableDelimiter") {
+    const [shown, name] = { ";": ["分号（；）", "分号"], "\t": ["制表符", "制表符"], "|": ["竖线（|）", "竖线"] }[separator] || [];
+    return name ? `整份文件只读出 1 列，但表头里有${shown}。如果原文件是用${name}分隔的，请另存为逗号分隔的 CSV 后重新上传。` : "";
+  }
+  return "";
+}
+
+// aria-label of a 查看 button for a problem-row category.
+function formatProblemViewLabel(category) {
+  switch (category.kind) {
+    case "missing": return `查看「${category.field}」的缺失行`;
+    case "conversion": return `查看「${category.field}」的格式问题`;
+    case "outlier": return `查看「${category.field}」的异常值`;
+    case "duplicateRows": return "查看重复行";
+    case "idDuplicate": return `查看「${category.field}」的重复行`;
+    case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
+    default: return "查看解析警告";
+  }
+}
+
+// Option text of a problem-row category, with the quality page's count.
+function formatProblemCategoryLabel(category) {
+  const count = formatInteger(category.count);
+  switch (category.kind) {
+    case "missing": return `缺失 · ${category.field}（${count} 行）`;
+    case "conversion": return `格式问题 · ${category.field}（${count} 个值）`;
+    case "outlier": return `异常值 · ${category.field}（${count} 行）`;
+    case "duplicateRows": return `整行重复（${count} 行）`;
+    case "idDuplicate": return `ID 重复 · ${category.field}（${count} 个重复值）`;
+    case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
+    default: return `解析警告（${count} 条）`;
+  }
+}
+
+// Viewer summary: the listed count in its unit, then "第 X / Y 页". Duplicate rows
+// say how the quality count (without each group's kept first row) relates to the list.
+function formatProblemRowsSummary(category, list, page, pageCount) {
+  const pages = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页`;
+  const listed = formatInteger(list.items.length);
+  if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
+  if (category.kind === "conversion") return `共 ${listed} 个值，${pages}`;
+  if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
+  return `共 ${listed} 行，${pages}`;
 }
 
 // "6、19", plus " 等 15 个" when totalCount is more than the numbers shown. Any row
