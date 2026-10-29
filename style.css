@@ -1055,6 +1055,13 @@ td .problem-view-button + .problem-view-button {
   margin-bottom: 0;
 }
 
+.problem-rows-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .problem-rows-heading button {
   min-height: 34px;
   font-size: 12px;

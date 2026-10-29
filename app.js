@@ -125,6 +125,8 @@ const dom = {
   problemRowsSection: document.getElementById("problemRowsSection"),
   problemRowsTitle: document.getElementById("problemRowsTitle"),
   problemRowsClose: document.getElementById("problemRowsClose"),
+  problemRowsExport: document.getElementById("problemRowsExport"),
+  problemRowsExportStatus: document.getElementById("problemRowsExportStatus"),
   problemRowsCategory: document.getElementById("problemRowsCategory"),
   problemRowsSummary: document.getElementById("problemRowsSummary"),
   problemRowsDraftNote: document.getElementById("problemRowsDraftNote"),
@@ -1328,6 +1330,7 @@ function openProblemView(category) {
   if (!list) return false;
   state.problemView = { category: { kind: match.kind, field: match.field, key: match.key }, page: 1, list };
   dom.problemRowsMessage.textContent = "";
+  setProblemRowsExportStatus("");
   renderProblemView();
   return true;
 }
@@ -1398,6 +1401,7 @@ function hideProblemView() {
   dom.problemRowsTable.innerHTML = "";
   dom.problemRowsDraftNote.classList.add("hidden");
   dom.problemRowsMessage.textContent = "";
+  setProblemRowsExportStatus("");
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], 1, 1);
 }
 

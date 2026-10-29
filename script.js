@@ -160,6 +160,8 @@ dom.problemRowsCategory.addEventListener("change", () => selectProblemCategory(d
 
 dom.problemRowsClose.addEventListener("click", closeProblemView);
 
+dom.problemRowsExport.addEventListener("click", exportProblemRows);
+
 dom.problemRowsFirstPage.addEventListener("click", () => goToProblemRowsPage("first"));
 
 dom.problemRowsPrevPage.addEventListener("click", () => goToProblemRowsPage("prev"));

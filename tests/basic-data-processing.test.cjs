@@ -3845,3 +3845,130 @@ test("closing the viewer gives focus back to the 查看 button that opened it", 
   assert.equal(document.activeElement, null);
   assert.equal(viewerState(orders).hidden, true);
 });
+
+// v2.6.0: "导出这一类" writes the whole open category as CSV through the existing
+// download path (BOM, formula neutralizing, file name sanitizing).
+function captureDownloads(scope) {
+  const downloads = [];
+  scope.context.URL = {
+    createObjectURL: (blob) => {
+      downloads.push({ blob });
+      return "blob:problem-rows";
+    },
+    revokeObjectURL() {}
+  };
+  scope.context.document.createElement = () => ({
+    click() { downloads[downloads.length - 1].fileName = this.download; },
+    remove() {}
+  });
+  return async () => Promise.all(downloads.map(async ({ blob, fileName }) => {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    return { fileName, type: blob.type, bom: Array.from(bytes.slice(0, 3)), text: new TextDecoder("utf-8").decode(bytes.slice(3)) };
+  }));
+}
+
+const EXPORT_CSV = "编号,金额,备注,说明,文件行号,=x\r\nR1,100,=1+1,s1,f1,a\r\nR2,,=cmd,s2,f2,b\r\nR3,-2200元,,s3,f3,c\r\nR4,-42,,s4,f4,d\r\n";
+
+test("exporting a problem category writes its rows with file rows, notes and every field", async () => {
+  const scope = await importCsvFile(EXPORT_CSV, "导出.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate("exportProblemRows()");
+  scope.evaluate('openProblemView({ kind: "missing", field: "金额" })');
+  scope.evaluate("exportProblemRows()");
+  const [remarks, amounts] = await downloads();
+  const day = scope.evaluate("formatReportFileDate(new Date())");
+  assert.deepEqual(remarks.bom, [0xef, 0xbb, 0xbf]);
+  assert.equal(remarks.type, "text/csv;charset=utf-8");
+  assert.equal(remarks.fileName, `导出_问题行_缺失_备注_${day}.csv`);
+  // Extra columns that clash with field names get （2）; formulas, headers included, are
+  // neutralized, and -2200元 keeps its apostrophe while -42 stays a number.
+  assert.equal(remarks.text, [
+    "文件行号（2）,说明（2）,编号,金额,备注,说明,文件行号,'=x",
+    "4,空值,R3,'-2200元,,s3,f3,c",
+    "5,空值,R4,-42,,s4,f4,d"
+  ].join("\r\n"));
+  assert.equal(amounts.text.split("\r\n")[1], "3,空值,R2,,'=cmd,s2,f2,b");
+  assert.equal(scope.elements.get("problemRowsExportStatus").textContent, `已导出 1 条：导出_问题行_缺失_金额_${day}.csv`);
+  assert.match(scope.elements.get("problemRowsExportStatus").className, /success/);
+});
+
+test("problem-row exports cover the whole category, not the current page", async () => {
+  const csv = `编号,备注\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${index % 2 ? "" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "notes.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("last")');
+  scope.evaluate("exportProblemRows()");
+  const [download] = await downloads();
+  const lines = download.text.split("\r\n");
+  assert.equal(lines.length, 61);
+  assert.equal(lines[1], "3,空值,R2,");
+  assert.equal(lines[60], "121,空值,R120,");
+  assert.equal(scope.elements.get("problemRowsExportStatus").textContent.startsWith("已导出 60 条："), true);
+});
+
+test("parse warnings without an imported row export with empty fields", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n", "warnings.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView({ kind: "parseWarnings" })');
+  scope.evaluate("exportProblemRows()");
+  const [download] = await downloads();
+  assert.deepEqual(download.text.split("\r\n"), [
+    "文件行号,说明,a,b",
+    "4,第 4 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。（这一行没有可分析的数据，未导入）,,",
+    "5,第 5 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。,3,"
+  ]);
+  assert.equal(download.fileName, `warnings_问题行_解析警告_${scope.evaluate("formatReportFileDate(new Date())")}.csv`);
+});
+
+test("problem-row export names keep the date after sanitizing and shortening the rest", () => {
+  const { evaluate } = createScriptContext();
+  evaluate('state.sourceFileName = "订单表.csv"');
+  const name = (category) => evaluate(`buildProblemRowsFileName(${JSON.stringify(category)}, new Date(2026, 9, 29))`);
+  assert.equal(name({ kind: "placeholder", field: "金额", key: "N/A" }), "订单表_问题行_疑似缺失值_金额_N-A_20261029.csv");
+  assert.equal(name({ kind: "duplicateRows" }), "订单表_问题行_整行重复_20261029.csv");
+  assert.equal(name({ kind: "idDuplicate", field: "订单号" }), "订单表_问题行_ID重复_订单号_20261029.csv");
+  assert.equal(name({ kind: "conversion", field: "a:b" }), "订单表_问题行_格式问题_a-b_20261029.csv");
+  const long = name({ kind: "outlier", field: "长".repeat(100) });
+  assert.ok(long.endsWith("_20261029.csv"), long);
+  assert.equal(long, `${`订单表_问题行_异常值_${"长".repeat(100)}`.slice(0, 80)}_20261029.csv`);
+});
+
+test("problem-row export headers number the extra columns past every clashing field name", () => {
+  const { evaluate } = createScriptContext();
+  const headers = (fields) => JSON.parse(evaluate(`JSON.stringify(buildProblemRowsCsvHeaders(${JSON.stringify(fields)}))`));
+  assert.deepEqual(headers(["a", "b"]), ["文件行号", "说明", "a", "b"]);
+  assert.deepEqual(headers(["文件行号", "文件行号（2）", "说明"]), ["文件行号（3）", "说明（2）", "文件行号", "文件行号（2）", "说明"]);
+});
+
+test("guard: the data exports keep their exact output through the shared CSV builder", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const expected = (rows) => orders.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: ${rows}.map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
+  for (const mode of ["filtered", "deduplicated"]) {
+    assert.equal(orders.evaluate(`buildCsvExportContent(getProcessedExportRows("${mode}"), state.fields)`), expected(`getProcessedExportRows("${mode}")`), mode);
+  }
+});
+
+test("the export button needs an open category and its status clears with the viewer", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const downloads = captureDownloads(orders);
+  orders.evaluate("exportProblemRows()");
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "请先打开一类问题行。");
+  assert.deepEqual(await downloads(), []);
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  orders.evaluate("exportProblemRows()");
+  assert.match(orders.elements.get("problemRowsExportStatus").textContent, /^已导出 26 条：/);
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
+  orders.evaluate("exportProblemRows(); closeProblemView()");
+  assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
+
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const section = html.slice(html.indexOf('id="problemRowsSection"'), html.indexOf('id="numberConversionSection"'));
+  assert.match(section, /<button id="problemRowsExport" class="secondary-button" type="button">导出这一类<\/button>/);
+  assert.match(section, /<p id="problemRowsExportStatus" class="inline-status" aria-live="polite"><\/p>/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('["problemRowsExport", "problemRowsExportStatus"].every((id) => Object.keys(dom).includes(id))'), true);
+  assert.ok(fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8").includes('dom.problemRowsExport.addEventListener("click", exportProblemRows);'));
+});

@@ -253,7 +253,10 @@
         <div id="problemRowsSection" class="module-subsection problem-rows hidden">
           <div class="problem-rows-heading">
             <h3 id="problemRowsTitle" class="subsection-title" tabindex="-1">问题行</h3>
-            <button id="problemRowsClose" class="secondary-button" type="button">关闭</button>
+            <div class="problem-rows-actions">
+              <button id="problemRowsExport" class="secondary-button" type="button">导出这一类</button>
+              <button id="problemRowsClose" class="secondary-button" type="button">关闭</button>
+            </div>
           </div>
           <div class="problem-rows-toolbar">
             <label class="problem-rows-category" for="problemRowsCategory">类别</label>
@@ -272,6 +275,7 @@
               <button id="problemRowsLastPage" class="secondary-button" type="button" disabled>末页</button>
             </div>
           </div>
+          <p id="problemRowsExportStatus" class="inline-status" aria-live="polite"></p>
         </div>
         <div id="numberConversionSection" class="module-subsection hidden">
           <h3 class="subsection-title">按单位读取的数字</h3>

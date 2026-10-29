@@ -94,20 +94,88 @@ function getProcessedExportRows(mode) {
 }
 
 function buildCsvExportContent(rows, fields) {
+  const sourceFields = [...fields];
+  return buildCsvTableContent(sourceFields, rows.map((row) => sourceFields.map((field) => readCsvExportCell(row, field))));
+}
+
+// CSV text of a header array and rows of cell arrays: every header and cell goes
+// through sanitizeCsvExportValue(), lines end with CRLF. Both data exports and the
+// problem-row export write through here.
+function buildCsvTableContent(headers, cellRows) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
     throw new Error("CSV 导出组件未加载，请刷新页面重试。");
   }
-  const sourceFields = [...fields];
-  const orderedFields = sourceFields.map(sanitizeCsvExportValue);
-  const data = rows.map((row) => sourceFields.map((field) => (
-    Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined
-      ? sanitizeCsvExportValue(row[field])
-      : ""
-  )));
   return window.Papa.unparse(
-    { fields: orderedFields, data },
+    { fields: headers.map(sanitizeCsvExportValue), data: cellRows.map((cells) => cells.map(sanitizeCsvExportValue)) },
     { header: true, newline: "\r\n", skipEmptyLines: false }
   );
+}
+
+// A row's cell for export: "" when the row lacks the field or holds null / undefined.
+function readCsvExportCell(row, field) {
+  return row && Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined
+    ? row[field]
+    : "";
+}
+
+// Column names of a problem-row export: 文件行号 and 说明 ahead of the fields, each
+// numbered "（2）", "（3）"… past any field already named so; field names stay.
+function buildProblemRowsCsvHeaders(fields) {
+  const taken = new Set(fields);
+  const unique = (name) => {
+    let candidate = name;
+    for (let suffix = 2; taken.has(candidate); suffix += 1) candidate = `${name}（${suffix}）`;
+    taken.add(candidate);
+    return candidate;
+  };
+  return [unique("文件行号"), unique("说明"), ...fields];
+}
+
+// Every item of a problem-row list (listProblemRows()), not only the page on screen:
+// its file row, its note and the original value of every field ("" for a parse
+// warning without an imported row).
+function buildProblemRowsCsvContent(list, fields) {
+  return buildCsvTableContent(buildProblemRowsCsvHeaders(fields), list.items.map((item) => {
+    const row = item.index === null ? null : state.rows[item.index];
+    return [item.line ?? "", item.note || "", ...fields.map((field) => readCsvExportCell(row, field))];
+  }));
+}
+
+const PROBLEM_KIND_FILE_NAMES = Object.freeze({
+  missing: "缺失",
+  conversion: "格式问题",
+  outlier: "异常值",
+  duplicateRows: "整行重复",
+  idDuplicate: "ID重复",
+  placeholder: "疑似缺失值",
+  parseWarnings: "解析警告"
+});
+
+// <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv; only the part before the
+// date is sanitized and shortened, so the date always stays.
+function buildProblemRowsFileName(category, now = new Date()) {
+  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
+  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
+  const parts = [stem, "问题行", PROBLEM_KIND_FILE_NAMES[category.kind], category.field, category.key]
+    .filter((part) => part !== undefined && part !== null && part !== "");
+  return `${sanitizeFileName(parts.join("_"))}_${formatReportFileDate(now)}.csv`;
+}
+
+// "导出这一类": the open category, every row, as a UTF-8 CSV with BOM.
+function exportProblemRows() {
+  const view = state.problemView;
+  if (!canExportProcessedData() || !view) {
+    setProblemRowsExportStatus("请先打开一类问题行。", "warning");
+    return;
+  }
+  try {
+    const content = buildProblemRowsCsvContent(view.list, state.fields);
+    const fileName = buildProblemRowsFileName(view.category, new Date());
+    downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
+    setProblemRowsExportStatus(`已导出 ${formatInteger(view.list.items.length)} 条：${fileName}`, "success");
+  } catch (error) {
+    setProblemRowsExportStatus(`导出失败：${error.message}`, "error");
+  }
 }
 
 function sanitizeCsvExportValue(value) {
@@ -1177,6 +1245,12 @@ function setReportExportStatus(message, tone = "") {
   if (!dom.reportExportStatus) return;
   dom.reportExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
   dom.reportExportStatus.textContent = message;
+}
+
+function setProblemRowsExportStatus(message, tone = "") {
+  if (!dom.problemRowsExportStatus) return;
+  dom.problemRowsExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
+  dom.problemRowsExportStatus.textContent = message;
 }
 
 function setDataExportStatus(message, tone = "") {
