@@ -410,7 +410,7 @@ function showSheetSelectionError(message) {
 }
 
 // retry is set only for the one re-parse below skipped title rows:
-// { lineOffset, headerDetection, firstError }. wholeText drops the row preview, for
+// { lineOffset, headerDetection, firstError() }. wholeText drops the row preview, for
 // the one re-parse after blank lines filled it (see handleParsedData()).
 function parseCsvText(text, sourceName, importId = beginImport(), retry = null, wholeText = false) {
   if (!isCurrentImport(importId)) return;
@@ -424,7 +424,7 @@ function parseCsvText(text, sourceName, importId = beginImport(), retry = null, 
     worker: false,
     transformHeader: encodeCsvHeaderForParser,
     complete: (results) => handleParsedData(results, sourceName, importId, { text, retry, wholeText }),
-    error: (error) => showError(retry ? retry.firstError : error.message, importId)
+    error: (error) => showError(retry ? retry.firstError() : error.message, importId)
   });
 }
 
@@ -491,14 +491,22 @@ function lineNumbersAtOffsets(text, offsets) {
   });
 }
 
-// File line where each data record of a parsed CSV starts. A second PapaParse pass
+// A record skipEmptyLines:true drops: a single empty cell.
+function isBlankCsvRecord(record) {
+  return record.length === 1 && record[0] === "";
+}
+
+// File lines where the records of a parsed CSV start. A second PapaParse pass
 // (header:false, synchronous step) reads the same text with the main parse's
 // delimiter and line break; a record starts at the previous step's cursor.
-// Records that skipEmptyLines:true drops (a single empty cell) are dropped here
-// too, before the first remaining one is taken as the header, as PapaParse does.
-// Returns null when the record count differs from dataRowCount.
-function findCsvRecordLineNumbers(text, meta, dataRowCount) {
+// records[i] covers every record read (header and blank records included, as
+// PapaParse Quotes errors count them); data[i] each data record (blank records
+// dropped before the first remaining one is taken as the header, as PapaParse does,
+// and as results.data and FieldMismatch errors count them). Returns null when the
+// data record count differs from dataRowCount.
+function findCsvRecordLines(text, meta, dataRowCount) {
   const starts = [];
+  const blank = [];
   let cursor = 0;
   Papa.parse(text, {
     header: false,
@@ -507,13 +515,50 @@ function findCsvRecordLineNumbers(text, meta, dataRowCount) {
     delimiter: meta?.delimiter,
     newline: meta?.linebreak,
     step: (results) => {
-      const record = results.data;
-      if (!(record.length === 1 && record[0] === "")) starts.push(cursor);
+      starts.push(cursor);
+      blank.push(isBlankCsvRecord(results.data));
       cursor = results.meta.cursor;
     }
   });
-  starts.shift();
-  return starts.length === dataRowCount ? lineNumbersAtOffsets(text, starts) : null;
+  const records = lineNumbersAtOffsets(text, starts);
+  const data = records.filter((_, index) => !blank[index]).slice(1);
+  return data.length === dataRowCount ? { records, data } : null;
+}
+
+// File line where one record starts, reading the text only up to it: index counts
+// every record (Quotes errors), or with dataRecords the data records (FieldMismatch
+// errors). null when the text holds fewer records.
+function findCsvRecordLine(text, meta, index, dataRecords) {
+  // The header is the first non-empty record, so data record k is non-empty record k + 1.
+  const target = dataRecords ? index + 1 : index;
+  let position = -1;
+  let start = null;
+  let cursor = 0;
+  Papa.parse(text, {
+    header: false,
+    skipEmptyLines: false,
+    worker: false,
+    delimiter: meta?.delimiter,
+    newline: meta?.linebreak,
+    step: (results, parser) => {
+      if (start !== null) return;
+      if (!dataRecords || !isBlankCsvRecord(results.data)) position += 1;
+      if (position === target) {
+        start = cursor;
+        parser.abort();
+      }
+      cursor = results.meta.cursor;
+    }
+  });
+  return start === null ? null : lineNumbersAtOffsets(text, [start])[0];
+}
+
+// File line of a PapaParse error from findCsvRecordLines(): Quotes rows index every
+// record read, FieldMismatch rows the data records. null without a row or lines.
+function parseErrorLineNumber(error, lines, lineOffset) {
+  if (!lines || !Number.isInteger(error.row)) return null;
+  const line = error.type === "Quotes" ? lines.records[error.row] : lines.data[error.row];
+  return Number.isInteger(line) ? line + lineOffset : null;
 }
 
 // Whether text holds more than limit data records: non-empty records (those
@@ -529,8 +574,7 @@ function csvHasMoreDataRecordsThan(text, meta, limit) {
     delimiter: meta?.delimiter,
     newline: meta?.linebreak,
     step: (results, parser) => {
-      const record = results.data;
-      if (record.length === 1 && record[0] === "") return;
+      if (isBlankCsvRecord(results.data)) return;
       records += 1;
       if (records > limit + 1) parser.abort();
     }
@@ -538,20 +582,33 @@ function csvHasMoreDataRecordsThan(text, meta, limit) {
   return records > limit + 1;
 }
 
-// On a CSV header error, re-parse once from the detected header row. Returns the
-// error to show now (with the title hint when skipping was tried), or "" when the
-// re-parse took over; a failed re-parse then shows that same first error.
+// On a CSV header error, re-parse once from the detected header row. message is the
+// error text, or a function building it (a line number may cost a pass over the
+// text). Returns the error to show now (with the title hint when skipping was
+// tried), or "" when the re-parse took over; a failed re-parse then shows that same
+// first error, built only then through retry.firstError().
 function retryCsvBelowTitleRows(source, sourceName, importId, message) {
-  if (!source || source.retry) return message;
+  const resolve = () => (typeof message === "function" ? message() : message);
+  if (!source || source.retry) return resolve();
   const found = findCsvHeaderBelowTitleRows(source.text);
-  const firstError = `${message}${found.titleHint}`;
-  if (!found.headerDetection) return firstError;
+  if (!found.headerDetection) return `${resolve()}${found.titleHint}`;
+  let firstError = null;
   parseCsvText(source.text.slice(found.offset), sourceName, importId, {
     lineOffset: found.lineOffset,
     headerDetection: found.headerDetection,
-    firstError
+    firstError: () => (firstError ??= `${resolve()}${found.titleHint}`)
   });
   return "";
+}
+
+function formatExtraCellError(lineNumber) {
+  return `CSV${lineNumber ? ` 第 ${lineNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`;
+}
+
+function formatUnclosedQuoteError(lineNumber) {
+  return lineNumber
+    ? `CSV 第 ${lineNumber} 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。`
+    : "CSV 中有引号没有闭合，之后的内容无法正确分列。请检查文件里的引号后重试。";
 }
 
 const CSV_HEADER_KEY_PREFIX = "__SMART_CSV_HEADER__";
@@ -673,23 +730,32 @@ function decodeText(buffer, encoding, fatal = false) {
   }
 }
 
-// source is { text, retry } from parseCsvText(); without it no header retry runs.
+// source is { text, retry, wholeText } from parseCsvText(); without it no header
+// retry runs and errors and warnings carry no line.
 function handleParsedData(results, sourceName, importId, source = null) {
   if (!isCurrentImport(importId)) return;
   const retry = source?.retry || null;
   // Physical lines skipped above the header, so row numbers match the file.
   const lineOffset = retry?.lineOffset || 0;
   // A failed re-parse below skipped title rows shows the first parse's error.
-  const fail = (message) => showError(retry ? retry.firstError : message, importId);
+  // message may be a function, called only when its text is shown.
+  const fail = (message) => showError(retry ? retry.firstError() : (typeof message === "function" ? message() : message), importId);
   const failHeader = (message) => {
     const error = retryCsvBelowTitleRows(source, sourceName, importId, message);
     if (error) fail(error);
   };
+  // File line of an error's record, read only up to it; null without the text.
+  const errorLine = (error) => {
+    if (!source || !Number.isInteger(error.row)) return null;
+    const line = findCsvRecordLine(source.text, results.meta, error.row, error.type !== "Quotes");
+    return line === null ? null : line + lineOffset;
+  };
   const parseErrors = Array.isArray(results.errors) ? results.errors : [];
   const extraFieldError = parseErrors.find((error) => error.code === "TooManyFields");
   if (extraFieldError) {
-    const rowNumber = Number.isInteger(extraFieldError.row) ? extraFieldError.row + 2 + lineOffset : null;
-    failHeader(`CSV${rowNumber ? ` 第 ${rowNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`);
+    // The re-parse's header passed detection, so an extra cell is its own error.
+    if (retry) showError(`${formatHeaderDetectionNote(buildHeaderDetectionState(retry.headerDetection))}${formatExtraCellError(errorLine(extraFieldError))}`, importId);
+    else failHeader(() => formatExtraCellError(errorLine(extraFieldError)));
     return;
   }
   const fatalError = parseErrors.find((error) =>
@@ -697,7 +763,9 @@ function handleParsedData(results, sourceName, importId, source = null) {
     || (error.type === "Delimiter" && error.code !== "UndetectableDelimiter")
   );
   if (fatalError) {
-    fail(`CSV 解析失败：${fatalError.message}`);
+    fail(() => (fatalError.code === "MissingQuotes"
+      ? formatUnclosedQuoteError(errorLine(fatalError))
+      : `CSV 解析失败：${fatalError.message}`));
     return;
   }
 
@@ -743,14 +811,8 @@ function handleParsedData(results, sourceName, importId, source = null) {
     return;
   }
 
-  const parseWarnings = parseErrors
-    .filter((error) => !(error.code === "UndetectableDelimiter" && fields.length === 1))
-    .slice(0, 20)
-    .map((error) => ({
-      row: Number.isInteger(error.row) ? error.row + 2 + lineOffset : null,
-      code: error.code || "ParseWarning",
-      message: error.message || "CSV 行结构异常"
-    }));
+  const warningErrors = parseErrors
+    .filter((error) => !(error.code === "UndetectableDelimiter" && fields.length === 1));
   // Indexes into sourceRows of the kept rows, so row numbers drop with blank rows.
   const keptIndexes = [];
   const rows = sourceRows.reduce((normalizedRows, row, index) => {
@@ -769,8 +831,14 @@ function handleParsedData(results, sourceName, importId, source = null) {
 
   // Only a file about to be committed gets the line-number pass; a re-parse below
   // skipped title rows adds the physical lines above its header.
-  const recordLineNumbers = source ? findCsvRecordLineNumbers(source.text, results.meta, sourceRows.length) : null;
-  const rowNumbers = recordLineNumbers ? keptIndexes.map((index) => recordLineNumbers[index] + lineOffset) : null;
+  const recordLines = source ? findCsvRecordLines(source.text, results.meta, sourceRows.length) : null;
+  const rowNumbers = recordLines ? keptIndexes.map((index) => recordLines.data[index] + lineOffset) : null;
+  // Every warning is kept, with its exact line or null; no line is estimated.
+  const parseWarnings = warningErrors.map((error) => ({
+    row: parseErrorLineNumber(error, recordLines, lineOffset),
+    code: error.code || "ParseWarning",
+    message: error.message || "CSV 行结构异常"
+  }));
   commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null, rowNumbers);
 }
 

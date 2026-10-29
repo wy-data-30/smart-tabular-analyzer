@@ -1701,6 +1701,111 @@ test("CSV edge files keep their errors and parse warnings", () => {
   }
 });
 
+// Exact file lines for CSV warnings and "CSV 第 N 行" errors: FieldMismatch rows index
+// the data records, Quotes rows every record read (header and blank records too).
+const lineWarnings = (scope) => JSON.parse(scope.evaluate(
+  'JSON.stringify(state.parseWarnings.filter((warning) => warning.code !== "UndetectableDelimiter").map((warning) => [warning.code, warning.row]))'
+));
+const EXTRA_CELL_ERROR = "的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。";
+const exactGradeRow = (index) => `S${String(index).padStart(3, "0")},学生${index},80,90`;
+
+test("CSV warnings name the exact line after blank lines, quoted line breaks and any line break", async () => {
+  const cases = [
+    ["blank line under the header", "a,b\n1,2\n\n3\n4,5\n", [["TooFewFields", 4]]],
+    ["quoted line break", "a,b\n\"x\ny\",2\n3\n4,5\n", [["TooFewFields", 4]]],
+    ["blank line under the header, CRLF", "a,b\r\n1,2\r\n\r\n3\r\n4,5\r\n", [["TooFewFields", 4]]],
+    ["quoted line break, lone CR", "a,b\r\"x\ry\",2\r3\r4,5\r", [["TooFewFields", 4]]],
+    ["whitespace-only row after a blank line (dropped from the rows)", "a,b\n1,2\n\n \n3,4\n", [["TooFewFields", 4]]],
+    ["malformed quote", "a,b\n1,2\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 3]]],
+    ["malformed quote after a blank line", "a,b\n1,2\n\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 4]]],
+    ["malformed quote on the first data line", "a,b\n\"x\"y\",3\n4,5\n", [["InvalidQuotes", 2]]],
+    ["title row, blank line under the header, short row (retry)", `期中成绩\n学号,姓名,语文,数学\n\n${[1, 2, 3, 4, 5].map(exactGradeRow).join("\n")}\nS006,学生6,80\n${exactGradeRow(7)}\n${exactGradeRow(8)}\n`, [["TooFewFields", 9]]]
+  ];
+  for (const [label, text, expected] of cases) {
+    const scope = await importCsvFile(text);
+    assert.deepEqual(lineWarnings(scope), expected, label);
+  }
+});
+
+test("CSV errors name the exact line of an extra cell or an unclosed quote", async () => {
+  const cases = [
+    ["extra cell after a blank line", "a,b\n1,2\n\n3,4,5\n6,7\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["extra cell after a quoted line break", "a,b\n\"x\ny\",2\n3,4,5\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["extra cell after a blank line, CRLF", "a,b\r\n1,2\r\n\r\n3,4,5\r\n6,7\r\n", `CSV 第 4 行${EXTRA_CELL_ERROR}`],
+    ["title row, blank line, then the header", `期中成绩\n\n学号,姓名,语文,数学\n${[1, 2, 3, 4, 5, 6].map(exactGradeRow).join("\n")}\nS007,学生7,80,90,多出\n`, `CSV 第 3 行${EXTRA_CELL_ERROR}${TITLE_FALLBACK_HINT}`],
+    ["unclosed quote", "a,b\n1,2\n\"x,3\n4,5\n", "CSV 第 3 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。"],
+    ["unclosed quote after a blank line", "a,b\n\n1,2\n\"x,3\n", "CSV 第 4 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。"]
+  ];
+  for (const [label, text, status] of cases) {
+    const scope = await importCsvFile(text);
+    assert.equal(scope.evaluate("state.rows.length"), 0, label);
+    assert.equal(scope.elements.get("statusPanel").textContent, status, label);
+  }
+});
+
+test("an extra cell found only after skipping title rows shows the re-parse's own line and header note", async () => {
+  // Header detection reads 210 rows, so the extra cell on line 253 is found by the re-parse.
+  const rows = Array.from({ length: 250 }, (_, index) => exactGradeRow(index + 1));
+  const scope = await importCsvFile(`期中成绩\n学号,姓名,语文,数学\n${rows.join("\n")}\nS251,学生251,80,90,多出\n`);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, `表头在第 2 行，已跳过上方 1 行：「期中成绩」。CSV 第 253 行${EXTRA_CELL_ERROR}`);
+});
+
+test("every CSV warning is counted, with thousands separators in the status", async () => {
+  const shortRows = (count) => `a,b\r\n${Array.from({ length: 10 }, (_, index) => `${index},${index}`).join("\r\n")}\r\n${Array.from({ length: count }, (_, index) => String(100 + index)).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(shortRows(25));
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 已载入，但发现 25 个解析警告，涉及 25 行。请核对数据预览和字段数量。");
+  assert.equal(scope.evaluate("state.parseWarnings.length"), 25);
+  assert.equal(scope.evaluate("state.parseWarnings[24].row"), 36);
+  assert.equal(reportOf(scope).report.quality.parseWarningCount, 25);
+
+  const many = await importCsvFile(shortRows(1000));
+  assert.equal(many.elements.get("statusPanel").textContent, "CSV 已载入，但发现 1,000 个解析警告，涉及 1,000 行。请核对数据预览和字段数量。");
+});
+
+test("CSV warnings get no line when the line pass does not match the parsed rows", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  const papaStub = {
+    parse(text, options) {
+      if (options.header === false) {
+        // One record fewer than the main parse returned.
+        options.step({ data: ["姓名", "城市"], errors: [], meta: { cursor: 6 } }, { abort() {} });
+        options.step({ data: ["张三"], errors: [], meta: { cursor: 9 } }, { abort() {} });
+        return;
+      }
+      const fields = ["姓名", "城市"].map(options.transformHeader);
+      options.complete({
+        errors: [{ type: "FieldMismatch", code: "TooFewFields", message: "Too few fields", row: 1 }],
+        meta: { fields, delimiter: ",", linebreak: "\n" },
+        data: [{ [fields[0]]: "张三", [fields[1]]: "上海" }, { [fields[0]]: "李四" }]
+      });
+    }
+  };
+  context.Papa = papaStub;
+  context.window.Papa = papaStub;
+  evaluate('parseCsvText("姓名,城市\\n张三,上海\\n李四\\n", "mismatch.csv", beginImport())');
+  assert.equal(evaluate("state.rows.length"), 2);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings.map((warning) => warning.row))")), [null]);
+  assert.equal(elements.get("statusPanel").textContent, "CSV 已载入，但发现 1 个解析警告。请核对数据预览和字段数量。");
+});
+
+test("guard: imports that skip title rows or need no error line call Papa.parse as often as before", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.equal(orders.papaCalls(), 2);
+  // 成绩表-标题无逗号.csv fails its first parse with an extra cell, but the retry takes over.
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.equal(grades.evaluate("state.rows.length"), 30, fileName);
+    assert.equal(grades.papaCalls(), 4, fileName);
+  }
+});
+
+test("a shown extra-cell error adds one line pass after the main parse and header detection", async () => {
+  const extra = await importCsvFile("a,b\r\n1,2,3\r\n");
+  assert.equal(extra.elements.get("statusPanel").textContent, `CSV 第 2 行${EXTRA_CELL_ERROR}`);
+  assert.deepEqual(extra.papaOptions().map((options) => options.header), [true, false, false]);
+});
+
 // ID duplicate detection on the original rows (state.idDuplicates).
 function idDuplicates(evaluate) {
   return JSON.parse(evaluate("JSON.stringify(state.idDuplicates)"));

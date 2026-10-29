@@ -270,15 +270,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryFilterDraftValues = new Set();
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
-  state.headerDetection = headerDetection
-    ? {
-      headerRowNumber: headerDetection.headerRowNumber,
-      skippedRows: headerDetection.skippedRows.map((row) => ({
-        rowNumber: row.rowNumber,
-        preview: formatSkippedRowPreview(row.cells)
-      }))
-    }
-    : null;
+  state.headerDetection = buildHeaderDetectionState(headerDetection);
   state.sourceRowNumbers = new WeakMap();
   if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
@@ -305,8 +297,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.results.classList.remove("hidden");
   const headerNote = formatHeaderDetectionNote(state.headerDetection);
   if (state.parseWarnings.length) {
-    const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter(Boolean)).size;
-    setStatus(`CSV 已载入，但发现 ${state.parseWarnings.length} 个解析警告${affectedRows ? `，涉及 ${affectedRows} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning");
+    // Warnings without a line count in the total only.
+    const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
+    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning");
   } else {
     setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success");
   }
@@ -326,6 +319,20 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   resetTemplateResults("字段识别已完成。请选择分析模板并映射字段。");
   updateExportButtons();
   showResultsWorkspace();
+}
+
+// state.headerDetection from the importer's { headerRowNumber, skippedRows: [{ rowNumber,
+// cells }] }, or null: each skipped row keeps a short preview of its cells.
+function buildHeaderDetectionState(headerDetection) {
+  return headerDetection
+    ? {
+      headerRowNumber: headerDetection.headerRowNumber,
+      skippedRows: headerDetection.skippedRows.map((row) => ({
+        rowNumber: row.rowNumber,
+        preview: formatSkippedRowPreview(row.cells)
+      }))
+    }
+    : null;
 }
 
 // File row of a row object from the current import, or null for rows that did not
