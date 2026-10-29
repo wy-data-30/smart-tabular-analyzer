@@ -232,6 +232,11 @@ function detectNumericFormat(values, strategy) {
   return convertibleValues.every(percentToken) ? "percent" : "number";
 }
 
+// The unit a field's numbers are read with, or "".
+function getFieldNumberUnit(field) {
+  return getFieldProfile(field)?.numberStrategy?.unit || "";
+}
+
 function getNumericFormat(field) {
   return getFieldProfile(field)?.numericFormat || "number";
 }

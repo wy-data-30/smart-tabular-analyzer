@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、疑似数值列、缺失率等级，以及质量页使用的原始数据数值统计。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、缺失率等级，以及质量页使用的原始数据数值统计。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -224,6 +224,22 @@ function estimateConfirmedProfile(profile, rows, currentKeys, nextKeys, numberFo
     conversionFailureCount: convertedCount === undefined ? 0 : counts.nonMissingCount - convertedCount,
     estimated: counts.estimated
   };
+}
+
+// Fields whose number strategy has a switch or a unit conflict, ignored fields
+// left out, in field order. Conflicting units run from most to fewest values,
+// ties by first appearance.
+function buildNumberConversionSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    const strategy = profile.numberStrategy;
+    if (profile.typeKey === "ignore" || !strategy || !(hasNumberStrategySwitch(strategy) || strategy.unitConflict)) return [];
+    const { unitCount, unitSamples, magnitudeCount, fullwidthCount } = profile.numberReadings;
+    const conflictUnits = strategy.unitConflict
+      ? Object.entries(strategy.units).map(([unit, count]) => ({ unit, count })).sort((a, b) => b.count - a.count)
+      : [];
+    if (!unitCount && !magnitudeCount && !fullwidthCount && !conflictUnits.length) return [];
+    return [{ field: profile.field, unit: strategy.unit, unitCount, unitSamples: [...unitSamples], magnitudeCount, fullwidthCount, conflictUnits }];
+  });
 }
 
 // A category field reads as numeric-looking when, without missing values and
