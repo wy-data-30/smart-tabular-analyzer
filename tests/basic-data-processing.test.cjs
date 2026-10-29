@@ -3174,3 +3174,77 @@ test("number sections and unit labels escape field names in HTML and Markdown", 
     assert.ok(!line.startsWith("<") && !line.startsWith("-楼层") && !line.startsWith("量"), line);
   }
 });
+
+// v2.6.0: the checks behind the quality counts, shared with the problem-row lists.
+const STAGE3_IMPORT_FILES = fs.readdirSync(STAGE3_FIXTURES).filter((fileName) => /\.(csv|xlsx)$/.test(fileName)).sort();
+const EXAMPLE_CSV_FILES = fs.readdirSync(path.join(__dirname, "..", "examples")).filter((fileName) => /\.csv$/.test(fileName)).sort();
+
+async function importEveryQualityFile() {
+  const scopes = [];
+  for (const fileName of STAGE3_IMPORT_FILES) scopes.push([fileName, await importStage3Fixture(fileName)]);
+  for (const fileName of EXAMPLE_CSV_FILES) {
+    scopes.push([fileName, await importCsvFile(fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8"), fileName)]);
+  }
+  return scopes;
+}
+
+// [field, type, failures counted by the shared check, profile count] per field and type.
+const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringify(state.profiles.flatMap((profile) => ["numeric", "date"].map((typeKey) => {
+  const fails = getProfileConversionCheck(profile, typeKey);
+  const count = state.rows.filter((row) => !isMissingOrConfirmed(row[profile.field], profile.confirmedKeys) && fails(row[profile.field])).length;
+  return [profile.field, typeKey, count, profile.conversionFailuresByType[typeKey]];
+})))`));
+
+test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.equal(scopes.length, 11);
+  const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  scopes.push(["订单表.csv（全部确认后）", orders]);
+  for (const [fileName, scope] of scopes) {
+    const counts = conversionCheckCounts(scope);
+    assert.ok(counts.length >= 2, fileName);
+    for (const [field, typeKey, count, expected] of counts) assert.equal(count, expected, `${fileName} ${field} ${typeKey}`);
+  }
+  assert.equal(orders.evaluate("getProfileConversionCheck(state.profiles[0], \"category\")"), null);
+});
+
+test("guard: profiles keep the placeholder keys they counted as missing", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const keys = () => JSON.parse(orders.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.confirmedKeys, getConfirmedPlaceholderKeys(profile.field)]))"));
+  assert.ok(keys().every(([, kept, current]) => kept.length === 0 && current.length === 0));
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  for (const [field, kept, current] of keys()) assert.deepEqual(kept, current, field);
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["N/A", "—"]);
+  orders.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["—"]);
+  // A copy: changing the confirmations later never changes a built profile.
+  orders.evaluate('state.placeholderConfirmations["备注"].push("x")');
+  assert.deepEqual(keys().find(([field]) => field === "备注")[1], ["—"]);
+});
+
+test("guard: ID grouping lists each value's rows in first-appearance order", () => {
+  const { evaluate } = createScriptContext();
+  const groups = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = ["B", " A", "", "B", "N/A", "A ", "C", "N/A", "B"].map((value) => ({ 编号: value }));
+    const plain = groupIdValueIndexes(rows, "编号", []);
+    const confirmed = groupIdValueIndexes(rows, "编号", ["N/A"]);
+    return { plain: [...plain.indexesByValue], plainCount: plain.nonMissingCount, confirmed: [...confirmed.indexesByValue], sorted: sortIdDuplicates(plain.indexesByValue) };
+  })())`));
+  assert.deepEqual(groups.plain, [["B", [0, 3, 8]], ["A", [1, 5]], ["N/A", [4, 7]], ["C", [6]]]);
+  assert.equal(groups.plainCount, 8);
+  assert.deepEqual(groups.confirmed, [["B", [0, 3, 8]], ["A", [1, 5]], ["C", [6]]]);
+  assert.deepEqual(groups.sorted, [["B", [0, 3, 8]], ["A", [1, 5]], ["N/A", [4, 7]]]);
+
+  // The most frequent value is not the first one here, so the order tells the rule apart:
+  // B (3 times) first, then A and C (2 times each) by first appearance.
+  const ordered = JSON.parse(evaluate(`JSON.stringify((() => {
+    const rows = ["A", "B", "A", "B", "C", "B", "C"].map((value) => ({ 编号: value }));
+    const { indexesByValue } = groupIdValueIndexes(rows, "编号", []);
+    const summary = buildIdDuplicateSummary(rows, ["编号"], [{ field: "编号", typeKey: "id" }], () => null);
+    return { sorted: sortIdDuplicates(indexesByValue).map(([value]) => value), summary: summary[0].values.map((item) => item.value), mostlyRepeated: summary[0].mostlyRepeated };
+  })())`));
+  assert.deepEqual(ordered.sorted, ["B", "A", "C"]);
+  assert.equal(ordered.mostlyRepeated, false);
+  assert.deepEqual(ordered.summary, ["B", "A", "C"]);
+});

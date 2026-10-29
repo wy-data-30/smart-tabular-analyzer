@@ -97,6 +97,8 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     },
     numericFormat,
     sampleValues,
+    // The placeholder keys this profile counted as missing.
+    confirmedKeys: [...confirmedKeys],
     conversionFailuresByType,
     conversionFailureSamplesByType,
     conversionFailureCount: conversionFailuresByType[typeKey] || 0,
@@ -115,6 +117,19 @@ function inferFieldTypeKey(field, { nonMissingCount, uniqueCount, numericCount, 
   if (dateRatio >= 0.8) return "date";
   if (numericRatio >= 0.8) return "numeric";
   return "category";
+}
+
+// The check behind conversionFailuresByType[typeKey] of a profile: (value) => true
+// when the value fails, read with the profile's number strategy (numeric) or date
+// strategy (date), as buildColumnProfile() reads them. It applies to the values the
+// profile counts as non-missing (see profile.confirmedKeys). null for other types.
+function getProfileConversionCheck(profile, typeKey) {
+  if (typeKey === "numeric") {
+    const parseNumber = getNumberParser(profile.numberStrategy);
+    return (value) => parseNumber(value) === null;
+  }
+  if (typeKey === "date") return (value) => !toDate(value, profile.dateStrategy);
+  return null;
 }
 
 // Counts a value only the number strategy converts: read with the unit (up to three

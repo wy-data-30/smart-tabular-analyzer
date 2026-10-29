@@ -94,19 +94,8 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmat
   const rowKeyAt = (index) => (rowKeys[index] ??= buildExactRowKey(rows[index], fields));
   const idFields = fields.filter((field) => profiles.some((profile) => profile.field === field && profile.typeKey === "id"));
   return idFields.map((field) => {
-    const confirmedKeys = getConfirmedPlaceholderKeys(field, confirmations);
-    const indexesByValue = new Map();
-    let nonMissingCount = 0;
-    rows.forEach((row, index) => {
-      const value = analysisValue(row[field], confirmedKeys);
-      if (value === "") return;
-      nonMissingCount += 1;
-      const indexes = indexesByValue.get(value);
-      if (indexes) indexes.push(index);
-      else indexesByValue.set(value, [index]);
-    });
-    const duplicates = [...indexesByValue].filter(([, indexes]) => indexes.length > 1)
-      .sort(([, a], [, b]) => b.length - a.length || a[0] - b[0]);
+    const { indexesByValue, nonMissingCount } = groupIdValueIndexes(rows, field, getConfirmedPlaceholderKeys(field, confirmations));
+    const duplicates = sortIdDuplicates(indexesByValue);
     const uniqueRatio = nonMissingCount ? indexesByValue.size / nonMissingCount : 0;
     const mostlyRepeated = nonMissingCount >= ID_MOSTLY_REPEATED_MIN_VALUES && uniqueRatio < ID_MOSTLY_REPEATED_UNIQUE_RATIO;
     const listed = mostlyRepeated ? [] : duplicates.slice(0, ID_DUPLICATE_VALUE_LIMIT);
@@ -131,6 +120,30 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmat
       })
     };
   });
+}
+
+// Row indexes of each non-missing value of an ID field, compared after
+// analysisValue() (so confirmed placeholder keys are missing), values in order of
+// first appearance; nonMissingCount counts the values grouped.
+function groupIdValueIndexes(rows, field, confirmedKeys) {
+  const indexesByValue = new Map();
+  let nonMissingCount = 0;
+  rows.forEach((row, index) => {
+    const value = analysisValue(row[field], confirmedKeys);
+    if (value === "") return;
+    nonMissingCount += 1;
+    const indexes = indexesByValue.get(value);
+    if (indexes) indexes.push(index);
+    else indexesByValue.set(value, [index]);
+  });
+  return { indexesByValue, nonMissingCount };
+}
+
+// [value, indexes] of the values seen more than once, most frequent first, ties by
+// first appearance: the order of the quality page's duplicate table.
+function sortIdDuplicates(indexesByValue) {
+  return [...indexesByValue].filter(([, indexes]) => indexes.length > 1)
+    .sort(([, a], [, b]) => b.length - a.length || a[0] - b[0]);
 }
 
 // ID fields that list duplicate values; mostly repeated fields do not count.
