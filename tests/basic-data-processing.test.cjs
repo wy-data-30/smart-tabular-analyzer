@@ -1561,9 +1561,11 @@ const lineRange = (first, last) => Array.from({ length: last - first + 1 }, (_, 
 async function importCsvFile(text, fileName = "lines.csv") {
   const scope = createExcelContext();
   let papaCalls = 0;
+  const papaOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
     parse(...args) {
       papaCalls += 1;
+      papaOptions.push({ header: args[1]?.header, preview: args[1]?.preview });
       return Papa.parse(...args);
     }
   });
@@ -1576,7 +1578,7 @@ async function importCsvFile(text, fileName = "lines.csv") {
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
   });
   await scope.evaluate("parseDataFile(__csvFile)");
-  return { ...scope, papaCalls: () => papaCalls };
+  return { ...scope, papaCalls: () => papaCalls, papaOptions: () => papaOptions.map((options) => ({ ...options })) };
 }
 
 test("Excel row numbers follow the !ref start and skip blank rows inside the data", async () => {
@@ -1813,6 +1815,51 @@ test("a CSV over the row limit still fails before any line-number pass", async (
   assert.equal(scope.evaluate("state.rows.length"), 0);
   assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
   assert.equal(scope.papaCalls(), 1);
+});
+
+// The row preview (maxRows + 1) counts blank records too, so blank lines used to
+// leave a truncated parse under the limit and drop the rows after it silently.
+const blankLineRows = (count) => Array.from({ length: count }, (_, index) => `R${index},${index}\r\n\r\n`).join("");
+
+test("a CSV whose blank lines fill the row preview imports every row", async () => {
+  const scope = await importCsvFile(`编号,值\r\n${blankLineRows(60000)}`, "blank-lines.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 60000);
+  assert.equal(scope.evaluate('state.rows[59999]["编号"]'), "R59999");
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[0])"), 2);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[59999])"), 120000);
+  assert.equal(scope.evaluate("state.rows.every((row) => getSourceRowNumber(row) !== null)"), true);
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success");
+  // Guard: the first parse keeps its row preview; the whole text is parsed again only after the count.
+  assert.deepEqual(scope.papaOptions(), [
+    { header: true, preview: 100001 },
+    { header: false, preview: undefined },
+    { header: true, preview: undefined },
+    { header: false, preview: undefined }
+  ]);
+});
+
+test("a CSV over the row limit fails even when blank lines fill the row preview", async () => {
+  const text = ["值", "", "", "", "", "", ...Array.from({ length: 100001 }, (_, index) => String(index))].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "over-with-blanks.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.elements.get("statusPanel").textContent, "CSV 超过 100,000 行数据限制，请拆分文件后重试。");
+  assert.equal(scope.papaCalls(), 2);
+});
+
+test("guard: a CSV with exactly 100,000 rows and trailing blank lines imports all of them", async () => {
+  const text = ["值", ...Array.from({ length: 100000 }, (_, index) => String(index)), "", "", ""].join("\r\n");
+  const scope = await importCsvFile(`${text}\r\n`, "exact-with-blanks.csv");
+  assert.equal(scope.evaluate("state.rows.length"), 100000);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[99999])"), 100001);
+});
+
+test("a titled CSV whose blank lines fill the row preview imports every row after the retry", async () => {
+  const scope = await importCsvFile(`成绩单\r\n编号,值\r\n${blankLineRows(60000)}`, "titled-blank-lines.csv");
+  assert.equal(scope.evaluate('state.fields.join(",")'), "编号,值");
+  assert.equal(scope.evaluate("state.rows.length"), 60000);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[0])"), 3);
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[59999])"), 120001);
+  assert.match(scope.elements.get("statusPanel").textContent, /表头在第 2 行，已跳过上方 1 行：「成绩单」。$/);
 });
 
 // ID duplicates on the quality page (#idDuplicateDetails) and in reports.

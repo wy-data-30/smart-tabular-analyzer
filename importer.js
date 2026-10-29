@@ -410,19 +410,20 @@ function showSheetSelectionError(message) {
 }
 
 // retry is set only for the one re-parse below skipped title rows:
-// { lineOffset, headerDetection, firstError }.
-function parseCsvText(text, sourceName, importId = beginImport(), retry = null) {
+// { lineOffset, headerDetection, firstError }. wholeText drops the row preview, for
+// the one re-parse after blank lines filled it (see handleParsedData()).
+function parseCsvText(text, sourceName, importId = beginImport(), retry = null, wholeText = false) {
   if (!isCurrentImport(importId)) return;
   assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
   Papa.parse(text, {
     header: true,
     skipEmptyLines: true,
-    preview: IMPORT_LIMITS.maxRows + 1,
+    ...(wholeText ? {} : { preview: IMPORT_LIMITS.maxRows + 1 }),
     // PapaParse workers cannot clone transformHeader functions. Keep parsing on
     // the main thread so protected and duplicate header handling remains intact.
     worker: false,
     transformHeader: encodeCsvHeaderForParser,
-    complete: (results) => handleParsedData(results, sourceName, importId, { text, retry }),
+    complete: (results) => handleParsedData(results, sourceName, importId, { text, retry, wholeText }),
     error: (error) => showError(retry ? retry.firstError : error.message, importId)
   });
 }
@@ -513,6 +514,28 @@ function findCsvRecordLineNumbers(text, meta, dataRowCount) {
   });
   starts.shift();
   return starts.length === dataRowCount ? lineNumbersAtOffsets(text, starts) : null;
+}
+
+// Whether text holds more than limit data records: non-empty records (those
+// skipEmptyLines:true keeps) after the first one, the header. A header:false pass
+// with the main parse's delimiter and line break counts them without keeping any
+// row and stops once the count is past the limit.
+function csvHasMoreDataRecordsThan(text, meta, limit) {
+  let records = 0;
+  Papa.parse(text, {
+    header: false,
+    skipEmptyLines: false,
+    worker: false,
+    delimiter: meta?.delimiter,
+    newline: meta?.linebreak,
+    step: (results, parser) => {
+      const record = results.data;
+      if (record.length === 1 && record[0] === "") return;
+      records += 1;
+      if (records > limit + 1) parser.abort();
+    }
+  });
+  return records > limit + 1;
 }
 
 // On a CSV header error, re-parse once from the detected header row. Returns the
@@ -697,8 +720,17 @@ function handleParsedData(results, sourceName, importId, source = null) {
   }
 
   const sourceRows = Array.isArray(results.data) ? results.data : [];
+  const rowLimitError = `CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`;
   if (sourceRows.length > IMPORT_LIMITS.maxRows) {
-    fail(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`);
+    fail(rowLimitError);
+    return;
+  }
+  // The row preview counts blank records too: when they filled it, the parse stopped
+  // early under the limit. Count the data records, then fail as over the limit or
+  // parse the whole text once more.
+  if (results.meta?.truncated && source && !source.wholeText) {
+    if (csvHasMoreDataRecordsThan(source.text, results.meta, IMPORT_LIMITS.maxRows)) fail(rowLimitError);
+    else parseCsvText(source.text, sourceName, importId, retry, true);
     return;
   }
   const blankHeaderHasData = csvBlankHeaderHasData(
