@@ -27,10 +27,10 @@
       { "field": "大区", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "5/30=16.7%", "expected": "category" },
       { "field": "产品", "nonMissing": 30, "numericRate": "0/30", "dateRate": "0/30", "uniqueRate": "5/30=16.7%", "expected": "category" },
       { "field": "数量", "nonMissing": 30, "numericRate": "29/30=96.7%", "dateRate": "0/30", "uniqueRate": "29/30=96.7%", "expected": "numeric", "reason": "数值率≥80%（ID 规则要求数值率<70%）；「—」1 个转换失败" },
-      { "field": "金额", "nonMissing": 30, "numericRate": "27/30=90%", "dateRate": "0/30", "uniqueRate": "30/30=100%", "expected": "numeric", "reason": "2200元、3500元、N/A 转换失败，￥ 两个可转换" },
+      { "field": "金额", "nonMissing": 30, "numericRate": "29/30=96.7%", "dateRate": "0/30", "uniqueRate": "30/30=100%", "expected": "numeric", "reason": "v2.5.0 起按单位「元」读取 2200元、3500元；只有 N/A 转换失败，￥ 两个可转换" },
       { "field": "备注", "nonMissing": 4, "numericRate": "0/4", "dateRate": "0/4", "uniqueRate": "4/4=100%", "expected": "category", "reason": "非空 4 个 <12，不触发唯一率 ID 规则；缺失 26" }
     ],
-    "expectedTotals": { "duplicateRows": 0, "totalMissing": 26, "formatProblems": 5 }
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 26, "formatProblems": 3 }
   },
   "成绩表.csv": {
     "encoding": "UTF-8 BOM，CRLF",

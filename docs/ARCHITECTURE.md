@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.4.0 架构说明
+# Smart Tabular Analyzer v2.5.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -123,6 +123,7 @@ flowchart LR
 | 当前分析范围 | `filteredRows`, `filterSourceRows`, `filters` | 当前筛选结果、来源身份保护和已应用条件 |
 | 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
 | 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
+| 疑似数值列 | `numericLooking` | `buildNumericLookingSummary(state.profiles)` 的结果。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 整体替换，`resetAnalysisState()` 清成 `[]`，筛选不改它（见“数字策略”） |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告 |
 | 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选和去重结果与 `rows` 共享行对象，所以同样能查到 |
@@ -219,7 +220,7 @@ flowchart LR
 - **行号**：一律用文件行号。Excel 是 `!ref` 起始行加 `sheet_to_json` 的原始下标（`buildExcelTabularData()` 去掉的开头空行也计算在内）；CSV 是解码后文本（不含 BOM）里表头行之前的物理换行数加 1，由 `lineNumbersAtOffsets()` 计算。数据行的行号是精确的，见下文“数据行的文件行号”。“CSV 第 N 行”报错和解析警告的行号仍按 `error.row + 2` 估算（重试后加上跳过的行数），表头以下的空行和跨行引号单元格造成的偏差仍未修正。
 - **结果**：导入层返回 `headerDetection = { headerRowNumber, skippedRows: [{ rowNumber, cells }] }`，`skippedRows` 只含非空行；`commitTabularData()` 用 `formatSkippedRowPreview()` 把 `cells` 转成 `preview`（非空格用空格连接，超过 20 个字符截断加“…”）后写入 `state.headerDetection`。跳过的行数 K 一律等于 `headerRowNumber − 1`，空行也计算在内。状态栏在成功和“有解析警告”两种文案后面追加 `formatHeaderDetectionNote()` 生成的“表头在第 N 行，已跳过上方 K 行：「…」「…」。”，最多列 2 行摘要，更多时加“等”。
 - **回退提示**：第一个非空行是可跳过的行（`attempted` 为 `true`）但没能确认表头时，在原报错后面追加 `formatTitleRowFallbackHint()` 的“第 N 行看起来像标题。如果表头不在第 N 行，请删除表头上方的标题行后重新上传。”，N 是第一个非空行的文件行号。多工作表时，这条报错显示在工作表选择面板里。
-- **已知残留**：两列文件的表头只写了第一列、第二列是互不相同的文本时，会把第一条数据当成表头（状态栏会写明跳过了哪一行）；手动指定表头行计划在后续版本提供。多行表头、“合计”行、一个工作表里的多块表格都不在处理范围内。
+- **已知残留**：两列文件的表头只写了第一列、第二列是互不相同的文本时，会把第一条数据当成表头（状态栏会写明跳过了哪一行）；手动指定表头行计划在后续版本提供。多行表头、“合计”行、一个工作表里的多块表格都不在处理范围内。表头检测用不带策略的 `toNumber()`，把“5kg”当文本，分析却按字段的数字策略把它当数（见“数字策略”）：标题行下面直接是“苹果,5kg”这类没有表头的数据时，这一行会被当成表头，字段“5kg”下面的值按 kg 读成数值。
 
 ### 数据行的文件行号（v2.3.0）
 
@@ -358,8 +359,8 @@ XLSX.utils.sheet_to_json(worksheet, {
 | `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称；整个字段名等于序号、行号、行序号、index、idx、No.、Row No.、Row No 或 `#`（不区分大小写），以及以"中文字符 + ID"结尾（如 学生ID、客户 ID）的名称也判为 ID |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
 | `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
-| `toNumber(value)` | 解析普通数值、科学计数、规范千分位、货币、会计负数和百分比 |
-| `detectNumericFormat(values)` | 只有所有可转换值都带 `%` 时标记为 percent；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
+| `toNumber(value, strategy)` | 不带策略（或策略没有开关）时就是 `toPlainNumber(value)`：解析普通数值、科学计数、规范千分位、货币、会计负数和百分比；带策略时另外读单位、万/亿和全角数字，见“数字策略” |
+| `detectNumericFormat(values, strategy)` | 只有所有可转换值（按字段的数字策略）都带 `%` 时标记为 percent，策略开了全角时 `％` 也算；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
 | `countFieldConversionFailures()` | 取得指定字段按数值或日期解释时的失败数量 |
 | `stageFieldTypeChange()` | 只更新未应用草稿和提示 |
 | `applyFieldConfiguration()` | 把草稿提交到 `profile.typeKey`，更新手动类型记录并触发重建 |
@@ -380,6 +381,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - 总数、非空数、缺失数和缺失率。
 - 唯一值数量和唯一率。
 - 能转成数值和日期的个数（`numericCount`、`dateCount`）、数值率、日期率、日期策略和数值格式。
+- 数字策略 `numberStrategy`、按策略才能读成数字的值的统计 `numberReadings`，以及“疑似数值列”用的计数 `numericLooking`（见“数字策略”）。
 - 最多 3 个去重后的示例值。
 - 数值与日期两种解释下的转换失败数（`conversionFailuresByType`）和各自最多 3 个去重后的失败样例（`conversionFailureSamplesByType`）。
 - 当前类型对应的 `conversionFailureCount` 与 `conversionFailureSamples`；分类、ID 和忽略字段均为 0 与空数组。`applyFieldConfiguration()` / `restoreAutomaticFieldTypes()` 改类型时通过 `countFieldConversionFailures()` 与 `getFieldConversionFailureSamples()` 同步更新。
@@ -396,6 +398,42 @@ XLSX.utils.sheet_to_json(worksheet, {
 - Data Quality、Statistics、Filtering、Visualization 和模板字段选择都以当前已应用 `typeKey` 为准。
 - 字段配置提交会调用 `rebuildAnalysisFromProfiles()`，重新计算质量异常值和当前分析，并清除旧筛选。
 - Report Export 同时记录自动类型和最终应用类型。
+
+### 数字策略（v2.5.0）
+
+“2200元”“1.2万”“１２３”这类写法按字段读成数字。每个字段有自己的数字策略，决定这一列认哪个单位、认不认万/亿、要不要把全角数字转成半角；不带策略时 `toNumber(value)` 和 v2.4.0 逐值相同。
+
+- **匹配形式**（`parsing.js` 的 `matchNumberWithUnit()`）：去首尾空格、按需全角转半角之后，整格是“可选正负号 + 数字（普通、千分位或 .小数）+ 可选万/亿 + 可选空白 + 可选单位”，并且万/亿和单位至少有一个。数字和万/亿之间不允许空白。`￥2200元`、`(2200元)`、`1.2 万`、`2200元/件` 都不匹配，照旧算转换失败。
+- **单位白名单**（`NUMBER_UNITS`，长写法在前）：元；kg、克、千克、公斤、斤、吨；件、个、箱、台、人、次；秒、分钟、小时、天；米、cm、mm、km；岁。拉丁字母不区分大小写，比较时统一小写。不收 g（4G / 5G、8G / 16G 不是克）、m（米还是分钟）、分（分数、分钱还是分钟），也不收块、楼、层、号、号线、年、月、期、班、名、页、张、瓶、包等。
+- **策略怎么定**（`buildNumberStrategy(values)`）：`buildColumnProfile()` 用本字段的非缺失值（已排除确认的疑似缺失值）算出 `{ unit, unitConflict, units, allowMagnitude, fullwidth }`。只看“像数字的值”（符合上面匹配形式的值），不按占整列的比例算：一列名字里只要有一个“3人”，单位就是“人”，能不能判为数值仍由 80% 阈值决定。所有匹配到的值只出现一种单位时采用它；出现两种及以上（含 kg 和千克这种同义不同写法）时不采用任何单位，`unitConflict` 为 `true`，`units` 保留各单位的个数，不做单位换算。出现过万/亿就 `allowMagnitude`；有全角写法转半角后能转换就 `fullwidth`。`hasNumberStrategySwitch()` 在 `unit`、`allowMagnitude`、`fullwidth` 至少有一个时为真。
+- **读取顺序**（`toNumberWithStrategy()`）：去首尾空格 → 策略开了全角时按固定字符表转半角 → 先用 `toPlainNumber()`（所以 `￥15,007`、`12.5%` 照常读）→ 再用 `matchNumberWithUnit()`，单位必须等于策略的单位、万/亿必须被允许。
+- **全角**：`FULLWIDTH_NUMBER_CHARS` 只转 ０–９ 和 `，．－＋％`，不用 NFKC，所以“①”“²”不会变成数字。只在带策略、并且策略开了全角的路径上转。
+- **万、亿**：`shiftDecimalNumber()` 去掉千分位后把小数点右移 4 / 8 位再 `Number()`，不做浮点乘法：`0.07万` = 700、`1.15亿` = 115000000、`-0.5万` = −5000，结果都是精确整数（直方图的“小范围整数按值计数”依赖这一点）。
+- **存放**：策略存在 profile 的 `numberStrategy` 里，不是独立的 state，不用加进 `resetAnalysisState()`。导入时随 profile 新建；字段配置和“恢复自动识别”只改 `typeKey`，profile 对象不换；筛选不碰 profile；疑似缺失值确认 / 撤销时随 `rebuildConfirmedFieldProfile()` 完整重建，结果和原来逐字段相同。手动把字段改成数值时策略自然生效：`conversionFailuresByType.numeric` 对所有字段都按策略算。
+- **契约 17 的前提**：`PLACEHOLDER_VALUES` 的每个写法及其全角形式，在任何数字策略下都不能被转换，也不给策略提供单位、万/亿或全角证据。所以确认疑似缺失值不会改变策略，`estimateConfirmedProfile()` 的“数值数不变”捷径仍然成立。策略不能改成按比例算，否则确认会改变分母、进而改变策略，捷径就失效。
+- **统计**：profile 的 `numberReadings = { unitCount, unitSamples, magnitudeCount, fullwidthCount }` 只统计 `toPlainNumber()` 读不了、按策略才读成数字的值：按单位读取的个数和最多 3 个样例、按万/亿换算的个数、全角写法的个数。
+- **调用点**：分析和质量口径都按字段的策略读数字。
+  - `buildColumnProfile()` 和 `detectNumericFormat()` 直接用刚算出的策略（导入时 profile 还没进 `state.profiles`）。
+  - stats.js：`countInvalidNumericValues()`、`buildNumericStats()`、`buildDateChartTrend()`、`buildMetricDateTrend()`、`groupNumericFieldByCategory()`、`buildDateTrend()`（目前只被传空的 numericField，这一行走不到）、`aggregateByCategory()`、`getNumericValues()`。
+  - app.js：`filterRowsByConfig()`，和设置筛选面板范围的 `getNumericValues()` 同口径。
+  - quality.js：转换失败的两个兜底 `countConversionFailuresForValues()`、`getFieldConversionFailureSamples()`。
+  - templates.js：三个趋势 getter，以及取代 `getSalesMetricValue()` 的 `buildSalesMetricGetter(mappings)`。
+- **保持不带策略的三处**：
+  - 表头检测（`importer.js` 的 `isHeaderTextValue()`、`vetoesHeaderCandidate()`，含 `mostly(toNumber)` 的函数引用）：按行判断，还没有字段，也没有策略；契约 15 要求第一行通过校验的文件完全走原来的路径。残留见“表头行检测”。
+  - CSV 导出的公式中和（`report.js` 的 `sanitizeCsvExportValue()`）：只有能读成普通数字的负数才不加 `'`；`-2200元` 以 `-` 开头，带策略会被当成合法负数，导出后在电子表格里可能被当成公式。全角的 `－５` 不以 ASCII `-` 开头，本来就不加。
+  - 启动自检（`script.js` 的 `typeof toNumber`）：只检查 parsing.js 是否加载。
+- **性能做法**：调用点在循环外取一次转换函数（`getFieldNumberParser(field)`，或已有 profile 时 `getNumberParser(profile.numberStrategy)`），循环里只调它，逐值的路径上不调 `getFieldProfile()`；策略没有开关时取到的就是 `toPlainNumber` 本身。`parseFieldNumber(field, value)` 只给零散的单值调用。10 万行 × 5 列和 × 20 列、不带单位的 CSV 完整导入与 v2.4.0 相差约 0.5%–1.4%；同样 10 万行 × 5 列、其中两列全部带单位时约 7.4 s（v2.4.0 把这两列判成分类，约 4.6 s；Node 内测量）。
+- **疑似数值列**：已应用类型为分类的字段（忽略的字段不是分类，自然不算），把缺失值和所有疑似缺失值写法（无论是否确认）都排除在分子、分母和样例之外；排除后非空至少 `NUMERIC_LOOKING_MIN_VALUES`（5）个，按策略的数值率不低于 `NUMERIC_LOOKING_MIN_RATIO`（0.5）、低于 `NUMERIC_LOOKING_MAX_RATIO`（0.8，即自动判为数值的阈值）时提示，列最多 3 个转不了的样例（按第一次出现）。只提示，不改类型，不计入 pill。
+  - 计数在 `buildColumnProfile()` 已有的循环里顺带记下（profile 的 `numericLooking = { valueCount, numericCount, samples }`）。疑似缺失值写法从不能转换，所以只有转换失败的值才调用 `placeholderKey()`。
+  - `buildNumericLookingSummary(profiles)` 按已应用类型从 profile 汇总，结果 `[{ field, valueCount, numericCount, ratio, samples }]` 存在 `state.numericLooking`。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()`（应用字段配置、恢复自动识别、疑似缺失值确认 / 撤销都经过它）整体替换，`resetAnalysisState()` 清成 `[]`，筛选不重算。
+  - 按这个口径，确认 / 撤销只能通过 ID ↔ 分类的变化影响提示：确认后分类字段的数值率不会超过排除疑似值后的数值率。
+- **字段标签**：`format.js` 的 `formatFieldLabel(field)` 在字段读成了某个单位时写成“金额（元）”；字段名 NFKC + 小写后结尾已经是 `…u`、`…(u)`、`…[u]`、`…【u】`、`…/u`、`…_u`、`…-u`、`… u` 时不重复加，拉丁单位要求前面不是字母（“bag”不算含 kg）。`numericAxisLabel()` 给图表 y 轴加“（元）”，和“（百分比）”同时出现时单位在前。加在：统计表、质量页异常值表、数值分布图、日期趋势图、快速分组图、自定义分析的摘要卡 / 表 / 图（标题、dataset label、y 轴）。不加：下拉框（value 必须是原字段名）、缺失值检查表、疑似缺失值区、ID 重复区、模板里的字段名；模板图表的 y 轴经 `numericAxisLabel()` 带单位。`state.rows`、数据预览和 CSV 导出保留原值。
+- **质量页**：缺失值检查之后、疑似缺失值之前有两个静态小节，`#numberConversionSection` / `#numberConversionDetails`（“按单位读取的数字”）和 `#numericLookingSection` / `#numericLookingDetails`（“疑似数值列”），默认 `hidden`。`renderNumberNoteSection()` 在 `renderQuality()`“没有数值字段时提前 return”之前写入，每个字段一行，没有内容时整节隐藏。
+  - “按单位读取的数字”来自 `buildNumberConversionSummary(profiles)`：未忽略、并且策略有开关或单位冲突的字段，`[{ field, unit, unitCount, unitSamples, magnitudeCount, fullwidthCount, conflictUnits }]`。`formatNumberConversion()` 写成“「金额」：按"元"读取了 2 个值（2200元、3500元）”，有的部分才写，用“；”连接：“按万/亿换算了 N 个值”“N 个全角数字已按半角读取”；单位冲突时写“同时出现 kg（5 个）和 千克（1 个），没有按单位读取，这些值不能读成数字。”，各单位按个数降序，个数相同按第一次出现。冲突字段常常是分类或 ID，所以不说“算作格式问题”。
+  - “疑似数值列”来自 `state.numericLooking`，`formatNumericLookingHint()` 写成“「楼层」：去掉缺失值和疑似缺失值后，5 个值里有 3 个能读成数字（60.0%），其余的如 B1、B2。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。”，百分比用 `formatPercent()`。
+  - 不新增 pill。
+- **报告**：快照新增 `fieldTypes[i].numberUnit`（无单位为 `""`）、`quality.numberConversions`（`buildNumberConversionSummary()` 的结果）和 `quality.numericLooking`（`state.numericLooking` 的副本）。`normalizeReportSnapshot()` 对旧快照补 `""` 和 `null`。HTML / Markdown 报告在“各字段缺失情况”之后、“疑似缺失值”之前加“按单位读取的数字”和“疑似数值列”两节（Markdown 用 `### `），文字和质量页相同，HTML 经 `escapeHtml()`，Markdown 每行写成 `- ` 加 `escapeMarkdownText()` 的结果；列表为空或快照为 `null` 时整节不输出。报告摘要只列问题的计数：有“疑似数值列：N 个字段”（N > 0 时，HTML 追加在质量摘要句末尾，Markdown 加一条计数行），没有“按单位读取”。报告从快照渲染，字段标签由 `buildReportFieldLabeler()` 按 `fieldTypes[].numberUnit` 生成；`dateTrends[].summary` 这类写进快照的字符串在 `buildReportData()` 时就带上单位。
+- **已知限制**：字段名写“万元”、值又写“1.2万”时，值按元换算成 12000，不做特殊处理；标签按上面的结尾规则生成，“金额（万元）”显示为“金额（万元）（元）”，“金额万元”结尾是“元”，不再加。会计格式的“-”仍是第二档疑似缺失值，不当 0。
 
 ## 6. Data Quality（数据质量）
 
@@ -420,7 +458,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations)`：ID 字段重复值，见下文“ID 字段重复值”。
 - `countListedIdDuplicateFields(idDuplicates)`：逐值列出了重复值的 ID 字段数，质量页 pill 和报告摘要共用。
 - `buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` / `countPendingPlaceholderFields(entries)`：疑似缺失值和还有待确认写法的字段数，见下文“疑似缺失值”。
-- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()` 和 `renderPlaceholderDetails()`。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），之后是“ID 重复字段：N”（N > 0 为 warning，否则为 success），最后一项是“疑似缺失值：N 个字段”（同样的颜色规则）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。两个详情 renderer 都在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示 ID 重复值和疑似缺失值。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()` 和 `renderPlaceholderDetails()`。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），之后是“ID 重复字段：N”（N > 0 为 warning，否则为 success），最后一项是“疑似缺失值：N 个字段”（同样的颜色规则）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。两个详情 renderer，以及“按单位读取的数字”“疑似数值列”两个小节（见“数字策略”），都在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示它们。
 
 异常值规则为：
 
@@ -434,9 +472,9 @@ upper = Q3 + 1.5 × IQR
 **输入 / 输出**
 
 - 输入：原始 `state.rows`、完整 `state.fields` 和当前已应用 profiles。
-- 输出：`totalMissing`、`duplicateRows`、`idDuplicates`、`placeholders`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题、异常值、ID 重复值和疑似缺失值 DOM。
+- 输出：`totalMissing`、`duplicateRows`、`idDuplicates`、`placeholders`、`numericLooking`、`qualityNumericStats`，以及质量页的缺失、重复、格式问题、异常值、ID 重复值和疑似缺失值 DOM。
 - `renderQuality()` 不展示 CSV 解析警告；它保存在 state 并进入报告。转换失败（格式问题）按原始数据显示在质量页，也显示在字段配置和报告字段类型部分。
-- 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但 `toNumber()` 失败的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
+- 统计表口径不同：`buildNumericStats(rows)` 为每个数值字段记录 `invalidCount`（当前分析行中非缺失但按字段的数字策略读不成数字的个数），随筛选变化；有效值为 0 的字段仍不进入统计表。
 
 **与其他模块的关系**
 
@@ -475,7 +513,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **匹配**：`placeholderKey(value)` 只看字符串单元格：去首尾空格 → NFKC → 再去首尾空格，整格等于清单里的某个写法才算，不做子串匹配；得到的写法就是 key，确认的粒度是“字段 × key”。全角的「Ｎ／Ａ」「－－」、康熙部首「⽆」、小号的「﹘」「﹣」等经 NFKC 变成清单写法，和半角写法是同一个 key。去首尾空格后超过 8 个 UTF-16 单位的单元格直接判为不匹配，不做 NFKC（清单最长 4 个字符；NFKC 不会把字符映射成空，清单字符也不是组合的结果）。零宽空格（U+200B）不是 JS 的空白字符，带它的写法匹配不上；BOM（U+FEFF）会被 `trim()` 去掉。
 - **检出**：`buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` 基于原始 `state.rows`，按字段顺序、同一字段内按 key 第一次出现的位置，每个“字段 × key”一项 `{ field, key, tier, count, rawValues, rowNumbers, confirmed, fieldIgnored }`。`rawValues` 是去首尾空格后的不同原文；`rowNumbers` 最多 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个，经 `getSourceRowNumber()` 取得，查不到为 `null`。被忽略的字段不检出新的疑似值，但已经确认的 key 仍列出（`fieldIgnored: true`），照样计入该字段的缺失数，仍可撤销。`commitTabularData()` 在算完 profile 之后、`renderQuality()` 之前计算，`rebuildAnalysisFromProfiles()` 开头重算（字段配置的变化会改变哪些字段被检查），筛选不重算。结果存在 `state.placeholders`。
 - **确认的状态**：`state.placeholderConfirmations` 是“字段 → 已确认的 key 数组”（`Object.create(null)`）。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它；确认和撤销时也整体替换。通过 `getConfirmedPlaceholderKeys(field)` 读取（用 `hasOwnProperty`，字段名叫 `constructor` 之类也安全）。
-- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 17 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、三个分组函数（`groupNumericFieldByCategory()`、`aggregateByCategory()`、模板用的 `groupMetricRowsByField()`，显示为“未填写”）、模板用的 `countNonMissingValues()` 和去重用户数、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览和结论里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7；`renderInsights()` 里的“重复行”也按原值）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期，所以只调用 `toNumber()` / `parseFieldDate()` 的地方不用改。分组显示“未填写”、筛选显示“（空值）”是现有的不一致，这一版没有统一。
+- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 17 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、三个分组函数（`groupNumericFieldByCategory()`、`aggregateByCategory()`、模板用的 `groupMetricRowsByField()`，显示为“未填写”）、模板用的 `countNonMissingValues()` 和去重用户数、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览和结论里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7；`renderInsights()` 里的“重复行”也按原值）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期（在任何数字策略下也不能，见“数字策略”），所以只做数值或日期转换的地方不用改。分组显示“未填写”、筛选显示“（空值）”是现有的不一致，这一版没有统一。
 - **第 4 条刷新路径**：`confirmPlaceholder(field, key)`、`undoPlaceholderConfirmation(field, key)` 和 `confirmAllCommonPlaceholders()`（只覆盖未忽略字段里待确认的常见写法）都经过 `updatePlaceholderConfirmations(keysByField, message)`，顺序是：
   1. 字段配置有未应用的草稿时拒绝，状态不变，在字段配置区和 `#placeholderMessage` 写“字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。”。没有可做的事（key 不在待确认列表里，或要撤销的 key 没确认过）时也返回 `false`。
   2. 整体替换 `state.placeholderConfirmations`。
@@ -682,6 +720,7 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
 - 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。HTML / Markdown 报告在“数值异常值”之后加“ID 字段重复值”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。HTML 质量摘要句末尾追加“；ID 重复字段：N”，Markdown 在“解析警告”后加一条“- ID 重复字段：N”。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
 - 报告快照的 `quality.placeholders` 由 `buildReportPlaceholders()` 生成：`{ confirmed: [{ field, key, rawValues, count, fieldIgnored }], pending: [{ field, key, tier, rawValues, count, rowNumbers, effect }] }`，`effect` 是质量页上同样的“确认后缺失值 0 → 1，类型仍为数值”文字。HTML / Markdown 报告在“各字段缺失情况”之后加“疑似缺失值”一节：由 `buildReportPlaceholderSection()` 生成同一份内容，已确认的写成“字段 / 写法 / 出现次数 / 状态”表（被忽略的字段状态为“已按缺失处理（字段已忽略）”），待确认的写成“字段 / 写法 / 档位 / 出现次数 / 文件行号 / 确认后的影响”表，有第二档写法时表后加一条以“说明：”开头的提示；快照存在但没有检出时写“没有发现疑似缺失值。”。只有有检出或有确认时，HTML 质量摘要句才追加“；疑似缺失值：N 个字段”，Markdown 在“ID 重复字段”后加一条“- 疑似缺失值：N 个字段”（N 同质量页 pill）。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义，Markdown 的说明文字经 `escapeMarkdownText()`，每行都以固定文字开头，不以用户的字段名或值开头。`normalizeReportSnapshot()` 遇到缺少这个字段或 `confirmed` / `pending` 不是数组的快照取 `null`，这一节和摘要里的这一项都不输出。
+- 报告快照的 `fieldTypes[].numberUnit`、`quality.numberConversions` 和 `quality.numericLooking`，以及“按单位读取的数字”“疑似数值列”两节和带单位的字段标签，见“数字策略”。
 
 **与其他模块的关系**
 

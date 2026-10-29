@@ -19,6 +19,9 @@ const state = {
   // buildPlaceholderSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   placeholders: [],
+  // buildNumericLookingSummary() of the profiles; imports, field configuration
+  // and placeholder confirmations rebuild it, filters do not.
+  numericLooking: [],
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -101,6 +104,10 @@ const dom = {
   qualitySummary: document.getElementById("qualitySummary"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  numberConversionSection: document.getElementById("numberConversionSection"),
+  numberConversionDetails: document.getElementById("numberConversionDetails"),
+  numericLookingSection: document.getElementById("numericLookingSection"),
+  numericLookingDetails: document.getElementById("numericLookingDetails"),
   placeholderDetails: document.getElementById("placeholderDetails"),
   placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
@@ -285,6 +292,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.duplicateRows = countDuplicateRows(rows, fields);
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
+  state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -954,6 +962,8 @@ function filterRowsByConfig(rows, filters) {
   const categoryKeys = filters.category ? getConfirmedPlaceholderKeys(filters.category.field) : [];
   const startTime = filters.date ? Date.parse(`${filters.date.start}T00:00:00Z`) : null;
   const endTime = filters.date ? Date.parse(`${filters.date.end}T23:59:59.999Z`) : null;
+  // The same parser as getNumericValues(), which sets the range in the filter panel.
+  const parseNumber = filters.numeric ? getFieldNumberParser(filters.numeric.field) : null;
 
   return rows.filter((row) => {
     if (filters.category) {
@@ -961,7 +971,7 @@ function filterRowsByConfig(rows, filters) {
       if (!categoryValues.has(value)) return false;
     }
     if (filters.numeric) {
-      const value = toNumber(row[filters.numeric.field]);
+      const value = parseNumber(row[filters.numeric.field]);
       if (value === null || value < filters.numeric.min || value > filters.numeric.max) return false;
     }
     if (filters.date) {
@@ -1062,6 +1072,7 @@ function refreshFilteredAnalysis() {
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
+  state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1104,6 +1115,8 @@ function renderQuality() {
     <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">疑似缺失值：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
   `;
   // Before the outlier table, which returns early when there is no numeric field.
+  renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
+  renderNumberNoteSection(dom.numericLookingSection, dom.numericLookingDetails, state.numericLooking.map(formatNumericLookingHint));
   renderIdDuplicateDetails();
   renderPlaceholderDetails();
 
@@ -1147,7 +1160,7 @@ function renderQuality() {
     <tbody>
       ${qualityNumericStats.map((stat) => `
         <tr>
-          <td>${escapeHtml(stat.field)}</td>
+          <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
           <td>${formatInteger(stat.outlierCount)}</td>
           <td>${formatFieldNumber(stat.field, stat.lowerBound)}</td>
           <td>${formatFieldNumber(stat.field, stat.upperBound)}</td>
@@ -1155,6 +1168,15 @@ function renderQuality() {
       `).join("")}
     </tbody>
   `;
+}
+
+// "按单位读取的数字" and "疑似数值列": one line per field, the whole subsection
+// hidden when there is none.
+function renderNumberNoteSection(section, details, lines) {
+  section.classList.toggle("hidden", !lines.length);
+  details.innerHTML = lines.length
+    ? `<ul class="number-note-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`
+    : "";
 }
 
 // One table per ID field with listed duplicates, a hint per mostly repeated field,
@@ -1262,7 +1284,7 @@ function renderNumericStats() {
     <tbody>
       ${state.numericStats.map((stat) => `
         <tr>
-          <td>${escapeHtml(stat.field)}</td>
+          <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
           <td>${formatInteger(stat.count)}</td>
           <td${stat.invalidCount ? ' class="cell-warning"' : ""}>${formatInteger(stat.invalidCount)}</td>
           <td>${formatFieldNumber(stat.field, stat.mean)}</td>
@@ -1340,7 +1362,7 @@ function renderNumericDistributionChart() {
   const field = dom.numericChartField.value;
   const canvas = document.getElementById("numericDistributionChart");
   destroyChart("numericDistributionChart");
-  dom.numericChartTitle.textContent = field ? `${field} 数值分布（记录频数）` : "数值字段分布（记录频数）";
+  dom.numericChartTitle.textContent = field ? `${formatFieldLabel(field)} 数值分布（记录频数）` : "数值字段分布（记录频数）";
   canvas.setAttribute("aria-label", dom.numericChartTitle.textContent);
   if (!field) return drawEmptyChart(canvas, "没有可用的数值字段");
 
@@ -1352,7 +1374,7 @@ function renderNumericDistributionChart() {
     data: {
       labels: bins.map((bin) => bin.label),
       datasets: [{
-        label: `${field} 分布（记录频数）`,
+        label: `${formatFieldLabel(field)} 分布（记录频数）`,
         data: bins.map((bin) => bin.count),
         backgroundColor: CHART_THEME.primary
       }]
@@ -1405,7 +1427,7 @@ function renderDateTrendChart() {
   const aggregationLabel = getDateChartAggregateLabel(aggregate);
   const yearly = getDateGranularity(field) === "year";
   dom.dateChartTitle.textContent = numericField
-    ? `${numericField} 按${timeUnit}趋势（${aggregationLabel}）`
+    ? `${formatFieldLabel(numericField)} 按${timeUnit}趋势（${aggregationLabel}）`
     : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
   state.charts.dateTrendChart = new Chart(canvas, {
@@ -1414,7 +1436,7 @@ function renderDateTrendChart() {
       labels: trend.labels,
       datasets: [{
         label: numericField
-          ? `${numericField}${yearly ? "年度" : " "}${aggregationLabel}趋势`
+          ? `${formatFieldLabel(numericField)}${yearly ? "年度" : " "}${aggregationLabel}趋势`
           : `${yearly ? "年度" : ""}记录数趋势`,
         data: trend.values,
         borderColor: CHART_THEME.primary,
@@ -1448,7 +1470,7 @@ function renderCustomAnalysisChart() {
   destroyChart("customAnalysisChart");
   const methodLabel = { sum: "合计", avg: "平均值", median: "中位数" }[method];
   dom.customAnalysisChartTitle.textContent = metric && group
-    ? `${metric} 按 ${group} 分组（${methodLabel}）`
+    ? `${formatFieldLabel(metric)} 按 ${group} 分组（${methodLabel}）`
     : "分组聚合结果";
   canvas.setAttribute("aria-label", dom.customAnalysisChartTitle.textContent);
 
@@ -1463,7 +1485,7 @@ function renderCustomAnalysisChart() {
     data: {
       labels: grouped.map((item) => item.name),
       datasets: [{
-        label: `${group} 分组的 ${metric} ${methodLabel}`,
+        label: `${group} 分组的 ${formatFieldLabel(metric)} ${methodLabel}`,
         data: grouped.map((item) => item.value),
         backgroundColor: CHART_THEME.warning
       }]
@@ -1566,7 +1588,7 @@ function renderV2SummaryCards(metricField, groupField, aggregateMethod, dateFiel
   const validRecordCount = grouped.reduce((total, item) => total + item.count, 0);
   const trendPointCount = dateField ? buildMetricDateTrend(dateField, metricField, aggregateMethod).labels.length : 0;
   const cards = [
-    ["分析指标", metricField],
+    ["分析指标", formatFieldLabel(metricField)],
     ["分组维度", groupField],
     ["聚合方式", getAggregateMethodLabel(aggregateMethod)],
     [dateField ? "时间点数量" : "有效记录数", dateField ? formatInteger(trendPointCount) : formatInteger(validRecordCount)]
@@ -1592,7 +1614,7 @@ function renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod)
     compareNumbersDescending(a[aggregateMethod], b[aggregateMethod])
   ));
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
-  dom.v2PrimaryTableTitle.textContent = `${metricField} 按 ${groupField} 分组（${aggregateLabel}）`;
+  dom.v2PrimaryTableTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`;
   dom.v2PrimaryTable.innerHTML = buildV2AggregationTableHtml(groupField, metricField, sorted, aggregateMethod);
 }
 
@@ -1603,7 +1625,7 @@ function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
       <tr>
         <th>${escapeHtml(groupField)}</th>
         <th>记录数</th>
-        <th>${escapeHtml(metricField)} ${valueLabel}</th>
+        <th>${escapeHtml(formatFieldLabel(metricField))} ${valueLabel}</th>
       </tr>
     </thead>
     <tbody>
@@ -1625,14 +1647,14 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
   const topGroups = [...grouped]
     .sort((a, b) => compareNumbersDescending(a[aggregateMethod], b[aggregateMethod]))
     .slice(0, 10);
-  dom.v2TopGroupTitle.textContent = `${metricField} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`;
+  dom.v2TopGroupTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TopGroupTitle.textContent);
   state.charts.v2TopGroupChart = new Chart(canvas, {
     type: "bar",
     data: {
       labels: topGroups.map((item) => item.name),
       datasets: [{
-        label: `${metricField} 按 ${groupField} 分组（${aggregateLabel}）`,
+        label: `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`,
         data: topGroups.map((item) => item[aggregateMethod]),
         backgroundColor: CHART_THEME.primary
       }]
@@ -1653,7 +1675,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
     ? "年份"
     : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
-  dom.v2TrendTitle.textContent = `${metricField} 按${timeUnit}趋势（${aggregateLabel}）`;
+  dom.v2TrendTitle.textContent = `${formatFieldLabel(metricField)} 按${timeUnit}趋势（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TrendTitle.textContent);
   state.charts.v2SelectedTrendChart = new Chart(canvas, {
     type: "line",
@@ -1748,6 +1770,7 @@ function resetAnalysisState() {
   state.idDuplicates = [];
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
+  state.numericLooking = [];
   state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];

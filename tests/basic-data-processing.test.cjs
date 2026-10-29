@@ -2056,7 +2056,7 @@ test("the order fixture goes from 26 to 27 missing values with one confirmation 
 
   orders.evaluate('confirmPlaceholder("金额", "N/A")');
   assert.equal(orders.evaluate("state.totalMissing"), 27);
-  assert.deepEqual(fieldFigures(orders.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 29, conversionFailureCount: 2 });
+  assert.deepEqual(fieldFigures(orders.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 29, conversionFailureCount: 0 });
 
   orders.evaluate("confirmAllCommonPlaceholders()");
   assert.equal(orders.evaluate("state.totalMissing"), 31);
@@ -2543,4 +2543,441 @@ test("report placeholder sections escape field names and keep Markdown lines fro
     assert.ok(!line.startsWith("-") && !line.startsWith("<"), line);
   }
   assert.ok(markdownSection.includes(scope.evaluate(`escapeMarkdownText(${JSON.stringify(`说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`)})`)));
+});
+
+// v2.5.0 number strategies: each field reads units, 万/亿 and full-width digits
+// through its own profile.numberStrategy.
+const numberProfile = (evaluate, field) => JSON.parse(evaluate(`JSON.stringify((({ typeKey, numberStrategy, numberReadings, conversionFailureCount, conversionFailureSamples }) => ({ typeKey, numberStrategy, numberReadings, conversionFailureCount, conversionFailureSamples }))(getFieldProfile(${JSON.stringify(field)})))`));
+
+test("the order fixture reads 2200元 and 3500元 as yuan and keeps only N/A as a format problem", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(numberProfile(orders.evaluate, "金额"), {
+    typeKey: "numeric",
+    numberStrategy: { unit: "元", unitConflict: false, units: { 元: 2 }, allowMagnitude: false, fullwidth: false },
+    numberReadings: { unitCount: 2, unitSamples: ["2200元", "3500元"], magnitudeCount: 0, fullwidthCount: 0 },
+    conversionFailureCount: 1,
+    conversionFailureSamples: ["N/A"]
+  });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(["2200元", "3500元", "￥15,007", "￥8,250", "N/A"].map((value) => parseFieldNumber("金额", value)))')), [2200, 3500, 15007, 8250, null]);
+  assert.deepEqual(qualityPill(orders.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  const amountStats = JSON.parse(orders.evaluate('JSON.stringify(state.numericStats.find((item) => item.field === "金额"))'));
+  assert.deepEqual(amountStats, {
+    field: "金额", count: 29, invalidCount: 1, mean: 3293.7241379310344, median: 1700, min: 704, max: 15007, std: 3305.713026497504,
+    q1: 1050, q3: 4600, lowerBound: -4275, upperBound: 9925, outlierCount: 1
+  });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(state.qualityNumericStats.find((item) => item.field === "金额"))')), amountStats);
+});
+
+test("the other stage3 fixtures keep their types and format problem totals", async () => {
+  const expected = {
+    "成绩表.csv": [["id", "id", "category", "numeric", "numeric", "numeric", "numeric", "numeric"], 3],
+    "成绩表-标题无逗号.csv": [["id", "id", "category", "numeric", "numeric", "numeric", "numeric", "numeric"], 3],
+    "花名册.xlsx": [["id", "category", "category", "id", "date", "numeric", "id"], 2],
+    "门店报表.xlsx": [["id", "id", "category", "date", "numeric", "numeric", "numeric", "category"], 0]
+  };
+  for (const [fileName, [types, formatProblems]] of Object.entries(expected)) {
+    const scope = await importStage3Fixture(fileName);
+    assert.deepEqual(importedSummary(scope.evaluate).types, types, fileName);
+    assert.equal(qualityPill(scope.elements, "格式问题").text, `格式问题：${formatProblems} 个值`, fileName);
+    assert.equal(scope.evaluate("state.profiles.some((profile) => hasNumberStrategySwitch(profile.numberStrategy))"), false, fileName);
+  }
+});
+
+test("15 distinct yuan amounts are numeric, while 4G / 5G and 8G-style sizes keep their types", () => {
+  const yuan = commitColumns({ 金额: Array.from({ length: 15 }, (_, index) => `${1000 + index * 37}元`) });
+  assert.equal(fieldFigures(yuan.evaluate, "金额").typeKey, "numeric");
+  const network = commitColumns({ 网络: ["4G", "5G", "5G", "4G", "5G", "3G", "5G", "4G"] });
+  assert.equal(fieldFigures(network.evaluate, "网络").typeKey, "category");
+  const memory = commitColumns({ 内存: Array.from({ length: 13 }, (_, index) => `${(index + 1) * 4}G`) });
+  assert.equal(fieldFigures(memory.evaluate, "内存").typeKey, "id");
+});
+
+test("万 amounts are exact integers, so small ranges still get one bar per value", () => {
+  const scope = createChartContext();
+  commitRows(scope, ["件数"], ["0.0001万", "0.0003万", "0.0005万", "0.0007万", "0.001万", "0.0002万", "0.0007万"].map((value) => ({ 件数: value })), "magnitude.csv");
+  assert.equal(scope.evaluate('getFieldProfile("件数").typeKey'), "numeric");
+  assert.deepEqual(drawDistribution(scope, "件数"), {
+    labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+    data: [1, 1, 1, 0, 1, 0, 2, 0, 0, 1]
+  });
+  put(scope.context, "__magnitudes", ["0.07万", "0.3万", "1万", "2万", "0.5万", "1.15亿"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__magnitudes.map((value) => toNumber(value, buildNumberStrategy(__magnitudes))))")), [700, 3000, 10000, 20000, 5000, 115000000]);
+});
+
+test("placeholder previews equal a full re-profile on unit columns and confirmations keep each number strategy", () => {
+  const scope = commitColumns({
+    金额: ["2200元", "N/A", "1.2万元", "—", "３５００元", "-", "800元", "n/a", "NULL", "约500"],
+    重量: ["5kg", "500千克", "N/A", "2kg", "—", "1kg", "-", "3kg", "无", "4kg"],
+    数量: ["１２", "—", "３４", "N/A", "５", "6", "－", "--", "7", "8"]
+  });
+  const strategies = () => JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.numberStrategy))"));
+  const before = strategies();
+  assert.deepEqual(before, [
+    { unit: "元", unitConflict: false, units: { 元: 4 }, allowMagnitude: true, fullwidth: true },
+    { unit: "", unitConflict: true, units: { kg: 5, 千克: 1 }, allowMagnitude: false, fullwidth: false },
+    { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: true }
+  ]);
+  const result = comparePlaceholderPreviews(scope);
+  assert.ok(result.checked >= 10);
+  assert.deepEqual(result.mismatches, []);
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(strategies(), before);
+  scope.evaluate('confirmPlaceholder("金额", "-"); confirmPlaceholder("重量", "无")');
+  assert.deepEqual(strategies(), before);
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A"); undoPlaceholderConfirmation("数量", "—")');
+  assert.deepEqual(strategies(), before);
+  assert.deepEqual(comparePlaceholderPreviews(scope).mismatches, []);
+});
+
+test("the numeric filter range and the filter itself read units the same way", async () => {
+  const scope = commitColumns({ 金额: ["1200", "800", "3500元", "2200元", "950"], 编号: ["a", "b", "c", "d", "e"] });
+  scope.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField()');
+  assert.equal(scope.elements.get("numericFilterRange").textContent, "800 至 3,500");
+  applyFilterState(scope, { numeric: { field: "金额", min: 2000, max: 3500 } });
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getAnalysisRows().map((row) => row["金额"]))')), ["3500元", "2200元"]);
+
+  const orders = await importStage3Fixture("订单表.csv");
+  applyFilterState(orders, { numeric: { field: "金额", min: 3000, max: 3500 } });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(getAnalysisRows().map((row) => [getSourceRowNumber(row), row["金额"]]))')), [[21, "3500元"]]);
+});
+
+test("manual type changes on a unit column use its strategy only while numeric", () => {
+  const scope = commitColumns({ 金额: ["2200元", "3500元", "约500", "N/A", "100元", "800元", "待定"] });
+  const snapshot = () => JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const profile = getFieldProfile("金额");
+    return [profile.typeKey, profile.conversionFailureCount, profile.conversionFailureSamples, state.numericStats.map((item) => [item.count, item.invalidCount, item.mean])];
+  })())`));
+  assert.deepEqual(snapshot(), ["category", 0, [], []]);
+  scope.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["numeric", 3, ["约500", "N/A", "待定"], [[4, 3, 1650]]]);
+  scope.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.deepEqual(snapshot(), ["numeric", 2, ["约500", "待定"], [[4, 2, 1650]]]);
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.deepEqual(snapshot(), ["numeric", 3, ["约500", "N/A", "待定"], [[4, 3, 1650]]]);
+  scope.evaluate('stageFieldTypeChange("金额", "id"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["id", 0, [], []]);
+  assert.equal(scope.evaluate("state.idDuplicates[0].duplicateValueCount"), 0);
+  scope.evaluate('stageFieldTypeChange("金额", "date"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["date", 7, ["2200元", "3500元", "约500"], []]);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(snapshot(), ["category", 0, [], []]);
+});
+
+test("header detection keeps reading 5kg as text while the analysis reads it as a number", async () => {
+  const headerless = await importCsvFile("库存表\r\n苹果,5kg\r\n香蕉,6kg\r\n梨,7kg\r\n桃,8kg\r\n", "headerless.csv");
+  assert.deepEqual(JSON.parse(headerless.evaluate("JSON.stringify([state.headerDetection.headerRowNumber, state.fields, state.rows.length])")), [2, ["苹果", "5kg"], 3]);
+  assert.equal(headerless.evaluate('getFieldProfile("5kg").typeKey'), "numeric");
+  const titled = await importCsvFile("库存表\r\n水果,重量\r\n苹果,5kg\r\n香蕉,6kg\r\n梨,7kg\r\n", "titled.csv");
+  assert.deepEqual(JSON.parse(titled.evaluate("JSON.stringify([state.headerDetection.headerRowNumber, state.fields, state.rows.length])")), [2, ["水果", "重量"], 3]);
+  assert.equal(titled.evaluate('getFieldProfile("重量").typeKey'), "numeric");
+});
+
+test("CSV export still neutralizes -2200元 in a yuan column", () => {
+  const scope = commitColumns({ 金额: ["-2200元", "1200元", "800元"] });
+  scope.context.window.Papa = Papa;
+  assert.equal(scope.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  assert.equal(scope.evaluate("buildCsvExportContent(state.rows, state.fields)"), "金额\r\n'-2200元\r\n1200元\r\n800元");
+});
+
+test("the sales template sums yuan amounts like the main analysis", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const result = JSON.parse(orders.evaluate(`JSON.stringify((() => {
+    const sales = analyzeSalesTemplate({ salesAmount: "金额", unitPrice: "", quantity: "", category: "产品", region: "大区", date: "下单日期" });
+    const regions = Object.fromEntries(sales.secondaryChart.labels.map((label, index) => [label, sales.secondaryChart.values[index]]));
+    const main = Object.fromEntries(groupNumericFieldByCategory("金额", "大区").map((group) => [group.name, group.sum]));
+    const trend = Object.fromEntries(sales.trendChart.labels.map((label, index) => [label, sales.trendChart.values[index]]));
+    const generic = analyzeGenericTemplate({ metric: "金额", group: "大区", date: "下单日期" });
+    return { regions, main, trend: [trend["2024-05-08"], trend["2024-05-20"]], genericTrend: generic.trendChart ? [generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-08")], generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-20")]] : null };
+  })())`));
+  assert.equal(result.regions["华南"], 6025);
+  assert.deepEqual(result.regions, result.main);
+  assert.deepEqual(result.trend, [3560, 4204]);
+  assert.deepEqual(result.genericTrend, [3560, 4204]);
+});
+
+// Numeric-looking category fields: placeholder spellings (confirmed or not) and
+// missing values are left out of the count, the share and the samples.
+const numericLooking = (evaluate) => JSON.parse(evaluate("JSON.stringify(state.numericLooking)"));
+
+test("the reported amounts with N/A and 约500 are not numeric-looking: without N/A, 4 of 5 is the numeric threshold", () => {
+  const scope = commitColumns({ 金额: AMOUNT_WITH_NA });
+  assert.equal(fieldFigures(scope.evaluate, "金额").typeKey, "category");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").numericLooking)')), { valueCount: 5, numericCount: 4, samples: ["约500"] });
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("floors 1, 2, 3, B1, B2 are numeric-looking (an accepted false hint)", () => {
+  const scope = commitColumns({ 楼层: ["1", "2", "3", "B1", "B2"] });
+  assert.deepEqual(numericLooking(scope.evaluate), [{ field: "楼层", valueCount: 5, numericCount: 3, ratio: 0.6, samples: ["B1", "B2"] }]);
+});
+
+test("a year column with dashes is not numeric-looking", () => {
+  const scope = commitColumns({ 年份: YEARS_WITH_DASHES });
+  assert.equal(fieldFigures(scope.evaluate, "年份").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("numeric-looking fields list up to three unconvertible samples and never a placeholder spelling", () => {
+  const scope = commitColumns({
+    评分: ["1", "N/A", "2", "5", "—", "4", "非常愿意", "一般", "3", "-", "", "Ｎ／Ａ"],
+    金额: ["1200", "800", "面议", "1500", "面议", "900", "700", "面议", "650", "1100", "N/A", "—"],
+    报价: ["1200", "待定", "800", "待定", "1500", "待定", "NULL", "", "无", "--", "", "n/a"],
+    价格: ["1200元", "800", "约500", "待定", "1500元", "900", "N/A", "—", "", "", "", ""]
+  });
+  assert.deepEqual(numericLooking(scope.evaluate), [
+    { field: "评分", valueCount: 7, numericCount: 5, ratio: 5 / 7, samples: ["非常愿意", "一般"] },
+    { field: "金额", valueCount: 10, numericCount: 7, ratio: 0.7, samples: ["面议"] },
+    { field: "报价", valueCount: 6, numericCount: 3, ratio: 0.5, samples: ["待定"] },
+    { field: "价格", valueCount: 6, numericCount: 4, ratio: 4 / 6, samples: ["约500", "待定"] }
+  ]);
+  const placeholderSamples = JSON.parse(scope.evaluate("JSON.stringify(state.numericLooking.flatMap((item) => item.samples).filter((sample) => placeholderKey(sample)))"));
+  assert.deepEqual(placeholderSamples, []);
+});
+
+test("a field with only four values is not numeric-looking", () => {
+  const scope = commitColumns({ 金额: ["1200", "800", "约500", "1500"] });
+  assert.equal(fieldFigures(scope.evaluate, "金额").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("numeric-looking hints follow applied types and confirmations, and filters keep them", () => {
+  const scope = commitColumns({
+    楼层: ["1", "2", "3", "B1", "B2", "1", "2", "3", "4", "B1", "1", "2"],
+    房号: ["101", "102", "103", "104", "105", "106", "107", "A1", "B2", "C3", "D4", "N/A"]
+  });
+  const fields = () => numericLooking(scope.evaluate).map((item) => item.field);
+  // 房号 starts as an ID: 12 distinct values, 7 of 12 numeric.
+  assert.equal(fieldFigures(scope.evaluate, "房号").typeKey, "id");
+  assert.deepEqual(fields(), ["楼层"]);
+
+  scope.evaluate('stageFieldTypeChange("楼层", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(fields(), []);
+  scope.evaluate('stageFieldTypeChange("楼层", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(fields(), []);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fields(), ["楼层"]);
+
+  // Confirming N/A leaves 11 values, so 房号 is no longer an ID but a category.
+  scope.evaluate('confirmPlaceholder("房号", "N/A")');
+  assert.equal(fieldFigures(scope.evaluate, "房号").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate)[1], { field: "房号", valueCount: 11, numericCount: 7, ratio: 7 / 11, samples: ["A1", "B2", "C3"] });
+  scope.evaluate('undoPlaceholderConfirmation("房号", "N/A")');
+  assert.deepEqual(fields(), ["楼层"]);
+
+  const before = scope.evaluate("state.numericLooking");
+  applyFilterState(scope, { category: { field: "楼层", values: ["1"] } });
+  assert.equal(scope.evaluate("state.numericLooking"), before);
+  assert.deepEqual(fields(), ["楼层"]);
+});
+
+test("numeric-looking hints are cleared on reset and replaced on every import", () => {
+  const scope = commitColumns({ 楼层: ["1", "2", "3", "B1", "B2"] });
+  assert.equal(numericLooking(scope.evaluate).length, 1);
+  commitRows(scope, ["金额"], ["1", "2", "3", "4", "5"].map((value) => ({ 金额: value })), "next.csv");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+  commitRows(scope, ["楼层"], ["1", "2", "3", "B1", "B2"].map((value) => ({ 楼层: value })), "again.csv");
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+// Units in labels, the two number subsections of the quality page and reports.
+const UNIT_SECTION_COLUMNS = {
+  重量: ["5kg", "500千克", "2kg", "1kg", "3kg", "4kg"],
+  楼层: ["1", "2", "3", "B1", "B2", "4"],
+  销量: ["1.2万", "8000", "３５００", "9500", "1万", "6000"]
+};
+const WEIGHT_CONFLICT_TEXT = "「重量」：同时出现 kg（5 个）和 千克（1 个），没有按单位读取，这些值不能读成数字。";
+const SALES_CONVERSION_TEXT = "「销量」：按万/亿换算了 2 个值；1 个全角数字已按半角读取";
+const FLOOR_HINT_TEXT = "「楼层」：去掉缺失值和疑似缺失值后，6 个值里有 4 个能读成数字（66.7%），其余的如 B1、B2。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。";
+const ORDER_AMOUNT_CONVERSION_TEXT = "「金额」：按\"元\"读取了 2 个值（2200元、3500元）";
+
+function withFakeCharts(scope) {
+  const charts = [];
+  scope.context.Chart = scope.context.window.Chart = class {
+    constructor(canvas, config) { charts.push(config); }
+    destroy() {}
+  };
+  return charts;
+}
+
+test("field labels add the unit unless the name already ends with it", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__labelCases = [
+    ["金额", "元", "金额（元）"], ["金额（元）", "元", "金额（元）"], ["金额(元)", "元", "金额(元)"], ["金额/元", "元", "金额/元"],
+    ["金额【元】", "元", "金额【元】"], ["金额[元]", "元", "金额[元]"], ["金额 元", "元", "金额 元"], ["金额-元", "元", "金额-元"], ["金额元", "元", "金额元"],
+    ["weight_kg", "kg", "weight_kg"], ["重量kg", "kg", "重量kg"], ["重量KG", "kg", "重量KG"], ["重量（ＫＧ）", "kg", "重量（ＫＧ）"],
+    ["bag", "kg", "bag（kg）"], ["backlog", "kg", "backlog（kg）"], ["元旦活动数", "元", "元旦活动数（元）"], ["数量", "", "数量"]
+  ];
+  assert.deepEqual(
+    JSON.parse(evaluate("JSON.stringify(__labelCases.map(([field, unit]) => formatFieldLabelWithUnit(field, unit)))")),
+    context.__labelCases.map(([, , label]) => label)
+  );
+});
+
+test("statistics, charts and custom analysis label the yuan field, while selects keep the field name", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const charts = withFakeCharts(orders);
+  orders.evaluate(`
+    populateControls();
+    dom.numericChartField.value = "金额"; dom.dateChartField.value = "下单日期"; dom.dateChartMetric.value = "金额";
+    dom.metricField.value = "金额"; dom.groupField.value = "大区"; dom.aggregateMethod.value = "sum";
+    renderCharts();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "大区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderV2Analysis();
+  `);
+  const text = (id) => orders.elements.get(id).textContent;
+  const html = (id) => orders.elements.get(id).innerHTML;
+  const statsCells = tableCells(orders.elements, "numericStatsTable");
+  assert.deepEqual(statsCells.slice(statsCells.indexOf("金额（元）"), statsCells.indexOf("金额（元）") + 2), ["金额（元）", "29"]);
+  assert.ok(statsCells.includes("数量"));
+  const outlierCells = tableCells(orders.elements, "outlierTable");
+  assert.deepEqual(outlierCells.slice(outlierCells.indexOf("金额（元）"), outlierCells.indexOf("金额（元）") + 2), ["金额（元）", "1"]);
+  assert.equal(text("numericChartTitle"), "金额（元） 数值分布（记录频数）");
+  assert.equal(text("dateChartTitle"), "金额（元） 按日期趋势（平均值）");
+  assert.equal(text("customAnalysisChartTitle"), "金额（元） 按 大区 分组（合计）");
+  assert.equal(text("v2PrimaryTableTitle"), "金额（元） 按 大区 分组（求和）");
+  assert.equal(text("v2TopGroupTitle"), "金额（元） 按 大区 分组 Top 10（求和）");
+  assert.equal(text("v2TrendTitle"), "金额（元） 按日期趋势（求和）");
+  assert.ok(html("v2PrimaryTable").includes("<th>金额（元） 求和值</th>"));
+  assert.ok(html("v2SummaryCards").includes('title="金额（元）">金额（元）</div>'));
+  const axisTitles = charts.map((config) => [config.data.datasets[0].label, config.options.scales.y.title.text]);
+  assert.deepEqual(axisTitles, [
+    ["金额（元） 分布（记录频数）", "记录频数"],
+    ["金额（元） 平均值趋势", "平均值（元）"],
+    ["大区 分组的 金额（元） 合计", "合计（元）"],
+    ["金额（元） 按 大区 分组（求和）", "求和（元）"],
+    ["金额（元） 按日期趋势（求和）", "求和（元）"]
+  ]);
+  for (const id of ["numericChartField", "dateChartMetric", "metricField", "v2MetricField", "numericFilterField"]) {
+    assert.ok(html(id).includes('<option value="金额">金额</option>'), id);
+  }
+  assert.ok(html("qualityTable").includes("<td>金额</td>"));
+});
+
+test("the quality page lists numbers read by unit and numeric-looking fields, and hides empty subsections", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const section = (scope, id) => scope.elements.get(id).classList.contains("hidden");
+  assert.equal(section(orders, "numberConversionSection"), false);
+  assert.equal(orders.elements.get("numberConversionDetails").innerHTML, `<ul class="number-note-list"><li>${orders.evaluate(`escapeHtml(${JSON.stringify(ORDER_AMOUNT_CONVERSION_TEXT)})`)}</li></ul>`);
+  assert.equal(section(orders, "numericLookingSection"), true);
+
+  const scope = commitColumns(UNIT_SECTION_COLUMNS);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(buildNumberConversionSummary(state.profiles).map(formatNumberConversion))")), [WEIGHT_CONFLICT_TEXT, SALES_CONVERSION_TEXT]);
+  assert.equal(scope.elements.get("numberConversionDetails").innerHTML, `<ul class="number-note-list"><li>${WEIGHT_CONFLICT_TEXT}</li><li>${SALES_CONVERSION_TEXT}</li></ul>`);
+  assert.equal(section(scope, "numericLookingSection"), false);
+  assert.equal(scope.elements.get("numericLookingDetails").innerHTML, `<ul class="number-note-list"><li>${FLOOR_HINT_TEXT}</li></ul>`);
+
+  scope.evaluate('stageFieldTypeChange("销量", "ignore"); stageFieldTypeChange("重量", "ignore"); stageFieldTypeChange("楼层", "numeric"); applyFieldConfiguration()');
+  assert.equal(section(scope, "numberConversionSection"), true);
+  assert.equal(section(scope, "numericLookingSection"), true);
+});
+
+test("number conversion texts order conflicting units by count, then first appearance", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__items = [
+    { field: "长度", unit: "", unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 2, conflictUnits: [{ unit: "mm", count: 3 }, { unit: "cm", count: 2 }, { unit: "km", count: 2 }] },
+    { field: "金额", unit: "元", unitCount: 5, unitSamples: ["1元", "2元", "3元"], magnitudeCount: 1, fullwidthCount: 1, conflictUnits: [] }
+  ];
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__items.map(formatNumberConversion))")), [
+    "「长度」：2 个全角数字已按半角读取；同时出现 mm（3 个）、cm（2 个）和 km（2 个），没有按单位读取，这些值不能读成数字。",
+    "「金额」：按\"元\"读取了 5 个值（1元、2元、3元）；按万/亿换算了 1 个值；1 个全角数字已按半角读取"
+  ]);
+  const scope = commitColumns({ 长度: ["3cm", "5mm", "7km", "2mm", "4cm", "8km", "6mm"] });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(buildNumberConversionSummary(state.profiles)[0].conflictUnits)")), [
+    { unit: "mm", count: 3 }, { unit: "cm", count: 2 }, { unit: "km", count: 2 }
+  ]);
+});
+
+test("the quality page has static number subsections between the missing value check and the placeholders", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
+  const order = ['id="qualityTable"', 'id="numberConversionSection"', 'id="numericLookingSection"', '<h3 class="subsection-title">疑似缺失值</h3>'].map((marker) => quality.indexOf(marker));
+  assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
+  assert.match(quality, /<div id="numberConversionSection" class="module-subsection hidden">\s*<h3 class="subsection-title">按单位读取的数字<\/h3>\s*<div id="numberConversionDetails" class="number-note-details"><\/div>/);
+  assert.match(quality, /<div id="numericLookingSection" class="module-subsection hidden">\s*<h3 class="subsection-title">疑似数值列<\/h3>\s*<div id="numericLookingDetails" class="number-note-details"><\/div>/);
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('["numberConversionSection", "numberConversionDetails", "numericLookingSection", "numericLookingDetails"].every((id) => Object.keys(dom).includes(id))'), true);
+});
+
+test("the quality page renders the number subsections even without numeric fields", () => {
+  const scope = commitColumns({ 楼层: ["1", "2", "3", "B1", "B2", "4"], 重量: ["5kg", "500千克", "2kg", "1kg", "3kg", "4kg"] });
+  assert.equal(scope.evaluate('getProfilesByType("numeric").length'), 0);
+  assert.ok(scope.elements.get("numericLookingDetails").innerHTML.includes("「楼层」"));
+  assert.ok(scope.elements.get("numberConversionDetails").innerHTML.includes("「重量」"));
+});
+
+test("reports carry number units, conversions and numeric-looking fields like the quality page", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "avg"; dom.metricField.value = "金额"; dom.groupField.value = "大区"; dom.aggregateMethod.value = "sum"');
+  const { report, html, markdown } = reportOf(orders);
+  assert.deepEqual(report.fieldTypes.map((field) => field.numberUnit), ["", "", "", "", "", "", "元", ""]);
+  assert.deepEqual(report.quality.numberConversions, [
+    { field: "金额", unit: "元", unitCount: 2, unitSamples: ["2200元", "3500元"], magnitudeCount: 0, fullwidthCount: 0, conflictUnits: [] }
+  ]);
+  assert.deepEqual(report.quality.numericLooking, []);
+  assert.ok(report.dateTrends[0].summary.startsWith("日期字段「下单日期」包含 20 个时间点；金额（元）平均值从 2024-05-06 的"), report.dateTrends[0].summary);
+  assert.ok(html.includes("；疑似缺失值：<strong>4</strong> 个字段。</p>"));
+  assert.doesNotMatch(html, /按单位读取：<strong>/);
+  assert.doesNotMatch(html, /疑似数值列/);
+  assert.ok(html.includes(`<h3>按单位读取的数字</h3>\n    <ul class="summary-list"><li>${orders.evaluate(`escapeHtml(${JSON.stringify(ORDER_AMOUNT_CONVERSION_TEXT)})`)}</li></ul>`));
+  assert.ok(html.includes("<td>金额（元）</td><td>29</td><td>1</td>"));
+  assert.ok(html.includes("<td>金额（元）</td><td>1</td><td>-4,275</td><td>9,925</td>"));
+  assert.ok(html.includes("<strong>指标字段：</strong>金额（元）"));
+  assert.doesNotMatch(markdown, /- 按单位读取：/);
+  assert.doesNotMatch(markdown, /疑似数值列/);
+  assert.ok(markdown.includes(`### 按单位读取的数字\n\n- ${orders.evaluate(`escapeMarkdownText(${JSON.stringify(ORDER_AMOUNT_CONVERSION_TEXT)})`)}\n\n`));
+  assert.ok(markdown.includes("| 金额（元） | 29 | 1 |"));
+  assert.ok(markdown.includes("- 指标字段：金额（元）"));
+
+  const scope = commitColumns(UNIT_SECTION_COLUMNS);
+  const constructed = reportOf(scope);
+  assert.deepEqual(constructed.report.quality.numericLooking, [{ field: "楼层", valueCount: 6, numericCount: 4, ratio: 4 / 6, samples: ["B1", "B2"] }]);
+  assert.ok(constructed.html.includes("；ID 重复字段：<strong>0</strong>；疑似数值列：<strong>1</strong> 个字段。</p>"));
+  assert.doesNotMatch(constructed.html, /按单位读取：<strong>/);
+  assert.ok(constructed.html.includes(`<h3>按单位读取的数字</h3>\n    <ul class="summary-list"><li>${WEIGHT_CONFLICT_TEXT}</li><li>${SALES_CONVERSION_TEXT}</li></ul>`));
+  assert.ok(constructed.html.includes(`<h3>疑似数值列</h3>\n    <ul class="summary-list"><li>${FLOOR_HINT_TEXT}</li></ul>`));
+  assert.ok(constructed.markdown.includes("- ID 重复字段：0\n- 疑似数值列：1 个字段\n"));
+  assert.doesNotMatch(constructed.markdown, /- 按单位读取：/);
+  assert.ok(constructed.markdown.includes("### 按单位读取的数字\n\n- "));
+  assert.ok(constructed.markdown.includes(`### 疑似数值列\n\n- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(FLOOR_HINT_TEXT)})`)}\n\n`));
+});
+
+test("legacy report snapshots without number units or hints leave both sections and counts out", () => {
+  const scope = createScriptContext();
+  const normalized = JSON.parse(scope.evaluate('JSON.stringify(normalizeReportSnapshot({ fieldTypes: [{ field: "金额" }] }))'));
+  assert.equal(normalized.fieldTypes[0].numberUnit, "");
+  assert.equal(normalized.quality.numberConversions, null);
+  assert.equal(normalized.quality.numericLooking, null);
+  const legacy = {
+    fieldTypes: [{ field: "金额" }],
+    quality: { totalMissing: 0, duplicateRows: 0, parseWarningCount: 0, outliers: [{ field: "金额", outlierCount: 1, lowerBound: "1", upperBound: "9" }] },
+    numericStats: [{ field: "金额", count: 3, invalidCount: 0, mean: "2", median: "2", min: "1", max: "3", standardDeviation: "1" }]
+  };
+  put(scope.context, "__legacyNumbers", legacy);
+  const html = scope.evaluate("buildHtmlReport(__legacyNumbers, [])");
+  const markdown = scope.evaluate("buildMarkdownReport(__legacyNumbers)");
+  assert.doesNotMatch(html, /按单位读取|疑似数值列/);
+  assert.doesNotMatch(markdown, /按单位读取|疑似数值列/);
+  assert.ok(html.includes("<td>金额</td><td>3</td>"));
+  assert.ok(markdown.includes("| 金额 | 3 |"));
+  // Present but empty lists: no section and no count either.
+  put(scope.context, "__emptyNumbers", { ...legacy, quality: { ...legacy.quality, numberConversions: [], numericLooking: [] } });
+  assert.doesNotMatch(scope.evaluate("buildHtmlReport(__emptyNumbers, [])"), /按单位读取|疑似数值列/);
+  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__emptyNumbers)"), /按单位读取|疑似数值列/);
+});
+
+test("number sections and unit labels escape field names in HTML and Markdown", () => {
+  const field = "<b>重\n量</b>|x";
+  const scope = commitColumns({ [field]: ["5kg", "6kg", "7kg", "8kg", "9kg"], "-楼层": ["1", "2", "3", "B1", "B2"] });
+  const { html, markdown } = reportOf(scope);
+  assert.ok(html.includes("<td>&lt;b&gt;重\n量&lt;/b&gt;|x（kg）</td><td>5</td>"));
+  assert.ok(html.includes(`<li>${scope.evaluate(`escapeHtml(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}</li>`));
+  assert.ok(scope.elements.get("numberConversionDetails").innerHTML.includes("「&lt;b&gt;重\n量&lt;/b&gt;|x」"));
+  assert.ok(scope.elements.get("numericLookingDetails").innerHTML.includes("「-楼层」"));
+  const conversionLine = `- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}`;
+  assert.ok(markdown.includes(conversionLine));
+  assert.ok(conversionLine.includes("<br>") && !conversionLine.includes("<b>"));
+  for (const line of markdown.split("\n")) {
+    assert.ok(!line.startsWith("<") && !line.startsWith("-楼层") && !line.startsWith("量"), line);
+  }
 });

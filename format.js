@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值的说明文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -46,10 +46,47 @@ function formatFieldNumber(field, value) {
   return formatNumber(value);
 }
 
+// The unit goes before "（百分比）".
 function numericAxisLabel(field, fallbackLabel) {
+  const unit = getFieldNumberUnit(field);
+  const unitText = unit ? `（${unit}）` : "";
   return getNumericFormat(field) === "percent"
-    ? `${fallbackLabel}（百分比）`
-    : fallbackLabel;
+    ? `${fallbackLabel}${unitText}（百分比）`
+    : `${fallbackLabel}${unitText}`;
+}
+
+// "金额（元）" for a field read with a unit; the name stays when it already ends
+// with the unit: …u, …(u), …[u], …【u】, …/u, …_u, …-u or … u, compared after NFKC
+// and in lower case. A Latin unit must not follow a letter ("bag" has no kg).
+function formatFieldLabelWithUnit(field, unit) {
+  if (!unit) return field;
+  const name = String(field).normalize("NFKC").trim().toLowerCase();
+  const target = unit.toLowerCase();
+  const bracketed = [`(${target})`, `[${target}]`, `【${target}】`].some((ending) => name.endsWith(ending));
+  const bare = name.endsWith(target) && !(/^[a-z]/.test(target) && /[a-z]/.test(name.charAt(name.length - target.length - 1)));
+  return bracketed || bare ? field : `${field}（${unit}）`;
+}
+
+function formatFieldLabel(field) {
+  return formatFieldLabelWithUnit(field, getFieldNumberUnit(field));
+}
+
+// One line of "按单位读取的数字" for a buildNumberConversionSummary() item.
+function formatNumberConversion(item) {
+  const parts = [];
+  if (item.unitCount) parts.push(`按"${item.unit}"读取了 ${formatInteger(item.unitCount)} 个值（${item.unitSamples.join("、")}）`);
+  if (item.magnitudeCount) parts.push(`按万/亿换算了 ${formatInteger(item.magnitudeCount)} 个值`);
+  if (item.fullwidthCount) parts.push(`${formatInteger(item.fullwidthCount)} 个全角数字已按半角读取`);
+  if (item.conflictUnits.length) {
+    const units = item.conflictUnits.map(({ unit, count }) => `${unit}（${formatInteger(count)} 个）`);
+    parts.push(`同时出现 ${units.slice(0, -1).join("、")}和 ${units[units.length - 1]}，没有按单位读取，这些值不能读成数字。`);
+  }
+  return `「${item.field}」：${parts.join("；")}`;
+}
+
+// One line of "疑似数值列" for a state.numericLooking item.
+function formatNumericLookingHint(item) {
+  return `「${item.field}」：去掉缺失值和疑似缺失值后，${formatInteger(item.valueCount)} 个值里有 ${formatInteger(item.numericCount)} 个能读成数字（${formatPercent(item.ratio)}），其余的如 ${item.samples.join("、")}。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。`;
 }
 
 // Longest preview of one skipped title row, counted in characters.

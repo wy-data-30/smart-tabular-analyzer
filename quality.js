@@ -1,8 +1,8 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、缺失率等级，以及质量页使用的原始数据数值统计。
 
-function countConversionFailuresForValues(values, typeKey) {
+function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
-  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const convert = typeKey === "numeric" ? getFieldNumberParser(field) : toDate;
   return values.reduce((count, value) => (
     count + (!isMissing(value) && convert(value) === null ? 1 : 0)
   ), 0);
@@ -17,7 +17,8 @@ function countFieldConversionFailures(field, typeKey) {
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
   return countConversionFailuresForValues(
     state.rows.map((row) => row[field]).filter((value) => !isMissingOrConfirmed(value, confirmedKeys)),
-    typeKey
+    typeKey,
+    field
   );
 }
 
@@ -27,7 +28,7 @@ function getFieldConversionFailureSamples(field, typeKey) {
   if (profile?.conversionFailureSamplesByType) {
     return [...(profile.conversionFailureSamplesByType[typeKey] || [])];
   }
-  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const convert = typeKey === "numeric" ? getFieldNumberParser(field) : toDate;
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const samples = [];
   state.rows.forEach((row) => {
@@ -223,6 +224,41 @@ function estimateConfirmedProfile(profile, rows, currentKeys, nextKeys, numberFo
     conversionFailureCount: convertedCount === undefined ? 0 : counts.nonMissingCount - convertedCount,
     estimated: counts.estimated
   };
+}
+
+// Fields whose number strategy has a switch or a unit conflict, ignored fields
+// left out, in field order. Conflicting units run from most to fewest values,
+// ties by first appearance.
+function buildNumberConversionSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    const strategy = profile.numberStrategy;
+    if (profile.typeKey === "ignore" || !strategy || !(hasNumberStrategySwitch(strategy) || strategy.unitConflict)) return [];
+    const { unitCount, unitSamples, magnitudeCount, fullwidthCount } = profile.numberReadings;
+    const conflictUnits = strategy.unitConflict
+      ? Object.entries(strategy.units).map(([unit, count]) => ({ unit, count })).sort((a, b) => b.count - a.count)
+      : [];
+    if (!unitCount && !magnitudeCount && !fullwidthCount && !conflictUnits.length) return [];
+    return [{ field: profile.field, unit: strategy.unit, unitCount, unitSamples: [...unitSamples], magnitudeCount, fullwidthCount, conflictUnits }];
+  });
+}
+
+// A category field reads as numeric-looking when, without missing values and
+// placeholder spellings, at least this many values remain and their numeric share
+// is at least the minimum but below the automatic numeric threshold.
+const NUMERIC_LOOKING_MIN_VALUES = 5;
+const NUMERIC_LOOKING_MIN_RATIO = 0.5;
+const NUMERIC_LOOKING_MAX_RATIO = 0.8;
+
+// Numeric-looking fields among the applied category fields, in field order, from
+// each profile's numericLooking figures. Only a hint: types stay as they are.
+function buildNumericLookingSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey !== "category" || !profile.numericLooking) return [];
+    const { valueCount, numericCount, samples } = profile.numericLooking;
+    const ratio = valueCount ? numericCount / valueCount : 0;
+    if (valueCount < NUMERIC_LOOKING_MIN_VALUES || ratio < NUMERIC_LOOKING_MIN_RATIO || ratio >= NUMERIC_LOOKING_MAX_RATIO) return [];
+    return [{ field: profile.field, valueCount, numericCount, ratio, samples: [...samples] }];
+  });
 }
 
 function missingRateLevel() {

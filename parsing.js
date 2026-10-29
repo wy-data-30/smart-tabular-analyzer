@@ -1,4 +1,4 @@
-// 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。
+// 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
 
 const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
@@ -92,7 +92,95 @@ function hasPercentToken(value) {
   return /%$/.test(unsigned);
 }
 
-function toNumber(value) {
+// Full-width characters a number strategy reads as half-width. A fixed table, not
+// NFKC, so "①" and "²" never become digits.
+const FULLWIDTH_NUMBER_CHARS = Object.freeze({
+  "０": "0", "１": "1", "２": "2", "３": "3", "４": "4", "５": "5", "６": "6", "７": "7", "８": "8", "９": "9",
+  "，": ",", "．": ".", "－": "-", "＋": "+", "％": "%"
+});
+
+// Units a number strategy may read, longer spellings first. Latin letters match in
+// any case and compare in lower case. No "g": 4G / 5G and 8G / 16G are not grams.
+const NUMBER_UNITS = Object.freeze(["千克", "公斤", "小时", "分钟", "元", "克", "斤", "吨", "件", "个", "箱", "台", "人", "次", "秒", "天", "米", "岁", "kg", "cm", "mm", "km"]);
+
+// Sign, a plain or comma-grouped number, 万 / 亿 right after it, then optional
+// space and a unit.
+const NUMBER_WITH_UNIT_PATTERN = new RegExp(`^([+-]?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?|\\.\\d+))(万|亿)?(?:\\s*(${NUMBER_UNITS.join("|")}))?$`, "i");
+
+function toHalfwidthNumberText(text) {
+  return text.replace(/[０-９，．－＋％]/g, (char) => FULLWIDTH_NUMBER_CHARS[char]);
+}
+
+// { numberText, magnitude, unit } for a trimmed, half-width text with 万 / 亿, a
+// unit or both; otherwise null.
+function matchNumberWithUnit(text) {
+  const match = text.match(NUMBER_WITH_UNIT_PATTERN);
+  if (!match || (!match[2] && !match[3])) return null;
+  return { numberText: match[1], magnitude: match[2] || "", unit: (match[3] || "").toLowerCase() };
+}
+
+// A field's number strategy from its non-missing values. Only number-like values
+// decide, never their share of the column: one unit among them is adopted, two or
+// more spellings adopt none (unitConflict, with counts in units).
+function buildNumberStrategy(values) {
+  const units = new Map();
+  let allowMagnitude = false;
+  let fullwidth = false;
+  values.forEach((value) => {
+    if (typeof value !== "string") return;
+    const raw = value.trim();
+    const text = toHalfwidthNumberText(raw);
+    const match = matchNumberWithUnit(text);
+    if (text !== raw && (match || toPlainNumber(text) !== null)) fullwidth = true;
+    if (!match) return;
+    if (match.unit) units.set(match.unit, (units.get(match.unit) || 0) + 1);
+    if (match.magnitude) allowMagnitude = true;
+  });
+  return {
+    unit: units.size === 1 ? [...units.keys()][0] : "",
+    unitConflict: units.size > 1,
+    units: Object.fromEntries(units),
+    allowMagnitude,
+    fullwidth
+  };
+}
+
+function hasNumberStrategySwitch(strategy) {
+  return Boolean(strategy && (strategy.unit || strategy.allowMagnitude || strategy.fullwidth));
+}
+
+// Without a strategy, or with one that has no switch, the plain parser (v2.4.0).
+function toNumber(value, strategy) {
+  return hasNumberStrategySwitch(strategy) ? toNumberWithStrategy(value, strategy) : toPlainNumber(value);
+}
+
+// A one-argument parser for a strategy: toPlainNumber itself when it has no switch.
+function getNumberParser(strategy) {
+  return hasNumberStrategySwitch(strategy) ? (value) => toNumberWithStrategy(value, strategy) : toPlainNumber;
+}
+
+function toNumberWithStrategy(value, strategy) {
+  if (isMissing(value)) return null;
+  const raw = String(value).trim();
+  const text = strategy.fullwidth ? toHalfwidthNumberText(raw) : raw;
+  const plain = toPlainNumber(text);
+  if (plain !== null) return plain;
+  const match = matchNumberWithUnit(text);
+  if (!match || (match.unit && match.unit !== strategy.unit) || (match.magnitude && !strategy.allowMagnitude)) return null;
+  if (!match.magnitude) return toPlainNumber(match.numberText);
+  return shiftDecimalNumber(match.numberText, match.magnitude === "万" ? 4 : 8);
+}
+
+// 0.07万 is 700 exactly: the decimal point moves right as text, no float multiply.
+function shiftDecimalNumber(numberText, places) {
+  const [, sign, integerPart, fractionPart = ""] = numberText.replaceAll(",", "").match(/^([+-]?)(\d*)(?:\.(\d+))?$/);
+  const fraction = fractionPart.padEnd(places, "0");
+  const shifted = `${sign}${integerPart}${fraction.slice(0, places)}${fraction.length > places ? `.${fraction.slice(places)}` : ""}`;
+  const parsed = Number(shifted);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toPlainNumber(value) {
   if (isMissing(value)) return null;
   const raw = String(value).trim();
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(raw)) return null;

@@ -249,7 +249,8 @@ function buildReportData(now = new Date()) {
     missingRate: formatPercent(profile.missingRate),
     conversionFailureCount: profile.conversionFailureCount || 0,
     conversionFailureSamples: [...(profile.conversionFailureSamples || [])],
-    sampleValues: [...profile.sampleValues]
+    sampleValues: [...profile.sampleValues],
+    numberUnit: getFieldNumberUnit(profile.field)
   }));
   const numericStats = state.numericStats.map((stat) => ({
     field: stat.field,
@@ -274,7 +275,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.4.0",
+    version: "v2.5.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -325,7 +326,9 @@ function buildReportData(now = new Date()) {
         ...item,
         values: item.values.map((value) => ({ ...value, rowNumbers: [...value.rowNumbers] }))
       })),
-      placeholders: buildReportPlaceholders()
+      placeholders: buildReportPlaceholders(),
+      numberConversions: buildNumberConversionSummary(state.profiles),
+      numericLooking: state.numericLooking.map((item) => ({ ...item, samples: [...item.samples] }))
     },
     numericStats,
     categoryStats,
@@ -425,7 +428,7 @@ function buildReportDateTrends() {
 
     const firstValue = trend.values[0];
     const lastValue = trend.values[trend.values.length - 1];
-    const valueLabel = metricField ? `${metricField}${getDateChartAggregateLabel(aggregate)}` : "记录数";
+    const valueLabel = metricField ? `${formatFieldLabel(metricField)}${getDateChartAggregateLabel(aggregate)}` : "记录数";
     const firstDisplay = metricField
       ? formatFieldNumber(metricField, firstValue)
       : formatInteger(firstValue);
@@ -519,7 +522,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.4.0",
+    version: reportData.version || "v2.5.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -549,7 +552,9 @@ function normalizeReportSnapshot(reportData = {}) {
       missingCount: field.missingCount ?? 0,
       conversionFailureCount: field.conversionFailureCount ?? 0,
       conversionFailureSamples: Array.isArray(field.conversionFailureSamples) ? field.conversionFailureSamples : [],
-      sampleValues: Array.isArray(field.sampleValues) ? field.sampleValues : []
+      sampleValues: Array.isArray(field.sampleValues) ? field.sampleValues : [],
+      // Snapshots from before v2.5.0 have no number units.
+      numberUnit: typeof field.numberUnit === "string" ? field.numberUnit : ""
     })),
     quality: {
       ...quality,
@@ -566,7 +571,10 @@ function normalizeReportSnapshot(reportData = {}) {
       // Snapshots from before v2.4.0 have no placeholder check: null leaves it out.
       placeholders: Array.isArray(quality.placeholders?.confirmed) && Array.isArray(quality.placeholders?.pending)
         ? quality.placeholders
-        : null
+        : null,
+      // Snapshots from before v2.5.0 have no number sections: null leaves them out.
+      numberConversions: Array.isArray(quality.numberConversions) ? quality.numberConversions : null,
+      numericLooking: Array.isArray(quality.numericLooking) ? quality.numericLooking : null
     },
     numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
       ...item,
@@ -647,8 +655,34 @@ function buildReportPlaceholderSection({ confirmed, pending }) {
   };
 }
 
+// Field labels of a normalized snapshot, with the unit its fieldTypes recorded.
+function buildReportFieldLabeler(reportData) {
+  const units = new Map(reportData.fieldTypes.map((field) => [field.field, field.numberUnit]));
+  return (field) => formatFieldLabelWithUnit(field, units.get(field) || "");
+}
+
+// The lines of "按单位读取的数字" and "疑似数值列", the quality page's texts; an
+// empty list for a missing (pre-v2.5.0) or empty section.
+function buildReportNumberSections(quality) {
+  return {
+    conversions: (quality.numberConversions || []).map(formatNumberConversion),
+    numericLooking: (quality.numericLooking || []).map(formatNumericLookingHint)
+  };
+}
+
 function buildHtmlReport(reportData, chartImages = []) {
   reportData = normalizeReportSnapshot(reportData);
+  const fieldLabel = buildReportFieldLabeler(reportData);
+  const numberSections = buildReportNumberSections(reportData.quality);
+  // The summary counts problems only: numbers read by unit get their section, no count.
+  const numericLookingSummary = numberSections.numericLooking.length
+    ? `；疑似数值列：<strong>${escapeHtml(numberSections.numericLooking.length)}</strong> 个字段`
+    : "";
+  const numberSectionHtml = [
+    ["按单位读取的数字", numberSections.conversions],
+    ["疑似数值列", numberSections.numericLooking]
+  ].filter(([, lines]) => lines.length).map(([title, lines]) => `<h3>${title}</h3>
+    <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
   const sheetMeta = reportData.sheetName
     ? `<div><dt>工作表名称</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
@@ -695,7 +729,7 @@ function buildHtmlReport(reportData, chartImages = []) {
     : `<p class="empty">无适用的日期字段。</p>`;
   const customSection = reportData.customAnalysis.completed
     ? `
-      <p><strong>指标字段：</strong>${escapeHtml(reportData.customAnalysis.metricField)}　
+      <p><strong>指标字段：</strong>${escapeHtml(fieldLabel(reportData.customAnalysis.metricField))}　
       <strong>分组字段：</strong>${escapeHtml(reportData.customAnalysis.groupField)}
       ${reportData.customAnalysis.aggregateLabel ? `　<strong>聚合方式：</strong>${escapeHtml(reportData.customAnalysis.aggregateLabel)}` : ""}
       ${reportData.customAnalysis.dateField ? `　<strong>日期字段：</strong>${escapeHtml(reportData.customAnalysis.dateField)}` : ""}</p>
@@ -810,18 +844,19 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}。</p>
+    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}。</p>
     <h3>各字段缺失情况</h3>
     ${buildHtmlReportTable(
       ["字段", "类型", "缺失值", "缺失率"],
       reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate]),
       "无字段质量结果。"
     )}
+    ${numberSectionHtml}
     ${placeholderSectionHtml}
     <h3>数值异常值</h3>
     ${buildHtmlReportTable(
       ["字段", "异常值数量", "下界", "上界"],
-      reportData.quality.outliers.map((item) => [item.field, item.outlierCount, item.lowerBound, item.upperBound]),
+      reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
     ${idSectionHtml}
@@ -830,7 +865,7 @@ function buildHtmlReport(reportData, chartImages = []) {
     <h2>数值字段描述性统计</h2>
     ${buildHtmlReportTable(
       ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
-      reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
+      reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
   </section>
@@ -872,6 +907,12 @@ function buildHtmlReportTable(headers, rows, emptyMessage) {
 
 function buildMarkdownReport(reportData) {
   reportData = normalizeReportSnapshot(reportData);
+  const fieldLabel = buildReportFieldLabeler(reportData);
+  const numberSections = buildReportNumberSections(reportData.quality);
+  const numberSectionLines = [
+    ["按单位读取的数字", numberSections.conversions],
+    ["疑似数值列", numberSections.numericLooking]
+  ].filter(([, lines]) => lines.length).flatMap(([title, lines]) => [`### ${title}`, "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
   const idDuplicates = reportData.quality.idDuplicates;
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const idSectionLines = idSection
@@ -957,6 +998,7 @@ function buildMarkdownReport(reportData) {
     ...(placeholders && (placeholders.confirmed.length || placeholders.pending.length)
       ? [`- 疑似缺失值：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
       : []),
+    ...(numberSections.numericLooking.length ? [`- 疑似数值列：${numberSections.numericLooking.length} 个字段`] : []),
     "",
     "### 各字段缺失情况",
     "",
@@ -967,13 +1009,14 @@ function buildMarkdownReport(reportData) {
       )
       : "无字段质量结果。",
     "",
+    ...numberSectionLines,
     ...placeholderSectionLines,
     "### 数值异常值",
     "",
     reportData.quality.outliers.length
       ? buildMarkdownTable(
         ["字段", "异常值数量", "下界", "上界"],
-        reportData.quality.outliers.map((item) => [item.field, item.outlierCount, item.lowerBound, item.upperBound])
+        reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound])
       )
       : "未识别到数值字段，暂无可用数值统计。",
     "",
@@ -983,7 +1026,7 @@ function buildMarkdownReport(reportData) {
     reportData.numericStats.length
       ? buildMarkdownTable(
         ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
-        reportData.numericStats.map((item) => [item.field, item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
+        reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
       )
       : "未识别到数值字段，暂无可用数值统计。",
     "",
@@ -1021,7 +1064,7 @@ function buildMarkdownReport(reportData) {
   lines.push("", "## 自定义分组分析结果", "");
   if (reportData.customAnalysis.completed) {
     lines.push(
-      `- 指标字段：${escapeMarkdownText(reportData.customAnalysis.metricField)}`,
+      `- 指标字段：${escapeMarkdownText(fieldLabel(reportData.customAnalysis.metricField))}`,
       `- 分组字段：${escapeMarkdownText(reportData.customAnalysis.groupField)}`,
       ...(reportData.customAnalysis.aggregateLabel ? [`- 聚合方式：${escapeMarkdownText(reportData.customAnalysis.aggregateLabel)}`] : []),
       ...(reportData.customAnalysis.dateField ? [`- 日期字段：${escapeMarkdownText(reportData.customAnalysis.dateField)}`] : []),
