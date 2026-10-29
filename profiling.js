@@ -120,6 +120,17 @@ function parseFieldDate(field, value) {
   return toDate(value, getFieldProfile(field)?.dateStrategy || {});
 }
 
+// The number parser of a field, for callers to take once outside their row loops:
+// toPlainNumber itself when the field's strategy has no switch.
+function getFieldNumberParser(field) {
+  const strategy = getFieldProfile(field)?.numberStrategy;
+  return hasNumberStrategySwitch(strategy) ? (value) => toNumberWithStrategy(value, strategy) : toPlainNumber;
+}
+
+function parseFieldNumber(field, value) {
+  return getFieldNumberParser(field)(value);
+}
+
 function getDateGranularity(field) {
   return getFieldProfile(field)?.dateStrategy?.granularity || "day";
 }

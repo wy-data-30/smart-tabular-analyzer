@@ -381,6 +381,125 @@ test("numeric parsing handles common tabular formats safely", () => {
   assert.equal(evaluate('toNumber("2026-07-18")'), null);
 });
 
+// Values a number strategy may convert, with the result under the strategy of a
+// column holding only that value.
+const NUMBER_STRATEGY_CONVERTS = [
+  ["2200元", 2200], ["2,200元", 2200], ["2200 元", 2200], ["-2200元", -2200],
+  ["1.2万", 12000], ["1.2万元", 12000], ["3亿元", 300000000], ["0.07万", 700], ["1.15亿", 115000000], ["-0.5万", -5000],
+  ["１２３", 123], ["１，２００", 1200], ["１２．５％", 0.125], ["－５", -5],
+  ["5KG", 5], ["5Kg", 5], ["30天", 30], ["2小时", 2], ["3人", 3], ["25岁", 25], ["3千克", 3]
+];
+const NUMBER_STRATEGY_REJECTS = [
+  "4G", "8G", "500g", "2楼", "3号线", "第3名", "3人间", "90分", "5m", "3块", "2024年", "5月", "1万2", "1.2 万", "约500",
+  "500+", "3-5", "1.2.3", "①", "²", "-", "--", "－", "－－", "—", "N/A", "2200元/件", "￥2200元", "(2200元)"
+];
+
+test("number strategies convert whitelisted units, 万/亿 and full-width digits", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__cases = NUMBER_STRATEGY_CONVERTS;
+  const results = JSON.parse(evaluate(`JSON.stringify(__cases.map(([value]) => [value, toNumber(value), toNumber(value, buildNumberStrategy([value]))]))`));
+  results.forEach(([value, plain, converted], index) => {
+    assert.equal(plain, null, `${value} without a strategy`);
+    assert.strictEqual(converted, NUMBER_STRATEGY_CONVERTS[index][1], value);
+  });
+});
+
+test("万 and 亿 shift the decimal point and give exact integers", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__cases = [["0.07万", 700], ["1.15亿", 115000000], ["1.2万", 12000], ["-0.5万", -5000], ["1.2万元", 12000], ["3亿元", 300000000], ["1,234.5678万", 12345678]];
+  const results = JSON.parse(evaluate(`JSON.stringify(__cases.map(([value]) => {
+    const number = toNumber(value, buildNumberStrategy([value]));
+    return [number, Number.isInteger(number)];
+  }))`));
+  results.forEach(([number, isInteger], index) => {
+    assert.strictEqual(number, context.__cases[index][1], context.__cases[index][0]);
+    assert.equal(isInteger, true, context.__cases[index][0]);
+  });
+});
+
+test("number strategies leave units off the list, other suffixes and placeholders unconverted", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__cases = NUMBER_STRATEGY_REJECTS;
+  const converted = JSON.parse(evaluate(`JSON.stringify(__cases.filter((value) => {
+    // Every whitelisted unit (and none), each with 万/亿 and full width on.
+    const widest = ["", ...NUMBER_UNITS].map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }));
+    return toNumber(value) !== null
+      || toNumber(value, buildNumberStrategy([value])) !== null
+      || widest.some((strategy) => toNumber(value, strategy) !== null);
+  }))`));
+  assert.deepEqual(converted, []);
+});
+
+test("without a strategy, or with one that has no switch, toNumber() is the plain parser", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__values = ["1,234.50", "$2,000", "(1,250)", "25%", "-3.5", "1e308", "1e309", "12$34", "1,23", "1 234.50", 42, "", "  ", null, undefined,
+    "not-a-number", "2026-07-18", "￥1,234.50", "(10%)", ...NUMBER_STRATEGY_CONVERTS.map(([value]) => value), ...NUMBER_STRATEGY_REJECTS];
+  const mismatches = JSON.parse(evaluate(`JSON.stringify(__values.filter((value) => {
+    const plain = toPlainNumber(value);
+    return toNumber(value) !== plain
+      || toNumber(value, undefined) !== plain
+      || toNumber(value, buildNumberStrategy([])) !== plain
+      || toNumber(value, { unit: "", unitConflict: true, units: { kg: 1, 千克: 1 }, allowMagnitude: false, fullwidth: false }) !== plain;
+  }).map(String))`));
+  assert.deepEqual(mismatches, []);
+});
+
+test("a number strategy takes one unit, drops conflicting spellings and ignores the column share", () => {
+  const { evaluate } = createScriptContext();
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5kg", "500千克"]))')), {
+    unit: "", unitConflict: true, units: { kg: 1, 千克: 1 }, allowMagnitude: false, fullwidth: false
+  });
+  assert.deepEqual(JSON.parse(evaluate(`JSON.stringify((() => {
+    const strategy = buildNumberStrategy(["￥2200", "2200元", "1800"]);
+    return { unit: strategy.unit, values: ["￥2200", "2200元", "1800"].map((value) => toNumber(value, strategy)) };
+  })())`)), { unit: "元", values: [2200, 2200, 1800] });
+  // One value is enough: the 80 percent threshold decides the type, not the strategy.
+  assert.equal(evaluate('buildNumberStrategy(["张三", "李四", "王五", "3人"]).unit'), "人");
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5KG", "2kg", "1.2万", "３"]))')), {
+    unit: "kg", unitConflict: false, units: { kg: 2 }, allowMagnitude: true, fullwidth: true
+  });
+});
+
+test("placeholder spellings never convert or give number strategy evidence (contract 17 premise)", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const toFullWidth = (text) => text.replace(/[!-~]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0xfee0));
+    const keys = [...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe];
+    const forms = keys.flatMap((key) => [key, toFullWidth(key), " " + toFullWidth(key) + " "]);
+    const strategies = [
+      {},
+      { unit: "", unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true },
+      ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
+    ];
+    return {
+      formCount: forms.length,
+      converted: forms.filter((form) => strategies.some((strategy) => toNumber(form, strategy) !== null)),
+      matched: forms.filter((form) => matchNumberWithUnit(form.trim()) || matchNumberWithUnit(toHalfwidthNumberText(form.trim()))),
+      strategy: buildNumberStrategy(forms)
+    };
+  })())`));
+  assert.equal(result.formCount, 57);
+  assert.deepEqual(result.converted, []);
+  assert.deepEqual(result.matched, []);
+  assert.deepEqual(result.strategy, { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: false });
+});
+
+test("getFieldNumberParser() is the plain parser unless the field's strategy has a switch", () => {
+  const { evaluate } = createScriptContext();
+  evaluate(`state.profiles = [
+    { field: "金额", numberStrategy: buildNumberStrategy(["2200元", "800"]) },
+    { field: "数量", numberStrategy: buildNumberStrategy(["3", "5"]) },
+    { field: "备注" }
+  ]`);
+  assert.equal(evaluate('getFieldNumberParser("数量") === toPlainNumber'), true);
+  assert.equal(evaluate('getFieldNumberParser("备注") === toPlainNumber'), true);
+  assert.equal(evaluate('getFieldNumberParser("不存在") === toPlainNumber'), true);
+  assert.equal(evaluate('getFieldNumberParser("金额") === toPlainNumber'), false);
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["2200元", "800", "5kg", "N/A"].map(getFieldNumberParser("金额")))')), [2200, 800, null, null]);
+  assert.equal(evaluate('parseFieldNumber("金额", "3500元")'), 3500);
+  assert.equal(evaluate('parseFieldNumber("数量", "3500元")'), null);
+});
+
 test("percentage and currency formats are parsed and classified correctly", () => {
   const { evaluate } = createScriptContext();
 
