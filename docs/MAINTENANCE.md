@@ -77,7 +77,13 @@
    ```
 
 4. 从同一个包中取得许可证文件，替换 `vendor/licenses/` 中对应的文件并核对许可证类型。
-5. 同步修改 `tests/core.test.cjs` 中的文件名，运行完整回归，并在浏览器中实际加载页面。升级 PapaParse 时，还要对照新版源码确认 `findCsvRecordLineNumbers()` 依赖的两条行为没变：`skipEmptyLines: true` 跳过的是只有一个空字符串的记录、并且在取表头之前过滤；字符串输入时 `step` 同步调用，`meta.cursor` 是这条记录结束（含换行）之后的位置。stage3 夹具和行号测试要全部通过。
+5. 同步修改 `tests/core.test.cjs` 中的文件名，运行完整回归，并在浏览器中实际加载页面。升级 PapaParse 时，还要对照新版源码确认导入层依赖的这些行为没变（见 `docs/ARCHITECTURE.md` 的“数据行的文件行号”）：
+   - `skipEmptyLines: true` 跳过的是只有一个空字符串的记录、并且在取表头之前过滤；字符串输入时 `step` 同步调用，`meta.cursor` 是这条记录结束（含换行）之后的位置（`findCsvRecordLines()`）。
+   - 错误的 `row` 有两种含义：FieldMismatch（TooFewFields / TooManyFields）是 `results.data` 的下标（跳过空记录、不含表头，字符串输入一次读完、不跨块累加）；Quotes（InvalidQuotes / MissingQuotes）是解析器已读到的全部记录数（含表头和空记录）。`parseErrorLineNumber()` 和 `findCsvRecordLine()` 按这个区分。
+   - `step` 回调的第二个参数有 `abort()`，调用后不再读后面的记录（`findCsvRecordLine()`、`csvHasMoreDataRecordsThan()` 靠它只读到需要的地方）。
+   - `preview` 计的是解析器读到的全部记录（含空记录，表头模式下再多 1 条给表头），在过滤空记录之前截断；截断时 `meta.truncated` 为 `true`（只剩空行时也为 `true`）。空记录占满预览的补救路径依赖这两点。
+   - 错误 code 的集合（MissingQuotes、InvalidQuotes、UndetectableDelimiter、TooManyFields、TooFewFields）和 `UndetectableDelimiter` 的出现条件（前 10 行平均列数不超过 1.99）；新增 code 时，`formatCsvWarningMessage()` 没有中文消息，会退回 PapaParse 的原文。
+   stage3 夹具、行号和调用次数的测试要全部通过。
 6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
 
 不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。
@@ -124,7 +130,7 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 ### CSV 行列错位或字段丢失
 
-检查 PapaParse 的 `errors`、`TooManyFields`、引号和表头。项目会拒绝可能丢失额外单元格的数据，不应把该错误降级为普通警告。
+检查 PapaParse 的 `errors`、`TooManyFields`、引号和表头。项目会拒绝可能丢失额外单元格的数据，不应把该错误降级为普通警告。报错和解析警告里的“第 N 行”是记事本里这条记录开始的行；质量页“CSV 解析警告”一行的“查看”能列出每条警告和对应的行。分号、制表符或竖线分隔的文件被读成 1 列时，警告里会说表头里有哪种分隔符。
 
 表头上方有标题行时：第一次解析报出表头类错误（数据列多于表头、空表头下有数据、重复表头）后，会用 `findCsvHeaderBelowTitleRows()` 自动检测表头行，并从表头行切开文本重新解析一次；检测或重试失败时显示第一次的报错，如果第一个非空行像标题，报错后面会附加“第 N 行看起来像标题……”的提示。规则见 `docs/ARCHITECTURE.md` 的“表头行检测”。
 

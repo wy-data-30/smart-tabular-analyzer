@@ -1,4 +1,4 @@
-// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、导出门禁、文件名和下载。
+// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。
 
 const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",

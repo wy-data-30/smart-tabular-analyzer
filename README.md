@@ -25,12 +25,14 @@ The project is a static website with no backend service, database, account syste
 
 - Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages.
 - Skip title, note, and blank rows above the header automatically, and state in the status bar and reports which row the header was found on.
-- Preview the first 10 rows and summarize the dataset size, field composition, missing values, and duplicate rows.
+- Describe CSV parse warnings (such as a row with fewer cells than the header) in Chinese with the file line they are on; the quality page shows how many warnings there are and how many lines they cover, and the “more data columns than the header” and “unclosed quote” errors name their line too. A file separated by semicolons, tabs, or bars that comes out as a single column gets a hint.
+- Preview the data page by page (50 rows a page, with the file row in the first column, following the filters) and summarize the dataset size, field composition, missing values, and duplicate rows.
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
 - Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
 - Check fields of type ID for duplicate values: the quality page and reports list up to 10 duplicate values per field with how often each appears, the file rows it appears on (the Excel row, or the CSV line where the record starts), and how many of those rows are identical. ID columns whose values mostly repeat, such as a user ID in an event log, get a short note instead of a list.
 - Find values such as N/A, NULL, or — that are often written for “no data” (suspected missing values): the quality page lists each one per field with its count, file rows, and how the missing count and the field type would change once it is confirmed. Nothing changes until you confirm; after confirming one value in one field (or all common values at once), it is treated as missing, so it no longer counts as a conversion failure and stays out of statistics, Top 10 lists, groups, filter options, and the ID duplicate check. Every confirmation can be undone. The original data, the data preview, and exported CSV files keep the original text, and reports list which values were treated as missing and which are still unconfirmed.
 - Read numbers written with a unit, 万 / 亿, or full-width digits, column by column: a column of amounts such as 2200元 is read in 元 (yuan), 1.2万 is read as 12000 and 3亿 as 300000000, and full-width digits such as １２３ are read as 123. The recognized units are 元; kg, 克, 千克, 公斤, 斤, 吨; 件, 个, 箱, 台, 人, 次; 秒, 分钟, 小时, 天; 米, cm, mm, km; and 岁 (Latin letters in any case). Statistics, chart titles and axes, and reports show the unit after the field name, such as “金额（元）”; the data preview and exported CSV files keep the original text. The quality page lists which fields were read this way (“按单位读取的数字”, numbers read by unit) and points out category fields where most values, but not enough for a numeric field, can be read as numbers (“疑似数值列”, numeric-looking fields), with up to three values that could not be read.
+- See the problem rows: next to each count on the quality page, “查看” (view) lists the rows behind it — missing values and format problems per field, outliers per numeric field, complete duplicate rows by group (the first row of each group marked as kept, as in the deduplicated export), every row of every duplicate ID value, suspected missing values per field and value (confirmed ones too), and CSV parse warnings. Each row shows its file row, a short note, and all original columns, with the problem cell highlighted, 50 rows a page, and a list to switch categories; “导出这一类” (export this category) writes every row of the category to CSV, with “文件行号” (file row) and “说明” (note) as the first two columns and the same BOM and formula-prefix neutralizing. The listed rows come from the same checks as the quality counts, use the original data, and do not follow the filters.
 - Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
 - Apply categorical, numeric, and date filters; run grouped analysis; or use scenario templates for common structured datasets.
 - Produce data-grounded observations without inferring external business context; trend observations compare record counts and flag a possibly incomplete last month or year, and the category observation skips fields whose values are too scattered.
@@ -135,11 +137,11 @@ npm run test:regression
 ├── profiling.js                 # Field type detection and field profiles
 ├── format.js                    # Display formatting and HTML escaping
 ├── stats.js                     # Descriptive stats, IQR, grouping, trends
-├── quality.js                   # Conversion failures, duplicates, ID duplicates, missing rates
+├── quality.js                   # Conversion failures, duplicates, ID duplicates, missing rates, problem rows
 ├── app.js                       # State, DOM map, refresh paths, rendering
 ├── importer.js                  # CSV / Excel import
 ├── templates.js                 # Scenario templates
-├── report.js                    # Reports and CSV export
+├── report.js                    # Reports, CSV export and problem-row export
 ├── script.js                    # Startup: self-check and event bindings (loads last)
 ├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
@@ -174,7 +176,8 @@ npm run test:regression
 - A field named in 万元 whose values are written like 1.2万 is still read in 元, as 12000.
 - In accounting formats “-” usually means 0, but it is still listed as a suspected missing value and never read as 0.
 - Excel cells are read by their stored value: an ID shown as 001012 through a number format is checked and shown as 1012, and the number 1012 and the text 1012 count as the same ID.
-- CSV row numbers count text lines, as a plain-text editor shows them. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
+- CSV row numbers count text lines, as a plain-text editor shows them; data rows, parse warnings, and errors all name the line where the record starts. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
+- Problem rows can be viewed and exported on the quality page only; HTML and Markdown reports do not list them, and there is no view of all problem rows together.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.
