@@ -21,11 +21,17 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
   const numberStrategy = buildNumberStrategy(nonMissingValues);
   const parseNumber = getNumberParser(numberStrategy);
   const numberReadings = { unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 0 };
+  // Figures for the numeric-looking hint, without any placeholder spelling. They
+  // never convert to numbers, so only failed values need placeholderKey().
+  const numericLookingSamples = [];
+  let placeholderFailureCount = 0;
   const numericValues = [];
   nonMissingValues.forEach((value) => {
     const number = parseNumber(value);
     if (number === null) {
       addConversionFailureSample(conversionFailureSamplesByType.numeric, value);
+      if (placeholderKey(value)) placeholderFailureCount += 1;
+      else addConversionFailureSample(numericLookingSamples, value);
       return;
     }
     numericValues.push(number);
@@ -84,6 +90,11 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     dateStrategy,
     numberStrategy,
     numberReadings,
+    numericLooking: {
+      valueCount: nonMissingCount - placeholderFailureCount,
+      numericCount: numericValues.length,
+      samples: numericLookingSamples
+    },
     numericFormat,
     sampleValues,
     conversionFailuresByType,

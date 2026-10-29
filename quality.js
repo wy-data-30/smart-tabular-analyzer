@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、疑似数值列、缺失率等级，以及质量页使用的原始数据数值统计。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -224,6 +224,25 @@ function estimateConfirmedProfile(profile, rows, currentKeys, nextKeys, numberFo
     conversionFailureCount: convertedCount === undefined ? 0 : counts.nonMissingCount - convertedCount,
     estimated: counts.estimated
   };
+}
+
+// A category field reads as numeric-looking when, without missing values and
+// placeholder spellings, at least this many values remain and their numeric share
+// is at least the minimum but below the automatic numeric threshold.
+const NUMERIC_LOOKING_MIN_VALUES = 5;
+const NUMERIC_LOOKING_MIN_RATIO = 0.5;
+const NUMERIC_LOOKING_MAX_RATIO = 0.8;
+
+// Numeric-looking fields among the applied category fields, in field order, from
+// each profile's numericLooking figures. Only a hint: types stay as they are.
+function buildNumericLookingSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey !== "category" || !profile.numericLooking) return [];
+    const { valueCount, numericCount, samples } = profile.numericLooking;
+    const ratio = valueCount ? numericCount / valueCount : 0;
+    if (valueCount < NUMERIC_LOOKING_MIN_VALUES || ratio < NUMERIC_LOOKING_MIN_RATIO || ratio >= NUMERIC_LOOKING_MAX_RATIO) return [];
+    return [{ field: profile.field, valueCount, numericCount, ratio, samples: [...samples] }];
+  });
 }
 
 function missingRateLevel() {

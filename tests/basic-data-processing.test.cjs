@@ -2694,3 +2694,88 @@ test("the sales template sums yuan amounts like the main analysis", async () => 
   assert.deepEqual(result.trend, [3560, 4204]);
   assert.deepEqual(result.genericTrend, [3560, 4204]);
 });
+
+// Numeric-looking category fields: placeholder spellings (confirmed or not) and
+// missing values are left out of the count, the share and the samples.
+const numericLooking = (evaluate) => JSON.parse(evaluate("JSON.stringify(state.numericLooking)"));
+
+test("the reported amounts with N/A and 约500 are not numeric-looking: without N/A, 4 of 5 is the numeric threshold", () => {
+  const scope = commitColumns({ 金额: AMOUNT_WITH_NA });
+  assert.equal(fieldFigures(scope.evaluate, "金额").typeKey, "category");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getFieldProfile("金额").numericLooking)')), { valueCount: 5, numericCount: 4, samples: ["约500"] });
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("floors 1, 2, 3, B1, B2 are numeric-looking (an accepted false hint)", () => {
+  const scope = commitColumns({ 楼层: ["1", "2", "3", "B1", "B2"] });
+  assert.deepEqual(numericLooking(scope.evaluate), [{ field: "楼层", valueCount: 5, numericCount: 3, ratio: 0.6, samples: ["B1", "B2"] }]);
+});
+
+test("a year column with dashes is not numeric-looking", () => {
+  const scope = commitColumns({ 年份: YEARS_WITH_DASHES });
+  assert.equal(fieldFigures(scope.evaluate, "年份").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("numeric-looking fields list up to three unconvertible samples and never a placeholder spelling", () => {
+  const scope = commitColumns({
+    评分: ["1", "N/A", "2", "5", "—", "4", "非常愿意", "一般", "3", "-", "", "Ｎ／Ａ"],
+    金额: ["1200", "800", "面议", "1500", "面议", "900", "700", "面议", "650", "1100", "N/A", "—"],
+    报价: ["1200", "待定", "800", "待定", "1500", "待定", "NULL", "", "无", "--", "", "n/a"],
+    价格: ["1200元", "800", "约500", "待定", "1500元", "900", "N/A", "—", "", "", "", ""]
+  });
+  assert.deepEqual(numericLooking(scope.evaluate), [
+    { field: "评分", valueCount: 7, numericCount: 5, ratio: 5 / 7, samples: ["非常愿意", "一般"] },
+    { field: "金额", valueCount: 10, numericCount: 7, ratio: 0.7, samples: ["面议"] },
+    { field: "报价", valueCount: 6, numericCount: 3, ratio: 0.5, samples: ["待定"] },
+    { field: "价格", valueCount: 6, numericCount: 4, ratio: 4 / 6, samples: ["约500", "待定"] }
+  ]);
+  const placeholderSamples = JSON.parse(scope.evaluate("JSON.stringify(state.numericLooking.flatMap((item) => item.samples).filter((sample) => placeholderKey(sample)))"));
+  assert.deepEqual(placeholderSamples, []);
+});
+
+test("a field with only four values is not numeric-looking", () => {
+  const scope = commitColumns({ 金额: ["1200", "800", "约500", "1500"] });
+  assert.equal(fieldFigures(scope.evaluate, "金额").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});
+
+test("numeric-looking hints follow applied types and confirmations, and filters keep them", () => {
+  const scope = commitColumns({
+    楼层: ["1", "2", "3", "B1", "B2", "1", "2", "3", "4", "B1", "1", "2"],
+    房号: ["101", "102", "103", "104", "105", "106", "107", "A1", "B2", "C3", "D4", "N/A"]
+  });
+  const fields = () => numericLooking(scope.evaluate).map((item) => item.field);
+  // 房号 starts as an ID: 12 distinct values, 7 of 12 numeric.
+  assert.equal(fieldFigures(scope.evaluate, "房号").typeKey, "id");
+  assert.deepEqual(fields(), ["楼层"]);
+
+  scope.evaluate('stageFieldTypeChange("楼层", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(fields(), []);
+  scope.evaluate('stageFieldTypeChange("楼层", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(fields(), []);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fields(), ["楼层"]);
+
+  // Confirming N/A leaves 11 values, so 房号 is no longer an ID but a category.
+  scope.evaluate('confirmPlaceholder("房号", "N/A")');
+  assert.equal(fieldFigures(scope.evaluate, "房号").typeKey, "category");
+  assert.deepEqual(numericLooking(scope.evaluate)[1], { field: "房号", valueCount: 11, numericCount: 7, ratio: 7 / 11, samples: ["A1", "B2", "C3"] });
+  scope.evaluate('undoPlaceholderConfirmation("房号", "N/A")');
+  assert.deepEqual(fields(), ["楼层"]);
+
+  const before = scope.evaluate("state.numericLooking");
+  applyFilterState(scope, { category: { field: "楼层", values: ["1"] } });
+  assert.equal(scope.evaluate("state.numericLooking"), before);
+  assert.deepEqual(fields(), ["楼层"]);
+});
+
+test("numeric-looking hints are cleared on reset and replaced on every import", () => {
+  const scope = commitColumns({ 楼层: ["1", "2", "3", "B1", "B2"] });
+  assert.equal(numericLooking(scope.evaluate).length, 1);
+  commitRows(scope, ["金额"], ["1", "2", "3", "4", "5"].map((value) => ({ 金额: value })), "next.csv");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+  commitRows(scope, ["楼层"], ["1", "2", "3", "B1", "B2"].map((value) => ({ 楼层: value })), "again.csv");
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(numericLooking(scope.evaluate), []);
+});

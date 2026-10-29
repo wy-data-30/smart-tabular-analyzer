@@ -19,6 +19,9 @@ const state = {
   // buildPlaceholderSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   placeholders: [],
+  // buildNumericLookingSummary() of the profiles; imports, field configuration
+  // and placeholder confirmations rebuild it, filters do not.
+  numericLooking: [],
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -285,6 +288,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.duplicateRows = countDuplicateRows(rows, fields);
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
+  state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   state.numericStats = buildNumericStats(state.filteredRows);
   state.qualityNumericStats = buildNumericStats(state.rows);
@@ -1064,6 +1068,7 @@ function refreshFilteredAnalysis() {
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
+  state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1750,6 +1755,7 @@ function resetAnalysisState() {
   state.idDuplicates = [];
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
+  state.numericLooking = [];
   state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];
