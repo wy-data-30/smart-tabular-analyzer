@@ -189,9 +189,18 @@
         </div>
         <div id="overviewCards" class="metric-grid"></div>
         <div class="module-subsection">
-          <h3 class="subsection-title">前 10 行数据预览</h3>
+          <h3 class="subsection-title">数据预览</h3>
           <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动">
-            <table id="previewTable" aria-label="前 10 行数据预览"></table>
+            <table id="previewTable" aria-label="数据预览"></table>
+          </div>
+          <div class="row-pager">
+            <p id="previewPageInfo" class="row-pager-info" aria-live="polite"></p>
+            <div class="row-pager-buttons">
+              <button id="previewFirstPage" class="secondary-button" type="button" disabled>首页</button>
+              <button id="previewPrevPage" class="secondary-button" type="button" disabled>上一页</button>
+              <button id="previewNextPage" class="secondary-button" type="button" disabled>下一页</button>
+              <button id="previewLastPage" class="secondary-button" type="button" disabled>末页</button>
+            </div>
           </div>
         </div>
       </section>

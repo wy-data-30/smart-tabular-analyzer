@@ -34,6 +34,9 @@ const state = {
   // Row object -> file row (Excel row, or the CSV line where the record starts),
   // set only by commitTabularData(); read it through getSourceRowNumber().
   sourceRowNumbers: new WeakMap(),
+  // Data preview page (1-based); renderPreview() clamps it. Imports, filters and
+  // field configuration go back to page 1.
+  previewPage: 1,
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -75,6 +78,11 @@ const dom = {
   overviewCards: document.getElementById("overviewCards"),
   insights: document.getElementById("insights"),
   previewTable: document.getElementById("previewTable"),
+  previewPageInfo: document.getElementById("previewPageInfo"),
+  previewFirstPage: document.getElementById("previewFirstPage"),
+  previewPrevPage: document.getElementById("previewPrevPage"),
+  previewNextPage: document.getElementById("previewNextPage"),
+  previewLastPage: document.getElementById("previewLastPage"),
   schemaTable: document.getElementById("schemaTable"),
   fieldConfigMessage: document.getElementById("fieldConfigMessage"),
   applyFieldConfig: document.getElementById("applyFieldConfig"),
@@ -268,6 +276,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
+  state.previewPage = 1;
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
   state.headerDetection = buildHeaderDetectionState(headerDetection);
@@ -473,22 +482,71 @@ function renderInsightGroups(insights) {
   `;
 }
 
+const ROW_TABLE_PAGE_SIZE = 50;
+
+// One page of rowCount rows: page clamped to 1..pageCount (anything else reads as 1),
+// and the slice bounds of that page.
+function getRowPage(rowCount, page) {
+  const pageCount = Math.max(1, Math.ceil(rowCount / ROW_TABLE_PAGE_SIZE));
+  const wanted = Math.floor(Number(page));
+  const current = Number.isFinite(wanted) ? Math.min(Math.max(wanted, 1), pageCount) : 1;
+  return { page: current, pageCount, start: (current - 1) * ROW_TABLE_PAGE_SIZE, end: current * ROW_TABLE_PAGE_SIZE };
+}
+
+// The page a pager button leads to: first, prev, next or last.
+function movePage(action, page, pageCount) {
+  if (action === "first") return 1;
+  if (action === "prev") return Math.max(1, page - 1);
+  if (action === "next") return Math.min(pageCount, page + 1);
+  if (action === "last") return pageCount;
+  return page;
+}
+
+// Pager text "第 X / Y 页，共 …" and its buttons: first and previous disabled on the
+// first page, next and last on the last one. controls: { info, first, prev, next, last }.
+function renderPager(controls, page, pageCount, totalText) {
+  controls.info.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${totalText}`;
+  controls.first.disabled = page <= 1;
+  controls.prev.disabled = page <= 1;
+  controls.next.disabled = page >= pageCount;
+  controls.last.disabled = page >= pageCount;
+}
+
+// Table HTML of one page of rows: the file row ("—" when the row has none), then
+// every field as displayed and escaped. entries: [{ row, line }]. Pure: no DOM, no state.
+function buildRowTableHtml(fields, entries) {
+  return `
+    <thead>
+      <tr><th>文件行号</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
+    </thead>
+    <tbody>
+      ${entries.map((entry) => `<tr><td>${entry.line === null || entry.line === undefined ? "—" : escapeHtml(entry.line)}</td>${fields.map((field) => `<td>${escapeHtml(displayValue(entry.row[field]))}</td>`).join("")}</tr>`).join("")}
+    </tbody>
+  `;
+}
+
+// One page of the analysis rows (they follow the filters), state.previewPage clamped.
 function renderPreview() {
-  const previewRows = getAnalysisRows().slice(0, 10);
-  if (!previewRows.length) {
+  const rows = getAnalysisRows();
+  const { page, pageCount, start, end } = getRowPage(rows.length, state.previewPage);
+  state.previewPage = page;
+  renderPager(
+    { info: dom.previewPageInfo, first: dom.previewFirstPage, prev: dom.previewPrevPage, next: dom.previewNextPage, last: dom.previewLastPage },
+    page,
+    pageCount,
+    `${formatInteger(rows.length)} 行`
+  );
+  if (!rows.length) {
     dom.previewTable.innerHTML = emptyTable("当前筛选条件下没有可预览的数据。");
     return;
   }
-  dom.previewTable.innerHTML = `
-    <thead>
-      <tr>${state.fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
-    </thead>
-    <tbody>
-      ${previewRows.map((row) => `
-        <tr>${state.fields.map((field) => `<td>${escapeHtml(displayValue(row[field]))}</td>`).join("")}</tr>
-      `).join("")}
-    </tbody>
-  `;
+  dom.previewTable.innerHTML = buildRowTableHtml(state.fields, rows.slice(start, end).map((row) => ({ row, line: getSourceRowNumber(row) })));
+}
+
+function goToPreviewPage(action) {
+  const { page, pageCount } = getRowPage(getAnalysisRows().length, state.previewPage);
+  state.previewPage = movePage(action, page, pageCount);
+  renderPreview();
 }
 
 function renderSchema() {
@@ -1060,6 +1118,7 @@ function refreshFilteredAnalysis() {
   updateExportButtons();
   state.numericStats = buildNumericStats(getAnalysisRows());
   state.categoryStats = buildCategoryStats(getAnalysisRows());
+  state.previewPage = 1;
   renderOverview();
   renderFilterCounts();
   renderInsights();
@@ -1087,6 +1146,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.numericStats = buildNumericStats(getAnalysisRows());
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.categoryStats = buildCategoryStats(getAnalysisRows());
+  state.previewPage = 1;
   renderOverview();
   renderInsights();
   renderPreview();
@@ -1784,6 +1844,7 @@ function resetAnalysisState() {
   state.numberFormatHints = Object.create(null);
   state.headerDetection = null;
   state.sourceRowNumbers = new WeakMap();
+  state.previewPage = 1;
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
@@ -1806,6 +1867,10 @@ function resetAnalysisState() {
   dom.overviewCards.innerHTML = "";
   dom.insights.innerHTML = "";
   dom.previewTable.innerHTML = "";
+  dom.previewPageInfo.textContent = "";
+  [dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage].forEach((button) => {
+    button.disabled = true;
+  });
   dom.schemaTable.innerHTML = "";
   dom.fieldConfigMessage.textContent = "";
   dom.fieldConfigMessage.className = "field-config-message";

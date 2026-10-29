@@ -883,6 +883,33 @@ body.has-results #statusPanel.success {
   -webkit-overflow-scrolling: touch;
 }
 
+.row-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.row-pager-info {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.row-pager-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.row-pager-buttons button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
 .table-wrap.compact {
   max-height: 390px;
   overflow: auto;

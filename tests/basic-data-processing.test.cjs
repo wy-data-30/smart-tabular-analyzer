@@ -3427,3 +3427,106 @@ test("parse-warning lists show rows that were imported and say when there is non
   assert.equal(clean.evaluate('listProblemRows({ kind: "parseWarnings" })'), null);
   assert.equal(clean.evaluate('listProblemCategories().some((category) => category.kind === "parseWarnings")'), false);
 });
+
+// v2.6.0: the data preview pages through the analysis rows, 50 at a time, with the
+// file row of each row in front.
+const PREVIEW_CITIES = ["上海", "北京", "广州"];
+const previewCsv = () => `编号,城市\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${PREVIEW_CITIES[index % 3]}`).join("\r\n")}\r\n`;
+// [file row, 编号] of each preview row, and the pager.
+const previewState = (scope) => ({
+  rows: [...scope.elements.get("previewTable").innerHTML.matchAll(/<tr><td>([^<]*)<\/td><td>([^<]*)<\/td>/g)].map((match) => [match[1], match[2]]),
+  info: scope.elements.get("previewPageInfo").textContent,
+  disabled: ["previewFirstPage", "previewPrevPage", "previewNextPage", "previewLastPage"].map((id) => scope.elements.get(id).disabled)
+});
+
+test("the data preview shows 50 rows a page with file rows and moves between pages", async () => {
+  const scope = await importCsvFile(previewCsv(), "preview.csv");
+  let shown = previewState(scope);
+  assert.equal(shown.rows.length, 50);
+  assert.deepEqual(shown.rows[0], ["2", "R1"]);
+  assert.deepEqual(shown.rows[49], ["51", "R50"]);
+  assert.equal(shown.info, "第 1 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [true, true, false, false]);
+  assert.match(scope.elements.get("previewTable").innerHTML, /<th>文件行号<\/th><th>编号<\/th><th>城市<\/th>/);
+
+  scope.evaluate('goToPreviewPage("next")');
+  shown = previewState(scope);
+  assert.deepEqual([shown.rows[0], shown.rows[49]], [["52", "R51"], ["101", "R100"]]);
+  assert.equal(shown.info, "第 2 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [false, false, false, false]);
+
+  scope.evaluate('goToPreviewPage("last")');
+  shown = previewState(scope);
+  assert.equal(shown.rows.length, 20);
+  assert.deepEqual(shown.rows[19], ["121", "R120"]);
+  assert.equal(shown.info, "第 3 / 3 页，共 120 行");
+  assert.deepEqual(shown.disabled, [false, false, true, true]);
+  scope.evaluate('goToPreviewPage("next")');
+  assert.equal(previewState(scope).info, "第 3 / 3 页，共 120 行");
+
+  scope.evaluate('goToPreviewPage("prev")');
+  assert.equal(previewState(scope).info, "第 2 / 3 页，共 120 行");
+  scope.evaluate('goToPreviewPage("first")');
+  assert.equal(previewState(scope).info, "第 1 / 3 页，共 120 行");
+});
+
+test("the data preview follows filters from page 1 and keeps the original file rows", async () => {
+  const scope = await importCsvFile(previewCsv(), "preview.csv");
+  // From the last page to a filter that still has two pages: page 1, not a clamped page 2.
+  scope.evaluate('goToPreviewPage("last")');
+  assert.equal(previewState(scope).info, "第 3 / 3 页，共 120 行");
+  applyFilterState(scope, { category: { field: "城市", values: ["北京", "上海"] } });
+  const twoPages = previewState(scope);
+  assert.equal(twoPages.info, "第 1 / 2 页，共 80 行");
+  assert.deepEqual(twoPages.rows[0], ["2", "R1"]);
+  assert.deepEqual(twoPages.disabled, [true, true, false, false]);
+
+  scope.evaluate('goToPreviewPage("last")');
+  applyFilterState(scope, { category: { field: "城市", values: ["北京"] } });
+  const shown = previewState(scope);
+  assert.equal(shown.info, "第 1 / 1 页，共 40 行");
+  assert.deepEqual(shown.rows.slice(0, 2), [["3", "R2"], ["6", "R5"]]);
+  assert.deepEqual(shown.rows[39], ["120", "R119"]);
+  assert.deepEqual(shown.disabled, [true, true, true, true]);
+
+  applyFilterState(scope, { category: { field: "城市", values: [] } });
+  assert.match(scope.elements.get("previewTable").innerHTML, /当前筛选条件下没有可预览的数据。/);
+  assert.equal(previewState(scope).info, "第 1 / 1 页，共 0 行");
+
+  // A field configuration rebuild clears the filters and goes back to page 1 too.
+  applyFilterState(scope, { category: null });
+  scope.evaluate('goToPreviewPage("next")');
+  scope.evaluate('stageFieldTypeChange("城市", "ignore"); applyFieldConfiguration()');
+  assert.equal(previewState(scope).info, "第 1 / 3 页，共 120 行");
+});
+
+test("renderPreview() clamps the page and works without a page in the state", () => {
+  const { context, elements, evaluate } = createScriptContext();
+  put(context, "__rows", Array.from({ length: 60 }, (_, index) => ({ 值: String(index) })));
+  evaluate('commitTabularData(["值"], __rows, "plain.csv", beginImport())');
+  for (const [page, info] of [[99, "第 2 / 2 页，共 60 行"], [0, "第 1 / 2 页，共 60 行"], [-3, "第 1 / 2 页，共 60 行"], [undefined, "第 1 / 2 页，共 60 行"], ["x", "第 1 / 2 页，共 60 行"]]) {
+    put(context, "__page", page);
+    evaluate("state.previewPage = __page; renderPreview()");
+    assert.equal(elements.get("previewPageInfo").textContent, info, String(page));
+  }
+  // Rows that did not come through an import have no file row: "—".
+  assert.match(elements.get("previewTable").innerHTML, /<tr><td>—<\/td><td>0<\/td><\/tr>/);
+  evaluate("beginImport()");
+  assert.equal(evaluate("state.previewPage"), 1);
+});
+
+test("the preview heading, pager and its buttons are static in index.html and bound in script.js", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assert.match(overview, /<h3 class="subsection-title">数据预览<\/h3>/);
+  assert.match(overview, /<table id="previewTable" aria-label="数据预览"><\/table>/);
+  assert.doesNotMatch(overview, /前 10 行/);
+  const ids = ["previewPageInfo", "previewFirstPage", "previewPrevPage", "previewNextPage", "previewLastPage"];
+  ids.forEach((id) => assert.match(overview, new RegExp(`id="${id}"`), id));
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate(`${JSON.stringify(ids)}.every((id) => Object.keys(dom).includes(id))`), true);
+  const script = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  for (const [id, action] of [["previewFirstPage", "first"], ["previewPrevPage", "prev"], ["previewNextPage", "next"], ["previewLastPage", "last"]]) {
+    assert.ok(script.includes(`dom.${id}.addEventListener("click", () => goToPreviewPage("${action}"));`), id);
+  }
+});

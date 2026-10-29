@@ -134,6 +134,14 @@ dom.excelSheetSelect.addEventListener("change", () => {
   dom.sheetSelectionMessage.textContent = "";
 });
 
+dom.previewFirstPage.addEventListener("click", () => goToPreviewPage("first"));
+
+dom.previewPrevPage.addEventListener("click", () => goToPreviewPage("prev"));
+
+dom.previewNextPage.addEventListener("click", () => goToPreviewPage("next"));
+
+dom.previewLastPage.addEventListener("click", () => goToPreviewPage("last"));
+
 dom.schemaTable.addEventListener("change", (event) => {
   const select = event.target.closest("select[data-field-type]");
   if (!select) return;
