@@ -954,6 +954,8 @@ function filterRowsByConfig(rows, filters) {
   const categoryKeys = filters.category ? getConfirmedPlaceholderKeys(filters.category.field) : [];
   const startTime = filters.date ? Date.parse(`${filters.date.start}T00:00:00Z`) : null;
   const endTime = filters.date ? Date.parse(`${filters.date.end}T23:59:59.999Z`) : null;
+  // The same parser as getNumericValues(), which sets the range in the filter panel.
+  const parseNumber = filters.numeric ? getFieldNumberParser(filters.numeric.field) : null;
 
   return rows.filter((row) => {
     if (filters.category) {
@@ -961,7 +963,7 @@ function filterRowsByConfig(rows, filters) {
       if (!categoryValues.has(value)) return false;
     }
     if (filters.numeric) {
-      const value = toNumber(row[filters.numeric.field]);
+      const value = parseNumber(row[filters.numeric.field]);
       if (value === null || value < filters.numeric.min || value > filters.numeric.max) return false;
     }
     if (filters.date) {

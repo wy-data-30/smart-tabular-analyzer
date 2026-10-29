@@ -154,6 +154,11 @@ function toNumber(value, strategy) {
   return hasNumberStrategySwitch(strategy) ? toNumberWithStrategy(value, strategy) : toPlainNumber(value);
 }
 
+// A one-argument parser for a strategy: toPlainNumber itself when it has no switch.
+function getNumberParser(strategy) {
+  return hasNumberStrategySwitch(strategy) ? (value) => toNumberWithStrategy(value, strategy) : toPlainNumber;
+}
+
 function toNumberWithStrategy(value, strategy) {
   if (isMissing(value)) return null;
   const raw = String(value).trim();

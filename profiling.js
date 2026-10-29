@@ -18,11 +18,18 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
   const uniqueCount = uniqueValues.size;
   const uniqueRatio = nonMissingCount ? uniqueCount / nonMissingCount : 0;
   const conversionFailureSamplesByType = { numeric: [], date: [] };
+  const numberStrategy = buildNumberStrategy(nonMissingValues);
+  const parseNumber = getNumberParser(numberStrategy);
+  const numberReadings = { unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 0 };
   const numericValues = [];
   nonMissingValues.forEach((value) => {
-    const number = toNumber(value);
-    if (number !== null) numericValues.push(number);
-    else addConversionFailureSample(conversionFailureSamplesByType.numeric, value);
+    const number = parseNumber(value);
+    if (number === null) {
+      addConversionFailureSample(conversionFailureSamplesByType.numeric, value);
+      return;
+    }
+    numericValues.push(number);
+    if (parseNumber !== toPlainNumber && toPlainNumber(value) === null) addNumberReading(numberReadings, value, numberStrategy);
   });
   const dateStrategy = buildDateStrategy(field, nonMissingValues);
   const dateValues = [];
@@ -44,7 +51,7 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     numeric: nonMissingCount - numericValues.length,
     date: nonMissingCount - dateValues.length
   };
-  const detectedNumericFormat = detectNumericFormat(nonMissingValues);
+  const detectedNumericFormat = detectNumericFormat(nonMissingValues, numberStrategy);
   const numericFormat = detectedNumericFormat === "number" && numberFormatHint === "percent"
     ? "percent"
     : detectedNumericFormat;
@@ -75,6 +82,8 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     numericRatio,
     dateRatio,
     dateStrategy,
+    numberStrategy,
+    numberReadings,
     numericFormat,
     sampleValues,
     conversionFailuresByType,
@@ -95,6 +104,21 @@ function inferFieldTypeKey(field, { nonMissingCount, uniqueCount, numericCount, 
   if (dateRatio >= 0.8) return "date";
   if (numericRatio >= 0.8) return "numeric";
   return "category";
+}
+
+// Counts a value only the number strategy converts: read with the unit (up to three
+// distinct samples), scaled by 万 / 亿, or written in full width.
+function addNumberReading(readings, value, strategy) {
+  const raw = String(value).trim();
+  const text = strategy.fullwidth ? toHalfwidthNumberText(raw) : raw;
+  if (text !== raw) readings.fullwidthCount += 1;
+  const match = matchNumberWithUnit(text);
+  if (!match) return;
+  if (match.unit) {
+    readings.unitCount += 1;
+    if (readings.unitSamples.length < 3 && !readings.unitSamples.includes(raw)) readings.unitSamples.push(raw);
+  }
+  if (match.magnitude) readings.magnitudeCount += 1;
 }
 
 // Keeps up to three distinct (trimmed) raw values that failed conversion.
@@ -123,8 +147,7 @@ function parseFieldDate(field, value) {
 // The number parser of a field, for callers to take once outside their row loops:
 // toPlainNumber itself when the field's strategy has no switch.
 function getFieldNumberParser(field) {
-  const strategy = getFieldProfile(field)?.numberStrategy;
-  return hasNumberStrategySwitch(strategy) ? (value) => toNumberWithStrategy(value, strategy) : toPlainNumber;
+  return getNumberParser(getFieldProfile(field)?.numberStrategy);
 }
 
 function parseFieldNumber(field, value) {
@@ -189,10 +212,13 @@ function buildDateStrategy(field, values) {
   };
 }
 
-function detectNumericFormat(values) {
-  const convertibleValues = values.filter((value) => toNumber(value) !== null);
+// Percent when every convertible value carries %; a full-width strategy reads ％ too.
+function detectNumericFormat(values, strategy) {
+  const parseNumber = getNumberParser(strategy);
+  const convertibleValues = values.filter((value) => parseNumber(value) !== null);
   if (!convertibleValues.length) return "number";
-  return convertibleValues.every(hasPercentToken) ? "percent" : "number";
+  const percentToken = strategy?.fullwidth ? (value) => hasPercentToken(toHalfwidthNumberText(String(value))) : hasPercentToken;
+  return convertibleValues.every(percentToken) ? "percent" : "number";
 }
 
 function getNumericFormat(field) {

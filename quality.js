@@ -1,8 +1,8 @@
 // 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、缺失率等级，以及质量页使用的原始数据数值统计。
 
-function countConversionFailuresForValues(values, typeKey) {
+function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
-  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const convert = typeKey === "numeric" ? getFieldNumberParser(field) : toDate;
   return values.reduce((count, value) => (
     count + (!isMissing(value) && convert(value) === null ? 1 : 0)
   ), 0);
@@ -17,7 +17,8 @@ function countFieldConversionFailures(field, typeKey) {
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
   return countConversionFailuresForValues(
     state.rows.map((row) => row[field]).filter((value) => !isMissingOrConfirmed(value, confirmedKeys)),
-    typeKey
+    typeKey,
+    field
   );
 }
 
@@ -27,7 +28,7 @@ function getFieldConversionFailureSamples(field, typeKey) {
   if (profile?.conversionFailureSamplesByType) {
     return [...(profile.conversionFailureSamplesByType[typeKey] || [])];
   }
-  const convert = typeKey === "numeric" ? toNumber : toDate;
+  const convert = typeKey === "numeric" ? getFieldNumberParser(field) : toDate;
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const samples = [];
   state.rows.forEach((row) => {

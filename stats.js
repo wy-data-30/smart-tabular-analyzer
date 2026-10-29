@@ -1,22 +1,24 @@
 // 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。
 
-// Non-missing values in `rows` that toNumber() cannot convert.
+// Non-missing values in `rows` that the field's number parser cannot convert.
 function countInvalidNumericValues(field, rows = getAnalysisRows()) {
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
+  const parseNumber = getFieldNumberParser(field);
   return rows.reduce((count, row) => (
-    count + (!isMissingOrConfirmed(row[field], confirmedKeys) && toNumber(row[field]) === null ? 1 : 0)
+    count + (!isMissingOrConfirmed(row[field], confirmedKeys) && parseNumber(row[field]) === null ? 1 : 0)
   ), 0);
 }
 
 function buildNumericStats(rows = getAnalysisRows()) {
   return getProfilesByType("numeric").flatMap((profile) => {
     const confirmedKeys = getConfirmedPlaceholderKeys(profile.field);
+    const parseNumber = getNumberParser(profile.numberStrategy);
     const values = [];
     let invalidCount = 0;
     rows.forEach((row) => {
       const value = row[profile.field];
       if (isMissingOrConfirmed(value, confirmedKeys)) return;
-      const number = toNumber(value);
+      const number = parseNumber(value);
       if (number === null) invalidCount += 1;
       else values.push(number);
     });
@@ -76,7 +78,8 @@ function buildCategoryStats(rows = getAnalysisRows()) {
 // Same bucketing as buildDateTrend(): month when the dated span exceeds 120
 // days, otherwise day; year-only fields by year.
 function buildDateChartTrend(dateField, metricField, aggregate) {
-  return buildTrendFromRows(dateField, (row) => toNumber(row[metricField]), metricField ? aggregate : "count");
+  const parseNumber = getFieldNumberParser(metricField);
+  return buildTrendFromRows(dateField, (row) => parseNumber(row[metricField]), metricField ? aggregate : "count");
 }
 
 function buildV2GroupedStats(metricField, groupField) {
@@ -84,14 +87,16 @@ function buildV2GroupedStats(metricField, groupField) {
 }
 
 function buildMetricDateTrend(dateField, metricField, aggregateMethod = "sum") {
-  return buildTrendFromRows(dateField, (row) => toNumber(row[metricField]), aggregateMethod);
+  const parseNumber = getFieldNumberParser(metricField);
+  return buildTrendFromRows(dateField, (row) => parseNumber(row[metricField]), aggregateMethod);
 }
 
 function groupNumericFieldByCategory(metricField, groupField) {
   const groupKeys = getConfirmedPlaceholderKeys(groupField);
+  const parseNumber = getFieldNumberParser(metricField);
   const groups = new Map();
   getAnalysisRows().forEach((row) => {
-    const value = toNumber(row[metricField]);
+    const value = parseNumber(row[metricField]);
     if (value === null) return;
     const groupName = analysisValue(row[groupField], groupKeys) || "未填写";
     if (!groups.has(groupName)) groups.set(groupName, []);
@@ -244,11 +249,12 @@ function buildPartialPeriodNote(dateField, trend) {
 }
 
 function buildDateTrend(dateField, numericField) {
+  const parseNumber = getFieldNumberParser(numericField);
   const items = [];
   getAnalysisRows().forEach((row) => {
     const date = parseFieldDate(dateField, row[dateField]);
     if (!date) return;
-    const value = numericField ? toNumber(row[numericField]) : null;
+    const value = numericField ? parseNumber(row[numericField]) : null;
     if (numericField && value === null) return;
     items.push({ date, value });
   });
@@ -289,10 +295,11 @@ function buildDateTrend(dateField, numericField) {
 
 function aggregateByCategory(metricField, groupField, method) {
   const groupKeys = getConfirmedPlaceholderKeys(groupField);
+  const parseNumber = getFieldNumberParser(metricField);
   const groups = new Map();
   getAnalysisRows().forEach((row) => {
     const group = analysisValue(row[groupField], groupKeys) || "未填写";
-    const value = toNumber(row[metricField]);
+    const value = parseNumber(row[metricField]);
     if (value === null) return;
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(value);
@@ -372,8 +379,9 @@ function countValues(field, rows = getAnalysisRows()) {
 }
 
 function getNumericValues(field, rows = getAnalysisRows()) {
+  const parseNumber = getFieldNumberParser(field);
   return rows
-    .map((row) => toNumber(row[field]))
+    .map((row) => parseNumber(row[field]))
     .filter((value) => value !== null);
 }
 

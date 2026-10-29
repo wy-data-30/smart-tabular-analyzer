@@ -236,7 +236,8 @@ function analyzeGenericTemplate(mappings) {
   const topBySum = grouped.find((item) => Number.isFinite(item.sum));
   const topByAvg = [...grouped]
     .sort((a, b) => compareNumbersDescending(a.avg, b.avg))[0];
-  const trend = mappings.date ? buildTrendFromRows(mappings.date, (row) => toNumber(row[mappings.metric]), "sum") : null;
+  const parseMetric = getFieldNumberParser(mappings.metric);
+  const trend = mappings.date ? buildTrendFromRows(mappings.date, (row) => parseMetric(row[mappings.metric]), "sum") : null;
   const insights = [
     `本次通用分析使用「${mappings.metric}」作为数值指标、「${mappings.group}」作为分组维度，有效数值记录为 ${formatInteger(values.length)} 条。`,
     `「${mappings.metric}」的平均值为 ${formatFieldNumber(mappings.metric, stats.mean)}，中位数为 ${formatFieldNumber(mappings.metric, stats.median)}，最小值为 ${formatFieldNumber(mappings.metric, stats.min)}，最大值为 ${formatFieldNumber(mappings.metric, stats.max)}。`,
@@ -278,7 +279,7 @@ function analyzeSalesTemplate(mappings) {
     ? regionRows.find((item) => Number.isFinite(item.sum))
     : regionRows[0];
   const trend = mappings.date
-    ? buildTrendFromRows(mappings.date, metricRows ? (row) => getSalesMetricValue(row, mappings) : null, metricRows ? "sum" : "count")
+    ? buildTrendFromRows(mappings.date, metricRows ? buildSalesMetricGetter(mappings) : null, metricRows ? "sum" : "count")
     : null;
 
   const insights = [
@@ -316,7 +317,8 @@ function analyzeScoreTemplate(mappings) {
     .map((field) => ({ field, rows: groupNumericFieldByCategory(mappings.score, field) }));
   const primaryDimension = dimensionResults[0];
   const secondaryDimension = dimensionResults[1];
-  const trend = mappings.examDate ? buildTrendFromRows(mappings.examDate, (row) => toNumber(row[mappings.score]), "avg") : null;
+  const parseScore = getFieldNumberParser(mappings.score);
+  const trend = mappings.examDate ? buildTrendFromRows(mappings.examDate, (row) => parseScore(row[mappings.score]), "avg") : null;
   const insights = [
     `成绩模板使用「${mappings.score}」作为成绩字段，有效成绩记录为 ${formatInteger(values.length)} 条。`,
     `成绩平均值为 ${formatFieldNumber(mappings.score, stats.mean)}，中位数为 ${formatFieldNumber(mappings.score, stats.median)}，最低值为 ${formatFieldNumber(mappings.score, stats.min)}，最高值为 ${formatFieldNumber(mappings.score, stats.max)}。`
@@ -362,7 +364,8 @@ function analyzeUsedGoodsTemplate(mappings) {
     .map((field) => ({ field, rows: groupNumericFieldByCategory(mappings.price, field) }));
   const primaryDimension = dimensionResults[0];
   const secondaryDimension = dimensionResults[1];
-  const trend = mappings.date ? buildTrendFromRows(mappings.date, (row) => toNumber(row[mappings.price]), "avg") : null;
+  const parsePrice = getFieldNumberParser(mappings.price);
+  const trend = mappings.date ? buildTrendFromRows(mappings.date, (row) => parsePrice(row[mappings.price]), "avg") : null;
   const insights = [
     `二手商品价格模板使用「${mappings.price}」作为价格字段，有效价格记录为 ${formatInteger(values.length)} 条。`,
     `价格平均值为 ${formatFieldNumber(mappings.price, stats.mean)}，中位数为 ${formatFieldNumber(mappings.price, stats.median)}，最低值为 ${formatFieldNumber(mappings.price, stats.min)}，最高值为 ${formatFieldNumber(mappings.price, stats.max)}。`
@@ -496,26 +499,35 @@ function buildSalesMetricRows(mappings) {
   }
   else return null;
 
+  const getValue = buildSalesMetricGetter(mappings);
   const rows = getAnalysisRows()
-    .map((row) => ({ row, value: getSalesMetricValue(row, mappings) }))
+    .map((row) => ({ row, value: getValue(row) }))
     .filter((item) => item.value !== null);
   rows.label = label;
   rows.formatField = formatField;
   return rows;
 }
 
-function getSalesMetricValue(row, mappings) {
-  if (mappings.salesAmount) return toNumber(row[mappings.salesAmount]);
-  if (mappings.unitPrice && mappings.quantity) {
-    const price = toNumber(row[mappings.unitPrice]);
-    const quantity = toNumber(row[mappings.quantity]);
-    if (price === null || quantity === null) return null;
-    const product = price * quantity;
-    return Number.isFinite(product) ? product : null;
+// The sales value of a row, with each mapped field's number parser taken once.
+function buildSalesMetricGetter(mappings) {
+  if (mappings.salesAmount) {
+    const parseAmount = getFieldNumberParser(mappings.salesAmount);
+    return (row) => parseAmount(row[mappings.salesAmount]);
   }
-  if (mappings.unitPrice) return toNumber(row[mappings.unitPrice]);
-  if (mappings.quantity) return toNumber(row[mappings.quantity]);
-  return null;
+  const parsePrice = getFieldNumberParser(mappings.unitPrice);
+  const parseQuantity = getFieldNumberParser(mappings.quantity);
+  if (mappings.unitPrice && mappings.quantity) {
+    return (row) => {
+      const price = parsePrice(row[mappings.unitPrice]);
+      const quantity = parseQuantity(row[mappings.quantity]);
+      if (price === null || quantity === null) return null;
+      const product = price * quantity;
+      return Number.isFinite(product) ? product : null;
+    };
+  }
+  if (mappings.unitPrice) return (row) => parsePrice(row[mappings.unitPrice]);
+  if (mappings.quantity) return (row) => parseQuantity(row[mappings.quantity]);
+  return () => null;
 }
 
 function buildTrendFactText(metricLabel, dateField, trend, valueLabel) {

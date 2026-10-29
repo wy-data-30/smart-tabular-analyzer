@@ -2056,7 +2056,7 @@ test("the order fixture goes from 26 to 27 missing values with one confirmation 
 
   orders.evaluate('confirmPlaceholder("金额", "N/A")');
   assert.equal(orders.evaluate("state.totalMissing"), 27);
-  assert.deepEqual(fieldFigures(orders.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 29, conversionFailureCount: 2 });
+  assert.deepEqual(fieldFigures(orders.evaluate, "金额"), { typeKey: "numeric", inferredTypeKey: "numeric", missingCount: 1, uniqueCount: 29, conversionFailureCount: 0 });
 
   orders.evaluate("confirmAllCommonPlaceholders()");
   assert.equal(orders.evaluate("state.totalMissing"), 31);
@@ -2543,4 +2543,154 @@ test("report placeholder sections escape field names and keep Markdown lines fro
     assert.ok(!line.startsWith("-") && !line.startsWith("<"), line);
   }
   assert.ok(markdownSection.includes(scope.evaluate(`escapeMarkdownText(${JSON.stringify(`说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`)})`)));
+});
+
+// v2.5.0 number strategies: each field reads units, 万/亿 and full-width digits
+// through its own profile.numberStrategy.
+const numberProfile = (evaluate, field) => JSON.parse(evaluate(`JSON.stringify((({ typeKey, numberStrategy, numberReadings, conversionFailureCount, conversionFailureSamples }) => ({ typeKey, numberStrategy, numberReadings, conversionFailureCount, conversionFailureSamples }))(getFieldProfile(${JSON.stringify(field)})))`));
+
+test("the order fixture reads 2200元 and 3500元 as yuan and keeps only N/A as a format problem", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  assert.deepEqual(numberProfile(orders.evaluate, "金额"), {
+    typeKey: "numeric",
+    numberStrategy: { unit: "元", unitConflict: false, units: { 元: 2 }, allowMagnitude: false, fullwidth: false },
+    numberReadings: { unitCount: 2, unitSamples: ["2200元", "3500元"], magnitudeCount: 0, fullwidthCount: 0 },
+    conversionFailureCount: 1,
+    conversionFailureSamples: ["N/A"]
+  });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(["2200元", "3500元", "￥15,007", "￥8,250", "N/A"].map((value) => parseFieldNumber("金额", value)))')), [2200, 3500, 15007, 8250, null]);
+  assert.deepEqual(qualityPill(orders.elements, "格式问题"), { tone: "warning", text: "格式问题：3 个值" });
+  const amountStats = JSON.parse(orders.evaluate('JSON.stringify(state.numericStats.find((item) => item.field === "金额"))'));
+  assert.deepEqual(amountStats, {
+    field: "金额", count: 29, invalidCount: 1, mean: 3293.7241379310344, median: 1700, min: 704, max: 15007, std: 3305.713026497504,
+    q1: 1050, q3: 4600, lowerBound: -4275, upperBound: 9925, outlierCount: 1
+  });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(state.qualityNumericStats.find((item) => item.field === "金额"))')), amountStats);
+});
+
+test("the other stage3 fixtures keep their types and format problem totals", async () => {
+  const expected = {
+    "成绩表.csv": [["id", "id", "category", "numeric", "numeric", "numeric", "numeric", "numeric"], 3],
+    "成绩表-标题无逗号.csv": [["id", "id", "category", "numeric", "numeric", "numeric", "numeric", "numeric"], 3],
+    "花名册.xlsx": [["id", "category", "category", "id", "date", "numeric", "id"], 2],
+    "门店报表.xlsx": [["id", "id", "category", "date", "numeric", "numeric", "numeric", "category"], 0]
+  };
+  for (const [fileName, [types, formatProblems]] of Object.entries(expected)) {
+    const scope = await importStage3Fixture(fileName);
+    assert.deepEqual(importedSummary(scope.evaluate).types, types, fileName);
+    assert.equal(qualityPill(scope.elements, "格式问题").text, `格式问题：${formatProblems} 个值`, fileName);
+    assert.equal(scope.evaluate("state.profiles.some((profile) => hasNumberStrategySwitch(profile.numberStrategy))"), false, fileName);
+  }
+});
+
+test("15 distinct yuan amounts are numeric, while 4G / 5G and 8G-style sizes keep their types", () => {
+  const yuan = commitColumns({ 金额: Array.from({ length: 15 }, (_, index) => `${1000 + index * 37}元`) });
+  assert.equal(fieldFigures(yuan.evaluate, "金额").typeKey, "numeric");
+  const network = commitColumns({ 网络: ["4G", "5G", "5G", "4G", "5G", "3G", "5G", "4G"] });
+  assert.equal(fieldFigures(network.evaluate, "网络").typeKey, "category");
+  const memory = commitColumns({ 内存: Array.from({ length: 13 }, (_, index) => `${(index + 1) * 4}G`) });
+  assert.equal(fieldFigures(memory.evaluate, "内存").typeKey, "id");
+});
+
+test("万 amounts are exact integers, so small ranges still get one bar per value", () => {
+  const scope = createChartContext();
+  commitRows(scope, ["件数"], ["0.0001万", "0.0003万", "0.0005万", "0.0007万", "0.001万", "0.0002万", "0.0007万"].map((value) => ({ 件数: value })), "magnitude.csv");
+  assert.equal(scope.evaluate('getFieldProfile("件数").typeKey'), "numeric");
+  assert.deepEqual(drawDistribution(scope, "件数"), {
+    labels: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+    data: [1, 1, 1, 0, 1, 0, 2, 0, 0, 1]
+  });
+  put(scope.context, "__magnitudes", ["0.07万", "0.3万", "1万", "2万", "0.5万", "1.15亿"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__magnitudes.map((value) => toNumber(value, buildNumberStrategy(__magnitudes))))")), [700, 3000, 10000, 20000, 5000, 115000000]);
+});
+
+test("placeholder previews equal a full re-profile on unit columns and confirmations keep each number strategy", () => {
+  const scope = commitColumns({
+    金额: ["2200元", "N/A", "1.2万元", "—", "３５００元", "-", "800元", "n/a", "NULL", "约500"],
+    重量: ["5kg", "500千克", "N/A", "2kg", "—", "1kg", "-", "3kg", "无", "4kg"],
+    数量: ["１２", "—", "３４", "N/A", "５", "6", "－", "--", "7", "8"]
+  });
+  const strategies = () => JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.numberStrategy))"));
+  const before = strategies();
+  assert.deepEqual(before, [
+    { unit: "元", unitConflict: false, units: { 元: 4 }, allowMagnitude: true, fullwidth: true },
+    { unit: "", unitConflict: true, units: { kg: 5, 千克: 1 }, allowMagnitude: false, fullwidth: false },
+    { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: true }
+  ]);
+  const result = comparePlaceholderPreviews(scope);
+  assert.ok(result.checked >= 10);
+  assert.deepEqual(result.mismatches, []);
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(strategies(), before);
+  scope.evaluate('confirmPlaceholder("金额", "-"); confirmPlaceholder("重量", "无")');
+  assert.deepEqual(strategies(), before);
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A"); undoPlaceholderConfirmation("数量", "—")');
+  assert.deepEqual(strategies(), before);
+  assert.deepEqual(comparePlaceholderPreviews(scope).mismatches, []);
+});
+
+test("the numeric filter range and the filter itself read units the same way", async () => {
+  const scope = commitColumns({ 金额: ["1200", "800", "3500元", "2200元", "950"], 编号: ["a", "b", "c", "d", "e"] });
+  scope.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField()');
+  assert.equal(scope.elements.get("numericFilterRange").textContent, "800 至 3,500");
+  applyFilterState(scope, { numeric: { field: "金额", min: 2000, max: 3500 } });
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getAnalysisRows().map((row) => row["金额"]))')), ["3500元", "2200元"]);
+
+  const orders = await importStage3Fixture("订单表.csv");
+  applyFilterState(orders, { numeric: { field: "金额", min: 3000, max: 3500 } });
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(getAnalysisRows().map((row) => [getSourceRowNumber(row), row["金额"]]))')), [[21, "3500元"]]);
+});
+
+test("manual type changes on a unit column use its strategy only while numeric", () => {
+  const scope = commitColumns({ 金额: ["2200元", "3500元", "约500", "N/A", "100元", "800元", "待定"] });
+  const snapshot = () => JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const profile = getFieldProfile("金额");
+    return [profile.typeKey, profile.conversionFailureCount, profile.conversionFailureSamples, state.numericStats.map((item) => [item.count, item.invalidCount, item.mean])];
+  })())`));
+  assert.deepEqual(snapshot(), ["category", 0, [], []]);
+  scope.evaluate('stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["numeric", 3, ["约500", "N/A", "待定"], [[4, 3, 1650]]]);
+  scope.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.deepEqual(snapshot(), ["numeric", 2, ["约500", "待定"], [[4, 2, 1650]]]);
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.deepEqual(snapshot(), ["numeric", 3, ["约500", "N/A", "待定"], [[4, 3, 1650]]]);
+  scope.evaluate('stageFieldTypeChange("金额", "id"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["id", 0, [], []]);
+  assert.equal(scope.evaluate("state.idDuplicates[0].duplicateValueCount"), 0);
+  scope.evaluate('stageFieldTypeChange("金额", "date"); applyFieldConfiguration()');
+  assert.deepEqual(snapshot(), ["date", 7, ["2200元", "3500元", "约500"], []]);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(snapshot(), ["category", 0, [], []]);
+});
+
+test("header detection keeps reading 5kg as text while the analysis reads it as a number", async () => {
+  const headerless = await importCsvFile("库存表\r\n苹果,5kg\r\n香蕉,6kg\r\n梨,7kg\r\n桃,8kg\r\n", "headerless.csv");
+  assert.deepEqual(JSON.parse(headerless.evaluate("JSON.stringify([state.headerDetection.headerRowNumber, state.fields, state.rows.length])")), [2, ["苹果", "5kg"], 3]);
+  assert.equal(headerless.evaluate('getFieldProfile("5kg").typeKey'), "numeric");
+  const titled = await importCsvFile("库存表\r\n水果,重量\r\n苹果,5kg\r\n香蕉,6kg\r\n梨,7kg\r\n", "titled.csv");
+  assert.deepEqual(JSON.parse(titled.evaluate("JSON.stringify([state.headerDetection.headerRowNumber, state.fields, state.rows.length])")), [2, ["水果", "重量"], 3]);
+  assert.equal(titled.evaluate('getFieldProfile("重量").typeKey'), "numeric");
+});
+
+test("CSV export still neutralizes -2200元 in a yuan column", () => {
+  const scope = commitColumns({ 金额: ["-2200元", "1200元", "800元"] });
+  scope.context.window.Papa = Papa;
+  assert.equal(scope.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  assert.equal(scope.evaluate("buildCsvExportContent(state.rows, state.fields)"), "金额\r\n'-2200元\r\n1200元\r\n800元");
+});
+
+test("the sales template sums yuan amounts like the main analysis", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const result = JSON.parse(orders.evaluate(`JSON.stringify((() => {
+    const sales = analyzeSalesTemplate({ salesAmount: "金额", unitPrice: "", quantity: "", category: "产品", region: "大区", date: "下单日期" });
+    const regions = Object.fromEntries(sales.secondaryChart.labels.map((label, index) => [label, sales.secondaryChart.values[index]]));
+    const main = Object.fromEntries(groupNumericFieldByCategory("金额", "大区").map((group) => [group.name, group.sum]));
+    const trend = Object.fromEntries(sales.trendChart.labels.map((label, index) => [label, sales.trendChart.values[index]]));
+    const generic = analyzeGenericTemplate({ metric: "金额", group: "大区", date: "下单日期" });
+    return { regions, main, trend: [trend["2024-05-08"], trend["2024-05-20"]], genericTrend: generic.trendChart ? [generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-08")], generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-20")]] : null };
+  })())`));
+  assert.equal(result.regions["华南"], 6025);
+  assert.deepEqual(result.regions, result.main);
+  assert.deepEqual(result.trend, [3560, 4204]);
+  assert.deepEqual(result.genericTrend, [3560, 4204]);
 });
