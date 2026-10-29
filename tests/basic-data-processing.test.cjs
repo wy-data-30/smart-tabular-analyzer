@@ -3530,3 +3530,318 @@ test("the preview heading, pager and its buttons are static in index.html and bo
     assert.ok(script.includes(`dom.${id}.addEventListener("click", () => goToPreviewPage("${action}"));`), id);
   }
 });
+
+// v2.6.0: the problem-row viewer on the quality page.
+const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails"];
+// Every "查看" button: its container, data-problem-index, aria-label and other data attributes.
+const problemButtons = (scope) => PROBLEM_ENTRY_CONTAINERS.flatMap((id) => [...scope.elements.get(id).innerHTML.matchAll(/<button\b[^>]*\bdata-problem-index="(\d+)"[^>]*>/g)]
+  .map((match) => ({
+    container: id,
+    index: Number(match[1]),
+    label: (match[0].match(/aria-label="([^"]*)"/) || [])[1],
+    dataAttributes: [...match[0].matchAll(/\b(data-[a-z-]+)=/g)].map((attribute) => attribute[1])
+  })));
+const clickProblemButton = (scope, index) => {
+  put(scope.context, "__problemButton", index === null ? null : { dataset: { problemIndex: String(index) } });
+  scope.evaluate("handleProblemViewClick({ target: { closest: () => __problemButton } })");
+};
+const openCategory = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.problemView && state.problemView.category)"));
+const categoryAt = (scope, index) => JSON.parse(scope.evaluate(`JSON.stringify(state.problemCategories[${index}])`));
+const viewerState = (scope) => ({
+  hidden: scope.elements.get("problemRowsSection").classList.contains("hidden"),
+  summary: scope.elements.get("problemRowsSummary").textContent,
+  message: scope.elements.get("problemRowsMessage").textContent,
+  disabled: ["problemRowsFirstPage", "problemRowsPrevPage", "problemRowsNextPage", "problemRowsLastPage"].map((id) => scope.elements.get(id).disabled),
+  lines: [...scope.elements.get("problemRowsTable").innerHTML.matchAll(/<tr><td>([^<]*)<\/td><td>/g)].map((match) => match[1])
+});
+const sameCategory = (category) => ({ kind: category.kind, field: category.field, key: category.key });
+
+test("every 查看 button opens its own category and carries only its index", async () => {
+  const scopes = [await importStage3Fixture("订单表.csv"), await importStage3Fixture("花名册.xlsx"), await importCsvFile("a,b\n1,2\n3\n4,5\n", "warnings.csv")];
+  for (const scope of scopes) {
+    const buttons = problemButtons(scope);
+    const categoryCount = scope.evaluate("state.problemCategories.length");
+    assert.ok(categoryCount > 0);
+    // Each category has a button, and every button names what it shows.
+    assert.deepEqual([...new Set(buttons.map((button) => button.index))].sort((a, b) => a - b), Array.from({ length: categoryCount }, (_, index) => index));
+    for (const button of buttons) {
+      assert.deepEqual(button.dataAttributes, ["data-problem-index"], button.label);
+      assert.match(button.label, /^查看/);
+      clickProblemButton(scope, button.index);
+      assert.deepEqual(sameCategory(openCategory(scope)), sameCategory(categoryAt(scope, button.index)), button.label);
+      assert.equal(scope.elements.get("problemRowsCategory").value, String(button.index));
+      assert.equal(viewerState(scope).hidden, false);
+    }
+  }
+  const [orders, roster, warnings] = scopes;
+  const label = (scope, container) => problemButtons(scope).filter((button) => button.container === container).map((button) => button.label);
+  assert.deepEqual(label(orders, "qualityTable").slice(0, 2), ["查看「下单日期」的格式问题", "查看「数量」的格式问题"]);
+  assert.ok(label(orders, "qualityTable").includes("查看「备注」的缺失行"));
+  assert.deepEqual(label(orders, "outlierTable"), ["查看「数量」的异常值", "查看「金额」的异常值"]);
+  assert.deepEqual(label(orders, "idDuplicateDetails"), ["查看「订单号」的重复行"]);
+  assert.ok(label(orders, "placeholderDetails").includes("查看「金额」中「N/A」所在的行"));
+  assert.deepEqual(label(roster, "qualitySummary"), ["查看重复行"]);
+  assert.deepEqual(label(warnings, "parseWarningSummary"), ["查看解析警告"]);
+  assert.equal(warnings.elements.get("parseWarningSummary").classList.contains("hidden"), false);
+  assert.match(warnings.elements.get("parseWarningSummary").innerHTML, /CSV 解析警告：1 条，涉及 1 行/);
+  assert.equal(orders.elements.get("parseWarningSummary").classList.contains("hidden"), true);
+
+  // A click outside a button, or on a stale index, changes nothing.
+  clickProblemButton(orders, null);
+  clickProblemButton(orders, 99);
+  assert.equal(viewerState(orders).hidden, false);
+});
+
+test("the 查看 columns keep a cell element in every row and leave the count cells as they were", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  for (const id of ["qualityTable", "outlierTable"]) {
+    const html = orders.elements.get(id).innerHTML;
+    assert.match(html, /<th>查看<\/th>/, id);
+    const rows = [...html.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].map((match) => match[1]).filter((row) => row.includes("<td"));
+    for (const row of rows) {
+      const lastCell = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].pop()[1];
+      assert.match(lastCell, /^<(button|span)\b/, `${id}: ${row.slice(0, 60)}`);
+    }
+  }
+  assert.deepEqual(qualityRow(orders.elements, "金额").slice(-1)[0].text, "1（N/A）");
+});
+
+test("the viewer lists rows with their file rows, notes and highlighted cells, 50 a page", async () => {
+  const csv = `编号,备注\r\n${Array.from({ length: 120 }, (_, index) => `R${index + 1},${index % 2 ? "" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "notes.csv");
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  let view = viewerState(scope);
+  assert.equal(view.summary, "共 60 行，第 1 / 2 页");
+  assert.deepEqual(view.disabled, [true, true, false, false]);
+  assert.equal(view.lines.length, 50);
+  assert.deepEqual(view.lines.slice(0, 2), ["3", "5"]);
+  const html = scope.elements.get("problemRowsTable").innerHTML;
+  assert.match(html, /<th>文件行号<\/th><th>说明<\/th><th>编号<\/th><th>备注<\/th>/);
+  assert.match(html, /<tr><td>3<\/td><td>空值<\/td><td>R2<\/td><td class="cell-problem"><\/td><\/tr>/);
+
+  scope.evaluate('goToProblemRowsPage("next")');
+  view = viewerState(scope);
+  assert.equal(view.summary, "共 60 行，第 2 / 2 页");
+  assert.deepEqual(view.disabled, [false, false, true, true]);
+  assert.equal(view.lines.length, 10);
+  assert.equal(view.lines[9], "121");
+  scope.evaluate('goToProblemRowsPage("first")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Filters do not touch the viewer: it stays on the original rows and its page.
+  scope.evaluate('goToProblemRowsPage("last")');
+  applyFilterState(scope, { category: { field: "编号", values: ["R1"] } });
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+  assert.equal(openCategory(scope).kind, "missing");
+});
+
+test("viewer summaries name the unit of each kind of count", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  assert.equal(viewerState(orders).summary, "共 26 行，第 1 / 1 页");
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  assert.equal(viewerState(orders).summary, "共 1 个值，第 1 / 1 页");
+  const roster = await importStage3Fixture("花名册.xlsx");
+  roster.evaluate('openProblemView({ kind: "duplicateRows" })');
+  assert.equal(viewerState(roster).summary, "重复 1 行（1 组，共 2 行，每组第一行保留），第 1 / 1 页");
+  assert.doesNotMatch(roster.elements.get("problemRowsTable").innerHTML, /cell-problem/);
+  const warnings = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n", "warnings.csv");
+  warnings.evaluate('openProblemView({ kind: "parseWarnings" })');
+  assert.equal(viewerState(warnings).summary, "共 2 条警告，第 1 / 1 页");
+  assert.deepEqual(viewerState(warnings).lines, ["4", "5"]);
+  // The dropped whitespace row has no cells; the imported one shows its values.
+  assert.match(warnings.elements.get("problemRowsTable").innerHTML, /<tr><td>4<\/td><td>[^<]*（这一行没有可分析的数据，未导入）<\/td><td><\/td><td><\/td><\/tr>/);
+  assert.match(warnings.elements.get("problemRowsTable").innerHTML, /<tr><td>5<\/td><td>[^<]*<\/td><td>3<\/td><td><\/td><\/tr>/);
+});
+
+test("the category list switches categories and labels each count", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  const options = [...orders.elements.get("problemRowsCategory").innerHTML.matchAll(/<option value="(\d+)"( selected)?>([^<]*)<\/option>/g)].map((match) => [match[1], Boolean(match[2]), match[3]]);
+  assert.deepEqual(options.slice(0, 7), [
+    ["0", true, "缺失 · 备注（26 行）"],
+    ["1", false, "格式问题 · 下单日期（1 个值）"],
+    ["2", false, "格式问题 · 数量（1 个值）"],
+    ["3", false, "格式问题 · 金额（1 个值）"],
+    ["4", false, "异常值 · 数量（1 行）"],
+    ["5", false, "异常值 · 金额（1 行）"],
+    ["6", false, "ID 重复 · 订单号（1 个重复值）"]
+  ]);
+  assert.equal(options[9][2], "疑似缺失值 · 金额 · 「N/A」（1 行）");
+  orders.evaluate('selectProblemCategory("6")');
+  assert.deepEqual(sameCategory(openCategory(orders)), { kind: "idDuplicate", field: "订单号", key: undefined });
+  assert.equal(viewerState(orders).summary, "共 2 行，第 1 / 1 页");
+  const roster = await importStage3Fixture("花名册.xlsx");
+  roster.evaluate('openProblemView({ kind: "duplicateRows" })');
+  assert.match(roster.elements.get("problemRowsCategory").innerHTML, />整行重复（1 行）</);
+  const warnings = await importCsvFile("a,b\n1,2\n3\n4,5\n", "warnings.csv");
+  warnings.evaluate('openProblemView({ kind: "parseWarnings" })');
+  assert.match(warnings.elements.get("problemRowsCategory").innerHTML, />解析警告（1 条）</);
+});
+
+test("opening the viewer moves focus to its title, and closing hides it", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  let focused = 0;
+  orders.elements.get("problemRowsTitle").focus = () => { focused += 1; };
+  clickProblemButton(orders, 0);
+  assert.equal(focused, 1);
+  orders.evaluate("closeProblemView()");
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(orders.evaluate("state.problemView"), null);
+  assert.equal(orders.elements.get("problemRowsTable").innerHTML, "");
+  assert.equal(orders.elements.get("problemRowsCategory").innerHTML, "");
+});
+
+test("the viewer finds its category again after field configuration, confirmation and undo", async () => {
+  const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "refind.csv");
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+
+  // Confirming N/A keeps the category with more rows, back on page 1.
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  assert.equal(viewerState(scope).hidden, false);
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Ignoring the field keeps its missing rows; a field configuration rebuild goes back to page 1.
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('stageFieldTypeChange("备注", "ignore")');
+  assert.equal(scope.elements.get("problemRowsDraftNote").classList.contains("hidden"), false);
+  scope.evaluate("applyFieldConfiguration()");
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+  assert.equal(scope.elements.get("problemRowsDraftNote").classList.contains("hidden"), true);
+
+  // A category that is gone closes the viewer with a note.
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "conversion", field: "金额" })');
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(viewerState(orders).message, "这一类已经没有问题行。");
+  orders.evaluate('openProblemView({ kind: "outlier", field: "金额" })');
+  assert.equal(viewerState(orders).message, "");
+  orders.evaluate('stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(viewerState(orders).message, "这一类已经没有问题行。");
+});
+
+test("a new import closes the viewer and clears its state", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  orders.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  put(orders.context, "__cityRows", [{ 城市: "上海" }, { 城市: "" }]);
+  orders.evaluate('commitTabularData(["城市"], __cityRows, "cities.csv", beginImport())');
+  assert.equal(orders.evaluate("state.problemView"), null);
+  assert.equal(viewerState(orders).hidden, true);
+  assert.equal(orders.elements.get("problemRowsTable").innerHTML, "");
+  orders.evaluate("beginImport()");
+  assert.equal(orders.evaluate("state.problemCategories.length"), 0);
+});
+
+test("the viewer escapes field names, values and labels", async () => {
+  const field = '<b>备&注"</b>';
+  const scope = await importCsvFile(`编号,"${field.replace(/"/g, '""')}",其他\r\nR1,<i>x</i>,a\r\nR2,,<i>y</i>&'q'\r\nR3,'&',c\r\n`, "escape.csv");
+  scope.evaluate(`openProblemView({ kind: "missing", field: ${JSON.stringify(field)} })`);
+  const html = ["problemRowsTable", "problemRowsCategory", "qualityTable"].map((id) => scope.elements.get(id).innerHTML).join("\n");
+  assert.doesNotMatch(html, /<b>|<i>/);
+  assert.ok(html.includes("&lt;b&gt;备&amp;注&quot;&lt;/b&gt;"));
+  assert.ok(scope.elements.get("problemRowsTable").innerHTML.includes("<td>&lt;i&gt;y&lt;/i&gt;&amp;&#039;q&#039;</td>"));
+  assert.ok(scope.elements.get("qualityTable").innerHTML.includes('aria-label="查看「&lt;b&gt;备&amp;注&quot;&lt;/b&gt;」的缺失行"'));
+  // A category with nothing to show (编号 has no duplicates) leaves the open view as it is.
+  scope.evaluate('openProblemView({ kind: "idDuplicate", field: "编号" })');
+  assert.equal(openCategory(scope).kind, "missing");
+});
+
+test("the problem-row viewer is static in index.html, in the dom map and bound in script.js", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
+  const order = ['id="qualitySummary"', 'id="parseWarningSummary"', 'id="outlierTable"', 'id="problemRowsSection"', 'id="numberConversionSection"'].map((marker) => quality.indexOf(marker));
+  assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
+  assert.match(quality, /<p id="parseWarningSummary" class="[^"]*\bhidden\b[^"]*"/);
+  assert.match(quality, /<div id="problemRowsSection" class="[^"]*\bhidden\b[^"]*"/);
+  assert.match(quality, /<h3 id="problemRowsTitle" class="subsection-title" tabindex="-1">/);
+  assert.match(quality, /<p id="problemRowsSummary" class="[^"]*" aria-live="polite"><\/p>/);
+  const ids = ["qualitySection", "parseWarningSummary", "problemRowsSection", "problemRowsTitle", "problemRowsCategory", "problemRowsSummary", "problemRowsDraftNote", "problemRowsTable",
+    "problemRowsFirstPage", "problemRowsPrevPage", "problemRowsNextPage", "problemRowsLastPage", "problemRowsClose", "problemRowsMessage"];
+  ids.forEach((id) => assert.match(html, new RegExp(`id="${id}"`), id));
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate(`${JSON.stringify(ids)}.every((id) => Object.keys(dom).includes(id))`), true);
+  const script = fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8");
+  assert.ok(script.includes('dom.qualitySection.addEventListener("click", handleProblemViewClick);'));
+  assert.ok(script.includes('dom.problemRowsCategory.addEventListener("change", () => selectProblemCategory(dom.problemRowsCategory.value));'));
+  assert.ok(script.includes('dom.problemRowsClose.addEventListener("click", closeProblemView);'));
+  for (const [id, action] of [["problemRowsFirstPage", "first"], ["problemRowsPrevPage", "prev"], ["problemRowsNextPage", "next"], ["problemRowsLastPage", "last"]]) {
+    assert.ok(script.includes(`dom.${id}.addEventListener("click", () => goToProblemRowsPage("${action}"));`), id);
+  }
+  // The placeholder buttons keep their own handler, untouched.
+  assert.ok(script.includes('dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);'));
+});
+
+test("without numeric fields the viewer still lists its category again or closes", async () => {
+  // renderQuality() returns early when there is no numeric field: the viewer must refresh before that.
+  const csv = `城市,备注\r\n${Array.from({ length: 120 }, (_, index) => `${PREVIEW_CITIES[index % 3]},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "categories.csv");
+  assert.match(scope.elements.get("outlierTable").innerHTML, /未识别到数值字段/);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "category"]);
+  scope.evaluate('openProblemView({ kind: "missing", field: "备注" })');
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  scope.evaluate('goToProblemRowsPage("next")');
+  scope.evaluate('undoPlaceholderConfirmation("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 1 / 2 页");
+
+  // Ignoring 备注 drops its pending N/A entry, so that category closes with the note.
+  scope.evaluate('openProblemView({ kind: "placeholder", field: "备注", key: "N/A" })');
+  assert.equal(viewerState(scope).summary, "共 30 行，第 1 / 1 页");
+  scope.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.equal(viewerState(scope).hidden, true);
+  assert.equal(viewerState(scope).message, "这一类已经没有问题行。");
+});
+
+test("closing the viewer gives focus back to the 查看 button that opened it", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const document = orders.context.document;
+  const fakeButton = (index, connected = true) => ({
+    dataset: { problemIndex: String(index) },
+    isConnected: connected,
+    focus() { document.activeElement = this; }
+  });
+  document.activeElement = null;
+  const opener = fakeButton(0);
+  put(orders.context, "__opener", opener);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  orders.evaluate("closeProblemView()");
+  assert.equal(orders.evaluate("document.activeElement === __opener"), true);
+
+  // The opener was rendered away (a confirmation re-renders the quality page): the new
+  // button of the same category takes the focus.
+  const stale = fakeButton(0);
+  put(orders.context, "__opener", stale);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  stale.isConnected = false;
+  const fresh = fakeButton(0);
+  const selectors = [];
+  orders.elements.get("qualitySection").querySelector = (selector) => {
+    selectors.push(selector);
+    return selector === 'button[data-problem-index="0"]' ? fresh : null;
+  };
+  orders.evaluate("closeProblemView()");
+  assert.equal(document.activeElement, fresh);
+  assert.deepEqual(selectors, ['button[data-problem-index="0"]']);
+
+  // No button for the category any more: the focus stays where it was.
+  document.activeElement = null;
+  const gone = fakeButton(0);
+  put(orders.context, "__opener", gone);
+  orders.evaluate("handleProblemViewClick({ target: { closest: () => __opener } })");
+  gone.isConnected = false;
+  orders.elements.get("qualitySection").querySelector = () => null;
+  orders.evaluate("closeProblemView()");
+  assert.equal(document.activeElement, null);
+  assert.equal(viewerState(orders).hidden, true);
+});

@@ -136,6 +136,44 @@ function formatCsvWarningMessage(code, { line = null, cellCount = null, headerCo
   return "";
 }
 
+// aria-label of a 查看 button for a problem-row category.
+function formatProblemViewLabel(category) {
+  switch (category.kind) {
+    case "missing": return `查看「${category.field}」的缺失行`;
+    case "conversion": return `查看「${category.field}」的格式问题`;
+    case "outlier": return `查看「${category.field}」的异常值`;
+    case "duplicateRows": return "查看重复行";
+    case "idDuplicate": return `查看「${category.field}」的重复行`;
+    case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
+    default: return "查看解析警告";
+  }
+}
+
+// Option text of a problem-row category, with the quality page's count.
+function formatProblemCategoryLabel(category) {
+  const count = formatInteger(category.count);
+  switch (category.kind) {
+    case "missing": return `缺失 · ${category.field}（${count} 行）`;
+    case "conversion": return `格式问题 · ${category.field}（${count} 个值）`;
+    case "outlier": return `异常值 · ${category.field}（${count} 行）`;
+    case "duplicateRows": return `整行重复（${count} 行）`;
+    case "idDuplicate": return `ID 重复 · ${category.field}（${count} 个重复值）`;
+    case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
+    default: return `解析警告（${count} 条）`;
+  }
+}
+
+// Viewer summary: the listed count in its unit, then "第 X / Y 页". Duplicate rows
+// say how the quality count (without each group's kept first row) relates to the list.
+function formatProblemRowsSummary(category, list, page, pageCount) {
+  const pages = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页`;
+  const listed = formatInteger(list.items.length);
+  if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
+  if (category.kind === "conversion") return `共 ${listed} 个值，${pages}`;
+  if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
+  return `共 ${listed} 行，${pages}`;
+}
+
 // "6、19", plus " 等 15 个" when totalCount is more than the numbers shown. Any row
 // without a number shows "—" instead of a partial list.
 function formatRowNumberList(rowNumbers, totalCount = rowNumbers.length) {

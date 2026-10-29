@@ -234,6 +234,7 @@
         </div>
         <p class="section-note">本模块始终基于导入的原始数据计算，不受当前筛选条件影响。</p>
         <div id="qualitySummary" class="quality-summary"></div>
+        <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div class="two-column">
           <div>
             <h3 class="subsection-title">缺失值检查</h3>
@@ -245,6 +246,30 @@
             <h3 class="subsection-title">数值字段异常值检查</h3>
             <div class="table-wrap compact" tabindex="0" aria-label="异常值检查表，可横向滚动">
               <table id="outlierTable" aria-label="数值字段异常值检查"></table>
+            </div>
+          </div>
+        </div>
+        <p id="problemRowsMessage" class="problem-rows-message" role="status"></p>
+        <div id="problemRowsSection" class="module-subsection problem-rows hidden">
+          <div class="problem-rows-heading">
+            <h3 id="problemRowsTitle" class="subsection-title" tabindex="-1">问题行</h3>
+            <button id="problemRowsClose" class="secondary-button" type="button">关闭</button>
+          </div>
+          <div class="problem-rows-toolbar">
+            <label class="problem-rows-category" for="problemRowsCategory">类别</label>
+            <select id="problemRowsCategory"></select>
+          </div>
+          <p id="problemRowsSummary" class="problem-rows-summary" aria-live="polite"></p>
+          <p id="problemRowsDraftNote" class="problem-rows-note hidden">字段配置有未应用的修改，这里按已应用的字段配置列出。</p>
+          <div class="table-wrap" tabindex="0" aria-label="问题行表，可横向滚动">
+            <table id="problemRowsTable" aria-label="问题行"></table>
+          </div>
+          <div class="row-pager">
+            <div class="row-pager-buttons">
+              <button id="problemRowsFirstPage" class="secondary-button" type="button" disabled>首页</button>
+              <button id="problemRowsPrevPage" class="secondary-button" type="button" disabled>上一页</button>
+              <button id="problemRowsNextPage" class="secondary-button" type="button" disabled>下一页</button>
+              <button id="problemRowsLastPage" class="secondary-button" type="button" disabled>末页</button>
             </div>
           </div>
         </div>

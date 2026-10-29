@@ -37,6 +37,15 @@ const state = {
   // Data preview page (1-based); renderPreview() clamps it. Imports, filters and
   // field configuration go back to page 1.
   previewPage: 1,
+  // listProblemCategories() as of the last renderQuality(): the 查看 buttons carry an
+  // index into it.
+  problemCategories: [],
+  // The open problem-row viewer, or null: { category: { kind, field, key }, page,
+  // list } with list from listProblemRows(), kept while it is open. Imports close it;
+  // field configuration and placeholder confirmations list it again; filters never.
+  problemView: null,
+  // The 查看 button that opened the viewer, for the focus when it closes.
+  problemViewOpener: null,
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
   activeFileReader: null,
@@ -109,7 +118,21 @@ const dom = {
   filterMessage: document.getElementById("filterMessage"),
   applyFilters: document.getElementById("applyFilters"),
   clearAllFilters: document.getElementById("clearAllFilters"),
+  qualitySection: document.getElementById("qualitySection"),
   qualitySummary: document.getElementById("qualitySummary"),
+  parseWarningSummary: document.getElementById("parseWarningSummary"),
+  problemRowsMessage: document.getElementById("problemRowsMessage"),
+  problemRowsSection: document.getElementById("problemRowsSection"),
+  problemRowsTitle: document.getElementById("problemRowsTitle"),
+  problemRowsClose: document.getElementById("problemRowsClose"),
+  problemRowsCategory: document.getElementById("problemRowsCategory"),
+  problemRowsSummary: document.getElementById("problemRowsSummary"),
+  problemRowsDraftNote: document.getElementById("problemRowsDraftNote"),
+  problemRowsTable: document.getElementById("problemRowsTable"),
+  problemRowsFirstPage: document.getElementById("problemRowsFirstPage"),
+  problemRowsPrevPage: document.getElementById("problemRowsPrevPage"),
+  problemRowsNextPage: document.getElementById("problemRowsNextPage"),
+  problemRowsLastPage: document.getElementById("problemRowsLastPage"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
   numberConversionSection: document.getElementById("numberConversionSection"),
@@ -277,6 +300,8 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
   state.previewPage = 1;
+  state.problemView = null;
+  state.problemViewOpener = null;
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
   state.headerDetection = buildHeaderDetectionState(headerDetection);
@@ -502,25 +527,33 @@ function movePage(action, page, pageCount) {
   return page;
 }
 
-// Pager text "第 X / Y 页，共 …" and its buttons: first and previous disabled on the
-// first page, next and last on the last one. controls: { info, first, prev, next, last }.
-function renderPager(controls, page, pageCount, totalText) {
-  controls.info.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${totalText}`;
-  controls.first.disabled = page <= 1;
-  controls.prev.disabled = page <= 1;
-  controls.next.disabled = page >= pageCount;
-  controls.last.disabled = page >= pageCount;
+// Pager buttons: first and previous disabled on the first page, next and last on the
+// last one. buttons: [first, prev, next, last].
+function setPagerButtons(buttons, page, pageCount) {
+  buttons.forEach((button, index) => {
+    button.disabled = index < 2 ? page <= 1 : page >= pageCount;
+  });
 }
 
-// Table HTML of one page of rows: the file row ("—" when the row has none), then
-// every field as displayed and escaped. entries: [{ row, line }]. Pure: no DOM, no state.
-function buildRowTableHtml(fields, entries) {
+// Table HTML of one page of rows: the file row ("—" when the row has none), an
+// optional note column, then every field as displayed and escaped. entries:
+// [{ row, line, note, highlightField }]; a null row (a parse warning without an
+// imported row) leaves the field cells empty, and the highlightField cell gets
+// class "cell-problem". Pure: no DOM, no state.
+function buildRowTableHtml(fields, entries, { withNote = false } = {}) {
+  const cell = (entry, field) => {
+    if (!entry.row) return "<td></td>";
+    const value = escapeHtml(displayValue(entry.row[field]));
+    return entry.highlightField !== undefined && entry.highlightField !== null && field === entry.highlightField
+      ? `<td class="cell-problem">${value}</td>`
+      : `<td>${value}</td>`;
+  };
   return `
     <thead>
-      <tr><th>文件行号</th>${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
+      <tr><th>文件行号</th>${withNote ? "<th>说明</th>" : ""}${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
     </thead>
     <tbody>
-      ${entries.map((entry) => `<tr><td>${entry.line === null || entry.line === undefined ? "—" : escapeHtml(entry.line)}</td>${fields.map((field) => `<td>${escapeHtml(displayValue(entry.row[field]))}</td>`).join("")}</tr>`).join("")}
+      ${entries.map((entry) => `<tr><td>${entry.line === null || entry.line === undefined ? "—" : escapeHtml(entry.line)}</td>${withNote ? `<td>${escapeHtml(entry.note || "")}</td>` : ""}${fields.map((field) => cell(entry, field)).join("")}</tr>`).join("")}
     </tbody>
   `;
 }
@@ -530,12 +563,8 @@ function renderPreview() {
   const rows = getAnalysisRows();
   const { page, pageCount, start, end } = getRowPage(rows.length, state.previewPage);
   state.previewPage = page;
-  renderPager(
-    { info: dom.previewPageInfo, first: dom.previewFirstPage, prev: dom.previewPrevPage, next: dom.previewNextPage, last: dom.previewLastPage },
-    page,
-    pageCount,
-    `${formatInteger(rows.length)} 行`
-  );
+  dom.previewPageInfo.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rows.length)} 行`;
+  setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
     dom.previewTable.innerHTML = emptyTable("当前筛选条件下没有可预览的数据。");
     return;
@@ -708,6 +737,8 @@ function hasAutomaticTypeDifferences() {
 function updateFieldConfigActions() {
   dom.applyFieldConfig.disabled = !hasFieldConfigDraftChanges();
   dom.restoreAutoFieldTypes.disabled = !hasAutomaticTypeDifferences();
+  // The problem rows follow the applied configuration; say so while drafts wait.
+  dom.problemRowsDraftNote.classList.toggle("hidden", !state.problemView || !hasFieldConfigDraftChanges());
   updateExportButtons();
 }
 
@@ -1173,6 +1204,8 @@ function renderQuality() {
   const conversionFailureClass = conversionFailureTotal === 0 ? "success" : "warning";
   const listedIdFieldCount = countListedIdDuplicateFields(state.idDuplicates);
   const pendingPlaceholderFieldCount = countPendingPlaceholderFields(state.placeholders);
+  // First, so every 查看 button below can carry its category's index.
+  state.problemCategories = listProblemCategories();
   dom.qualitySummary.innerHTML = `
     <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
@@ -1180,8 +1213,11 @@ function renderQuality() {
     <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
     <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">ID 重复字段：${formatInteger(listedIdFieldCount)}</span>
     <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">疑似缺失值：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
+    ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
+  renderParseWarningSummary();
   // Before the outlier table, which returns early when there is no numeric field.
+  refreshProblemView();
   renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
   renderNumberNoteSection(dom.numericLookingSection, dom.numericLookingDetails, state.numericLooking.map(formatNumericLookingHint));
   renderIdDuplicateDetails();
@@ -1195,6 +1231,7 @@ function renderQuality() {
         <th>缺失值数量</th>
         <th>缺失率</th>
         <th>无法转换</th>
+        <th>查看</th>
       </tr>
     </thead>
     <tbody>
@@ -1205,6 +1242,10 @@ function renderQuality() {
           <td>${formatInteger(profile.missingCount)}</td>
           <td>${formatPercent(profile.missingRate)}</td>
           <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
+          <td>${problemViewCell([
+            problemViewButton({ kind: "missing", field: profile.field }, "缺失"),
+            problemViewButton({ kind: "conversion", field: profile.field }, "格式问题")
+          ])}</td>
         </tr>
       `).join("")}
     </tbody>
@@ -1222,6 +1263,7 @@ function renderQuality() {
         <th>异常值数量</th>
         <th>下界</th>
         <th>上界</th>
+        <th>查看</th>
       </tr>
     </thead>
     <tbody>
@@ -1231,10 +1273,143 @@ function renderQuality() {
           <td>${formatInteger(stat.outlierCount)}</td>
           <td>${formatFieldNumber(stat.field, stat.lowerBound)}</td>
           <td>${formatFieldNumber(stat.field, stat.upperBound)}</td>
+          <td>${problemViewCell([problemViewButton({ kind: "outlier", field: stat.field }, "查看")])}</td>
         </tr>
       `).join("")}
     </tbody>
   `;
+}
+
+// A 查看 button for a category of state.problemCategories, or "" when the category
+// has nothing to show. It carries only the category's index (no field name).
+function problemViewButton(category, text) {
+  const index = state.problemCategories.findIndex((item) => isSameProblemCategory(item, category));
+  if (index < 0) return "";
+  return `<button type="button" class="secondary-button problem-view-button" data-problem-index="${index}" aria-label="${escapeHtml(formatProblemViewLabel(state.problemCategories[index]))}">${escapeHtml(text)}</button>`;
+}
+
+// The content of a 查看 cell: its buttons, or a short note so the cell is never empty.
+function problemViewCell(buttons) {
+  const html = buttons.filter(Boolean).join("");
+  return html || `<span class="problem-view-none">无</span>`;
+}
+
+function isSameProblemCategory(a, b) {
+  return a.kind === b.kind && a.field === b.field && a.key === b.key;
+}
+
+// "CSV 解析警告：N 条，涉及 M 行" with a 查看 button, under the pills; hidden without warnings.
+function renderParseWarningSummary() {
+  const count = state.parseWarnings.length;
+  dom.parseWarningSummary.classList.toggle("hidden", !count);
+  if (!count) {
+    dom.parseWarningSummary.innerHTML = "";
+    return;
+  }
+  const rowCount = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
+  dom.parseWarningSummary.innerHTML = `${escapeHtml(`CSV 解析警告：${formatInteger(count)} 条${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
+}
+
+// Delegated click handler of #qualitySection for the 查看 buttons, bound in script.js.
+function handleProblemViewClick(event) {
+  const button = event.target.closest("button[data-problem-index]");
+  if (!button) return;
+  const category = state.problemCategories[Number(button.dataset.problemIndex)];
+  if (!category || !openProblemView(category)) return;
+  state.problemViewOpener = button;
+  dom.problemRowsTitle.focus();
+}
+
+// Opens the viewer on a category of state.problemCategories at page 1. Returns false,
+// leaving the viewer as it was, when the category has nothing to show.
+function openProblemView(category) {
+  const match = state.problemCategories.find((item) => isSameProblemCategory(item, category));
+  const list = match ? listProblemRows(match) : null;
+  if (!list) return false;
+  state.problemView = { category: { kind: match.kind, field: match.field, key: match.key }, page: 1, list };
+  dom.problemRowsMessage.textContent = "";
+  renderProblemView();
+  return true;
+}
+
+function selectProblemCategory(value) {
+  const category = state.problemCategories[Number(value)];
+  if (category) openProblemView(category);
+}
+
+function goToProblemRowsPage(action) {
+  const view = state.problemView;
+  if (!view) return;
+  const { page, pageCount } = getRowPage(view.list.items.length, view.page);
+  view.page = movePage(action, page, pageCount);
+  renderProblemView();
+}
+
+// Kinds whose rows have one cell to point at: the field of the category.
+const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate"]);
+
+// The open category's current page: category list, summary, table and pager.
+function renderProblemView() {
+  const view = state.problemView;
+  const index = state.problemCategories.findIndex((item) => isSameProblemCategory(item, view.category));
+  const category = state.problemCategories[index];
+  const { page, pageCount, start, end } = getRowPage(view.list.items.length, view.page);
+  view.page = page;
+  dom.problemRowsSection.classList.remove("hidden");
+  dom.problemRowsCategory.innerHTML = state.problemCategories.map((item, itemIndex) => (
+    `<option value="${itemIndex}"${itemIndex === index ? " selected" : ""}>${escapeHtml(formatProblemCategoryLabel(item))}</option>`
+  )).join("");
+  dom.problemRowsCategory.value = String(index);
+  dom.problemRowsSummary.textContent = formatProblemRowsSummary(category, view.list, page, pageCount);
+  dom.problemRowsDraftNote.classList.toggle("hidden", !hasFieldConfigDraftChanges());
+  const highlightField = HIGHLIGHTED_PROBLEM_KINDS.has(category.kind) ? category.field : null;
+  dom.problemRowsTable.innerHTML = buildRowTableHtml(state.fields, view.list.items.slice(start, end).map((item) => ({
+    row: item.index === null ? null : state.rows[item.index],
+    line: item.line,
+    note: item.note,
+    highlightField
+  })), { withNote: true });
+  setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], page, pageCount);
+}
+
+// The 关闭 button: hides the viewer and gives the focus back to the 查看 button that
+// opened it, or, when a re-render replaced that button, to the new button of the
+// same category; with neither, the focus stays.
+function closeProblemView() {
+  const category = state.problemView?.category;
+  const opener = state.problemViewOpener;
+  hideProblemView();
+  const target = opener?.isConnected ? opener : findProblemViewButton(category);
+  if (target) target.focus();
+}
+
+function findProblemViewButton(category) {
+  if (!category || typeof dom.qualitySection.querySelector !== "function") return null;
+  const index = state.problemCategories.findIndex((item) => isSameProblemCategory(item, category));
+  return index < 0 ? null : dom.qualitySection.querySelector(`button[data-problem-index="${index}"]`);
+}
+
+function hideProblemView() {
+  state.problemView = null;
+  state.problemViewOpener = null;
+  dom.problemRowsSection.classList.add("hidden");
+  dom.problemRowsCategory.innerHTML = "";
+  dom.problemRowsSummary.textContent = "";
+  dom.problemRowsTable.innerHTML = "";
+  dom.problemRowsDraftNote.classList.add("hidden");
+  dom.problemRowsMessage.textContent = "";
+  setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], 1, 1);
+}
+
+// After field configuration or placeholder confirmations (renderQuality()): lists the
+// open category again from page 1, or closes the viewer when it has no rows now.
+function refreshProblemView() {
+  const view = state.problemView;
+  if (!view) return;
+  if (!openProblemView(view.category)) {
+    hideProblemView();
+    dom.problemRowsMessage.textContent = "这一类已经没有问题行。";
+  }
 }
 
 // "按单位读取的数字" and "疑似数值列": one line per field, the whole subsection
@@ -1263,7 +1438,7 @@ function renderIdDuplicateDetails() {
       const overflow = formatIdDuplicateOverflow(item.duplicateValueCount, item.values.length);
       return `
         <div class="id-duplicate-field">
-          <p class="id-duplicate-field-name">${escapeHtml(item.field)}</p>
+          <p class="id-duplicate-field-name">${escapeHtml(item.field)} ${problemViewButton({ kind: "idDuplicate", field: item.field }, "查看")}</p>
           <div class="table-wrap" tabindex="0" aria-label="${escapeHtml(item.field)} 的重复值表，可横向滚动">
             <table aria-label="${escapeHtml(item.field)} 的重复值">
               <thead><tr><th>重复值</th><th>出现次数</th><th>文件行号</th><th>说明</th></tr></thead>
@@ -1292,13 +1467,15 @@ function renderPlaceholderDetails() {
   const items = state.placeholders.map((entry, index) => {
     const textId = `placeholderText${index}`;
     const profile = getFieldProfile(entry.field);
+    // Its own data-problem-index: handlePlaceholderClick() only reads data-placeholder-*.
+    const viewButton = problemViewButton({ kind: "placeholder", field: entry.field, key: entry.key }, "查看");
     let item;
     if (entry.confirmed) {
-      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">撤销</button></li>`;
+      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">撤销</button>${viewButton}</li>`;
     } else {
       const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, [entry.key]));
       const notes = formatPlaceholderNotes([entry.key]);
-      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按缺失处理</button></li>`;
+      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按缺失处理</button>${viewButton}</li>`;
     }
     if (state.placeholders[index + 1]?.field === entry.field) return item;
     const pendingKeys = state.placeholders.filter((other) => other.field === entry.field && !other.confirmed).map((other) => other.key);
@@ -1845,6 +2022,7 @@ function resetAnalysisState() {
   state.headerDetection = null;
   state.sourceRowNumbers = new WeakMap();
   state.previewPage = 1;
+  state.problemCategories = [];
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
   state.sourceFileName = "";
@@ -1868,9 +2046,7 @@ function resetAnalysisState() {
   dom.insights.innerHTML = "";
   dom.previewTable.innerHTML = "";
   dom.previewPageInfo.textContent = "";
-  [dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage].forEach((button) => {
-    button.disabled = true;
-  });
+  setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], 1, 1);
   dom.schemaTable.innerHTML = "";
   dom.fieldConfigMessage.textContent = "";
   dom.fieldConfigMessage.className = "field-config-message";
@@ -1895,6 +2071,9 @@ function resetAnalysisState() {
   dom.filterExcludedCount.textContent = "0";
   setFilterMessage("尚未应用筛选，当前分析使用全部记录。", "");
   dom.qualitySummary.innerHTML = "";
+  dom.parseWarningSummary.innerHTML = "";
+  dom.parseWarningSummary.classList.add("hidden");
+  hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
   dom.idDuplicateDetails.innerHTML = "";

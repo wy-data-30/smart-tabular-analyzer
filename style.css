@@ -996,6 +996,106 @@ tbody tr:hover {
   color: var(--warning);
 }
 
+.problem-view-button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+td .problem-view-button + .problem-view-button {
+  margin-left: 6px;
+}
+
+.quality-summary .problem-view-button {
+  min-height: 30px;
+}
+
+.placeholder-item .problem-view-button {
+  margin-left: 8px;
+}
+
+.problem-view-none {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.parse-warning-summary {
+  margin: -6px 0 16px;
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.problem-rows-message:empty {
+  display: none;
+}
+
+.problem-rows-message {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.problem-rows {
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--panel-subtle);
+}
+
+.problem-rows-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.problem-rows-heading .subsection-title {
+  margin-bottom: 0;
+}
+
+.problem-rows-heading button {
+  min-height: 34px;
+  font-size: 12px;
+}
+
+.problem-rows-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.problem-rows-category {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.problem-rows-toolbar select {
+  flex: 1 1 240px;
+  max-width: 100%;
+}
+
+.problem-rows-summary,
+.problem-rows-note {
+  margin: 10px 0;
+  font-size: 13px;
+}
+
+.problem-rows-note {
+  color: var(--warning);
+}
+
+td.cell-problem {
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px #fedf89;
+}
+
 .id-duplicate-field + .id-duplicate-field,
 .id-duplicate-field + .id-duplicate-note,
 .id-duplicate-note + .id-duplicate-field,
