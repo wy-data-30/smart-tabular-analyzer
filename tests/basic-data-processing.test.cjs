@@ -1686,9 +1686,8 @@ test("CSV edge files keep their errors and parse warnings", () => {
   const cases = [
     ["a,b\r\n", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
     ["", "status-panel error", "CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", []],
-    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 2 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
-      { row: null, code: "UndetectableDelimiter", message: "Unable to auto-detect delimiting character; defaulted to ','" },
-      { row: 2, code: "TooFewFields", message: "Too few fields: expected 2 fields but parsed 1" }
+    ["a,b\r\n1\r\n", "status-panel warning", "CSV 已载入，但发现 1 个解析警告，涉及 1 行。请核对数据预览和字段数量。", [
+      { row: 2, code: "TooFewFields", message: "第 2 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。" }
     ]],
     ["a,b\r\n1,2,3\r\n", "status-panel error", "CSV 第 2 行的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。", []]
   ];
@@ -1804,6 +1803,48 @@ test("a shown extra-cell error adds one line pass after the main parse and heade
   const extra = await importCsvFile("a,b\r\n1,2,3\r\n");
   assert.equal(extra.elements.get("statusPanel").textContent, `CSV 第 2 行${EXTRA_CELL_ERROR}`);
   assert.deepEqual(extra.papaOptions().map((options) => options.header), [true, false, false]);
+});
+
+const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(({ row, code, message }) => [row, code, message]))"));
+
+test("imported CSV warnings carry Chinese messages and keep their codes", async () => {
+  const short = await importCsvFile("a,b,c\n1,2,3\n4\n5,6,7\n");
+  assert.deepEqual(codedWarnings(short), [[3, "TooFewFields", "第 3 行只有 1 列（表头有 3 列），缺少的单元格按空值处理。"]]);
+  const quote = await importCsvFile("a,b\n1,2\n\"x\"y\",3\n4,5\n");
+  assert.deepEqual(codedWarnings(quote), [[3, "InvalidQuotes", "第 3 行有不规范的引号（引号后面紧跟了其他字符），这一行可能被读错。"]]);
+
+  // Without the source text there is no line; the cell count still comes from the row.
+  const { evaluate } = createScriptContext();
+  evaluate(`handleParsedData({
+    errors: [{ type: "FieldMismatch", code: "TooFewFields", message: "Too few fields", row: 1 }],
+    meta: { fields: ["a", "b", "c"] },
+    data: [{ a: "1", b: "2", c: "3" }, { a: "4" }]
+  }, "no-source.csv", beginImport())`);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings)")), [
+    { row: null, code: "TooFewFields", message: "有一条记录的列数少于表头（只有 1 列，表头有 3 列），缺少的单元格按空值处理。" }
+  ]);
+});
+
+test("a one-column CSV whose header holds a semicolon, tab or bar gets one Chinese delimiter warning", async () => {
+  for (const [separator, name, short] of [[";", "分号（；）", "分号"], ["\t", "制表符", "制表符"], ["|", "竖线（|）", "竖线"]]) {
+    const scope = await importCsvFile(["a", "b"].join(separator) + `\n1${separator}2\n3\n5${separator}6\n`);
+    assert.equal(scope.evaluate("state.fields.length"), 1, name);
+    assert.deepEqual(codedWarnings(scope), [
+      [null, "UndetectableDelimiter", `整份文件只读出 1 列，但表头里有${name}。如果原文件是用${short}分隔的，请另存为逗号分隔的 CSV 后重新上传。`]
+    ], name);
+    assert.equal(scope.elements.get("statusPanel").textContent, "CSV 已载入，但发现 1 个解析警告。请核对数据预览和字段数量。", name);
+  }
+});
+
+test("guard: a plain one-column CSV still gets no delimiter warning", async () => {
+  const scope = await importCsvFile("字段\n1\n2\n");
+  assert.deepEqual(codedWarnings(scope), []);
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success");
+});
+
+test("a comma CSV with several columns no longer lists the delimiter guess as a warning", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n3\n5,6\n");
+  assert.deepEqual(codedWarnings(scope).map(([row, code]) => [row, code]), [[3, "TooFewFields"]]);
 });
 
 // ID duplicate detection on the original rows (state.idDuplicates).

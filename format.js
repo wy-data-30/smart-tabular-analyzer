@@ -111,6 +111,31 @@ function formatHeaderDetectionNote(headerDetection) {
   return `表头在第 ${headerRowNumber} 行，已跳过上方 ${headerRowNumber - 1} 行${quoted ? `：${quoted}${more}` : ""}。`;
 }
 
+// Chinese text of a kept CSV parse warning by its PapaParse code, or "" for other
+// codes. line is the warning's file line or null; for TooFewFields cellCount and
+// headerCount are the cells of the row and of the header (cellCount null when
+// unknown); for UndetectableDelimiter separator is the character found in the header
+// of a one-column file.
+function formatCsvWarningMessage(code, { line = null, cellCount = null, headerCount = null, separator = "" } = {}) {
+  if (code === "TooFewFields") {
+    const missingCells = "缺少的单元格按空值处理。";
+    if (line && cellCount !== null) return `第 ${line} 行只有 ${cellCount} 列（表头有 ${headerCount} 列），${missingCells}`;
+    if (line) return `第 ${line} 行的列数少于表头，${missingCells}`;
+    if (cellCount !== null) return `有一条记录的列数少于表头（只有 ${cellCount} 列，表头有 ${headerCount} 列），${missingCells}`;
+    return `有一条记录的列数少于表头，${missingCells}`;
+  }
+  if (code === "InvalidQuotes") {
+    return line
+      ? `第 ${line} 行有不规范的引号（引号后面紧跟了其他字符），这一行可能被读错。`
+      : "有一处不规范的引号（引号后面紧跟了其他字符），所在的记录可能被读错。";
+  }
+  if (code === "UndetectableDelimiter") {
+    const [shown, name] = { ";": ["分号（；）", "分号"], "\t": ["制表符", "制表符"], "|": ["竖线（|）", "竖线"] }[separator] || [];
+    return name ? `整份文件只读出 1 列，但表头里有${shown}。如果原文件是用${name}分隔的，请另存为逗号分隔的 CSV 后重新上传。` : "";
+  }
+  return "";
+}
+
 // "6、19", plus " 等 15 个" when totalCount is more than the numbers shown. Any row
 // without a number shows "—" instead of a partial list.
 function formatRowNumberList(rowNumbers, totalCount = rowNumbers.length) {

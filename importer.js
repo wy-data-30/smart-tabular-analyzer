@@ -811,8 +811,12 @@ function handleParsedData(results, sourceName, importId, source = null) {
     return;
   }
 
+  // A failed delimiter guess matters only when the file came out as one column whose
+  // header holds another separator; with several columns the comma clearly split it.
+  const oneColumnHeader = fields.length === 1 ? decodeCsvHeaderFromParser(fieldPairs[0].raw) : "";
+  const separator = [";", "\t", "|"].find((character) => oneColumnHeader.includes(character)) || "";
   const warningErrors = parseErrors
-    .filter((error) => !(error.code === "UndetectableDelimiter" && fields.length === 1));
+    .filter((error) => error.code !== "UndetectableDelimiter" || separator);
   // Indexes into sourceRows of the kept rows, so row numbers drop with blank rows.
   const keptIndexes = [];
   const rows = sourceRows.reduce((normalizedRows, row, index) => {
@@ -833,12 +837,19 @@ function handleParsedData(results, sourceName, importId, source = null) {
   // skipped title rows adds the physical lines above its header.
   const recordLines = source ? findCsvRecordLines(source.text, results.meta, sourceRows.length) : null;
   const rowNumbers = recordLines ? keptIndexes.map((index) => recordLines.data[index] + lineOffset) : null;
-  // Every warning is kept, with its exact line or null; no line is estimated.
-  const parseWarnings = warningErrors.map((error) => ({
-    row: parseErrorLineNumber(error, recordLines, lineOffset),
-    code: error.code || "ParseWarning",
-    message: error.message || "CSV 行结构异常"
-  }));
+  // Every warning is kept, with its exact line or null; no line is estimated. A short
+  // row's cell count comes from its parsed row, which holds only the cells it had.
+  const parseWarnings = warningErrors.map((error) => {
+    const row = parseErrorLineNumber(error, recordLines, lineOffset);
+    const shortRow = error.code === "TooFewFields" && Number.isInteger(error.row) ? sourceRows[error.row] : null;
+    const message = formatCsvWarningMessage(error.code, {
+      line: row,
+      cellCount: shortRow ? Object.keys(shortRow).length : null,
+      headerCount: allFieldPairs.length,
+      separator
+    });
+    return { row, code: error.code || "ParseWarning", message: message || error.message || "CSV 行结构异常" };
+  });
   commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null, rowNumbers);
 }
 
