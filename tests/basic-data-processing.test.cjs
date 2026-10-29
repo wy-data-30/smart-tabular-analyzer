@@ -3248,3 +3248,182 @@ test("guard: ID grouping lists each value's rows in first-appearance order", () 
   assert.equal(ordered.mostlyRepeated, false);
   assert.deepEqual(ordered.summary, ["B", "A", "C"]);
 });
+
+// v2.6.0: the rows behind each quality count (listProblemCategories / listProblemRows).
+// Checks every category against the figure the quality page shows, and the order:
+// file order, or by group for the two duplicate kinds.
+const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((() => {
+  const mismatches = [];
+  const names = [];
+  const ascending = (list) => list.every((value, index) => index === 0 || value > list[index - 1]);
+  listProblemCategories().forEach((category) => {
+    const name = [category.kind, category.field, category.key].filter((part) => part !== undefined).join(" / ");
+    const result = listProblemRows(category);
+    if (!result) {
+      mismatches.push(name + ": no list");
+      return;
+    }
+    names.push(name + " = " + result.items.length);
+    const items = result.items;
+    let expected;
+    if (category.kind === "missing") expected = getFieldProfile(category.field).missingCount;
+    if (category.kind === "conversion") expected = getFieldProfile(category.field).conversionFailureCount;
+    if (category.kind === "outlier") expected = getQualityNumericStats().find((stat) => stat.field === category.field).outlierCount;
+    if (category.kind === "placeholder") expected = state.placeholders.find((entry) => entry.field === category.field && entry.key === category.key).count;
+    if (category.kind === "parseWarnings") expected = state.parseWarnings.length;
+    if (category.kind === "duplicateRows") {
+      // The quality count leaves out the first row of each group, which is kept.
+      expected = state.duplicateRows + result.groupCount;
+      if (items.filter((item) => item.kept).length !== result.groupCount) mismatches.push(name + ": kept rows");
+    }
+    if (category.kind === "idDuplicate") {
+      const summary = state.idDuplicates.find((item) => item.field === category.field);
+      const groups = new Map();
+      items.forEach((item) => groups.set(item.value, [...(groups.get(item.value) || []), item]));
+      if (groups.size !== summary.duplicateValueCount) mismatches.push(name + ": " + groups.size + " values, summary " + summary.duplicateValueCount);
+      summary.values.forEach((value, position) => {
+        const rows = groups.get(value.value) || [];
+        if ([...groups.keys()][position] !== value.value) mismatches.push(name + ": value order at " + position);
+        if (rows.length !== value.count) mismatches.push(name + ": " + value.value + " has " + rows.length + " rows, summary " + value.count);
+        if (JSON.stringify(rows.slice(0, 10).map((item) => item.line)) !== JSON.stringify(value.rowNumbers)) mismatches.push(name + ": " + value.value + " row numbers");
+      });
+      expected = [...groups.values()].reduce((sum, rows) => sum + rows.length, 0);
+    }
+    if (items.length !== expected) mismatches.push(name + ": listed " + items.length + ", quality page " + expected);
+    if (category.kind === "duplicateRows" || category.kind === "idDuplicate") {
+      const firsts = [];
+      items.forEach((item, index) => {
+        if (index === 0 || item.group !== items[index - 1].group) firsts.push(item.index);
+        else if (item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
+      });
+      if (category.kind === "duplicateRows" && !ascending(firsts)) mismatches.push(name + ": groups not by first appearance");
+    } else if (category.kind !== "parseWarnings" && !ascending(items.map((item) => item.index))) {
+      mismatches.push(name + ": not in file order");
+    }
+    if (items.some((item) => item.index !== null && item.line !== getSourceRowNumber(state.rows[item.index]))) mismatches.push(name + ": line numbers");
+  });
+  return { names, mismatches };
+})())`));
+
+test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.equal(scopes.length, 11);
+  for (const [fileName, scope] of scopes) {
+    const { names, mismatches } = problemRowCheck(scope);
+    assert.deepEqual(mismatches, [], fileName);
+    assert.ok(names.length > 0, fileName);
+  }
+  const names = (fileName) => problemRowCheck(scopes.find(([name]) => name === fileName)[1]).names;
+  assert.deepEqual(names("订单表.csv"), [
+    "missing / 备注 = 26",
+    "conversion / 下单日期 = 1", "conversion / 数量 = 1", "conversion / 金额 = 1",
+    "outlier / 数量 = 1", "outlier / 金额 = 1",
+    "idDuplicate / 订单号 = 2",
+    "placeholder / 下单日期 / — = 1", "placeholder / 数量 / — = 1", "placeholder / 金额 / N/A = 1",
+    "placeholder / 备注 / N/A = 1", "placeholder / 备注 / — = 1"
+  ]);
+  assert.deepEqual(names("花名册.xlsx"), [
+    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "outlier / 月薪 = 3", "duplicateRows = 2",
+    "idDuplicate / 工号 = 3", "idDuplicate / 身份证号 = 3", "idDuplicate / 手机号 = 3"
+  ]);
+  // 用户ID and 会话ID are mostly repeated: no entry for them.
+  assert.deepEqual(names("sample-user-behavior.csv").filter((name) => name.startsWith("idDuplicate")), ["idDuplicate / 事件ID = 4"]);
+});
+
+test("problem-row lists follow confirmations, manual types, ignored fields and undo", async () => {
+  const orders = await importStage3Fixture("订单表.csv");
+  const check = () => {
+    const result = problemRowCheck(orders);
+    assert.deepEqual(result.mismatches, []);
+    return result.names;
+  };
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(check().filter((name) => !name.startsWith("placeholder")), [
+    "missing / 下单日期 = 1", "missing / 数量 = 1", "missing / 金额 = 1", "missing / 备注 = 28",
+    "outlier / 数量 = 1", "outlier / 金额 = 1", "idDuplicate / 订单号 = 2"
+  ]);
+  const confirmedNotes = JSON.parse(orders.evaluate('JSON.stringify(listProblemRows({ kind: "placeholder", field: "金额", key: "N/A" }).items.map((item) => [item.line, item.note]))'));
+  assert.deepEqual(confirmedNotes, [[15, "已按缺失处理"]]);
+
+  // 客户名称 becomes a mostly repeated ID field; 备注 is ignored but keeps its missing values.
+  orders.evaluate('stageFieldTypeChange("金额", "category"); stageFieldTypeChange("客户名称", "id"); stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  const ignored = check();
+  assert.ok(ignored.includes("missing / 备注 = 28"));
+  assert.ok(!ignored.some((name) => name.startsWith("outlier / 金额") || name.startsWith("idDuplicate / 客户名称")));
+  assert.ok(ignored.includes("placeholder / 备注 / N/A = 1"));
+
+  orders.evaluate('stageFieldTypeChange("金额", "numeric"); stageFieldTypeChange("数量", "date"); applyFieldConfiguration()');
+  assert.ok(check().includes("conversion / 数量 = 29"));
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  const undone = check();
+  assert.ok(undone.includes("conversion / 金额 = 1"));
+  assert.ok(!undone.includes("missing / 金额 = 1"));
+  assert.equal(orders.evaluate('state.manualFieldTypes["金额"]'), undefined);
+  assert.equal(orders.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+});
+
+test("ID duplicate rows follow the quality table's order, with every value and row", async () => {
+  const ordered = await importCsvFile(`编号,值\r\n${["A", "B", "A", "B", "C", "B", "C"].map((id, index) => `${id},${index}`).join("\r\n")}\r\n`);
+  const items = JSON.parse(ordered.evaluate('JSON.stringify(listProblemRows({ kind: "idDuplicate", field: "编号" }).items.map((item) => [item.value, item.line, item.note]))'));
+  assert.deepEqual(items, [
+    ["B", 3, "第 1 组：「B」出现 3 次"], ["B", 5, "第 1 组：「B」出现 3 次"], ["B", 7, "第 1 组：「B」出现 3 次"],
+    ["A", 2, "第 2 组：「A」出现 2 次"], ["A", 4, "第 2 组：「A」出现 2 次"],
+    ["C", 6, "第 3 组：「C」出现 2 次"], ["C", 8, "第 3 组：「C」出现 2 次"]
+  ]);
+
+  // More than 10 duplicate values: the summary lists 10, the problem rows every one.
+  const ids = [
+    ...Array.from({ length: 15 }, () => "S000"),
+    ...Array.from({ length: 11 }, (_, index) => [`S${index + 1}`, `S${index + 1}`]).flat(),
+    ...Array.from({ length: 40 }, (_, index) => `S${index + 100}`)
+  ];
+  const long = await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`);
+  assert.deepEqual(problemRowCheck(long).mismatches, []);
+  const result = JSON.parse(long.evaluate('JSON.stringify(listProblemRows({ kind: "idDuplicate", field: "学号" }))'));
+  assert.equal(result.items.length, 37);
+  assert.equal(new Set(result.items.map((item) => item.value)).size, 12);
+  assert.equal(result.items.filter((item) => item.value === "S000").length, 15);
+  assert.equal(long.evaluate('state.idDuplicates[0].values.length'), 10);
+});
+
+test("duplicate-row lists mark the kept first row of each group", async () => {
+  const scope = await importCsvFile("城市,值\r\n上海,1\r\n北京,2\r\n上海,1\r\n北京,2\r\n上海,1\r\n广州,3\r\n");
+  const result = JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "duplicateRows" }))'));
+  assert.equal(result.groupCount, 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 3);
+  assert.deepEqual(result.items.map((item) => [item.line, item.group, item.kept, item.note]), [
+    [2, 1, true, "第 1 组（保留）"], [4, 1, false, "第 1 组"], [6, 1, false, "第 1 组"],
+    [3, 2, true, "第 2 组（保留）"], [5, 2, false, "第 2 组"]
+  ]);
+});
+
+test("missing, conversion and outlier lists explain each row", async () => {
+  const scope = await importCsvFile("金额,备注\r\n10,a\r\n12,N/A\r\n,b\r\n11,c\r\n待定,d\r\n13,e\r\n9,f\r\n10,g\r\n11,h\r\n12,i\r\n500,j\r\n");
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  const notes = (category) => JSON.parse(scope.evaluate(`JSON.stringify(listProblemRows(${JSON.stringify(category)}).items.map((item) => [item.line, item.note]))`));
+  assert.deepEqual(notes({ kind: "missing", field: "金额" }), [[4, "空值"]]);
+  assert.deepEqual(notes({ kind: "missing", field: "备注" }), [[3, "已按缺失处理"]]);
+  assert.deepEqual(notes({ kind: "conversion", field: "金额" }), [[6, "无法转换为数值"]]);
+  const bounds = JSON.parse(scope.evaluate('JSON.stringify(getQualityNumericStats().find((stat) => stat.field === "金额"))'));
+  assert.deepEqual(notes({ kind: "outlier", field: "金额" }), [[12, `高于上界 ${scope.evaluate(`formatFieldNumber("金额", ${bounds.upperBound})`)}`]]);
+  assert.equal(scope.evaluate('listProblemRows({ kind: "conversion", field: "备注" })'), null);
+  assert.equal(scope.evaluate('listProblemRows({ kind: "missing", field: "不存在" })'), null);
+});
+
+test("parse-warning lists show rows that were imported and say when there is none", async () => {
+  const scope = await importCsvFile("a,b\n1,2\n\n \n3\n4,5\n");
+  const items = JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "parseWarnings" }).items)'));
+  assert.deepEqual(items.map(({ index, line }) => [index, line]), [[null, 4], [1, 5]]);
+  assert.equal(items[0].note, "第 4 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。（这一行没有可分析的数据，未导入）");
+  assert.equal(items[1].note, "第 5 行只有 1 列（表头有 2 列），缺少的单元格按空值处理。");
+  assert.deepEqual(problemRowCheck(scope).mismatches, []);
+
+  const oneColumn = await importCsvFile("a;b\n1;2\n3\n5;6\n");
+  const [warning] = JSON.parse(oneColumn.evaluate('JSON.stringify(listProblemRows({ kind: "parseWarnings" }).items)'));
+  assert.equal(warning.index, null);
+  assert.match(warning.note, /（没有行号）$/);
+
+  const clean = await importStage3Fixture("订单表.csv");
+  assert.equal(clean.evaluate('listProblemRows({ kind: "parseWarnings" })'), null);
+  assert.equal(clean.evaluate('listProblemCategories().some((category) => category.kind === "parseWarnings")'), false);
+});

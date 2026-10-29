@@ -274,6 +274,163 @@ function buildNumericLookingSummary(profiles) {
   });
 }
 
+// ---- Problem rows: the rows behind each quality-page count ----
+// A category is { kind, field, key } with kind one of missing, conversion, outlier,
+// duplicateRows, idDuplicate, placeholder, parseWarnings. Every list comes from the
+// same checks as its quality count and reads the original rows (state.rows), never
+// the filters. Items are { index (into state.rows, or null), line (file row or
+// null), note, ... }, in file order; the duplicate kinds go group by group.
+
+function problemRowItem(index, note, extra = {}) {
+  return { index, line: getSourceRowNumber(state.rows[index]), note, ...extra };
+}
+
+// Missing values of a field, counted as its profile counts missingCount (with the
+// placeholder keys the profile was built with). Ignored fields keep theirs.
+function listMissingRows(field) {
+  const profile = getFieldProfile(field);
+  if (!profile) return null;
+  const items = [];
+  state.rows.forEach((row, index) => {
+    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) items.push(problemRowItem(index, isMissing(row[field]) ? "空值" : "已按缺失处理"));
+  });
+  return { items, count: profile.missingCount };
+}
+
+// Values that fail the applied numeric or date type, by getProfileConversionCheck().
+function listConversionFailureRows(field) {
+  const profile = getFieldProfile(field);
+  const fails = profile && getProfileConversionCheck(profile, profile.typeKey);
+  if (!fails) return null;
+  const items = [];
+  state.rows.forEach((row, index) => {
+    const value = row[field];
+    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `无法转换为${profile.type}`));
+  });
+  return { items, count: profile.conversionFailureCount };
+}
+
+// Values strictly outside the IQR bounds of the quality statistics, read with the
+// same number parser; values that fail conversion are never outliers.
+function listOutlierRows(field) {
+  const stat = getQualityNumericStats().find((item) => item.field === field);
+  const profile = getFieldProfile(field);
+  if (!stat || !profile) return null;
+  const parseNumber = getNumberParser(profile.numberStrategy);
+  const above = `高于上界 ${formatFieldNumber(field, stat.upperBound)}`;
+  const below = `低于下界 ${formatFieldNumber(field, stat.lowerBound)}`;
+  const items = [];
+  state.rows.forEach((row, index) => {
+    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
+    const number = parseNumber(row[field]);
+    if (number === null) return;
+    if (number > stat.upperBound) items.push(problemRowItem(index, above));
+    else if (number < stat.lowerBound) items.push(problemRowItem(index, below));
+  });
+  return { items, count: stat.outlierCount };
+}
+
+// Exactly repeated rows (buildExactRowKey() over every field), grouped, groups by
+// first appearance. The first row of a group is kept by the deduplicated export, so
+// the quality count (state.duplicateRows) leaves it out: items = count + groupCount.
+function listDuplicateRowGroups() {
+  if (!state.duplicateRows) return null;
+  const groups = new Map();
+  state.rows.forEach((row, index) => {
+    const key = buildExactRowKey(row, state.fields);
+    const indexes = groups.get(key);
+    if (indexes) indexes.push(index);
+    else groups.set(key, [index]);
+  });
+  const items = [];
+  let group = 0;
+  groups.forEach((indexes) => {
+    if (indexes.length < 2) return;
+    group += 1;
+    indexes.forEach((index, position) => items.push(problemRowItem(index, `第 ${group} 组${position ? "" : "（保留）"}`, { group, kept: !position })));
+  });
+  return { items, count: state.duplicateRows, groupCount: group };
+}
+
+// Every duplicate value of an ID field and every row of it, in the order of the
+// quality page's table (sortIdDuplicates()) but without its limits. Mostly repeated
+// fields get no list.
+function listIdDuplicateRows(field) {
+  const summary = state.idDuplicates.find((item) => item.field === field);
+  const profile = getFieldProfile(field);
+  if (!summary || !profile || summary.mostlyRepeated || !summary.duplicateValueCount) return null;
+  const { indexesByValue } = groupIdValueIndexes(state.rows, field, profile.confirmedKeys);
+  const items = [];
+  sortIdDuplicates(indexesByValue).forEach(([value, indexes], position) => {
+    const note = `第 ${position + 1} 组：「${value}」出现 ${indexes.length} 次`;
+    indexes.forEach((index) => items.push(problemRowItem(index, note, { group: position + 1, value })));
+  });
+  return { items, count: items.length, valueCount: summary.duplicateValueCount };
+}
+
+// Rows holding one placeholder key of a field, confirmed or not.
+function listPlaceholderRows(field, key) {
+  const entry = state.placeholders.find((item) => item.field === field && item.key === key);
+  if (!entry) return null;
+  const note = entry.confirmed ? "已按缺失处理" : "待确认";
+  const items = [];
+  state.rows.forEach((row, index) => {
+    if (placeholderKey(row[field]) === key) items.push(problemRowItem(index, note));
+  });
+  return { items, count: entry.count };
+}
+
+// One item per parse warning, in warning order. A warning whose line is not among
+// the imported rows (a dropped blank row) or that has no line gets no row.
+function listParseWarningRows() {
+  if (!state.parseWarnings.length) return null;
+  const indexByLine = new Map();
+  state.rows.forEach((row, index) => {
+    const line = getSourceRowNumber(row);
+    if (line !== null && !indexByLine.has(line)) indexByLine.set(line, index);
+  });
+  const items = state.parseWarnings.map((warning) => {
+    const index = warning.row === null ? null : indexByLine.get(warning.row) ?? null;
+    const reason = warning.row === null ? "（没有行号）" : index === null ? "（这一行没有可分析的数据，未导入）" : "";
+    return { index, line: warning.row, note: `${warning.message}${reason}` };
+  });
+  return { items, count: items.length };
+}
+
+// Categories with rows to show, in this order: missing, format problems, outliers
+// (per field), duplicate rows, ID duplicates (per field), placeholders (per field
+// and key), parse warnings. count / unit describe the quality figure for labels:
+// row, value, duplicateRow (without each group's kept row), duplicateValue, warning.
+function listProblemCategories() {
+  return [
+    ...state.profiles.filter((profile) => profile.missingCount > 0)
+      .map((profile) => ({ kind: "missing", field: profile.field, count: profile.missingCount, unit: "row" })),
+    ...state.profiles.filter((profile) => profile.conversionFailureCount > 0)
+      .map((profile) => ({ kind: "conversion", field: profile.field, count: profile.conversionFailureCount, unit: "value" })),
+    ...getQualityNumericStats().filter((stat) => stat.outlierCount > 0)
+      .map((stat) => ({ kind: "outlier", field: stat.field, count: stat.outlierCount, unit: "value" })),
+    ...(state.duplicateRows > 0 ? [{ kind: "duplicateRows", count: state.duplicateRows, unit: "duplicateRow" }] : []),
+    ...state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0)
+      .map((item) => ({ kind: "idDuplicate", field: item.field, count: item.duplicateValueCount, unit: "duplicateValue" })),
+    ...state.placeholders.map((entry) => ({ kind: "placeholder", field: entry.field, key: entry.key, count: entry.count, unit: "row" })),
+    ...(state.parseWarnings.length ? [{ kind: "parseWarnings", count: state.parseWarnings.length, unit: "warning" }] : [])
+  ];
+}
+
+// The rows of one category, or null when it has none to show now.
+function listProblemRows(category) {
+  switch (category?.kind) {
+    case "missing": return listMissingRows(category.field);
+    case "conversion": return listConversionFailureRows(category.field);
+    case "outlier": return listOutlierRows(category.field);
+    case "duplicateRows": return listDuplicateRowGroups();
+    case "idDuplicate": return listIdDuplicateRows(category.field);
+    case "placeholder": return listPlaceholderRows(category.field, category.key);
+    case "parseWarnings": return listParseWarningRows();
+    default: return null;
+  }
+}
+
 function missingRateLevel() {
   const denominator = state.rows.length * state.fields.length;
   const rate = denominator ? state.totalMissing / denominator : 0;
