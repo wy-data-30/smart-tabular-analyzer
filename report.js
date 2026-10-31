@@ -4,7 +4,6 @@ const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",
   categoryTopChart: "分类字段 Top 10",
   dateTrendChart: "日期字段趋势",
-  customAnalysisChart: "自定义分组图",
   v2TopGroupChart: "自定义分析 Top 10 分组",
   v2SelectedTrendChart: "自定义分析时间趋势",
   templateMainChart: "场景模板主图",
@@ -22,7 +21,6 @@ const REPORT_CHART_HEADING_IDS = Object.freeze({
   numericDistributionChart: "numericChartTitle",
   categoryTopChart: "categoryChartTitle",
   dateTrendChart: "dateChartTitle",
-  customAnalysisChart: "customAnalysisChartTitle",
   v2TopGroupChart: "v2TopGroupTitle",
   v2SelectedTrendChart: "v2TrendTitle",
   templateMainChart: "templateMainChartTitle",
@@ -521,19 +519,7 @@ function buildReportDateTrends() {
 }
 
 function buildReportCustomAnalysis() {
-  let current = state.customAnalysis;
-  if (!current) {
-    const metricField = dom.metricField?.value || "";
-    const groupField = dom.groupField?.value || "";
-    const metricIsValid = getProfilesByType("numeric").some((profile) => profile.field === metricField);
-    const groupIsValid = getProfilesByType("category").some((profile) => profile.field === groupField);
-    if (metricIsValid && groupIsValid) {
-      const grouped = groupNumericFieldByCategory(metricField, groupField);
-      if (grouped.length) {
-        current = { metricField, groupField, aggregateMethod: dom.aggregateMethod?.value || "sum", dateField: "", grouped, trend: null };
-      }
-    }
-  }
+  const current = state.customAnalysis;
 
   if (!current || !Array.isArray(current.grouped) || !current.grouped.length) {
     return {

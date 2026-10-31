@@ -438,7 +438,7 @@
             <h2>按业务需要组合字段</h2>
           </div>
         </div>
-        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段、分析模板和高级设置均为可选。</p>
+        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段和分析模板均为可选。</p>
 
         <div class="analysis-panel primary-analysis-panel">
           <div class="analysis-panel-heading">
@@ -532,31 +532,6 @@
                   <div class="chart-frame"><canvas id="templateTrendChart" role="img" aria-label="模板分析时间趋势图"></canvas></div>
                 </div>
               </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="analysis-details">
-          <summary>高级设置</summary>
-          <div class="analysis-details-content">
-            <div class="analysis-panel-heading">
-              <h3 class="subsection-title">快速分组图表</h3>
-              <p>保留原有即时切换入口，用于并排尝试不同聚合方式。</p>
-            </div>
-            <div class="control-row">
-              <label>分析指标<select id="metricField"></select></label>
-              <label>分组维度<select id="groupField"></select></label>
-              <label>汇总方式
-                <select id="aggregateMethod">
-                  <option value="sum">合计</option>
-                  <option value="avg">平均值</option>
-                  <option value="median">中位数</option>
-                </select>
-              </label>
-            </div>
-            <div class="chart-card advanced-chart-card">
-              <div class="chart-header"><h3 id="customAnalysisChartTitle">分组聚合结果</h3></div>
-              <div class="chart-frame custom-chart"><canvas id="customAnalysisChart" role="img" aria-label="自定义分组图表"></canvas></div>
             </div>
           </div>
         </details>

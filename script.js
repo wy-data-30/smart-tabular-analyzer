@@ -102,10 +102,7 @@ dom.dropZone.addEventListener("drop", (event) => {
   dom.categoryChartField,
   dom.dateChartField,
   dom.dateChartMetric,
-  dom.dateChartAggregate,
-  dom.metricField,
-  dom.groupField,
-  dom.aggregateMethod
+  dom.dateChartAggregate
 ].forEach((control) => control.addEventListener("change", renderCharts));
 
 dom.v2AnalyzeButton.addEventListener("click", renderV2Analysis);

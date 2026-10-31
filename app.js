@@ -154,9 +154,6 @@ const dom = {
   numericChartTitle: document.getElementById("numericChartTitle"),
   categoryChartTitle: document.getElementById("categoryChartTitle"),
   dateChartTitle: document.getElementById("dateChartTitle"),
-  metricField: document.getElementById("metricField"),
-  groupField: document.getElementById("groupField"),
-  aggregateMethod: document.getElementById("aggregateMethod"),
   v2MetricField: document.getElementById("v2MetricField"),
   v2GroupField: document.getElementById("v2GroupField"),
   v2AggregateMethod: document.getElementById("v2AggregateMethod"),
@@ -185,7 +182,6 @@ const dom = {
   templateSecondaryChartTitle: document.getElementById("templateSecondaryChartTitle"),
   templateTrendCard: document.getElementById("templateTrendCard"),
   templateTrendChartTitle: document.getElementById("templateTrendChartTitle"),
-  customAnalysisChartTitle: document.getElementById("customAnalysisChartTitle"),
   dataExportOriginalCount: document.getElementById("dataExportOriginalCount"),
   dataExportFilteredCount: document.getElementById("dataExportFilteredCount"),
   dataExportDeduplicatedCount: document.getElementById("dataExportDeduplicatedCount"),
@@ -1566,8 +1562,6 @@ function populateControls({ keepChartSelections = false } = {}) {
     ? previousDateChartMetric
     : "";
   dom.dateChartAggregate.value = keepChartSelections && previousDateChartAggregate === "sum" ? "sum" : "avg";
-  setSelectOptions(dom.metricField, numericProfiles.map((profile) => profile.field));
-  setSelectOptions(dom.groupField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), "请选择数值字段");
   setSelectOptions(dom.v2GroupField, categoryProfiles.map((profile) => profile.field), "请选择分类字段");
   setSelectOptions(dom.v2DateField, dateProfiles.map((profile) => profile.field), "不选择时间字段", true);
@@ -1575,7 +1569,7 @@ function populateControls({ keepChartSelections = false } = {}) {
 
 function renderCharts() {
   if (!window.Chart) {
-    ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "customAnalysisChart"].forEach((id) => {
+    ["numericDistributionChart", "categoryTopChart", "dateTrendChart"].forEach((id) => {
       drawEmptyChart(document.getElementById(id), "图表组件加载失败，请刷新页面重试");
     });
     return;
@@ -1583,7 +1577,6 @@ function renderCharts() {
   renderNumericDistributionChart();
   renderCategoryTopChart();
   renderDateTrendChart();
-  renderCustomAnalysisChart();
 }
 
 function renderNumericDistributionChart() {
@@ -1688,38 +1681,6 @@ function getDateChartSelection() {
 
 function getDateChartAggregateLabel(aggregate) {
   return { count: "记录数", avg: "平均值", sum: "合计" }[aggregate] || "记录数";
-}
-
-function renderCustomAnalysisChart() {
-  const metric = dom.metricField.value;
-  const group = dom.groupField.value;
-  const method = dom.aggregateMethod.value;
-  const canvas = document.getElementById("customAnalysisChart");
-  destroyChart("customAnalysisChart");
-  const methodLabel = { sum: "合计", avg: "平均值", median: "中位数" }[method];
-  dom.customAnalysisChartTitle.textContent = metric && group
-    ? `${formatFieldLabel(metric)} 按 ${group} 分组（${methodLabel}）`
-    : "分组聚合结果";
-  canvas.setAttribute("aria-label", dom.customAnalysisChartTitle.textContent);
-
-  if (!metric || !group) {
-    return drawEmptyChart(canvas, "请选择数值字段和分类字段");
-  }
-
-  const grouped = aggregateByCategory(metric, group, method).slice(0, 12);
-  if (!grouped.length) return drawEmptyChart(canvas, "当前筛选结果中没有可计算的分组记录");
-  state.charts.customAnalysisChart = new Chart(canvas, {
-    type: "bar",
-    data: {
-      labels: grouped.map((item) => item.name),
-      datasets: [{
-        label: `${group} 分组的 ${formatFieldLabel(metric)} ${methodLabel}`,
-        data: grouped.map((item) => item.value),
-        backgroundColor: CHART_THEME.warning
-      }]
-    },
-    options: chartOptions(numericAxisLabel(metric, methodLabel), metric)
-  });
 }
 
 function resetV2AnalysisState() {

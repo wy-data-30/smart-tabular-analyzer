@@ -589,16 +589,6 @@ test("the date trend chart averages or sums the selected metric", () => {
   assert.equal(total.data[5], 89140);
 });
 
-test("the date trend chart ignores the quick-grouping metric select", () => {
-  const scope = createChartContext();
-  commitExampleCsv(scope, "sample-data.csv");
-
-  const before = drawDateTrend(scope);
-  scope.evaluate('dom.metricField.value = "销售额"; renderCharts()');
-  const after = { ...scope.lastChart("dateTrendChart"), title: scope.elements.get("dateChartTitle").textContent };
-  assert.deepEqual(after, before);
-});
-
 test("date trend selections follow the import, filter and field-configuration paths", () => {
   const scope = createChartContext();
   commitExampleCsv(scope, "sample-data.csv");
@@ -731,7 +721,7 @@ test("a flat record-count trend reads 基本持平 without a change ratio", () =
   }
 });
 
-test("the trend insight ignores numeric fields and both metric selects", () => {
+test("the trend insight ignores numeric fields and the trend chart's metric selects", () => {
   const dates = ["2025-01-05", "2025-02-05", "2025-03-05", "2025-04-05", "2025-06-10"];
   const withAmounts = (amounts) => dates.map((date, index) => ({ 日期: date, 金额: String(amounts[index]) }));
   const { scope, text } = trendInsightFor(withAmounts([1, 2, 3, 4, 5]));
@@ -739,7 +729,7 @@ test("the trend insight ignores numeric fields and both metric selects", () => {
   assert.equal(trendInsightFor(withAmounts([500, 1, 900, 2, 0])).text, text);
   assert.equal(trendInsightFor(datedRows(dates)).text, text);
 
-  scope.evaluate('dom.metricField.value = "金额"; dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "sum"; renderCharts()');
+  scope.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "sum"; renderCharts()');
   assert.equal(scope.evaluate('buildTrendInsight("日期")'), text);
 });
 
@@ -2549,7 +2539,6 @@ test("after confirming every order placeholder, no analysis output shows N/A or 
     orders.evaluate(`
       dom.categoryFilterField.value = "备注"; updateCategoryFilterField();
       dom.categoryChartField.value = "备注";
-      dom.metricField.value = "金额"; dom.groupField.value = "备注"; dom.aggregateMethod.value = "sum";
       dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "备注"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
       renderCharts(); renderV2Analysis();
     `);
@@ -3028,7 +3017,6 @@ test("statistics, charts and custom analysis label the yuan field, while selects
   orders.evaluate(`
     populateControls();
     dom.numericChartField.value = "金额"; dom.dateChartField.value = "下单日期"; dom.dateChartMetric.value = "金额";
-    dom.metricField.value = "金额"; dom.groupField.value = "大区"; dom.aggregateMethod.value = "sum";
     renderCharts();
     dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "大区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
     renderV2Analysis();
@@ -3042,7 +3030,6 @@ test("statistics, charts and custom analysis label the yuan field, while selects
   assert.deepEqual(outlierCells.slice(outlierCells.indexOf("金额（元）"), outlierCells.indexOf("金额（元）") + 2), ["金额（元）", "1"]);
   assert.equal(text("numericChartTitle"), "金额（元） 数值分布（记录频数）");
   assert.equal(text("dateChartTitle"), "金额（元） 按日期趋势（平均值）");
-  assert.equal(text("customAnalysisChartTitle"), "金额（元） 按 大区 分组（合计）");
   assert.equal(text("v2PrimaryTableTitle"), "金额（元） 按 大区 分组（求和）");
   assert.equal(text("v2TopGroupTitle"), "金额（元） 按 大区 分组 Top 10（求和）");
   assert.equal(text("v2TrendTitle"), "金额（元） 按日期趋势（求和）");
@@ -3053,11 +3040,10 @@ test("statistics, charts and custom analysis label the yuan field, while selects
     ["金额（元） 分布（记录频数）", "记录频数"],
     ["客户名称 Top 10（记录数）", "记录数"],
     ["金额（元） 平均值趋势", "平均值（元）"],
-    ["大区 分组的 金额（元） 合计", "合计（元）"],
     ["金额（元） 按 大区 分组（求和）", "求和（元）"],
     ["金额（元） 按日期趋势（求和）", "求和（元）"]
   ]);
-  for (const id of ["numericChartField", "dateChartMetric", "metricField", "v2MetricField", "numericFilterField"]) {
+  for (const id of ["numericChartField", "dateChartMetric", "v2MetricField", "numericFilterField"]) {
     assert.ok(html(id).includes('<option value="金额">金额</option>'), id);
   }
   assert.ok(html("qualityTable").includes("<td>金额</td>"));
@@ -3117,7 +3103,7 @@ test("the quality page renders the number subsections even without numeric field
 
 test("reports carry number units, conversions and numeric-looking fields like the quality page", async () => {
   const orders = await importStage3Fixture("订单表.csv");
-  orders.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "avg"; dom.metricField.value = "金额"; dom.groupField.value = "大区"; dom.aggregateMethod.value = "sum"');
+  orders.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "avg"; dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "大区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
   const { report, html, markdown } = reportOf(orders);
   assert.deepEqual(report.fieldTypes.map((field) => field.numberUnit), ["", "", "", "", "", "", "元", ""]);
   assert.deepEqual(report.quality.numberConversions, [
@@ -4195,4 +4181,24 @@ test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles
   assert.doesNotMatch(repoFile("style.css"), /workflow-|\.step-(?:number|copy|state)/);
   assert.deepEqual(typesOf(scope, ["updateWorkflowSteps"]), ["undefined"]);
   assert.deepEqual(domKeys(scope).filter((key) => key.startsWith("workflowStep")), []);
+});
+
+test("v2.7.0 quick grouping: the advanced settings block, its chart and its report fallback are gone", () => {
+  const scope = createScriptContext();
+  assert.doesNotMatch(repoFile("index.html"), /id="(?:metricField|groupField|aggregateMethod|customAnalysisChart|customAnalysisChartTitle)"|高级设置|快速分组/);
+  assert.deepEqual(typesOf(scope, ["renderCustomAnalysisChart"]), ["undefined"]);
+  assert.deepEqual(domKeys(scope).filter((key) => ["metricField", "groupField", "aggregateMethod", "customAnalysisChartTitle"].includes(key)), []);
+  assert.equal(scope.evaluate('"customAnalysisChart" in REPORT_CHART_TITLES || "customAnalysisChart" in REPORT_CHART_HEADING_IDS'), false);
+  assert.doesNotMatch(repoFile("script.js"), /dom\.(?:metricField|groupField|aggregateMethod)/);
+});
+
+test("v2.7.0 quick grouping: the report has a custom-analysis section only after the custom analysis was generated", () => {
+  const scope = createChartContext();
+  commitExampleCsv(scope, "sample-data.csv");
+  // Before v2.7.0 the selects of the quick-grouping block (picked by the browser) built the report's
+  // section on their own; this line makes the fake DOM do what the browser does.
+  scope.evaluate('if (typeof dom.metricField !== "undefined") { dom.metricField.value = "销售额"; dom.groupField.value = "地区"; dom.aggregateMethod.value = "sum"; }');
+  assert.equal(scope.evaluate("buildReportData().customAnalysis.completed"), false);
+  scope.evaluate('dom.v2MetricField.value = "销售额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
+  assert.equal(scope.evaluate("buildReportData().customAnalysis.completed"), true);
 });

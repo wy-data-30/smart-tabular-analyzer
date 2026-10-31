@@ -1740,8 +1740,7 @@ select:hover {
 
 .field-selector-panel label,
 .template-selector-panel label,
-.template-mapping-grid label,
-.control-row label {
+.template-mapping-grid label {
   display: grid;
   gap: 6px;
   color: var(--text-secondary);
@@ -1751,8 +1750,7 @@ select:hover {
 
 .field-selector-panel select,
 .template-selector-panel select,
-.template-mapping-grid select,
-.control-row select {
+.template-mapping-grid select {
   width: 100%;
   max-width: none;
 }
@@ -1843,10 +1841,6 @@ select:hover {
   background: #fff;
 }
 
-.advanced-chart-card {
-  margin-top: 14px;
-}
-
 .analysis-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1874,21 +1868,6 @@ select:hover {
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.control-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
-  gap: 10px;
-}
-
-.custom-chart {
-  height: 340px;
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
 }
 
 .insights {
@@ -2185,8 +2164,7 @@ select:focus-visible,
     grid-template-columns: 1fr;
   }
 
-  .template-mapping-grid,
-  .control-row {
+  .template-mapping-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 
@@ -2419,8 +2397,7 @@ select:focus-visible,
   }
 
   .chart-frame,
-  .chart-card.wide .chart-frame,
-  .custom-chart {
+  .chart-card.wide .chart-frame {
     height: 270px;
   }
 
@@ -2430,8 +2407,7 @@ select:focus-visible,
 
   .field-selector-panel,
   .template-selector-panel,
-  .template-mapping-grid,
-  .control-row {
+  .template-mapping-grid {
     grid-template-columns: 1fr;
   }
 
