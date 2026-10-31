@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.6.1 架构说明
+# Smart Tabular Analyzer v2.7.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
