@@ -1401,3 +1401,84 @@ test("placeholders never change the date strategy of a field without a year name
     { order: "conflict", changed: [], allowYearOnly: false, allAtOnce: true }
   ]);
 });
+
+// v2.6.1 fast paths of isMissing() and toPlainNumber().
+
+// The v2.6.0 body of isMissing(), the reference for the fast path.
+const legacyIsMissing = (value) => value === null || value === undefined || String(value).trim() === "";
+
+test("isMissing() agrees with trim() for every UTF-16 code unit alone, at either end and inside", () => {
+  const { evaluate } = createScriptContext();
+  const isMissing = evaluate("isMissing");
+  let compared = 0;
+  for (let code = 0; code <= 0xFFFF; code += 1) {
+    const ch = String.fromCharCode(code);
+    for (const value of [ch, ch + ch, `a${ch}`, `${ch}a`, `a${ch}a`, `1${ch}`, `${ch}1`, ` ${ch}12 `, `${ch}1${ch}`]) {
+      assert.equal(isMissing(value), legacyIsMissing(value), `U+${code.toString(16).toUpperCase().padStart(4, "0")} in ${JSON.stringify(value)}`);
+      compared += 1;
+    }
+  }
+  assert.ok(compared > 500000);
+});
+
+test("isMissing() treats exactly the 25 trim() characters as blank and keeps U+0085, U+180E, U+200B", () => {
+  const { evaluate } = createScriptContext();
+  const isMissing = evaluate("isMissing");
+  const blanks = [0x9, 0xA, 0xB, 0xC, 0xD, 0x20, 0xA0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009, 0x200A, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF];
+  blanks.forEach((code) => assert.equal(isMissing(String.fromCharCode(code)), true, `U+${code.toString(16)}`));
+  [0x85, 0x180E, 0x200B, 0x200C, 0x200D, 0x2060].forEach((code) => assert.equal(isMissing(String.fromCharCode(code)), false, `U+${code.toString(16)}`));
+  assert.equal(isMissing(""), true);
+  assert.equal(isMissing(null), true);
+  assert.equal(isMissing(undefined), true);
+  assert.equal(isMissing(0), false);
+  assert.equal(isMissing([]), true);
+  // Text above U+3000 takes the fast path; each result still matches the reference.
+  ["华东", "\u3001", "\ud800", "\u3000华东", "华东\u3000", "\ufeff", "\ufeff华东"].forEach((value) => {
+    assert.equal(isMissing(value), legacyIsMissing(value), JSON.stringify(value));
+  });
+  assert.equal(isMissing("华东"), false);
+  assert.equal(isMissing("\ud800"), false);
+  assert.equal(isMissing("\u3000"), true);
+  assert.equal(isMissing("\ufeff"), true);
+});
+
+test("toPlainNumber() reads plain digit strings and never lets the fast path return Infinity or accept more than digits", () => {
+  const { evaluate } = createScriptContext();
+  const toPlainNumber = evaluate("toPlainNumber");
+  assert.equal(toPlainNumber("0"), 0);
+  assert.equal(toPlainNumber("007"), 7);
+  assert.equal(toPlainNumber(" 42 "), 42);
+  assert.equal(toPlainNumber("\u00a042\u3000"), 42);
+  assert.equal(toPlainNumber("9".repeat(15)), 999999999999999);
+  assert.equal(toPlainNumber("9".repeat(16)), 9999999999999999);
+  assert.equal(toPlainNumber("1" + "0".repeat(308)), 1e308);
+  assert.equal(toPlainNumber("9".repeat(309)), null);
+  assert.equal(toPlainNumber("9".repeat(400)), null);
+  assert.equal(toPlainNumber("1" + "0".repeat(309)), null);
+  // Not ASCII digits, or not only digits: the full path decides, as before.
+  ["１２３", "٣٤٥", "۱۲۳", "123abc", "abc123", "12-3", "1 2", "1\n2", "2024-01-01", "2024/1/1", "1_000", "0x10"].forEach((text) => assert.equal(toPlainNumber(text), null, text));
+  assert.equal(toPlainNumber("1,234"), 1234);
+  assert.equal(toPlainNumber("12 345"), 12345);
+  assert.equal(toPlainNumber("123%"), 1.23);
+  assert.equal(toPlainNumber("(123)"), -123);
+  assert.equal(toPlainNumber(123), 123);
+  assert.equal(Object.is(toPlainNumber(-0), 0), true);
+});
+
+test("ordinary text and digit strings are read without calling trim() twice", () => {
+  const scope = createScriptContext();
+  scope.evaluate(`globalThis.__trim = String.prototype.trim; String.prototype.trim = function () { globalThis.__trimCalls = (globalThis.__trimCalls || 0) + 1; return globalThis.__trim.call(this); };`);
+  const trimCalls = () => scope.context.__trimCalls || 0;
+  scope.evaluate('isMissing("East")');
+  scope.evaluate('isMissing("12345")');
+  assert.equal(trimCalls(), 0);
+  // Chinese text takes the fast path too.
+  scope.evaluate('isMissing("华东")');
+  assert.equal(trimCalls(), 0);
+  scope.evaluate('toPlainNumber("12345")');
+  assert.equal(trimCalls(), 1);
+  // Edge whitespace still takes the full path and is judged by trim().
+  const before = trimCalls();
+  assert.equal(scope.evaluate('isMissing(" a")'), false);
+  assert.ok(trimCalls() > before);
+});
