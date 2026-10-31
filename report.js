@@ -56,7 +56,6 @@ function updateExportButtons() {
     button.setAttribute("aria-disabled", String(dataExportDisabled));
   });
   renderDataExportSummary();
-  updateWorkflowSteps();
 }
 
 function renderDataExportSummary() {

@@ -4184,3 +4184,15 @@ test("v2.7.0 examples: examples/ keeps only the file the sample button loads, th
     "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
 });
+
+const repoFile = (name) => fs.readFileSync(path.join(REPO_ROOT, name), "utf8");
+const domKeys = (scope) => JSON.parse(scope.evaluate("JSON.stringify(Object.keys(dom))"));
+const typesOf = (scope, names) => JSON.parse(scope.evaluate("JSON.stringify(" + JSON.stringify(names) + ".map((name) => typeof globalThis[name]))"));
+
+test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles and the scripts", () => {
+  const scope = createScriptContext();
+  assert.doesNotMatch(repoFile("index.html"), /workflow-status|workflowStep/);
+  assert.doesNotMatch(repoFile("style.css"), /workflow-|\.step-(?:number|copy|state)/);
+  assert.deepEqual(typesOf(scope, ["updateWorkflowSteps"]), ["undefined"]);
+  assert.deepEqual(domKeys(scope).filter((key) => key.startsWith("workflowStep")), []);
+});

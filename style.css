@@ -643,72 +643,6 @@ body.has-results #statusPanel.success {
   white-space: nowrap;
 }
 
-.workflow-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  margin: 14px 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  list-style: none;
-}
-
-.workflow-status li {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  min-width: 0;
-}
-
-.step-number {
-  display: grid;
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--success);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.step-copy {
-  display: flex;
-  gap: 5px;
-  align-items: baseline;
-  min-width: 0;
-  line-height: 1.25;
-}
-
-.step-copy strong {
-  font-size: 13px;
-}
-
-.step-copy small {
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.workflow-status li[data-state="current"] {
-  color: var(--primary);
-}
-
-.workflow-status li[data-state="current"] .step-number {
-  background: var(--primary);
-}
-
-.workflow-status li[data-state="pending"] {
-  color: var(--muted);
-}
-
-.workflow-export-state {
-  display: none !important;
-}
-
 .results-nav {
   position: sticky;
   top: var(--header-height);
@@ -2230,10 +2164,6 @@ select:focus-visible,
     gap: 14px;
   }
 
-  .workflow-status {
-    gap: 8px 14px;
-  }
-
   .chart-grid,
   .category-grid {
     grid-template-columns: 1fr;
@@ -2346,24 +2276,6 @@ select:focus-visible,
 
   .source-name {
     max-width: 100%;
-  }
-
-  .workflow-status {
-    gap: 7px 12px;
-    padding: 9px 11px;
-  }
-
-  .workflow-status li {
-    padding: 0;
-  }
-
-  .step-number {
-    width: 18px;
-    height: 18px;
-  }
-
-  .step-copy small {
-    display: none;
   }
 
   .results-nav {
@@ -2572,7 +2484,6 @@ select:focus-visible,
   #statusPanel,
   .sheet-selection-panel,
   .results-nav,
-  .workflow-status,
   .nav-new-analysis,
   .field-config-actions,
   .filter-toolbar-actions,

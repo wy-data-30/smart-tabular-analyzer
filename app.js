@@ -194,11 +194,7 @@ const dom = {
   dataExportStatus: document.getElementById("dataExportStatus"),
   exportHtmlReport: document.getElementById("exportHtmlReport"),
   exportMarkdownReport: document.getElementById("exportMarkdownReport"),
-  reportExportStatus: document.getElementById("reportExportStatus"),
-  workflowStepUpload: document.getElementById("workflowStepUpload"),
-  workflowStepSchema: document.getElementById("workflowStepSchema"),
-  workflowStepAnalysis: document.getElementById("workflowStepAnalysis"),
-  workflowStepExport: document.getElementById("workflowStepExport")
+  reportExportStatus: document.getElementById("reportExportStatus")
 };
 
 // A category field with more distinct values than this is too scattered for
@@ -226,50 +222,10 @@ function setImportBusy(isBusy) {
 function showResultsWorkspace() {
   document.body.classList.add("has-results");
   setImportBusy(false);
-  updateWorkflowSteps();
   window.requestAnimationFrame(() => {
     dom.reportTitle?.focus({ preventScroll: true });
     dom.results.scrollIntoView({ block: "start" });
   });
-}
-
-function updateWorkflowSteps() {
-  if (!dom.workflowStepUpload) return;
-
-  const setStep = (element, stateKey, label) => {
-    if (!element) return;
-    element.dataset.state = stateKey;
-    const stateLabel = typeof element.querySelector === "function"
-      ? element.querySelector(".step-state")
-      : null;
-    if (stateLabel) stateLabel.textContent = label;
-  };
-
-  if (!state.rows.length) {
-    setStep(dom.workflowStepUpload, "current", "等待文件");
-    setStep(dom.workflowStepSchema, "pending", "等待上传");
-    setStep(dom.workflowStepAnalysis, "pending", "等待配置");
-    setStep(dom.workflowStepExport, "pending", "等待分析");
-    return;
-  }
-
-  const hasDraftChanges = hasFieldConfigDraftChanges();
-  setStep(dom.workflowStepUpload, "complete", "已完成");
-
-  if (hasDraftChanges) {
-    setStep(dom.workflowStepSchema, "current", "有未应用修改");
-    setStep(dom.workflowStepAnalysis, "pending", "等待重新计算");
-    setStep(dom.workflowStepExport, "pending", "暂不可导出");
-    return;
-  }
-
-  setStep(
-    dom.workflowStepSchema,
-    "complete",
-    hasAutomaticTypeDifferences() ? "配置已应用" : "自动识别完成"
-  );
-  setStep(dom.workflowStepAnalysis, state.analysisCompletedAt ? "complete" : "current", state.analysisCompletedAt ? "已生成" : "正在生成");
-  setStep(dom.workflowStepExport, canExportReport() ? "current" : "pending", canExportReport() ? "可导出" : "等待分析");
 }
 
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
