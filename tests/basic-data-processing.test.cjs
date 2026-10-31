@@ -311,8 +311,23 @@ function createChartContext() {
   return scope;
 }
 
+// The bundled examples: sample-data.csv stays in examples/ (the "use sample data" button
+// loads it), the other five live in tests/fixtures/examples/. Every reader goes through
+// these two helpers, so a file in either directory is found and listed once.
+const EXAMPLE_DIRS = [path.join(__dirname, "..", "examples"), path.join(__dirname, "fixtures", "examples")];
+
+function listExampleCsvFiles() {
+  return EXAMPLE_DIRS.flatMap((dir) => fs.readdirSync(dir)).filter((fileName) => /\.csv$/.test(fileName)).sort();
+}
+
+function readExampleCsv(fileName) {
+  const dir = EXAMPLE_DIRS.find((candidate) => fs.existsSync(path.join(candidate, fileName)));
+  assert.ok(dir, `example file not found: ${fileName}`);
+  return fs.readFileSync(path.join(dir, fileName), "utf8");
+}
+
 function commitExampleCsv(scope, fileName) {
-  const text = fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8");
+  const text = readExampleCsv(fileName);
   const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
   put(scope.context, "__exampleFields", parsed.meta.fields);
   put(scope.context, "__exampleRows", parsed.data);
@@ -1888,7 +1903,7 @@ test("the grade and store fixtures have no ID duplicates", async () => {
 });
 
 test("user and session IDs in the behavior example are mostly repeated, event IDs are listed", async () => {
-  const text = fs.readFileSync(path.join(__dirname, "..", "examples", "sample-user-behavior.csv"), "utf8");
+  const text = readExampleCsv("sample-user-behavior.csv");
   const summary = idDuplicates((await importCsvFile(text, "sample-user-behavior.csv")).evaluate);
   assert.deepEqual(summary.map((item) => [item.field, item.mostlyRepeated, item.values.length]), [
     ["事件ID", false, 2],
@@ -2010,7 +2025,7 @@ test("a titled CSV whose blank lines fill the row preview imports every row afte
 
 // ID duplicates on the quality page (#idDuplicateDetails) and in reports.
 const idDetails = (scope) => scope.elements.get("idDuplicateDetails").innerHTML;
-const behaviorCsv = () => fs.readFileSync(path.join(__dirname, "..", "examples", "sample-user-behavior.csv"), "utf8");
+const behaviorCsv = () => readExampleCsv("sample-user-behavior.csv");
 
 test("the quality page has a static ID duplicate container in the dom map", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
@@ -2179,10 +2194,10 @@ test("the grade fixtures and the bundled examples have no placeholder candidates
     assert.equal(scope.evaluate("state.rows.length"), 30, fileName);
     assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
   }
-  const examples = fs.readdirSync(path.join(__dirname, "..", "examples")).filter((fileName) => fileName.endsWith(".csv"));
+  const examples = listExampleCsvFiles();
   assert.equal(examples.length, 6);
   for (const fileName of examples) {
-    const scope = await importCsvFile(fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8"), fileName);
+    const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     assert.ok(scope.evaluate("state.rows.length") > 0, fileName);
     assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
   }
@@ -3178,13 +3193,13 @@ test("number sections and unit labels escape field names in HTML and Markdown", 
 
 // v2.6.0: the checks behind the quality counts, shared with the problem-row lists.
 const STAGE3_IMPORT_FILES = fs.readdirSync(STAGE3_FIXTURES).filter((fileName) => /\.(csv|xlsx)$/.test(fileName)).sort();
-const EXAMPLE_CSV_FILES = fs.readdirSync(path.join(__dirname, "..", "examples")).filter((fileName) => /\.csv$/.test(fileName)).sort();
+const EXAMPLE_CSV_FILES = listExampleCsvFiles();
 
 async function importEveryQualityFile() {
   const scopes = [];
   for (const fileName of STAGE3_IMPORT_FILES) scopes.push([fileName, await importStage3Fixture(fileName)]);
   for (const fileName of EXAMPLE_CSV_FILES) {
-    scopes.push([fileName, await importCsvFile(fs.readFileSync(path.join(__dirname, "..", "examples", fileName), "utf8"), fileName)]);
+    scopes.push([fileName, await importCsvFile(readExampleCsv(fileName), fileName)]);
   }
   return scopes;
 }
@@ -4153,4 +4168,19 @@ test("a field-configuration rebuild keeps a chosen category field that is still 
   scope.evaluate('dom.categoryChartField.value = "甲"');
   recommitColumns(scope, columns);
   assert.equal(categoryChartValue(scope), "乙");
+});
+
+// ---------------------------------------------------------------------------------------
+// v2.7.0: removals and the two chart conclusions.
+// ---------------------------------------------------------------------------------------
+const REPO_ROOT = path.join(__dirname, "..");
+
+test("v2.7.0 examples: examples/ keeps only the file the sample button loads, the other five are test fixtures", () => {
+  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")), ["sample-data.csv"]);
+  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "tests", "fixtures", "examples")).sort(), [
+    "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+  ]);
+  assert.deepEqual(["examples", path.join("tests", "fixtures", "examples")].flatMap((dir) => fs.readdirSync(path.join(REPO_ROOT, dir))).sort(), [
+    "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+  ]);
 });
