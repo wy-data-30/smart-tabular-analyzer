@@ -3036,6 +3036,7 @@ test("statistics, charts and custom analysis label the yuan field, while selects
   const axisTitles = charts.map((config) => [config.data.datasets[0].label, config.options.scales.y.title.text]);
   assert.deepEqual(axisTitles, [
     ["金额（元） 分布（记录频数）", "记录频数"],
+    ["客户名称 Top 10（记录数）", "记录数"],
     ["金额（元） 平均值趋势", "平均值（元）"],
     ["大区 分组的 金额（元） 合计", "合计（元）"],
     ["金额（元） 按 大区 分组（求和）", "求和（元）"],
@@ -4073,4 +4074,83 @@ test("the statistics table takes the median from its sorted values instead of so
   const scope = commitColumns(STATS_REUSE_COLUMNS);
   const calls = countStatsCalls(scope, ["median"], () => scope.evaluate("buildNumericStats(state.rows)"));
   assert.equal(calls.median, 0);
+});
+
+// v2.6.1: the category chart starts on the first concentrated category field.
+
+function categoryChartValue(scope) {
+  return scope.elements.get("categoryChartField").value;
+}
+
+// Field types the test data really gets, so a field that turns out to be an ID cannot hide a mistake.
+function chartTestTypes(scope) {
+  return statsJson(scope, "Object.fromEntries(state.profiles.map((profile) => [profile.field, profile.typeKey]))");
+}
+
+function recommitColumns(scope, columns) {
+  const fields = Object.keys(columns);
+  put(scope.context, "__fields", fields);
+  put(scope.context, "__rows", columns[fields[0]].map((_, index) => Object.fromEntries(fields.map((field) => [field, columns[field][index]]))));
+  scope.evaluate('commitTabularData(__fields, __rows, "second.csv", beginImport())');
+}
+
+test("the category chart starts on the first concentrated category field, as the findings do", () => {
+  const scope = commitColumns({
+    姓名: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    部门: ["A", "A", "B", "B", "A", "A", "B", "A", "B", "A"]
+  });
+  assert.deepEqual(chartTestTypes(scope), { 姓名: "category", 部门: "category" });
+  assert.equal(categoryChartValue(scope), "部门");
+  assert.match(statsJson(scope, "state.insights").join("\n"), /分类字段「部门」中占比最高/);
+});
+
+test("the default needs a top category that repeats: exactly twice is enough, once is not", () => {
+  const scope = commitColumns({
+    甲项: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    成对: ["a", "a", "b", "b", "c", "c", "d", "d", "e", "e"]
+  });
+  assert.deepEqual(chartTestTypes(scope), { 甲项: "category", 成对: "category" });
+  assert.equal(categoryChartValue(scope), "成对");
+});
+
+test("the default allows 20 distinct values and not 21", () => {
+  const twice = (distinct) => Array.from({ length: 42 }, (_, index) => `v${index % distinct}`);
+  const scope = commitColumns({ 区域二十一: twice(21), 区域二十: twice(20) });
+  assert.deepEqual(chartTestTypes(scope), { 区域二十一: "category", 区域二十: "category" });
+  assert.deepEqual(statsJson(scope, "state.categoryStats.map((item) => [item.field, item.distinctCount])"), [["区域二十一", 21], ["区域二十", 20]]);
+  assert.equal(categoryChartValue(scope), "区域二十");
+});
+
+test("without a concentrated category field the first category field is kept, and without any it is empty", () => {
+  const scattered = commitColumns({
+    甲: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    乙: ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10"]
+  });
+  assert.deepEqual(chartTestTypes(scattered), { 甲: "category", 乙: "category" });
+  assert.equal(categoryChartValue(scattered), "甲");
+  const numericOnly = commitColumns({ 数量: ["1", "2", "3", "4", "5", "6"] });
+  assert.deepEqual(chartTestTypes(numericOnly), { 数量: "numeric" });
+  assert.equal(categoryChartValue(numericOnly), "");
+});
+
+test("a field-configuration rebuild keeps a chosen category field that is still a category; a new import starts over", () => {
+  const columns = {
+    甲: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    乙: ["a", "a", "b", "b", "a", "a", "b", "a", "b", "a"],
+    丙: ["x", "x", "y", "y", "y", "x", "x", "y", "y", "x"],
+    数量: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+  };
+  const scope = commitColumns(columns);
+  assert.deepEqual(chartTestTypes(scope), { 甲: "category", 乙: "category", 丙: "category", 数量: "numeric" });
+  assert.equal(categoryChartValue(scope), "乙");
+  scope.evaluate('dom.categoryChartField.value = "丙"');
+  scope.evaluate('stageFieldTypeChange("数量", "ignore"); applyFieldConfiguration()');
+  assert.equal(categoryChartValue(scope), "丙");
+  // The chosen field leaves the category fields: back to the rule.
+  scope.evaluate('stageFieldTypeChange("丙", "ignore"); applyFieldConfiguration()');
+  assert.equal(categoryChartValue(scope), "乙");
+  // A new import never inherits the old choice.
+  scope.evaluate('dom.categoryChartField.value = "甲"');
+  recommitColumns(scope, columns);
+  assert.equal(categoryChartValue(scope), "乙");
 });

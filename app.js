@@ -446,14 +446,7 @@ function renderInsights() {
   const topNumeric = state.numericStats
     .slice()
     .sort((a, b) => Math.abs(b.max - b.min) - Math.abs(a.max - a.min))[0];
-  // The first category field, in field order, whose values are concentrated
-  // enough to summarise: at most INSIGHT_CATEGORY_MAX_DISTINCT distinct values
-  // in the current rows and a top category that repeats.
-  const firstCategory = state.categoryStats.find((item) => (
-    item.top.length
-      && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT
-      && item.top[0].count >= 2
-  ));
+  const firstCategory = findConcentratedCategory(state.categoryStats);
   const hasCategoryValues = state.categoryStats.some((item) => item.top.length);
   const dateProfile = getProfilesByType("date")
     .find((profile) => fieldHasDateData(profile.field));
@@ -485,6 +478,18 @@ function renderInsights() {
 
   state.insights = insights;
   renderInsightGroups(insights);
+}
+
+// The first category field, in field order, whose values are concentrated enough to
+// summarise: at most INSIGHT_CATEGORY_MAX_DISTINCT distinct values in the current rows
+// and a top category that repeats. The findings and the category chart's default field
+// both use it.
+function findConcentratedCategory(categoryStats) {
+  return categoryStats.find((item) => (
+    item.top.length
+      && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT
+      && item.top[0].count >= 2
+  ));
 }
 
 function renderInsightGroups(insights) {
@@ -1199,7 +1204,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderQuality();
   renderNumericStats();
   renderCategoryStats();
-  populateControls({ keepDateChartSelection: true });
+  populateControls({ keepChartSelections: true });
   renderCharts();
   resetV2AnalysisState();
   renderTemplateMappingForm();
@@ -1577,9 +1582,12 @@ function renderCategoryStats() {
   `).join("");
 }
 
-// A new import resets the trend chart to record counts; a field-configuration
-// rebuild keeps the chosen metric while it is still a numeric field with data.
-function populateControls({ keepDateChartSelection = false } = {}) {
+// A new import resets the trend chart to record counts and the category chart to the
+// first concentrated category field (or the first category field when none is
+// concentrated). A field-configuration rebuild keeps the chosen trend metric while it is
+// still a numeric field with data, and the chosen category field while it is still a
+// category field.
+function populateControls({ keepChartSelections = false } = {}) {
   const numericProfiles = getProfilesByType("numeric")
     .filter((profile) => fieldHasNumericData(profile.field));
   const categoryProfiles = getProfilesByType("category");
@@ -1588,15 +1596,20 @@ function populateControls({ keepDateChartSelection = false } = {}) {
   const numericFields = numericProfiles.map((profile) => profile.field);
   const previousDateChartMetric = dom.dateChartMetric.value;
   const previousDateChartAggregate = dom.dateChartAggregate.value;
+  const previousCategoryChartField = dom.categoryChartField.value;
+  const categoryFields = categoryProfiles.map((profile) => profile.field);
 
   setSelectOptions(dom.numericChartField, numericProfiles.map((profile) => profile.field));
-  setSelectOptions(dom.categoryChartField, categoryProfiles.map((profile) => profile.field));
+  setSelectOptions(dom.categoryChartField, categoryFields);
+  dom.categoryChartField.value = keepChartSelections && categoryFields.includes(previousCategoryChartField)
+    ? previousCategoryChartField
+    : findConcentratedCategory(state.categoryStats)?.field ?? categoryFields[0] ?? "";
   setSelectOptions(dom.dateChartField, dateProfiles.map((profile) => profile.field));
   setSelectOptions(dom.dateChartMetric, numericFields, "记录数", true);
-  dom.dateChartMetric.value = keepDateChartSelection && numericFields.includes(previousDateChartMetric)
+  dom.dateChartMetric.value = keepChartSelections && numericFields.includes(previousDateChartMetric)
     ? previousDateChartMetric
     : "";
-  dom.dateChartAggregate.value = keepDateChartSelection && previousDateChartAggregate === "sum" ? "sum" : "avg";
+  dom.dateChartAggregate.value = keepChartSelections && previousDateChartAggregate === "sum" ? "sum" : "avg";
   setSelectOptions(dom.metricField, numericProfiles.map((profile) => profile.field));
   setSelectOptions(dom.groupField, categoryProfiles.map((profile) => profile.field));
   setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), "请选择数值字段");
