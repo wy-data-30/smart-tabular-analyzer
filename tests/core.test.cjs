@@ -147,7 +147,6 @@ assert.deepEqual(APP_SCRIPT_FILES, [
   "quality.js",
   "app.js",
   "importer.js",
-  "templates.js",
   "report.js",
   "script.js"
 ]);
@@ -192,7 +191,6 @@ const resultSectionOrder = [
   "statisticsSection",
   "chartsSection",
   "customSection",
-  "insightsSection",
   "exportSection"
 ].map((id) => htmlSource.indexOf(`id="${id}"`));
 assert.equal(resultSectionOrder.every((position, index) => position >= 0 && (!index || position > resultSectionOrder[index - 1])), true);
@@ -338,8 +336,8 @@ assert.equal(evaluate('formatFieldNumber("价格", 1234.5)'), "1,234.5");
 assert.equal(evaluate('chartOptions("平均值", "转化率").scales.y.ticks.callback(0.1)'), "10%");
 
 context.__largeValues = Array.from({ length: 125_000 }, (_, index) => index - 62_500);
-assert.equal(evaluate("summarizeNumbers(__largeValues).min"), -62_500);
-assert.equal(evaluate("summarizeNumbers(__largeValues).max"), 62_499);
+assert.equal(evaluate("numericExtents(__largeValues).min"), -62_500);
+assert.equal(evaluate("numericExtents(__largeValues).max"), 62_499);
 assert.equal(
   evaluate("buildHistogram(__largeValues, 10).reduce((total, bin) => total + bin.count, 0)"),
   125_000
@@ -618,8 +616,8 @@ assert.equal(
 );
 assert.equal(evaluate('state.categoryStats.some((item) => item.field === "备注")'), false);
 assert.equal(evaluate('getActiveProfiles().some((item) => item.field === "备注")'), false);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"numeric"}).includes("金额")'), true);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"any"}).includes("备注")'), false);
+assert.equal(evaluate('document.getElementById("numericChartField").innerHTML.includes("金额")'), true);
+assert.equal(evaluate('document.getElementById("categoryChartField").innerHTML.includes("备注")'), false);
 assert.equal(evaluate("JSON.stringify(state.rows)"), originalRows);
 
 evaluate("restoreAutomaticFieldTypes()");
@@ -632,7 +630,7 @@ evaluate('stageFieldTypeChange("渠道", "numeric")');
 evaluate("applyFieldConfiguration()");
 assert.equal(evaluate('state.profiles.find((item) => item.field === "渠道").conversionFailureCount'), 4);
 assert.equal(evaluate("state.numericStats.length"), 0);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"numeric"}).includes("渠道")'), false);
+assert.equal(evaluate('document.getElementById("numericChartField").innerHTML.includes("渠道")'), false);
 assert.equal(evaluate('JSON.stringify(buildDateTrend("下单日期", "渠道").labels)'), "[]");
 evaluate("restoreAutomaticFieldTypes()");
 
@@ -694,7 +692,7 @@ evaluate(`(() => {
   state.sourceFileName = "销售 数据.xlsx";
   state.sourceSheetName = "华东<明细>";
   state.analysisCompletedAt = new Date(2026, 6, 17, 14, 30, 5);
-  state.insights = ["数据集包含 3 行、5 个字段。", "销售额整体上升。"];
+  state.chartInsights = { category: "分类字段「地区」中占比最高的类别是「华南」，出现 2 次，占比 66.7%。", trend: "销售额整体上升。" };
   state.customAnalysis = {
     metricField: "销售额",
     groupField: "地区",
@@ -729,8 +727,7 @@ assert.equal(reportData.categoryStats.find((item) => item.field === "测试 Top 
 assert.equal(reportData.dateTrends.find((item) => item.field === "日期").labels.length, 2);
 assert.equal(reportData.customAnalysis.metricField, "销售额");
 assert.equal(reportData.customAnalysis.rows[0].group, "华南");
-assert.ok(Array.isArray(reportData.insights));
-assert.ok(reportData.insights.some((item) => item.includes("数据集包含")));
+assert.deepEqual(reportData.insights, ["分类字段「地区」中占比最高的类别是「华南」，出现 2 次，占比 66.7%。", "销售额整体上升。"]);
 
 context.__reportData = reportData;
 const reportHtml = evaluate(`buildHtmlReport(__reportData, [{
@@ -818,7 +815,7 @@ evaluate(`(() => {
   state.sourceSheetName = "";
   state.sourceType = "csv";
   state.analysisCompletedAt = new Date(2026, 6, 17, 15, 0, 0);
-  state.insights = ["未识别到可用于统计的数值字段。"];
+  state.chartInsights = { category: "", trend: "" };
   state.customAnalysis = null;
 })()`);
 const noNumericReport = JSON.parse(evaluate(

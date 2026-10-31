@@ -4,12 +4,8 @@ const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",
   categoryTopChart: "分类字段 Top 10",
   dateTrendChart: "日期字段趋势",
-  customAnalysisChart: "自定义分组图",
   v2TopGroupChart: "自定义分析 Top 10 分组",
-  v2SelectedTrendChart: "自定义分析时间趋势",
-  templateMainChart: "场景模板主图",
-  templateSecondaryChart: "场景模板辅助图",
-  templateTrendChart: "场景模板时间趋势"
+  v2SelectedTrendChart: "自定义分析时间趋势"
 });
 
 const REPORT_FILTER_MAX_VALUES = 10;
@@ -22,12 +18,8 @@ const REPORT_CHART_HEADING_IDS = Object.freeze({
   numericDistributionChart: "numericChartTitle",
   categoryTopChart: "categoryChartTitle",
   dateTrendChart: "dateChartTitle",
-  customAnalysisChart: "customAnalysisChartTitle",
   v2TopGroupChart: "v2TopGroupTitle",
-  v2SelectedTrendChart: "v2TrendTitle",
-  templateMainChart: "templateMainChartTitle",
-  templateSecondaryChart: "templateSecondaryChartTitle",
-  templateTrendChart: "templateTrendChartTitle"
+  v2SelectedTrendChart: "v2TrendTitle"
 });
 
 function canExportReport() {
@@ -56,7 +48,6 @@ function updateExportButtons() {
     button.setAttribute("aria-disabled", String(dataExportDisabled));
   });
   renderDataExportSummary();
-  updateWorkflowSteps();
 }
 
 function renderDataExportSummary() {
@@ -343,7 +334,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.6.1",
+    version: "v2.7.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -402,7 +393,7 @@ function buildReportData(now = new Date()) {
     categoryStats,
     dateTrends: buildReportDateTrends(),
     customAnalysis: buildReportCustomAnalysis(),
-    insights: [...state.insights]
+    insights: [state.chartInsights.category, state.chartInsights.trend].filter(Boolean)
   };
 }
 
@@ -522,19 +513,7 @@ function buildReportDateTrends() {
 }
 
 function buildReportCustomAnalysis() {
-  let current = state.customAnalysis;
-  if (!current) {
-    const metricField = dom.metricField?.value || "";
-    const groupField = dom.groupField?.value || "";
-    const metricIsValid = getProfilesByType("numeric").some((profile) => profile.field === metricField);
-    const groupIsValid = getProfilesByType("category").some((profile) => profile.field === groupField);
-    if (metricIsValid && groupIsValid) {
-      const grouped = groupNumericFieldByCategory(metricField, groupField);
-      if (grouped.length) {
-        current = { metricField, groupField, aggregateMethod: dom.aggregateMethod?.value || "sum", dateField: "", grouped, trend: null };
-      }
-    }
-  }
+  const current = state.customAnalysis;
 
   if (!current || !Array.isArray(current.grouped) || !current.grouped.length) {
     return {
@@ -590,7 +569,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.6.1",
+    version: reportData.version || "v2.7.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smart Tabular Analyzer | 表格数据体检工具</title>
-  <link rel="stylesheet" href="style.css?v=2.6.1">
+  <link rel="stylesheet" href="style.css?v=2.7.0">
   <script src="vendor/papaparse-5.4.1.min.js" integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"></script>
   <script src="vendor/chart-4.4.1.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"></script>
   <script src="vendor/xlsx-0.20.3.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"></script>
@@ -130,24 +130,6 @@
         <a class="nav-new-analysis secondary-button" href="#dropZone">上传新文件</a>
       </header>
 
-      <ol class="workflow-status" aria-label="分析流程状态">
-        <li id="workflowStepUpload" data-state="complete">
-          <span class="step-number" aria-hidden="true">✓</span>
-          <span class="step-copy"><strong>文件已加载</strong><small class="step-state">已完成</small></span>
-        </li>
-        <li id="workflowStepSchema" data-state="complete">
-          <span class="step-number" aria-hidden="true">✓</span>
-          <span class="step-copy"><strong>字段已确认</strong><small class="step-state">自动识别完成</small></span>
-        </li>
-        <li id="workflowStepAnalysis" data-state="complete">
-          <span class="step-number" aria-hidden="true">✓</span>
-          <span class="step-copy"><strong>分析已生成</strong><small class="step-state">已生成</small></span>
-        </li>
-        <li id="workflowStepExport" class="workflow-export-state" data-state="current" aria-hidden="true">
-          <span class="step-number">4</span><span class="step-state">可导出</span>
-        </li>
-      </ol>
-
       <aside class="results-nav" aria-label="分析模块导航">
         <nav class="desktop-results-nav" aria-label="分析模块目录">
           <a class="active" href="#overviewSection"><span>01</span>数据概览</a>
@@ -157,8 +139,7 @@
           <a href="#statisticsSection"><span>05</span>描述性统计</a>
           <a href="#chartsSection"><span>06</span>图表分析</a>
           <a href="#customSection"><span>07</span>自定义分析</a>
-          <a href="#insightsSection"><span>08</span>分析结论</a>
-          <a href="#exportSection"><span>09</span>导出</a>
+          <a href="#exportSection"><span>08</span>导出</a>
         </nav>
         <label class="mobile-results-nav" for="mobileSectionNav">
           <span>当前模块</span>
@@ -170,7 +151,6 @@
             <option value="statisticsSection">描述性统计</option>
             <option value="chartsSection">图表分析</option>
             <option value="customSection">自定义分析</option>
-            <option value="insightsSection">分析结论</option>
             <option value="exportSection">导出</option>
           </select>
         </label>
@@ -429,6 +409,7 @@
               <label class="chart-control" for="categoryChartField"><span>选择字段</span><select id="categoryChartField"></select></label>
             </div>
             <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表"></canvas></div>
+            <p id="categoryChartInsight" class="chart-insight hidden"></p>
           </div>
           <div class="chart-card wide">
             <div class="chart-header">
@@ -445,6 +426,7 @@
               </div>
             </div>
             <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas></div>
+            <p id="dateChartInsight" class="chart-insight hidden"></p>
           </div>
         </div>
       </section>
@@ -456,7 +438,7 @@
             <h2>按业务需要组合字段</h2>
           </div>
         </div>
-        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段、分析模板和高级设置均为可选。</p>
+        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
         <div class="analysis-panel primary-analysis-panel">
           <div class="analysis-panel-heading">
@@ -509,85 +491,6 @@
             </details>
           </div>
         </div>
-
-        <details class="analysis-details">
-          <summary>使用分析模板</summary>
-          <div class="analysis-details-content">
-            <div class="analysis-panel-heading">
-              <h3 class="subsection-title">场景模板分析</h3>
-              <p>使用销售、成绩、价格、问卷或用户行为模板组织常用指标。</p>
-            </div>
-            <div class="template-selector-panel">
-              <label>分析模板
-                <select id="scenarioTemplate">
-                  <option value="generic">通用数据分析</option>
-                  <option value="sales">销售数据分析</option>
-                  <option value="score">成绩数据分析</option>
-                  <option value="usedGoods">二手商品价格分析</option>
-                  <option value="survey">问卷调查分析</option>
-                  <option value="behavior">用户行为分析</option>
-                </select>
-              </label>
-            </div>
-            <div id="templateMappingForm" class="template-mapping-grid"></div>
-            <div class="template-actions"><button id="runTemplateAnalysis" type="button">按模板生成分析</button></div>
-            <div id="templatePrompt" class="analysis-prompt" aria-live="polite"></div>
-            <div id="templateResults" class="template-results hidden">
-              <div id="templateSummaryCards" class="analysis-summary-grid"></div>
-              <div id="templateInsights" class="insights"></div>
-              <div class="table-wrap" tabindex="0" aria-label="模板分析结果，可横向滚动"><table id="templatePrimaryTable" aria-label="模板分析结果"></table></div>
-              <div class="chart-grid">
-                <div class="chart-card">
-                  <div class="chart-header"><h3 id="templateMainChartTitle">模板主图</h3></div>
-                  <div class="chart-frame"><canvas id="templateMainChart" role="img" aria-label="模板分析主图"></canvas></div>
-                </div>
-                <div class="chart-card">
-                  <div class="chart-header"><h3 id="templateSecondaryChartTitle">模板辅助图</h3></div>
-                  <div class="chart-frame"><canvas id="templateSecondaryChart" role="img" aria-label="模板分析辅助图"></canvas></div>
-                </div>
-                <div id="templateTrendCard" class="chart-card wide">
-                  <div class="chart-header"><h3 id="templateTrendChartTitle">时间趋势</h3></div>
-                  <div class="chart-frame"><canvas id="templateTrendChart" role="img" aria-label="模板分析时间趋势图"></canvas></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="analysis-details">
-          <summary>高级设置</summary>
-          <div class="analysis-details-content">
-            <div class="analysis-panel-heading">
-              <h3 class="subsection-title">快速分组图表</h3>
-              <p>保留原有即时切换入口，用于并排尝试不同聚合方式。</p>
-            </div>
-            <div class="control-row">
-              <label>分析指标<select id="metricField"></select></label>
-              <label>分组维度<select id="groupField"></select></label>
-              <label>汇总方式
-                <select id="aggregateMethod">
-                  <option value="sum">合计</option>
-                  <option value="avg">平均值</option>
-                  <option value="median">中位数</option>
-                </select>
-              </label>
-            </div>
-            <div class="chart-card advanced-chart-card">
-              <div class="chart-header"><h3 id="customAnalysisChartTitle">分组聚合结果</h3></div>
-              <div class="chart-frame custom-chart"><canvas id="customAnalysisChart" role="img" aria-label="自定义分组图表"></canvas></div>
-            </div>
-          </div>
-        </details>
-      </section>
-
-      <section id="insightsSection" class="section-block">
-        <div class="section-heading">
-          <div>
-            <p class="section-label">分析结论</p>
-            <h2>主要发现</h2>
-          </div>
-        </div>
-        <div id="insights" class="insights"></div>
       </section>
 
       <section id="exportSection" class="section-block export-section">
@@ -664,15 +567,14 @@
     <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span>GitHub 仓库</span></a> · 文件内容不会上传到服务器</p>
   </footer>
 
-  <script src="parsing.js?v=2.6.1"></script>
-  <script src="profiling.js?v=2.6.1"></script>
-  <script src="format.js?v=2.6.1"></script>
-  <script src="stats.js?v=2.6.1"></script>
-  <script src="quality.js?v=2.6.1"></script>
-  <script src="app.js?v=2.6.1"></script>
-  <script src="importer.js?v=2.6.1"></script>
-  <script src="templates.js?v=2.6.1"></script>
-  <script src="report.js?v=2.6.1"></script>
-  <script src="script.js?v=2.6.1"></script>
+  <script src="parsing.js?v=2.7.0"></script>
+  <script src="profiling.js?v=2.7.0"></script>
+  <script src="format.js?v=2.7.0"></script>
+  <script src="stats.js?v=2.7.0"></script>
+  <script src="quality.js?v=2.7.0"></script>
+  <script src="app.js?v=2.7.0"></script>
+  <script src="importer.js?v=2.7.0"></script>
+  <script src="report.js?v=2.7.0"></script>
+  <script src="script.js?v=2.7.0"></script>
 </body>
 </html>

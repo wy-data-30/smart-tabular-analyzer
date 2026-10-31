@@ -643,72 +643,6 @@ body.has-results #statusPanel.success {
   white-space: nowrap;
 }
 
-.workflow-status {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  margin: 14px 0;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  list-style: none;
-}
-
-.workflow-status li {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  min-width: 0;
-}
-
-.step-number {
-  display: grid;
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--success);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.step-copy {
-  display: flex;
-  gap: 5px;
-  align-items: baseline;
-  min-width: 0;
-  line-height: 1.25;
-}
-
-.step-copy strong {
-  font-size: 13px;
-}
-
-.step-copy small {
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.workflow-status li[data-state="current"] {
-  color: var(--primary);
-}
-
-.workflow-status li[data-state="current"] .step-number {
-  background: var(--primary);
-}
-
-.workflow-status li[data-state="pending"] {
-  color: var(--muted);
-}
-
-.workflow-export-state {
-  display: none !important;
-}
-
 .results-nav {
   position: sticky;
   top: var(--header-height);
@@ -1737,6 +1671,16 @@ select:hover {
   height: 310px;
 }
 
+.chart-insight {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 7px 7px 0;
+  background: var(--primary-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .chart-card.wide .chart-frame {
   height: 340px;
 }
@@ -1775,9 +1719,7 @@ select:hover {
   font-size: 12px;
 }
 
-.field-selector-panel,
-.template-selector-panel,
-.template-mapping-grid {
+.field-selector-panel {
   display: grid;
   gap: 10px;
   align-items: end;
@@ -1792,22 +1734,7 @@ select:hover {
   grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
 }
 
-.template-selector-panel {
-  grid-template-columns: minmax(220px, 360px);
-}
-
-.template-mapping-grid {
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
-}
-
-.template-mapping-grid:empty {
-  display: none;
-}
-
-.field-selector-panel label,
-.template-selector-panel label,
-.template-mapping-grid label,
-.control-row label {
+.field-selector-panel label {
   display: grid;
   gap: 6px;
   color: var(--text-secondary);
@@ -1815,17 +1742,9 @@ select:hover {
   font-weight: 650;
 }
 
-.field-selector-panel select,
-.template-selector-panel select,
-.template-mapping-grid select,
-.control-row select {
+.field-selector-panel select {
   width: 100%;
   max-width: none;
-}
-
-.template-actions {
-  display: flex;
-  margin-bottom: 12px;
 }
 
 .analysis-prompt {
@@ -1844,8 +1763,7 @@ select:hover {
   font-weight: 620;
 }
 
-.v2-analysis-results,
-.template-results {
+.v2-analysis-results {
   display: grid;
   gap: 14px;
 }
@@ -1909,10 +1827,6 @@ select:hover {
   background: #fff;
 }
 
-.advanced-chart-card {
-  margin-top: 14px;
-}
-
 .analysis-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1940,78 +1854,6 @@ select:hover {
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.control-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
-  gap: 10px;
-}
-
-.custom-chart {
-  height: 340px;
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
-}
-
-.insights {
-  display: grid;
-  gap: 9px;
-}
-
-.insight-scope {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.insight-group-title {
-  margin: 0 0 9px;
-  font-size: 15px;
-}
-
-.insights-more {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.insights-more summary {
-  padding: 12px 0 4px;
-  color: var(--primary);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.insights-more .insights {
-  margin-top: 8px;
-}
-
-.insight-item {
-  position: relative;
-  padding: 12px 14px 12px 38px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--panel-subtle);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.insight-item::before {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  color: var(--primary);
-  content: "•";
-  font-size: 20px;
-  line-height: 16px;
 }
 
 .empty-note {
@@ -2230,10 +2072,6 @@ select:focus-visible,
     gap: 14px;
   }
 
-  .workflow-status {
-    gap: 8px 14px;
-  }
-
   .chart-grid,
   .category-grid {
     grid-template-columns: 1fr;
@@ -2253,11 +2091,6 @@ select:focus-visible,
 
   .custom-result-grid {
     grid-template-columns: 1fr;
-  }
-
-  .template-mapping-grid,
-  .control-row {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
   }
 
   .report-export-layout {
@@ -2346,24 +2179,6 @@ select:focus-visible,
 
   .source-name {
     max-width: 100%;
-  }
-
-  .workflow-status {
-    gap: 7px 12px;
-    padding: 9px 11px;
-  }
-
-  .workflow-status li {
-    padding: 0;
-  }
-
-  .step-number {
-    width: 18px;
-    height: 18px;
-  }
-
-  .step-copy small {
-    display: none;
   }
 
   .results-nav {
@@ -2507,8 +2322,7 @@ select:focus-visible,
   }
 
   .chart-frame,
-  .chart-card.wide .chart-frame,
-  .custom-chart {
+  .chart-card.wide .chart-frame {
     height: 270px;
   }
 
@@ -2516,10 +2330,7 @@ select:focus-visible,
     padding: 14px;
   }
 
-  .field-selector-panel,
-  .template-selector-panel,
-  .template-mapping-grid,
-  .control-row {
+  .field-selector-panel {
     grid-template-columns: 1fr;
   }
 
@@ -2527,8 +2338,7 @@ select:focus-visible,
     padding: 13px;
   }
 
-  .field-selector-panel button,
-  .template-actions button {
+  .field-selector-panel button {
     width: 100%;
   }
 
@@ -2572,7 +2382,6 @@ select:focus-visible,
   #statusPanel,
   .sheet-selection-panel,
   .results-nav,
-  .workflow-status,
   .nav-new-analysis,
   .field-config-actions,
   .filter-toolbar-actions,

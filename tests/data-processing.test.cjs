@@ -342,14 +342,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.6.1", () => {
+test("public current version markers agree on v2.7.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.6.1");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.6\.1/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.6\.1/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.7.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.7\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.7\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.6.1");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.6.1");
+  assert.equal(evaluate("buildReportData().version"), "v2.7.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.7.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -952,48 +952,6 @@ test("Excel sheets over the row limit below a first-row header are rejected when
   const coarseMessage = errorMessage('validateExcelWorksheetLimits({ "!ref": "A1" }, "大表")');
   assert.match(coarseMessage, /100,000/);
   assert.equal(builtMessage, coarseMessage);
-});
-
-test("scenario templates use every selected mapping field", () => {
-  const { context, evaluate } = createScriptContext();
-  const rows = Array.from({ length: 12 }, (_, index) => ({
-    score: String(70 + index),
-    class: index % 2 ? "Class B" : "Class A",
-    subject: index % 3 ? "Math" : "English",
-    price: String(100 + index * 10),
-    item: index % 2 ? "Phone" : "Laptop",
-    platform: index % 2 ? "Market A" : "Market B",
-    city: index % 3 ? "Shanghai" : "Beijing",
-    condition: index % 2 ? "Good" : "Like New",
-    userId: `U-${index + 1}`,
-    event: index % 2 ? "view" : "click",
-    channel: index % 2 ? "search" : "direct",
-    device: index % 2 ? "mobile" : "desktop",
-    date: `2026-07-${String(index + 1).padStart(2, "0")}`
-  }));
-  installDataset(context, evaluate, rows);
-
-  context.__scoreMappings = { score: "score", class: "class", subject: "subject", examDate: "date" };
-  context.__usedMappings = {
-    price: "price", item: "item", platform: "platform", city: "city", condition: "condition", date: "date"
-  };
-  context.__behaviorMappings = {
-    userId: "userId", event: "event", channel: "channel", device: "device", date: "date"
-  };
-
-  const scoreResult = JSON.parse(evaluate("JSON.stringify(analyzeScoreTemplate(__scoreMappings))"));
-  const usedResult = JSON.parse(evaluate("JSON.stringify(analyzeUsedGoodsTemplate(__usedMappings))"));
-  const behaviorResult = JSON.parse(evaluate("JSON.stringify(analyzeBehaviorTemplate(__behaviorMappings))"));
-
-  assert.deepEqual([...new Set(scoreResult.table.rows.map((row) => row[0]))].sort(), ["class", "subject"]);
-  assert.deepEqual(
-    [...new Set(usedResult.table.rows.map((row) => row[0]))].sort(),
-    ["city", "condition", "item", "platform"]
-  );
-  assert.deepEqual(
-    [...new Set(behaviorResult.table.rows.map((row) => row[0]))].sort(),
-    ["channel", "device", "event"]
-  );
 });
 
 // detectHeaderRow() only picks which row is the header; rows are written the way

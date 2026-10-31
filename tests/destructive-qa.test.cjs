@@ -179,7 +179,7 @@ test("a newer upload without date data does not keep the previous date chart tit
   ];
   evaluate('commitTabularData(["日期", "金额"], __datedRows, "dated.csv", beginImport())');
   byId("dateChartField").value = "日期";
-  // The trend chart reads its own metric select; #metricField no longer drives it.
+  // The trend chart reads its own metric select.
   byId("dateChartMetric").value = "金额";
   evaluate("renderCharts()");
   const previousTitle = byId("dateChartTitle").textContent;
