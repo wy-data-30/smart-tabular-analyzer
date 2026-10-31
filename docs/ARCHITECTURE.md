@@ -19,7 +19,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 | 顺序 | 文件 | 职责 |
 | --- | --- | --- |
-| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值和日历日期（按书写的日历日，不受时区影响）。 |
+| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
 | 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。 |
@@ -124,7 +124,7 @@ flowchart LR
 | 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
 | 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
 | 疑似数值列 | `numericLooking` | `buildNumericLookingSummary(state.profiles)` 的结果。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 整体替换，`resetAnalysisState()` 清成 `[]`，筛选不改它（见“数字策略”） |
-| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照 |
+| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照。没有筛选掉任何行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告（全部保存，每条 `{ row, code, message }`，`row` 是精确的文件行号或 `null`，见“数据行的文件行号”） |
 | 数据预览 | `previewPage` | 预览的页码（从 1 开始），`renderPreview()` 把它夹到有效范围；导入、筛选变化和字段配置（含疑似缺失值确认）回到 1，`resetAnalysisState()` 也设为 1（见“问题行”） |
 | 问题行 | `problemCategories`, `problemView`, `problemViewOpener` | `renderQuality()` 时的 `listProblemCategories()`（“查看”按钮带它的下标）；打开的查看区 `{ category: { kind, field, key }, page, list }` 或 `null`；打开查看区的那个“查看”按钮，关闭时把焦点还给它。导入时关闭，`resetAnalysisState()` 清空，筛选不改（见“问题行”） |
@@ -460,7 +460,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 **主要函数**
 
-- `isMissing(value)`：`null`、`undefined` 或 trim 后空字符串均视为缺失。分析和质量口径改用 `isMissingOrConfirmed(value, keys)`，已确认的疑似缺失值写法也算缺失；`importer.js` 仍用 `isMissing()`。
+- `isMissing(value)`：`null`、`undefined` 或 trim 后空字符串均视为缺失。字符串的首字符明确不是 `trim()` 会去掉的字符时直接判为非缺失，不再调用 `trim()`（v2.6.1）：`trim()` 只去掉 U+0009–U+000D、U+0020、U+00A0、U+1680、U+2000–U+200A、U+2028、U+2029、U+202F、U+205F、U+3000、U+FEFF 这 25 个字符，所以码元大于 32、不是 U+00A0，且小于 U+1680 或大于 U+3000（U+FEFF 除外）的首字符都能保证结果非空；其余首字符照旧走 `trim()`；`toPlainNumber()` 对 15 位以内的纯 ASCII 数字串同样直接返回 `Number(raw)`，位数上限保证结果有限。两处结果与原逻辑逐值相同。分析和质量口径改用 `isMissingOrConfirmed(value, keys)`，已确认的疑似缺失值写法也算缺失；`importer.js` 仍用 `isMissing()`。
 - `countDuplicateRows(rows, fields)`：统计每组首次出现之后的重复记录数。
 - `buildExactRowKey(row, fields)`：区分 absent、undefined、null、值类型和值字符串。
 - `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
@@ -591,13 +591,19 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - 总体标准差
 - Q1、Q3、IQR 上下界和异常值数量
 
+中位数用 `buildNumericStats()` 已排好序的数组直接取（`medianOfSorted()`）；`median()` 仍是"先排序再取"，供分组、趋势和自定义分析使用。
+
+**统计复用（v2.6.1）**：`commitTabularData()` 和 `rebuildAnalysisFromProfiles()`（刚执行过 `resetFilterState()`）只算一次 `qualityNumericStats`，`numericStats` 指向同一个数组；`refreshFilteredAnalysis()` 在分析行数等于原始行数时也复用它，否则重算。筛选只删行、不重排（`filterRowsByConfig()` 是 `rows.filter()`），所以行数相同就是同一批行、同一顺序；这个判断不依赖 `hasActiveFilters()`，也覆盖“设了筛选但所有行都符合”。**两份统计可能是同一个数组，任何代码都不能原地修改其中的数组或对象**（`sort()`、`push()`、改属性），读取方（统计表、质量页、报告、问题行）都只读。
+
 `buildCategoryStats()` 忽略缺失值，以非缺失值为分母计算占比，并只保留频数 Top 10。每项是 `{ field, total, distinctCount, top }`：`distinctCount` 是当前分析行中该字段的不同值个数（与 `countValues()` 口径相同，不受 Top 10 截断影响），也写入报告快照的 `categoryStats`。
 
-自动分类结论按字段顺序选第一个同时满足 `top.length > 0`、`distinctCount ≤ INSIGHT_CATEGORY_MAX_DISTINCT`（20）且排第一的类别至少出现 2 次的分类字段，文字仍为“分类字段「X」中占比最高的类别是……”。有带数据的分类字段但都不满足时，写“分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。”；没有分类字段或分类字段全空时仍写“未识别到适合生成频数统计的分类字段。”。因为 `distinctCount` 按当前分析行计算，筛选后结论会重新选字段。
+自动分类结论按字段顺序选第一个同时满足 `top.length > 0`、`distinctCount ≤ INSIGHT_CATEGORY_MAX_DISTINCT`（20）且排第一的类别至少出现 2 次的分类字段，文字仍为“分类字段「X」中占比最高的类别是……”。有带数据的分类字段但都不满足时，写“分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。”；没有分类字段或分类字段全空时仍写“未识别到适合生成频数统计的分类字段。”。因为 `distinctCount` 按当前分析行计算，筛选后结论会重新选字段。这条规则抽成 `findConcentratedCategory(categoryStats)`，分类图的默认字段也用它。
 
 `mean()`、`sumNumbers()` 和 `standardDeviation()` 会按最大绝对值缩放计算，降低极端有限数导致中间结果溢出的风险。`quantile()` 使用 `(n - 1) × q` 位置上的线性插值。
 
 日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图由自带的 `#dateChartMetric`（第一项“记录数”，其余为有数据的数值字段）和 `#dateChartAggregate`（平均值 avg / 合计 sum，选“记录数”时禁用）决定，默认是每期记录数；它不再读取快速分组的 `#metricField`。新导入时两个下拉框回到“记录数”和平均值；筛选变化保持选择；字段配置变化时，若所选指标仍是有数据的数值字段则保持，否则回到“记录数”。
+
+基础分类图 `#categoryChartField`（v2.6.1）：新导入时选 `findConcentratedCategory(state.categoryStats)` 的字段，没有符合的就选第一个分类字段，没有分类字段为空（花名册默认“部门”而不是 20 多个不同值的“姓名”）；筛选变化保持选择；字段配置变化（含疑似缺失值确认和撤销）时，所选字段仍是分类字段则保持，否则按上面的规则重选。日期趋势图和分类图的“重建时保持选择”共用 `populateControls({ keepChartSelections: true })`，导入时不传。默认值读的是导入或重建时按全部行算好的 `state.categoryStats`。
 
 自动趋势结论 `buildTrendInsight()` 固定调用 `buildDateTrend(dateField, "")`，比较当前分析行第一期和最后一期的记录数，不受数值字段、`#metricField` 或 `#dateChartMetric` 影响。首尾相同时写“……从 A 到 B 基本持平。”，不给变化幅度；上升或下降时给出变化幅度。每期至少 1 条记录，首期不会为 0，因此不再有“首期为 0”的分支。按月分桶时，如果该日期字段的最后一个日期早于当月最后一天；或按年分桶时，最后一个带月日的日期早于当年 12 月 31 日，`buildPartialPeriodNote()` 会在结论末尾追加“注意：最后一期（…）的数据截至 M 月 D 日，可能不完整，比较结果仅供参考。”。它不剔除最后一期，也不改变比较方式；按天分桶、只有年份（如“2025”）的值、只有一个时间点或没有有效日期时不加注释。日期按 `parseFieldDate()` 的 UTC 日历日和 `getDateTrendKey()` 的分桶键判断，不受运行时区影响。
 
@@ -672,7 +678,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 | --- | --- |
 | 基础图表入口 | `renderCharts()` |
 | 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间。场景模板的 `histogramChartConfig()` 不受影响 |
-| 分类 Top 10 | `renderCategoryTopChart()` → `countValues()` |
+| 分类 Top 10 | `renderCategoryTopChart()` → `countValues()`；默认字段由 `populateControls()` 经 `findConcentratedCategory()` 选出 |
 | 日期趋势 | `renderDateTrendChart()` → `getDateChartSelection()` → `buildDateChartTrend()` → `buildTrendFromRows()`（count / avg / sum，分桶规则与 `buildDateTrend()` 相同；`buildDateTrend()` 仍供自动趋势结论使用） |
 | 基础分组图 | `renderCustomAnalysisChart()` → `aggregateByCategory()` |
 | V2 自定义图 | `renderV2TopGroupChart()`, `renderV2TrendChart()` |
