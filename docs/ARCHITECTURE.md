@@ -8,8 +8,8 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 - `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
-- 浏览器端逻辑按职责分在 10 个普通 `<script>` 文件里（经典脚本，共享同一个全局作用域，没有打包器或模块系统），加载顺序和职责见下方“应用脚本”表。
-- 启动自检：`script.js` 一开始就调用 `ensureDomElementsPresent()`。它先用 `typeof` 检查前 9 个应用脚本各一个代表函数（如 `toNumber`、`commitTabularData`），缺失说明缓存里的旧 `index.html` 只加载了 `script.js`，或某个文件没有加载成功；脚本齐全时再检查 `dom` 映射中的元素是否都存在，缺失说明缓存里的旧 `index.html` 缺少新元素。任一项缺失，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失文件或键名的错误，阻止 `script.js` 后续代码执行，因此不会绑定任何业务事件；全部齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>`，全部 10 个应用脚本也都带 `?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
+- 浏览器端逻辑按职责分在 9 个普通 `<script>` 文件里（经典脚本，共享同一个全局作用域，没有打包器或模块系统），加载顺序和职责见下方“应用脚本”表。
+- 启动自检：`script.js` 一开始就调用 `ensureDomElementsPresent()`。它先用 `typeof` 检查前 8 个应用脚本各一个代表函数（如 `toNumber`、`commitTabularData`），缺失说明缓存里的旧 `index.html` 只加载了 `script.js`，或某个文件没有加载成功；脚本齐全时再检查 `dom` 映射中的元素是否都存在，缺失说明缓存里的旧 `index.html` 缺少新元素。任一项缺失，就在页面顶部插入内联样式的“页面已更新，请刷新后再使用。”提示条和“刷新页面”按钮，并抛出列出缺失文件或键名的错误，阻止 `script.js` 后续代码执行，因此不会绑定任何业务事件；全部齐全时什么都不做。`index.html` 引用 `style.css?v=<版本>`，全部 9 个应用脚本也都带 `?v=<版本>`，发版时随版本号一起更新，以减少新旧文件混用。
 - CSV、Excel、筛选、统计和报告生成均在浏览器本地完成。
 - 当前导入上限由 `IMPORT_LIMITS` 统一控制：25 MB、100,000 行数据、200 列。
 
@@ -22,15 +22,14 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 | 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
 | 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。 |
-| 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。 |
+| 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。 |
 | 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
-| 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表和自定义分析的渲染。 |
+| 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。 |
-| 8 | `templates.js` | 场景模板：模板定义、字段映射表单、各模板的分析计算和结果渲染。 |
-| 9 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。 |
-| 10 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
+| 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。 |
+| 9 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
 
-- 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。前 9 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
+- 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。前 8 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
 - `parsing.js`、`profiling.js`、`format.js`、`stats.js`、`quality.js` 是纯逻辑层，不直接访问 DOM 或第三方全局对象；但其中部分函数会在调用时读取 `state`（例如经由 `getFieldProfile()`）和 `getAnalysisRows()`（两者都定义在 `app.js`），所以还不是纯函数。
 - 经典脚本共享全局作用域：重复的顶层 `const` / `let` 会让后加载的整个文件无法执行，重复的函数声明会静默覆盖前一个。`tests/core.test.cjs` 会检查全部应用脚本的顶层名字不重复。
 
@@ -53,7 +52,6 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 ├── quality.js                  # 转换失败、重复行、ID 重复值、疑似缺失值、缺失率等级、问题行列表
 ├── app.js                      # state / dom、三条刷新路径、页面渲染（含预览分页和问题行查看区）
 ├── importer.js                 # CSV / Excel 导入和导入并发保护
-├── templates.js                # 场景模板
 ├── report.js                   # 报告生成、数据导出和问题行导出
 ├── script.js                   # 启动入口（最后加载）：自检、导航和事件绑定
 ├── package.json                # Node 测试命令
@@ -62,7 +60,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 ├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
 │   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
-│   └── sample-*.csv            # 内置与手工测试用虚构数据
+│   └── sample-data.csv         # “使用示例数据”加载的虚构数据
 ├── assets/                     # README 截图
 ├── tests/
 │   ├── test-context.cjs        # VM + 轻量假 DOM 测试环境
@@ -70,7 +68,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 │   ├── basic-data-processing.test.cjs
 │   ├── destructive-qa.test.cjs
 │   ├── core.test.cjs
-│   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具
+│   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具，examples/ 放其余 5 个示例 CSV（只给测试用）
 ├── docs/                       # 开发者维护文档
 └── .github/workflows/ci.yml    # push / PR 自动回归测试
 ```
@@ -90,7 +88,7 @@ flowchart LR
   G --> I["原始数据质量"]
   G --> J["filterRowsByConfig()"]
   J --> K["state.filteredRows 当前分析范围"]
-  H --> L["统计 / 趋势 / 分组 / 模板"]
+  H --> L["统计 / 趋势 / 分组 / 图表结论"]
   K --> L
   I --> M["质量页面与报告质量部分"]
   L --> N["页面渲染 / 图表 / 报告与数据导出"]
@@ -124,7 +122,7 @@ flowchart LR
 | 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
 | 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
 | 疑似数值列 | `numericLooking` | `buildNumericLookingSummary(state.profiles)` 的结果。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 整体替换，`resetAnalysisState()` 清成 `[]`，筛选不改它（见“数字策略”） |
-| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `insights`, `customAnalysis` | 当前统计、原始质量统计、结论和自定义分析快照。没有筛选掉任何行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
+| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `chartInsights`, `customAnalysis` | 当前统计、原始质量统计、图表下的两句结论（`{ category, trend }`，空字符串表示不显示，见“Statistics”）和自定义分析快照。没有筛选掉任何行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告（全部保存，每条 `{ row, code, message }`，`row` 是精确的文件行号或 `null`，见“数据行的文件行号”） |
 | 数据预览 | `previewPage` | 预览的页码（从 1 开始），`renderPreview()` 把它夹到有效范围；导入、筛选变化和字段配置（含疑似缺失值确认）回到 1，`resetAnalysisState()` 也设为 1（见“问题行”） |
 | 问题行 | `problemCategories`, `problemView`, `problemViewOpener` | `renderQuality()` 时的 `listProblemCategories()`（“查看”按钮带它的下标）；打开的查看区 `{ category: { kind, field, key }, page, list }` 或 `null`；打开查看区的那个“查看”按钮，关闭时把焦点还给它。导入时关闭，`resetAnalysisState()` 清空，筛选不改（见“问题行”） |
@@ -405,7 +403,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 **与其他模块的关系**
 
 - `commitTabularData()` 为每个字段调用 `buildColumnProfile()`。
-- Data Quality、Statistics、Filtering、Visualization 和模板字段选择都以当前已应用 `typeKey` 为准。
+- Data Quality、Statistics、Filtering 和 Visualization 都以当前已应用 `typeKey` 为准。
 - 字段配置提交会调用 `rebuildAnalysisFromProfiles()`，重新计算质量异常值和当前分析，并清除旧筛选。
 - Report Export 同时记录自动类型和最终应用类型。
 
@@ -424,10 +422,9 @@ XLSX.utils.sheet_to_json(worksheet, {
 - **统计**：profile 的 `numberReadings = { unitCount, unitSamples, magnitudeCount, fullwidthCount }` 只统计 `toPlainNumber()` 读不了、按策略才读成数字的值：按单位读取的个数和最多 3 个样例、按万/亿换算的个数、全角写法的个数。
 - **调用点**：分析和质量口径都按字段的策略读数字。
   - `buildColumnProfile()` 和 `detectNumericFormat()` 直接用刚算出的策略（导入时 profile 还没进 `state.profiles`）。
-  - stats.js：`countInvalidNumericValues()`、`buildNumericStats()`、`buildDateChartTrend()`、`buildMetricDateTrend()`、`groupNumericFieldByCategory()`、`buildDateTrend()`（目前只被传空的 numericField，这一行走不到）、`aggregateByCategory()`、`getNumericValues()`。
+  - stats.js：`countInvalidNumericValues()`、`buildNumericStats()`、`buildDateChartTrend()`、`buildMetricDateTrend()`、`groupNumericFieldByCategory()`、`buildDateTrend()`（目前只被传空的 numericField，这一行走不到）、`getNumericValues()`。
   - app.js：`filterRowsByConfig()`，和设置筛选面板范围的 `getNumericValues()` 同口径。
   - quality.js：转换失败的两个兜底 `countConversionFailuresForValues()`、`getFieldConversionFailureSamples()`。
-  - templates.js：三个趋势 getter，以及取代 `getSalesMetricValue()` 的 `buildSalesMetricGetter(mappings)`。
 - **保持不带策略的三处**：
   - 表头检测（`importer.js` 的 `isHeaderTextValue()`、`vetoesHeaderCandidate()`，含 `mostly(toNumber)` 的函数引用）：按行判断，还没有字段，也没有策略；契约 15 要求第一行通过校验的文件完全走原来的路径。残留见“表头行检测”。
   - CSV 导出的公式中和（`report.js` 的 `sanitizeCsvExportValue()`）：只有能读成普通数字的负数才不加 `'`；`-2200元` 以 `-` 开头，带策略会被当成合法负数，导出后在电子表格里可能被当成公式。全角的 `－５` 不以 ASCII `-` 开头，本来就不加。
@@ -437,7 +434,7 @@ XLSX.utils.sheet_to_json(worksheet, {
   - 计数在 `buildColumnProfile()` 已有的循环里顺带记下（profile 的 `numericLooking = { valueCount, numericCount, samples }`）。疑似缺失值写法从不能转换，所以只有转换失败的值才调用 `placeholderKey()`。
   - `buildNumericLookingSummary(profiles)` 按已应用类型从 profile 汇总，结果 `[{ field, valueCount, numericCount, ratio, samples }]` 存在 `state.numericLooking`。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()`（应用字段配置、恢复自动识别、疑似缺失值确认 / 撤销都经过它）整体替换，`resetAnalysisState()` 清成 `[]`，筛选不重算。
   - 按这个口径，确认 / 撤销只能通过 ID ↔ 分类的变化影响提示：确认后分类字段的数值率不会超过排除疑似值后的数值率。
-- **字段标签**：`format.js` 的 `formatFieldLabel(field)` 在字段读成了某个单位时写成“金额（元）”；字段名 NFKC + 小写后结尾已经是 `…u`、`…(u)`、`…[u]`、`…【u】`、`…/u`、`…_u`、`…-u`、`… u` 时不重复加，拉丁单位要求前面不是字母（“bag”不算含 kg）。`numericAxisLabel()` 给图表 y 轴加“（元）”，和“（百分比）”同时出现时单位在前。加在：统计表、质量页异常值表、数值分布图、日期趋势图、快速分组图、自定义分析的摘要卡 / 表 / 图（标题、dataset label、y 轴）。不加：下拉框（value 必须是原字段名）、缺失值检查表、疑似缺失值区、ID 重复区、模板里的字段名；模板图表的 y 轴经 `numericAxisLabel()` 带单位。`state.rows`、数据预览和 CSV 导出保留原值。
+- **字段标签**：`format.js` 的 `formatFieldLabel(field)` 在字段读成了某个单位时写成“金额（元）”；字段名 NFKC + 小写后结尾已经是 `…u`、`…(u)`、`…[u]`、`…【u】`、`…/u`、`…_u`、`…-u`、`… u` 时不重复加，拉丁单位要求前面不是字母（“bag”不算含 kg）。`numericAxisLabel()` 给图表 y 轴加“（元）”，和“（百分比）”同时出现时单位在前。加在：统计表、质量页异常值表、数值分布图、日期趋势图、自定义分析的摘要卡 / 表 / 图（标题、dataset label、y 轴）。不加：下拉框（value 必须是原字段名）、缺失值检查表、疑似缺失值区、ID 重复区。`state.rows`、数据预览和 CSV 导出保留原值。
 - **质量页**：缺失值检查之后、疑似缺失值之前有两个静态小节，`#numberConversionSection` / `#numberConversionDetails`（“按单位读取的数字”）和 `#numericLookingSection` / `#numericLookingDetails`（“疑似数值列”），默认 `hidden`。`renderNumberNoteSection()` 在 `renderQuality()`“没有数值字段时提前 return”之前写入，每个字段一行，没有内容时整节隐藏。
   - “按单位读取的数字”来自 `buildNumberConversionSummary(profiles)`：未忽略、并且策略有开关或单位冲突的字段，`[{ field, unit, unitCount, unitSamples, magnitudeCount, fullwidthCount, conflictUnits }]`。`formatNumberConversion()` 写成“「金额」：按"元"读取了 2 个值（2200元、3500元）”，有的部分才写，用“；”连接：“按万/亿换算了 N 个值”“N 个全角数字已按半角读取”；单位冲突时写“同时出现 kg（5 个）和 千克（1 个），没有按单位读取，这些值不能读成数字。”，各单位按个数降序，个数相同按第一次出现。冲突字段常常是分类或 ID，所以不说“算作格式问题”。
   - “疑似数值列”来自 `state.numericLooking`，`formatNumericLookingHint()` 写成“「楼层」：去掉缺失值和疑似缺失值后，5 个值里有 3 个能读成数字（60.0%），其余的如 B1、B2。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。”，百分比用 `formatPercent()`。
@@ -500,7 +497,6 @@ upper = Q3 + 1.5 × IQR
 需要区分两个重复口径：
 
 - 质量页的 `state.duplicateRows` 使用全部原始字段和原始行。
-- `renderInsights()` 会基于当前筛选行和非 `ignore` 字段重新计算分析范围内的重复数。
 
 ### ID 字段重复值（v2.3.0）
 
@@ -526,7 +522,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **匹配**：`placeholderKey(value)` 只看字符串单元格：去首尾空格 → NFKC → 再去首尾空格，整格等于清单里的某个写法才算，不做子串匹配；得到的写法就是 key，确认的粒度是“字段 × key”。全角的「Ｎ／Ａ」「－－」、康熙部首「⽆」、小号的「﹘」「﹣」等经 NFKC 变成清单写法，和半角写法是同一个 key。去首尾空格后超过 8 个 UTF-16 单位的单元格直接判为不匹配，不做 NFKC（清单最长 4 个字符；NFKC 不会把字符映射成空，清单字符也不是组合的结果）。零宽空格（U+200B）不是 JS 的空白字符，带它的写法匹配不上；BOM（U+FEFF）会被 `trim()` 去掉。
 - **检出**：`buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` 基于原始 `state.rows`，按字段顺序、同一字段内按 key 第一次出现的位置，每个“字段 × key”一项 `{ field, key, tier, count, rawValues, rowNumbers, confirmed, fieldIgnored }`。`rawValues` 是去首尾空格后的不同原文；`rowNumbers` 最多 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个，经 `getSourceRowNumber()` 取得，查不到为 `null`。被忽略的字段不检出新的疑似值，但已经确认的 key 仍列出（`fieldIgnored: true`），照样计入该字段的缺失数，仍可撤销。`commitTabularData()` 在算完 profile 之后、`renderQuality()` 之前计算，`rebuildAnalysisFromProfiles()` 开头重算（字段配置的变化会改变哪些字段被检查），筛选不重算。结果存在 `state.placeholders`。
 - **确认的状态**：`state.placeholderConfirmations` 是“字段 → 已确认的 key 数组”（`Object.create(null)`）。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它；确认和撤销时也整体替换。通过 `getConfirmedPlaceholderKeys(field)` 读取（用 `hasOwnProperty`，字段名叫 `constructor` 之类也安全）。
-- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 17 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、三个分组函数（`groupNumericFieldByCategory()`、`aggregateByCategory()`、模板用的 `groupMetricRowsByField()`，显示为“未填写”）、模板用的 `countNonMissingValues()` 和去重用户数、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览和结论里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7；`renderInsights()` 里的“重复行”也按原值）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期（在任何数字策略下也不能，见“数字策略”），所以只做数值或日期转换的地方不用改。分组显示“未填写”、筛选显示“（空值）”是现有的不一致，这一版没有统一。
+- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 12 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、分组函数 `groupNumericFieldByCategory()`（显示为“未填写”）、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径（v2.7.0 删去场景模板、快速分组图和“主要发现”后，原来的 17 处少了 5 处）。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期（在任何数字策略下也不能，见“数字策略”），所以只做数值或日期转换的地方不用改。分组显示“未填写”、筛选显示“（空值）”是现有的不一致，这一版没有统一。
 - **第 4 条刷新路径**：`confirmPlaceholder(field, key)`、`undoPlaceholderConfirmation(field, key)` 和 `confirmAllCommonPlaceholders()`（只覆盖未忽略字段里待确认的常见写法）都经过 `updatePlaceholderConfirmations(keysByField, message)`，顺序是：
   1. 字段配置有未应用的草稿时拒绝，状态不变，在字段配置区和 `#placeholderMessage` 写“字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。”。没有可做的事（key 不在待确认列表里，或要撤销的 key 没确认过）时也返回 `false`。
   2. 整体替换 `state.placeholderConfirmations`。
@@ -568,8 +564,8 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 **主要职责**
 
 - 生成数值描述性统计和分类 Top 10。
-- 计算分组聚合、日期趋势、直方图区间和自动结论。
-- 为 V2 自定义分析与六类场景模板生成表格、卡片、结论和图表数据。
+- 计算分组聚合、日期趋势、直方图区间和自动趋势结论。
+- 为 V2 自定义分析生成表格、卡片、结论和图表数据。
 - 对极端有限数值尽量避免求和与均值溢出。
 
 **主要函数**
@@ -577,12 +573,11 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 | 函数组 | 主要函数 |
 | --- | --- |
 | 数值统计 | `buildNumericStats()`, `getNumericValues()`, `mean()`, `median()`, `standardDeviation()`, `quantile()`, `sumNumbers()` |
-| 分类统计 | `buildCategoryStats()`, `countValues()`, `frequencyRows()` |
-| 分组聚合 | `groupNumericFieldByCategory()`, `summarizeGroupedValues()`, `aggregateByCategory()` |
+| 分类统计 | `buildCategoryStats()`, `countValues()` |
+| 分组聚合 | `groupNumericFieldByCategory()`, `summarizeGroupedValues()` |
 | 趋势 | `buildDateTrend()`, `buildTrendFromRows()`, `buildMetricDateTrend()` |
-| 自动结论 | `renderInsights()`, `buildTrendInsight()` |
+| 图表结论 | `buildCategoryInsight()`, `buildTrendInsight()`, `renderChartInsights()`（`app.js` / `stats.js`） |
 | 自定义分析 | `renderV2Analysis()`, `buildV2GroupedStats()` |
-| 场景模板 | `runTemplateAnalysis()` 及 `analyzeGenericTemplate()`、`analyzeSalesTemplate()`、`analyzeScoreTemplate()`、`analyzeUsedGoodsTemplate()`、`analyzeSurveyTemplate()`、`analyzeBehaviorTemplate()` |
 
 `buildNumericStats()` 对每个数值字段输出：
 
@@ -597,20 +592,20 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 
 `buildCategoryStats()` 忽略缺失值，以非缺失值为分母计算占比，并只保留频数 Top 10。每项是 `{ field, total, distinctCount, top }`：`distinctCount` 是当前分析行中该字段的不同值个数（与 `countValues()` 口径相同，不受 Top 10 截断影响），也写入报告快照的 `categoryStats`。
 
-自动分类结论按字段顺序选第一个同时满足 `top.length > 0`、`distinctCount ≤ INSIGHT_CATEGORY_MAX_DISTINCT`（20）且排第一的类别至少出现 2 次的分类字段，文字仍为“分类字段「X」中占比最高的类别是……”。有带数据的分类字段但都不满足时，写“分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。”；没有分类字段或分类字段全空时仍写“未识别到适合生成频数统计的分类字段。”。因为 `distinctCount` 按当前分析行计算，筛选后结论会重新选字段。这条规则抽成 `findConcentratedCategory(categoryStats)`，分类图的默认字段也用它。
+**图表下的两句结论（v2.7.0）**：分类图（`#categoryChartInsight`）和日期趋势图（`#dateChartInsight`）的画布下面各有一句结论，分别跟随图表当前选择的字段（`#categoryChartField`、`#dateChartField`），状态存在 `state.chartInsights = { category, trend }`，没有可说的时候是空字符串、对应元素带 `hidden`（没有对应类型的字段、所有字段被忽略、分析行为 0 都不显示）。分类句：`buildCategoryInsight(field)` 在 `state.categoryStats` 里找该字段，满足 `isConcentratedCategory(item)`（`top.length > 0`、`distinctCount ≤ INSIGHT_CATEGORY_MAX_DISTINCT`（20）且排第一的类别至少出现 2 次）时写“分类字段「X」中占比最高的类别是……”；不满足时写“「X」取值比较分散（超过 20 个不同值，或没有重复出现的值），不做概括。”，字段在当前范围内没有任何取值时写“「X」当前没有可统计的取值，不做概括。”。`findConcentratedCategory(categoryStats)` 是同一条规则的“取第一个”，分类图的默认字段也用它。`distinctCount` 按当前分析行计算，所以筛选后同一字段的句子会重算，但不会像 v2.6.1 的“主要发现”那样改选字段（图表的选择筛选时不变）。
 
 `mean()`、`sumNumbers()` 和 `standardDeviation()` 会按最大绝对值缩放计算，降低极端有限数导致中间结果溢出的风险。`quantile()` 使用 `(n - 1) × q` 位置上的线性插值。
 
-日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图由自带的 `#dateChartMetric`（第一项“记录数”，其余为有数据的数值字段）和 `#dateChartAggregate`（平均值 avg / 合计 sum，选“记录数”时禁用）决定，默认是每期记录数；它不再读取快速分组的 `#metricField`。新导入时两个下拉框回到“记录数”和平均值；筛选变化保持选择；字段配置变化时，若所选指标仍是有数据的数值字段则保持，否则回到“记录数”。
+日期趋势按日期排序；时间跨度超过 120 天时通常按月分桶，year-only 字段按年分桶。基础日期图由自带的 `#dateChartMetric`（第一项“记录数”，其余为有数据的数值字段）和 `#dateChartAggregate`（平均值 avg / 合计 sum，选“记录数”时禁用）决定，默认是每期记录数。新导入时两个下拉框回到“记录数”和平均值；筛选变化保持选择；字段配置变化时，若所选指标仍是有数据的数值字段则保持，否则回到“记录数”。`#dateChartField` 的选项只含有有效日期的日期字段，`populateControls()` 显式把它设为第一项（浏览器本来就选第一项，假 DOM 不会，所以显式赋值）。
 
-基础分类图 `#categoryChartField`（v2.6.1）：新导入时选 `findConcentratedCategory(state.categoryStats)` 的字段，没有符合的就选第一个分类字段，没有分类字段为空（花名册默认“部门”而不是 20 多个不同值的“姓名”）；筛选变化保持选择；字段配置变化（含疑似缺失值确认和撤销）时，所选字段仍是分类字段则保持，否则按上面的规则重选。日期趋势图和分类图的“重建时保持选择”共用 `populateControls({ keepChartSelections: true })`，导入时不传。默认值读的是导入或重建时按全部行算好的 `state.categoryStats`。
+基础分类图 `#categoryChartField`（v2.6.1；v2.7.0 起它也决定分类句）：新导入时选 `findConcentratedCategory(state.categoryStats)` 的字段，没有符合的就选第一个分类字段，没有分类字段为空（花名册默认“部门”而不是 20 多个不同值的“姓名”）；筛选变化保持选择；字段配置变化（含疑似缺失值确认和撤销）时，所选字段仍是分类字段则保持，否则按上面的规则重选。日期趋势图和分类图的“重建时保持选择”共用 `populateControls({ keepChartSelections: true })`，导入时不传。默认值读的是导入或重建时按全部行算好的 `state.categoryStats`。
 
-自动趋势结论 `buildTrendInsight()` 固定调用 `buildDateTrend(dateField, "")`，比较当前分析行第一期和最后一期的记录数，不受数值字段、`#metricField` 或 `#dateChartMetric` 影响。首尾相同时写“……从 A 到 B 基本持平。”，不给变化幅度；上升或下降时给出变化幅度。每期至少 1 条记录，首期不会为 0，因此不再有“首期为 0”的分支。按月分桶时，如果该日期字段的最后一个日期早于当月最后一天；或按年分桶时，最后一个带月日的日期早于当年 12 月 31 日，`buildPartialPeriodNote()` 会在结论末尾追加“注意：最后一期（…）的数据截至 M 月 D 日，可能不完整，比较结果仅供参考。”。它不剔除最后一期，也不改变比较方式；按天分桶、只有年份（如“2025”）的值、只有一个时间点或没有有效日期时不加注释。日期按 `parseFieldDate()` 的 UTC 日历日和 `getDateTrendKey()` 的分桶键判断，不受运行时区影响。
+趋势句是对 `#dateChartField` 当前选中的字段调用 `buildTrendInsight()`，它固定调用 `buildDateTrend(dateField, "")`，比较当前分析行第一期和最后一期的记录数，不受数值字段、`#dateChartMetric` 或 `#dateChartAggregate` 影响；选中的字段在筛选后没有有效日期时显示该函数现有的“……没有可安全转换的有效日期，因此未生成趋势结论。”。首尾相同时写“……从 A 到 B 基本持平。”，不给变化幅度；上升或下降时给出变化幅度。每期至少 1 条记录，首期不会为 0，因此不再有“首期为 0”的分支。按月分桶时，如果该日期字段的最后一个日期早于当月最后一天；或按年分桶时，最后一个带月日的日期早于当年 12 月 31 日，`buildPartialPeriodNote()` 会在结论末尾追加“注意：最后一期（…）的数据截至 M 月 D 日，可能不完整，比较结果仅供参考。”。它不剔除最后一期，也不改变比较方式；按天分桶、只有年份（如“2025”）的值、只有一个时间点或没有有效日期时不加注释。日期按 `parseFieldDate()` 的 UTC 日历日和 `getDateTrendKey()` 的分桶键判断，不受运行时区影响。
 
 **输入 / 输出**
 
-- 输入：当前已应用 profiles 和当前分析范围。`buildNumericStats()`、`buildCategoryStats()`、`getNumericValues()`、`countValues()` 等低层函数可显式接收 rows，并在未传时使用 `getAnalysisRows()`；趋势、分组、V2 和模板函数多数直接读取 `getAnalysisRows()`。
-- 输出：低层 builder 返回数组或对象；`commitTabularData()`、`refreshFilteredAnalysis()` 和 `rebuildAnalysisFromProfiles()` 再把结果写入 `state.numericStats`、`state.categoryStats` 等状态。自动结论、自定义分析和模板流程还会生成各自的状态或结果对象。
+- 输入：当前已应用 profiles 和当前分析范围。`buildNumericStats()`、`buildCategoryStats()`、`getNumericValues()`、`countValues()` 等低层函数可显式接收 rows，并在未传时使用 `getAnalysisRows()`；趋势、分组和 V2 函数多数直接读取 `getAnalysisRows()`。
+- 输出：低层 builder 返回数组或对象；`commitTabularData()`、`refreshFilteredAnalysis()` 和 `rebuildAnalysisFromProfiles()` 再把结果写入 `state.numericStats`、`state.categoryStats` 等状态。图表结论（`state.chartInsights`）和自定义分析还会生成各自的状态或结果对象。
 - 无法转换的数值或日期不会改写原值，只会从相应计算中排除。
 
 **与其他模块的关系**
@@ -618,7 +613,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - Application State 在导入、筛选和字段类型变化时触发重算。
 - Data Quality 复用 `buildNumericStats(state.rows)` 取得原始范围的 IQR 信息。
 - Visualization 消费直方图、分类计数、趋势和分组结果。
-- UI Rendering 展示统计表、结论、卡片和模板结果。
+- UI Rendering 展示统计表、图表结论和卡片。
 - Report Export 读取当前统计缓存，并补充日期趋势和自定义分析快照。
 
 ## 8. Filtering（筛选）
@@ -658,7 +653,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 **与其他模块的关系**
 
 - Profiling 决定哪些字段可出现在各类筛选控件中。
-- Statistics、Visualization、当前预览、自动结论和筛选导出通过 `getAnalysisRows()` 使用筛选结果。
+- Statistics、Visualization、当前预览、图表结论和筛选导出通过 `getAnalysisRows()` 使用筛选结果。
 - Data Quality 继续使用原始行。
 - 字段类型变化会清除筛选，避免旧条件与新类型不一致。
 - `refreshFilteredAnalysis()` 在重算期间临时清空 `analysisCompletedAt`，防止导出中间状态。
@@ -668,7 +663,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 **主要职责**
 
 - 使用 Chart.js 渲染基础分布、Top 10、日期趋势和分组图。
-- 渲染 V2 自定义分析及场景模板图表。
+- 渲染 V2 自定义分析图表。
 - 统一保存和销毁 Chart 实例。
 - 为 HTML 报告提供当前可见图表的图片快照。
 
@@ -677,16 +672,14 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 | 图表范围 | 主要函数 |
 | --- | --- |
 | 基础图表入口 | `renderCharts()` |
-| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间。场景模板的 `histogramChartConfig()` 不受影响 |
+| 数值分布 | `renderNumericDistributionChart()` → `getNumericValues()` → `buildDiscreteValueCounts()`，返回 null 时用 `buildHistogram()`。当前分析行的有效值全是整数、最大值减最小值不超过 11 且字段不是百分比格式时，从最小值到最大值每个整数一根柱子（无人选的值计 0）；否则仍是 10 个等宽区间 |
 | 分类 Top 10 | `renderCategoryTopChart()` → `countValues()`；默认字段由 `populateControls()` 经 `findConcentratedCategory()` 选出 |
-| 日期趋势 | `renderDateTrendChart()` → `getDateChartSelection()` → `buildDateChartTrend()` → `buildTrendFromRows()`（count / avg / sum，分桶规则与 `buildDateTrend()` 相同；`buildDateTrend()` 仍供自动趋势结论使用） |
-| 基础分组图 | `renderCustomAnalysisChart()` → `aggregateByCategory()` |
+| 日期趋势 | `renderDateTrendChart()` → `getDateChartSelection()` → `buildDateChartTrend()` → `buildTrendFromRows()`（count / avg / sum，分桶规则与 `buildDateTrend()` 相同；`buildDateTrend()` 仍供趋势结论使用） |
 | V2 自定义图 | `renderV2TopGroupChart()`, `renderV2TrendChart()` |
-| 模板图 | `renderTemplateChart()` 和各模板返回的 Chart 配置 |
-| 公共配置 | `barChartConfig()`, `lineChartConfig()`, `histogramChartConfig()`, `chartOptions()` |
+| 公共配置 | `chartOptions()` |
 | 生命周期 | `destroyChart()`, `drawEmptyChart()` |
 
-所有实例以 canvas ID 为键保存在 `state.charts`。基础 renderer 会在重建前调用 `destroyChart(id)`；V2 和模板分别由其控制器或 `clearTemplateCharts()` 先销毁旧实例。新数据导入时 `resetAnalysisState()` 销毁全部图表。
+所有实例以 canvas ID 为键保存在 `state.charts`。基础 renderer 会在重建前调用 `destroyChart(id)`；V2 由其控制器先销毁旧实例。新数据导入时 `resetAnalysisState()` 销毁全部图表。
 
 **输入 / 输出**
 
@@ -760,7 +753,8 @@ exportHtmlReport() / exportMarkdownReport()
 
 - `canExportReport()` / `canExportProcessedData()`：导出门禁。
 - `buildReportData()`：从当前状态建立两种报告共用的快照。
-- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>合计`），不再取 `numericStats[0]`。
+- `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>合计`），不再取 `numericStats[0]`。`buildReportCustomAnalysis()` 只读 `state.customAnalysis`：报告里的“自定义分组分析结果”一节只在生成过自定义分析之后才有，否则写“当前没有可导出的自定义分组分析结果。”（v2.7.0 起不再有从下拉框回推的默认值）。
+- 报告快照的 `insights` 是 `[state.chartInsights.category, state.chartInsights.trend].filter(Boolean)`，也就是导出时页面上显示的 0–2 句；一句都没有时 HTML / Markdown 的“自动分析结论”节写“暂无自动分析结论。”。`normalizeReportSnapshot()` 对旧快照不改：`insights` 不是数组时为 `[]`，是数组（例如 v2.6.1 的 6 句）就原样输出。
 - `normalizeReportSnapshot()`：为缺少可选部分的快照提供默认结构。
 - `captureCurrentChartImages()` / `isSafeChartDataUrl()`：捕获当前可见图表并校验图片 Data URL。
 - `buildHtmlReport()` / `buildMarkdownReport()`：生成最终文本。
@@ -786,7 +780,7 @@ exportHtmlReport() / exportMarkdownReport()
 - Visualization 提供 HTML 图表图片。
 - UI Rendering 控制按钮、进行中状态和成功/失败提示。
 
-当前 `buildReportData()` 直接读取全局 state；`buildReportCustomAnalysis()` 在缺少自定义快照时还可能从 DOM 控件回推分析；`captureCurrentChartImages()` 同时依赖 Chart 实例与 DOM。这些是未来拆分时需要先明确的边界。
+当前 `buildReportData()` 直接读取全局 state；`captureCurrentChartImages()` 同时依赖 Chart 实例与 DOM。这些是未来拆分时需要先明确的边界。
 
 v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中的报告版本标识统一为 `v2.1.2`，与 README 和包版本一致。
 
@@ -795,7 +789,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 **主要职责**
 
 - 缓存页面节点并在脚本加载时绑定事件。
-- 渲染概览、预览、字段配置、质量、统计、筛选、结论、自定义分析、模板和导出区域。
+- 渲染概览、预览、字段配置、质量、统计、筛选、图表（含图表下的两句结论）、自定义分析和导出区域。
 - 管理加载、错误、成功、工作流步骤和响应式导航状态。
 - 在数据集切换时清理旧 DOM 和图表。
 
@@ -803,13 +797,13 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 
 | UI 范围 | 主要函数 |
 | --- | --- |
-| 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()`, `updateWorkflowSteps()` |
+| 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()` |
 | 导入状态 | `setImportBusy()`, `setStatus()`, `showError()` |
 | 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderPlaceholderDetails()`, `renderParseWarningSummary()`, `renderNumericStats()`, `renderCategoryStats()` |
 | 分页表格与问题行 | `buildRowTableHtml()`, `getRowPage()`, `movePage()`, `setPagerButtons()`, `goToPreviewPage()`, `handleProblemViewClick()`, `openProblemView()`, `renderProblemView()`, `selectProblemCategory()`, `goToProblemRowsPage()`, `refreshProblemView()`, `closeProblemView()` / `hideProblemView()` |
-| 自动结论 | `renderInsights()`, `renderInsightGroups()` |
+| 图表结论 | `renderChartInsights()`, `renderCategoryInsight()`, `renderTrendInsight()`, `buildCategoryInsight()`, `setChartInsight()` |
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
-| 自定义与模板 | `renderV2Analysis()` 及其子 renderer、`renderTemplateMappingForm()`, `renderTemplateResult()` |
+| 自定义分析 | `renderV2Analysis()` 及其子 renderer |
 | 图表控件 | `populateControls()`, `renderCharts()` |
 | 导出 | `updateExportButtons()`, `renderDataExportSummary()`, `setReportExportStatus()`, `setDataExportStatus()`, `setProblemRowsExportStatus()` |
 | 全量清理 | `resetAnalysisState()` |
@@ -822,7 +816,7 @@ refreshFilteredAnalysis()       # 筛选变化
 rebuildAnalysisFromProfiles()   # 字段类型变化
 ```
 
-三者都按各自场景手工组合“重算 → render → 图表 → 自定义分析 → 导出状态”。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。
+三者都按各自场景手工组合“重算 → render → 图表 → 图表结论 → 自定义分析 → 导出状态”。图表结论（`renderChartInsights()`）排在 `populateControls()` 和 `renderCharts()` 之后，因为它读图表下拉框的值；它不放在 `renderCharts()` 里面，因为 `window.Chart` 不存在时 `renderCharts()` 会提前返回，而结论和报告快照不依赖 Chart.js。分类 / 趋势下拉框变化时，`script.js` 只重算各自那一句（趋势句在 10 万行上约 0.7 s，不能挂到所有图表下拉框上）。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。
 
 **输入 / 输出**
 
@@ -839,10 +833,10 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 
 ## 当前脚本的技术债
 
-当前浏览器逻辑共约七千行（具体行数随维护变化），按职责分在 10 个经典脚本中，包含 37 个顶层 state 字段和 132 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
+当前浏览器逻辑共约六千三百行（具体行数随维护变化），按职责分在 9 个经典脚本中，包含 37 个顶层 state 字段和 113 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
 
 1. **全局可变状态是中心依赖。** 多个缓存必须由调用顺序保持一致，例如 `rows`、`filteredRows`、profiles、统计、图表和 `analysisCompletedAt`。
-2. **计算、状态写入和 DOM 副作用混合。** `renderInsights()`、`renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。
+2. **计算、状态写入和 DOM 副作用混合。** `renderV2Analysis()`、`commitTabularData()` 等函数同时承担多个层次的职责。
 3. **刷新编排重复。** 导入、筛选和字段配置三条路径维护不同版本的重算与渲染清单，新增面板时容易漏掉某条路径。
 4. **DOM 和第三方全局对象耦合。** 事件在脚本加载时绑定，业务函数直接读取控件，并依赖 `window.Papa`、`window.XLSX` 和 `window.Chart`。
 5. **Visualization 与 Export 存在反向依赖。** 报告导出需要读取 Chart registry、canvas 可见性和标题 DOM。
@@ -948,7 +942,7 @@ V3 应采用“保留兼容入口的渐进迁移”，不要一次性重写。�
 
 ### 6. 拆分 UI 叶子 renderer
 
-按页面区域逐个迁移 Overview、Schema、Filters、Quality、Statistics、Custom、Template 和 Export：
+按页面区域逐个迁移 Overview、Schema、Filters、Quality、Statistics、Custom 和 Export：
 
 - renderer 接收 view model 和 DOM 引用。
 - renderer 不重新计算统计，不直接改变领域状态。
@@ -960,7 +954,7 @@ V3 应采用“保留兼容入口的渐进迁移”，不要一次性重写。�
 全局 state 和三个刷新入口是风险最高的部分，应最后处理：
 
 - 引入 selectors，统一原始范围和当前分析范围读取。
-- 抽取三条刷新链共有的 recompute / render 阶段，同时保留三个命令入口，以及质量是否重算、筛选是否清理、V2/模板是重跑还是重置等显式差异。
+- 抽取三条刷新链共有的 recompute / render 阶段，同时保留三个命令入口，以及质量是否重算、筛选是否清理、V2 是重跑还是重置等显式差异。
 - 把事件 bootstrap、导入并发、状态变更和 UI 调度放入应用控制器。
 - 最后才移除全局函数包装，并决定是否切换为原生 ES Modules 或构建工具。
 

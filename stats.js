@@ -1,4 +1,4 @@
-// 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势和直方图分箱。
+// 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。
 
 // Non-missing values in `rows` that the field's number parser cannot convert.
 function countInvalidNumericValues(field, rows = getAnalysisRows()) {

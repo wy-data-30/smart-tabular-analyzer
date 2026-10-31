@@ -11,7 +11,7 @@
 7. 为纯逻辑和主要边界增加测试，并运行 `npm run test:regression`。
 8. 更新 README 或 `docs/` 中受影响的行为说明。
 
-浏览器逻辑按职责分在 10 个普通 `<script>` 文件里（加载顺序和各文件职责见 `docs/ARCHITECTURE.md` 的“应用脚本”表），没有打包器或模块系统，所有文件共享同一个全局作用域：
+浏览器逻辑按职责分在 9 个普通 `<script>` 文件里（加载顺序和各文件职责见 `docs/ARCHITECTURE.md` 的“应用脚本”表），没有打包器或模块系统，所有文件共享同一个全局作用域：
 
 - 新代码放进职责对应的文件；小改动应遵循现有函数边界，不要仅为代码风格进行大范围搬动。
 - 加载时立即执行的代码（事件绑定、全局设置等）只放在最后加载的 `script.js`，其他文件只声明函数和常量。
@@ -95,7 +95,7 @@
 项目不需要构建产物，发布目录就是仓库根目录。必须保持：
 
 - 入口为根目录 `index.html`。
-- `style.css`、10 个应用脚本、示例 CSV 和 `assets/` 使用相对路径。
+- `style.css`、9 个应用脚本、示例 CSV 和 `assets/` 使用相对路径。
 - 不添加本地绝对路径、开发服务器代理或后端 API 依赖。
 - `vendor/` 下三个库文件随仓库发布、线上返回 200，且 SRI 与内容一致；根目录保留 `.nojekyll`，`.gitattributes` 保持 `vendor/** -text` 和 `tests/fixtures/stage3/** -text`，避免换行转换改变文件字节。
 
@@ -115,11 +115,11 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 1. 查看浏览器控制台是否有语法错误或 DOM ID 为 `null`。
 2. 在 Network 面板检查 `vendor/` 下三个库文件是否为 200，以及控制台是否出现 SRI（integrity）拒绝；若本地出现 SRI 拒绝，检查文件是否被换行转换改成了 CRLF。
-3. 确认 10 个应用脚本都在页面底部按顺序加载、`script.js` 在最底部最后加载，且 HTML ID 与 `app.js` 中的 `dom` 映射一致。页面顶部出现“页面已更新，请刷新后再使用。”时，控制台错误会列出缺失的脚本文件或 DOM 键名。
+3. 确认 9 个应用脚本都在页面底部按顺序加载、`script.js` 在最底部最后加载，且 HTML ID 与 `app.js` 中的 `dom` 映射一致。页面顶部出现“页面已更新，请刷新后再使用。”时，控制台错误会列出缺失的脚本文件或 DOM 键名。
 4. 逐个文件运行 `node --check`，再运行 `npm run test:regression`。`node --check a.js b.js` 只检查第一个文件，因此要用循环：
 
    ```bash
-   for f in parsing.js profiling.js format.js stats.js quality.js app.js importer.js templates.js report.js script.js; do node --check "$f"; done
+   for f in parsing.js profiling.js format.js stats.js quality.js app.js importer.js report.js script.js; do node --check "$f"; done
    ```
 
 ### CSV 中文乱码

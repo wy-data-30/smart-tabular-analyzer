@@ -34,8 +34,8 @@ The project is a static website with no backend service, database, account syste
 - Read numbers written with a unit, 万 / 亿, or full-width digits, column by column: a column of amounts such as 2200元 is read in 元 (yuan), 1.2万 is read as 12000 and 3亿 as 300000000, and full-width digits such as １２３ are read as 123. The recognized units are 元; kg, 克, 千克, 公斤, 斤, 吨; 件, 个, 箱, 台, 人, 次; 秒, 分钟, 小时, 天; 米, cm, mm, km; and 岁 (Latin letters in any case). Statistics, chart titles and axes, and reports show the unit after the field name, such as “金额（元）”; the data preview and exported CSV files keep the original text. The quality page lists which fields were read this way (“按单位读取的数字”, numbers read by unit) and points out category fields where most values, but not enough for a numeric field, can be read as numbers (“疑似数值列”, numeric-looking fields), with up to three values that could not be read.
 - See the problem rows: next to each count on the quality page, “查看” (view) lists the rows behind it — missing values and format problems per field, outliers per numeric field, complete duplicate rows by group (the first row of each group marked as kept, as in the deduplicated export), every row of every duplicate ID value, suspected missing values per field and value (confirmed ones too), and CSV parse warnings. Each row shows its file row, a short note, and all original columns, with the problem cell highlighted, 50 rows a page, and a list to switch categories; “导出这一类” (export this category) writes every row of the category to CSV, with “文件行号” (file row) and “说明” (note) as the first two columns and the same BOM and formula-prefix neutralizing. The listed rows come from the same checks as the quality counts, use the original data, and do not follow the filters.
 - Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
-- Apply categorical, numeric, and date filters; run grouped analysis; or use scenario templates for common structured datasets.
-- Produce data-grounded observations without inferring external business context; trend observations compare record counts and flag a possibly incomplete last month or year, and the category observation skips fields whose values are too scattered.
+- Apply categorical, numeric, and date filters, and run grouped analysis (one metric, one grouping field, optionally a date field).
+- Show one data-grounded conclusion under the category chart and one under the date trend chart, each following the field selected in that chart and without inferring external business context; the trend conclusion compares record counts and flags a possibly incomplete last month or year, and the category conclusion says so instead of summarizing a field whose values are too scattered. Reports carry the same sentences.
 - Export filtered or deduplicated rows to CSV in the browser while preserving field order and neutralizing spreadsheet-formula prefixes.
 - Export the analysis as HTML or Markdown; reports also record the applied filters, and HTML reports embed the currently rendered charts for offline viewing.
 
@@ -140,20 +140,14 @@ npm run test:regression
 ├── quality.js                   # Conversion failures, duplicates, ID duplicates, missing rates, problem rows
 ├── app.js                       # State, DOM map, refresh paths, rendering
 ├── importer.js                  # CSV / Excel import
-├── templates.js                 # Scenario templates
 ├── report.js                    # Reports, CSV export and problem-row export
 ├── script.js                    # Startup: self-check and event bindings (loads last)
 ├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
-│   ├── sample-data.csv          # Loaded by "Use Sample Data"
-│   ├── sample-sales.csv
-│   ├── sample-students.csv
-│   ├── sample-survey.csv
-│   ├── sample-used-products.csv
-│   └── sample-user-behavior.csv
+│   └── sample-data.csv          # Loaded by "Use Sample Data"
 ├── assets/
 ├── docs/
-├── tests/
+├── tests/                       # Tests and fixtures (tests/fixtures/examples/ holds the other sample CSVs)
 └── package.json
 ```
 
