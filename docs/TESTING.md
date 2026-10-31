@@ -114,3 +114,19 @@ VM 中创建的对象属于不同 realm。复杂对象可先 `JSON.stringify()` 
 
 该脚本不是标准测试依赖，也不在 CI 中运行。发布判断应以已提交夹具的手工回归和正式测试命令为准；若要把生成流程纳入项目，需先明确依赖和可重复执行方式。
 
+## 5. v2.6.1 新增测试固定了什么
+
+| 测试（文件） | 固定的内容 |
+| --- | --- |
+| `isMissing() agrees with trim() for every UTF-16 code unit…`（data-processing） | 65,536 个码元分别单独、重复、夹在文字前后中间时，`isMissing()` 与旧函数体（写在测试里）逐值相同 |
+| `isMissing() treats exactly the 25 trim() characters as blank…`（data-processing） | 25 个空白字符判空，U+0085、U+180E、U+200B 等不判空；中文、大于 U+3000 的标点、单独代理项、全角空格加中文的结果与旧逻辑相同 |
+| `toPlainNumber() reads plain digit strings…`（data-processing） | 15 位以内纯数字走快速路径；309 位以上不能返回 `Infinity`；全角 / 阿拉伯-印度数字、数字后跟字母、日期、会计括号、百分号仍走原路径 |
+| `ordinary text and digit strings are read without calling trim() twice`（data-processing，护栏） | 给 `String.prototype.trim` 计数：英文、中文、数字串在 `isMissing()` 里 0 次，`toPlainNumber("12345")` 1 次，首字符是空白时仍调用 trim |
+| `median() and the statistics table agree for odd, even, unsorted and overflowing values`（data-processing） | `median()` 的奇偶、乱序、相加溢出分支；统计表的中位数在乱序数据上正确 |
+| 统计复用 3 条（basic） | 筛选后统计只含保留的行（最大值放在被筛掉的类别里）、清除 / 清空筛选后回到完整统计、质量统计始终不变；设了筛选但行数不变时统计正确；筛选生效时改字段类型，两份统计都按新 profile 重算 |
+| `importing and clearing a filter build the numeric statistics as few times as needed`、`the statistics table takes the median from its sorted values…`（basic，护栏） | 给全局 `buildNumericStats` / `median` 计数：导入 1 次、带筛选 1 次、清除 0 次、重建 1 次；统计表里 `median` 0 次 |
+| 分类图默认字段 5 条（basic） | 规则的两个边界（不同值 ≤ 20、首位次数 ≥ 2）各有刚好满足 / 刚好不满足的数据；没有集中字段时选第一个分类字段，没有分类字段时为空；重建保留所选、所选字段不再是分类字段时回到规则、新导入不继承；与“主要发现”选同一个字段。每条先断言数据里各字段的实际类型 |
+
+两条调用次数护栏和 trim 次数护栏钉的是**性能性质**，不是结果：以后合理的实现变化（例如换了函数名、换了复用方式）可以随之更新这些测试，但要在 PR 里说明为什么。
+
+假 DOM 的 `<select>` 在改写 `innerHTML` 后 `value` 不会像浏览器那样重置为第一个选项，所以默认字段的测试只能确认代码显式给 `categoryChartField.value` 赋了哪个字段；`setSelectOptions()` 在浏览器里的重置行为要靠手动 / 无头浏览器验证（v2.6.1 已用无头 Chromium 对照过 v2.6.0）。

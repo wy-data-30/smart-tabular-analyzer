@@ -10,6 +10,13 @@ function isYearOnlyDateValue(value, strategy = {}) {
 }
 
 function isMissing(value) {
+  // Fast path: trim() removes only U+0009–U+000D, U+0020, U+00A0, U+1680,
+  // U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF. A string
+  // whose first character is none of these cannot trim to "", so it is not blank.
+  if (typeof value === "string" && value.length) {
+    const code = value.charCodeAt(0);
+    if (code > 32 && code !== 160 && (code < 0x1680 || (code > 0x3000 && code !== 0xfeff))) return false;
+  }
   return value === null || value === undefined || String(value).trim() === "";
 }
 
@@ -183,6 +190,8 @@ function shiftDecimalNumber(numberText, places) {
 function toPlainNumber(value) {
   if (isMissing(value)) return null;
   const raw = String(value).trim();
+  // Fast path: up to 15 plain digits always convert (the cap keeps Number() finite).
+  if (/^\d{1,15}$/.test(raw)) return Number(raw);
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(raw)) return null;
   const isAccountingNegative = /^\(.*\)$/.test(raw);
   let numericText = (isAccountingNegative ? raw.slice(1, -1) : raw).trim();

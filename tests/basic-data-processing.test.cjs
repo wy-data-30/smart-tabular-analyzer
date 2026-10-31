@@ -3036,6 +3036,7 @@ test("statistics, charts and custom analysis label the yuan field, while selects
   const axisTitles = charts.map((config) => [config.data.datasets[0].label, config.options.scales.y.title.text]);
   assert.deepEqual(axisTitles, [
     ["金额（元） 分布（记录频数）", "记录频数"],
+    ["客户名称 Top 10（记录数）", "记录数"],
     ["金额（元） 平均值趋势", "平均值（元）"],
     ["大区 分组的 金额（元） 合计", "合计（元）"],
     ["金额（元） 按 大区 分组（求和）", "求和（元）"],
@@ -3971,4 +3972,185 @@ test("the export button needs an open category and its status clears with the vi
   const { evaluate } = createScriptContext();
   assert.equal(evaluate('["problemRowsExport", "problemRowsExportStatus"].every((id) => Object.keys(dom).includes(id))'), true);
   assert.ok(fs.readFileSync(path.join(__dirname, "..", "script.js"), "utf8").includes('dom.problemRowsExport.addEventListener("click", exportProblemRows);'));
+});
+
+// v2.6.1: numericStats and qualityNumericStats share one array while no row is filtered out.
+
+const STATS_REUSE_COLUMNS = {
+  类别: ["甲", "乙", "甲", "乙", "甲", "乙"],
+  金额: ["10", "1000", "30", "40", "50", "20"],
+  数量: ["1", "2", "3", "4", "5", "6"]
+};
+
+function statsJson(scope, expression) {
+  return JSON.parse(scope.evaluate(`JSON.stringify(${expression}) ?? "null"`));
+}
+
+function filterStatsByCategory(scope, field, dropValue) {
+  put(scope.context, "__field", field);
+  put(scope.context, "__drop", dropValue);
+  scope.evaluate("dom.categoryFilterField.value = __field; updateCategoryFilterField(); state.categoryFilterDraftValues.delete(__drop); applyFilters();");
+}
+
+function emptyStatsFilterPanel(scope) {
+  scope.evaluate('dom.categoryFilterField.value = ""; dom.numericFilterField.value = ""; dom.dateFilterField.value = ""; updateCategoryFilterField(); updateNumericFilterField(); updateDateFilterField();');
+}
+
+// Wraps global functions of the scripts with call counters while action() runs.
+function countStatsCalls(scope, names, action) {
+  const counts = Object.fromEntries(names.map((name) => [name, 0]));
+  names.forEach((name) => {
+    const original = scope.context[name];
+    scope.context[name] = function counted(...args) { counts[name] += 1; return original.apply(this, args); };
+  });
+  action();
+  return counts;
+}
+
+test("a filter gets its own statistics, clearing it brings the full ones back, and the quality statistics never change", () => {
+  const scope = commitColumns(STATS_REUSE_COLUMNS);
+  const quality = () => JSON.stringify(statsJson(scope, "state.qualityNumericStats"));
+  const qualityAtImport = quality();
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "state.qualityNumericStats"));
+  assert.equal(statsJson(scope, "state.numericStats").find((item) => item.field === "金额").max, 1000);
+
+  // 乙 holds the 1000: with only 甲 left the maximum must drop to 50.
+  filterStatsByCategory(scope, "类别", "乙");
+  const filtered = statsJson(scope, "state.numericStats").find((item) => item.field === "金额");
+  assert.deepEqual([filtered.count, filtered.max, filtered.median], [3, 50, 30]);
+  assert.equal(statsJson(scope, "state.qualityNumericStats").find((item) => item.field === "金额").max, 1000);
+  assert.equal(quality(), qualityAtImport);
+
+  scope.evaluate("clearAllFilters()");
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "buildNumericStats(state.rows)"));
+  assert.equal(quality(), qualityAtImport);
+
+  filterStatsByCategory(scope, "类别", "乙");
+  emptyStatsFilterPanel(scope);
+  scope.evaluate("applyFilters()");
+  assert.equal(scope.evaluate("hasActiveFilters()"), false);
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "buildNumericStats(state.rows)"));
+  assert.equal(quality(), qualityAtImport);
+});
+
+test("a filter that keeps every row still shows the full statistics", () => {
+  const scope = commitColumns(STATS_REUSE_COLUMNS);
+  scope.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField(); applyFilters();');
+  assert.equal(scope.evaluate("hasActiveFilters()"), true);
+  assert.equal(scope.evaluate("getAnalysisRows().length"), 6);
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "buildNumericStats(state.rows)"));
+});
+
+test("field configuration rebuilds both statistics, also while a filter is applied", () => {
+  const scope = commitColumns(STATS_REUSE_COLUMNS);
+  filterStatsByCategory(scope, "类别", "乙");
+  scope.evaluate('stageFieldTypeChange("金额", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(statsJson(scope, "state.numericStats.map((item) => item.field)"), ["数量"]);
+  assert.deepEqual(statsJson(scope, "state.qualityNumericStats.map((item) => item.field)"), ["数量"]);
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "buildNumericStats(state.rows)"));
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(statsJson(scope, "state.numericStats.map((item) => item.field)"), ["金额", "数量"]);
+  assert.deepEqual(statsJson(scope, "state.numericStats"), statsJson(scope, "state.qualityNumericStats"));
+});
+
+// Guards for the speed-up itself: they pin how often the statistics are built, not what they say.
+test("importing and clearing a filter build the numeric statistics as few times as needed", () => {
+  const scope = createScriptContext();
+  const fields = Object.keys(STATS_REUSE_COLUMNS);
+  const rows = STATS_REUSE_COLUMNS.类别.map((_, index) => Object.fromEntries(fields.map((field) => [field, STATS_REUSE_COLUMNS[field][index]])));
+  put(scope.context, "__fields", fields);
+  put(scope.context, "__rows", rows);
+  const commit = countStatsCalls(scope, ["buildNumericStats"], () => scope.evaluate('commitTabularData(__fields, __rows, "count.csv", beginImport())'));
+  assert.equal(commit.buildNumericStats, 1);
+  const filter = countStatsCalls(scope, ["buildNumericStats"], () => filterStatsByCategory(scope, "类别", "乙"));
+  assert.equal(filter.buildNumericStats, 1);
+  const clear = countStatsCalls(scope, ["buildNumericStats"], () => scope.evaluate("clearAllFilters()"));
+  assert.equal(clear.buildNumericStats, 0);
+  const rebuild = countStatsCalls(scope, ["buildNumericStats"], () => scope.evaluate('stageFieldTypeChange("数量", "ignore"); applyFieldConfiguration()'));
+  assert.equal(rebuild.buildNumericStats, 1);
+});
+
+test("the statistics table takes the median from its sorted values instead of sorting again", () => {
+  const scope = commitColumns(STATS_REUSE_COLUMNS);
+  const calls = countStatsCalls(scope, ["median"], () => scope.evaluate("buildNumericStats(state.rows)"));
+  assert.equal(calls.median, 0);
+});
+
+// v2.6.1: the category chart starts on the first concentrated category field.
+
+function categoryChartValue(scope) {
+  return scope.elements.get("categoryChartField").value;
+}
+
+// Field types the test data really gets, so a field that turns out to be an ID cannot hide a mistake.
+function chartTestTypes(scope) {
+  return statsJson(scope, "Object.fromEntries(state.profiles.map((profile) => [profile.field, profile.typeKey]))");
+}
+
+function recommitColumns(scope, columns) {
+  const fields = Object.keys(columns);
+  put(scope.context, "__fields", fields);
+  put(scope.context, "__rows", columns[fields[0]].map((_, index) => Object.fromEntries(fields.map((field) => [field, columns[field][index]]))));
+  scope.evaluate('commitTabularData(__fields, __rows, "second.csv", beginImport())');
+}
+
+test("the category chart starts on the first concentrated category field, as the findings do", () => {
+  const scope = commitColumns({
+    姓名: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    部门: ["A", "A", "B", "B", "A", "A", "B", "A", "B", "A"]
+  });
+  assert.deepEqual(chartTestTypes(scope), { 姓名: "category", 部门: "category" });
+  assert.equal(categoryChartValue(scope), "部门");
+  assert.match(statsJson(scope, "state.insights").join("\n"), /分类字段「部门」中占比最高/);
+});
+
+test("the default needs a top category that repeats: exactly twice is enough, once is not", () => {
+  const scope = commitColumns({
+    甲项: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    成对: ["a", "a", "b", "b", "c", "c", "d", "d", "e", "e"]
+  });
+  assert.deepEqual(chartTestTypes(scope), { 甲项: "category", 成对: "category" });
+  assert.equal(categoryChartValue(scope), "成对");
+});
+
+test("the default allows 20 distinct values and not 21", () => {
+  const twice = (distinct) => Array.from({ length: 42 }, (_, index) => `v${index % distinct}`);
+  const scope = commitColumns({ 区域二十一: twice(21), 区域二十: twice(20) });
+  assert.deepEqual(chartTestTypes(scope), { 区域二十一: "category", 区域二十: "category" });
+  assert.deepEqual(statsJson(scope, "state.categoryStats.map((item) => [item.field, item.distinctCount])"), [["区域二十一", 21], ["区域二十", 20]]);
+  assert.equal(categoryChartValue(scope), "区域二十");
+});
+
+test("without a concentrated category field the first category field is kept, and without any it is empty", () => {
+  const scattered = commitColumns({
+    甲: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    乙: ["w1", "w2", "w3", "w4", "w5", "w6", "w7", "w8", "w9", "w10"]
+  });
+  assert.deepEqual(chartTestTypes(scattered), { 甲: "category", 乙: "category" });
+  assert.equal(categoryChartValue(scattered), "甲");
+  const numericOnly = commitColumns({ 数量: ["1", "2", "3", "4", "5", "6"] });
+  assert.deepEqual(chartTestTypes(numericOnly), { 数量: "numeric" });
+  assert.equal(categoryChartValue(numericOnly), "");
+});
+
+test("a field-configuration rebuild keeps a chosen category field that is still a category; a new import starts over", () => {
+  const columns = {
+    甲: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
+    乙: ["a", "a", "b", "b", "a", "a", "b", "a", "b", "a"],
+    丙: ["x", "x", "y", "y", "y", "x", "x", "y", "y", "x"],
+    数量: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+  };
+  const scope = commitColumns(columns);
+  assert.deepEqual(chartTestTypes(scope), { 甲: "category", 乙: "category", 丙: "category", 数量: "numeric" });
+  assert.equal(categoryChartValue(scope), "乙");
+  scope.evaluate('dom.categoryChartField.value = "丙"');
+  scope.evaluate('stageFieldTypeChange("数量", "ignore"); applyFieldConfiguration()');
+  assert.equal(categoryChartValue(scope), "丙");
+  // The chosen field leaves the category fields: back to the rule.
+  scope.evaluate('stageFieldTypeChange("丙", "ignore"); applyFieldConfiguration()');
+  assert.equal(categoryChartValue(scope), "乙");
+  // A new import never inherits the old choice.
+  scope.evaluate('dom.categoryChartField.value = "甲"');
+  recommitColumns(scope, columns);
+  assert.equal(categoryChartValue(scope), "乙");
 });
