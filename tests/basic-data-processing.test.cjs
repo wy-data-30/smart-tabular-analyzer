@@ -704,7 +704,7 @@ test("the partial-period note follows the filtered rows", () => {
   };
   assert.doesNotMatch(filtered("A"), PARTIAL_NOTE);
   assert.match(filtered("C"), /注意：最后一期（2025-05）的数据截至 5 月 20 日/);
-  assert.equal(scope.evaluate("state.insights[state.insights.length - 1]"), scope.evaluate('buildTrendInsight("日期")'));
+  assert.equal(scope.evaluate("state.chartInsights.trend"), scope.evaluate('buildTrendInsight("日期")'));
 });
 
 test("a flat record-count trend reads 基本持平 without a change ratio", () => {
@@ -733,10 +733,8 @@ test("the trend insight ignores numeric fields and the trend chart's metric sele
   assert.equal(scope.evaluate('buildTrendInsight("日期")'), text);
 });
 
-const SCATTERED_CATEGORY_INSIGHT = "分类字段的取值都比较分散（每个字段超过 20 个不同值，或没有重复出现的值），没有适合概括的分类结论。";
-
 function categoryInsight(scope) {
-  return JSON.parse(scope.evaluate('JSON.stringify(state.insights.find((text) => text.startsWith("分类字段「")) ?? null)'));
+  return JSON.parse(scope.evaluate('JSON.stringify(state.chartInsights.category.startsWith("分类字段「") ? state.chartInsights.category : null)'));
 }
 
 test("the category conclusion skips near-unique fields in sample-students", () => {
@@ -774,21 +772,21 @@ test("the category conclusion needs a top category that appears at least twice",
   assert.equal(categoryInsight(scope), "分类字段「渠道」中占比最高的类别是「线上」，出现 10 次，占比 66.7%。");
 });
 
-test("the category conclusion falls back when every category field is scattered", () => {
+test("the category conclusion says so for a scattered field and is hidden without a category field", () => {
   const scattered = createScriptContext();
   const rows = Array.from({ length: 30 }, (_, index) => ({ 甲: `a${index % 25}`, 乙: `b${index % 26}` }));
   commitRows(scattered, ["甲", "乙"], rows, "scattered.csv");
   assert.equal(categoryInsight(scattered), null);
-  assert.equal(scattered.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), true);
+  assert.equal(scattered.evaluate("state.chartInsights.category"), "「甲」取值比较分散（超过 20 个不同值，或没有重复出现的值），不做概括。");
 
   const noCategory = createScriptContext();
   commitRows(noCategory, ["日期", "金额"], [{ 日期: "2025-01-01", 金额: "1" }, { 日期: "2025-01-02", 金额: "2" }], "plain.csv");
   assert.equal(categoryInsight(noCategory), null);
-  assert.equal(noCategory.evaluate(`state.insights.includes(${JSON.stringify(SCATTERED_CATEGORY_INSIGHT)})`), false);
-  assert.equal(noCategory.evaluate('state.insights.includes("未识别到适合生成频数统计的分类字段。")'), true);
+  assert.equal(noCategory.evaluate("state.chartInsights.category"), "");
+  assert.equal(noCategory.elements.get("categoryChartInsight").classList.contains("hidden"), true);
 });
 
-test("the category conclusion re-picks fields from the filtered rows", () => {
+test("the category conclusion follows the selected field and is re-read from the filtered rows", () => {
   const scope = createScriptContext();
   const rows = Array.from({ length: 40 }, (_, index) => ({
     款号: index < 20 ? `g${Math.floor(index / 2)}` : `g${index - 10}`,
@@ -805,11 +803,14 @@ test("the category conclusion re-picks fields from the filtered rows", () => {
     refreshFilteredAnalysis();
   })()`);
   assert.equal(scope.evaluate('state.categoryStats.find((item) => item.field === "款号").distinctCount'), 10);
+  // The chart keeps its field (区域) through the filter, and so does the conclusion; picking 款号 re-reads it from the filtered rows.
+  assert.equal(categoryInsight(scope), "分类字段「区域」中占比最高的类别是「X」，出现 20 次，占比 100.0%。");
+  scope.evaluate('dom.categoryChartField.value = "款号"; renderCategoryInsight()');
   assert.equal(categoryInsight(scope), "分类字段「款号」中占比最高的类别是「g0」，出现 2 次，占比 10.0%。");
 
   const report = JSON.parse(scope.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
   assert.deepEqual(report.categoryStats.map((item) => [item.field, item.distinctCount]), [["款号", 10], ["区域", 1]]);
-  assert.deepEqual(report.insights, JSON.parse(scope.evaluate("JSON.stringify(state.insights)")));
+  assert.deepEqual(report.insights, [scope.evaluate("state.chartInsights.category")]);
 });
 
 const NO_FILTER_SENTENCE = "未设置筛选，结果基于完整数据。";
@@ -4091,14 +4092,14 @@ function recommitColumns(scope, columns) {
   scope.evaluate('commitTabularData(__fields, __rows, "second.csv", beginImport())');
 }
 
-test("the category chart starts on the first concentrated category field, as the findings do", () => {
+test("the category chart starts on the first concentrated category field, and the conclusion under it is about that field", () => {
   const scope = commitColumns({
     姓名: ["u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9", "u10"],
     部门: ["A", "A", "B", "B", "A", "A", "B", "A", "B", "A"]
   });
   assert.deepEqual(chartTestTypes(scope), { 姓名: "category", 部门: "category" });
   assert.equal(categoryChartValue(scope), "部门");
-  assert.match(statsJson(scope, "state.insights").join("\n"), /分类字段「部门」中占比最高/);
+  assert.match(scope.evaluate("state.chartInsights.category"), /分类字段「部门」中占比最高/);
 });
 
 test("the default needs a top category that repeats: exactly twice is enough, once is not", () => {
@@ -4214,4 +4215,136 @@ test("v2.7.0 templates: templates.js, its markup, styles, startup check and repo
   assert.deepEqual([...repoFile("script.js").matchAll(/\["([a-z]+\.js)", typeof /g)].map((match) => match[1]), [
     "parsing.js", "profiling.js", "format.js", "stats.js", "quality.js", "app.js", "importer.js", "report.js"
   ]);
+});
+
+test("v2.7.0 conclusions: the findings section and its navigation entries are gone, the conclusions sit in the chart cards", () => {
+  const html = repoFile("index.html");
+  assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>|<span>09<\/span>/);
+  const navHrefs = [...html.matchAll(/<a[^>]*href="#(\w+Section)"><span>(\d\d)<\/span>/g)].map((match) => [match[1], match[2]]);
+  assert.deepEqual(navHrefs.map(([, number]) => number), ["01", "02", "03", "04", "05", "06", "07", "08"]);
+  assert.equal(navHrefs.at(-1)[0], "exportSection");
+  const mobile = [...html.slice(html.indexOf('id="mobileSectionNav"')).matchAll(/<option value="(\w+)">/g)].map((match) => match[1]).slice(0, navHrefs.length);
+  assert.deepEqual(mobile, navHrefs.map(([id]) => id));
+  const chartCard = (canvasId) => html.slice(html.lastIndexOf('<div class="chart-card', html.indexOf('id="' + canvasId + '"')), html.indexOf('id="' + canvasId + '"') + 400);
+  assert.match(chartCard("categoryTopChart"), /id="categoryChartInsight" class="chart-insight hidden"/);
+  assert.match(chartCard("dateTrendChart"), /id="dateChartInsight" class="chart-insight hidden"/);
+  assert.match(repoFile("script.js"), /dom\.categoryChartField\.addEventListener\("change", renderCategoryInsight\)/);
+  assert.match(repoFile("script.js"), /dom\.dateChartField\.addEventListener\("change", renderTrendInsight\)/);
+  assert.deepEqual(typesOf(createScriptContext(), ["renderInsights", "renderInsightGroups"]), ["undefined", "undefined"]);
+});
+
+const CONCLUSION_ROWS = Array.from({ length: 30 }, (_, index) => ({
+  部门: ["A", "A", "A", "B", "B", "C"][index % 6],
+  品名: "k" + (index % 25),
+  签约日期: "2025-" + String(1 + (index % 6)).padStart(2, "0") + "-" + String(5 + (index % 3)).padStart(2, "0"),
+  回访日期: index < 12 ? "2025-0" + (1 + (index % 4)) + "-10" : ""
+}));
+const conclusions = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.chartInsights)"));
+function filterBy(scope, field, values) {
+  put(scope.context, "__conclusionFilter", { field, values });
+  scope.evaluate("state.filters = { category: __conclusionFilter, numeric: null, date: null }; state.filteredRows = filterRowsByConfig(state.rows, state.filters); state.filterSourceRows = state.rows; refreshFilteredAnalysis();");
+}
+const conclusionShown = (scope, id) => !scope.elements.get(id).classList.contains("hidden");
+
+test("v2.7.0 conclusions: each sentence follows its own chart select, a field change redoes only its sentence", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "部门");
+  assert.equal(scope.evaluate("dom.dateChartField.value"), "签约日期");
+  const start = conclusions(scope);
+  assert.equal(start.category, "分类字段「部门」中占比最高的类别是「A」，出现 15 次，占比 50.0%。");
+  assert.equal(start.trend, scope.evaluate('buildTrendInsight("签约日期")'));
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, start.category);
+  assert.equal(scope.elements.get("dateChartInsight").textContent, start.trend);
+  assert.equal(conclusionShown(scope, "categoryChartInsight") && conclusionShown(scope, "dateChartInsight"), true);
+
+  scope.evaluate('dom.categoryChartField.value = "品名"; renderCategoryInsight()');
+  assert.deepEqual(conclusions(scope), { category: "「品名」取值比较分散（超过 20 个不同值，或没有重复出现的值），不做概括。", trend: start.trend });
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, conclusions(scope).category);
+
+  scope.evaluate('dom.dateChartField.value = "回访日期"; renderTrendInsight()');
+  assert.equal(conclusions(scope).trend, scope.evaluate('buildTrendInsight("回访日期")'));
+  assert.notEqual(conclusions(scope).trend, start.trend);
+  assert.match(conclusions(scope).category, /^「品名」取值比较分散/);
+
+  // The metric and aggregate selects of the trend chart do not move the sentence.
+  scope.evaluate('dom.dateChartMetric.value = ""; dom.dateChartAggregate.value = "sum"; renderCharts()');
+  assert.equal(conclusions(scope).trend, scope.evaluate('buildTrendInsight("回访日期")'));
+});
+
+test("v2.7.0 conclusions: import, filter, field configuration and placeholder confirmation all refresh them", () => {
+  const scope = createScriptContext();
+  const rows = CONCLUSION_ROWS.map((row, index) => ({ ...row, 部门: index < 14 ? "N/A" : ["A", "A", "B", "C"][index % 4] }));
+  commitRows(scope, ["部门", "品名", "签约日期", "回访日期"], rows, "conclusions.csv");
+  // import: N/A is still a category value until confirmed.
+  assert.match(conclusions(scope).category, /^分类字段「部门」中占比最高的类别是「N\/A」，出现 14 次/);
+  // placeholder confirmation (the 4th trigger): N/A drops out, the top category changes.
+  scope.evaluate('confirmPlaceholder("部门", "N/A")');
+  assert.match(conclusions(scope).category, /^分类字段「部门」中占比最高的类别是「A」/);
+  // filter: only the rows of 品名 k0..k4; the select keeps 部门 and the sentence follows the filtered rows.
+  filterBy(scope, "品名", ["k0", "k1", "k2", "k3", "k4"]);
+  const filtered = scope.evaluate("getAnalysisRows().length");
+  assert.ok(filtered > 0 && filtered < 30);
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "部门");
+  assert.equal(conclusions(scope).category, scope.evaluate("buildCategoryInsight(\"部门\")"));
+  assert.equal(conclusions(scope).trend, scope.evaluate('buildTrendInsight("签约日期")'));
+  // a filter that keeps nothing: no sentences, both hidden.
+  filterBy(scope, "品名", ["不存在"]);
+  assert.deepEqual(conclusions(scope), { category: "", trend: "" });
+  assert.equal(conclusionShown(scope, "categoryChartInsight") || conclusionShown(scope, "dateChartInsight"), false);
+  // field configuration (the 3rd path) clears the filter and the sentences come back; ignoring the
+  // selected category field moves the select, and the sentence, to the next category field.
+  scope.evaluate('stageFieldTypeChange("部门", "ignore"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "品名");
+  assert.equal(conclusions(scope).category, "「品名」取值比较分散（超过 20 个不同值，或没有重复出现的值），不做概括。");
+  // every field ignored: nothing to say.
+  scope.evaluate(["品名", "签约日期", "回访日期"].map((field) => 'stageFieldTypeChange("' + field + '", "ignore");').join(" ") + " applyFieldConfiguration()");
+  assert.deepEqual(conclusions(scope), { category: "", trend: "" });
+  assert.equal(conclusionShown(scope, "categoryChartInsight") || conclusionShown(scope, "dateChartInsight"), false);
+});
+
+test("v2.7.0 conclusions: a field with no values and a new import reset the sentences", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["备注", "金额"], Array.from({ length: 6 }, (_, index) => ({ 备注: "", 金额: String(index + 1) })), "empty-category.csv");
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "备注");
+  assert.equal(conclusions(scope).category, "「备注」当前没有可统计的取值，不做概括。");
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(conclusions(scope), { category: "", trend: "" });
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, "");
+  assert.equal(conclusionShown(scope, "categoryChartInsight"), false);
+});
+
+test("v2.7.0 conclusions: they do not depend on Chart.js being loaded", () => {
+  const withoutChart = createScriptContext();
+  assert.equal(withoutChart.evaluate("window.Chart"), null);
+  commitRows(withoutChart, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
+  const withChart = createChartContext();
+  commitRows(withChart, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
+  assert.ok(conclusions(withoutChart).category && conclusions(withoutChart).trend);
+  assert.deepEqual(conclusions(withoutChart), conclusions(withChart));
+});
+
+test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 when there are none, and old snapshots as they were", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
+  const { report, html, markdown } = reportOf(scope);
+  assert.deepEqual(report.insights, [conclusions(scope).category, conclusions(scope).trend]);
+  assert.ok(html.includes("<h2>自动分析结论</h2>"));
+  assert.ok(html.includes("<li>" + conclusions(scope).category + "</li>"));
+  assert.ok(markdown.includes("1. " + conclusions(scope).category + "\n2. "));
+  // one sentence only
+  scope.evaluate('dom.dateChartField.value = ""; renderTrendInsight()');
+  assert.deepEqual(reportOf(scope).report.insights, [conclusions(scope).category]);
+  // none
+  scope.evaluate('stageFieldTypeChange("部门", "ignore"); stageFieldTypeChange("品名", "ignore"); stageFieldTypeChange("签约日期", "ignore"); stageFieldTypeChange("回访日期", "ignore"); applyFieldConfiguration()');
+  const none = reportOf(scope);
+  assert.deepEqual(none.report.insights, []);
+  assert.ok(none.html.includes("暂无自动分析结论。"));
+  assert.ok(none.markdown.includes("暂无自动分析结论。"));
+  // an old snapshot with the six v2.6.1 sentences is printed as it is; one without the field prints 暂无
+  const old = ["数据集包含 30 行，当前分析使用全部记录。", "当前有 4 个字段参与分析。", "缺失值 0 个。", "数值字段「金额」的平均值为 1。", "分类字段「部门」中占比最高的类别是「A」。", "基于日期字段「签约日期」观察。"];
+  put(scope.context, "__oldInsights", old);
+  const normalized = JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({ insights: __oldInsights }).insights)"));
+  assert.deepEqual(normalized, old);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).insights)")), []);
 });

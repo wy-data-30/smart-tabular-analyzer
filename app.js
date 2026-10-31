@@ -55,7 +55,7 @@ const state = {
   sourceSheetName: "",
   sourceType: "",
   analysisCompletedAt: null,
-  insights: [],
+  chartInsights: { category: "", trend: "" },
   customAnalysis: null,
   filters: {
     category: null,
@@ -85,7 +85,8 @@ const dom = {
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
   overviewCards: document.getElementById("overviewCards"),
-  insights: document.getElementById("insights"),
+  categoryChartInsight: document.getElementById("categoryChartInsight"),
+  dateChartInsight: document.getElementById("dateChartInsight"),
   previewTable: document.getElementById("previewTable"),
   previewPageInfo: document.getElementById("previewPageInfo"),
   previewFirstPage: document.getElementById("previewFirstPage"),
@@ -236,7 +237,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.sourceSheetName = sheetName;
   state.sourceType = sheetName ? "excel" : "csv";
   state.analysisCompletedAt = new Date();
-  state.insights = [];
+  state.chartInsights = { category: "", trend: "" };
   state.customAnalysis = null;
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
@@ -283,7 +284,6 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   }
 
   renderOverview();
-  renderInsights();
   renderPreview();
   renderSchema();
   initializeFilterControls();
@@ -292,6 +292,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   renderCategoryStats();
   populateControls();
   renderCharts();
+  renderChartInsights();
   resetV2AnalysisState();
   updateExportButtons();
   showResultsWorkspace();
@@ -345,113 +346,55 @@ function renderOverview() {
   `).join("");
 }
 
-function renderInsights() {
-  const analysisRows = getAnalysisRows();
-  const insights = [];
-  const activeProfiles = getActiveProfiles();
-  const activeFields = activeProfiles.map((profile) => profile.field);
-  const ignoredCount = state.profiles.length - activeProfiles.length;
-  const activeKeys = activeFields.map((field) => getConfirmedPlaceholderKeys(field));
-  const activeMissing = analysisRows.reduce((sum, row) => (
-    sum + activeFields.filter((field, index) => isMissingOrConfirmed(row[field], activeKeys[index])).length
-  ), 0);
-  const analysisDuplicates = activeFields.length ? countDuplicateRows(analysisRows, activeFields) : 0;
-  const missingRate = analysisRows.length && activeFields.length
-    ? activeMissing / (analysisRows.length * activeFields.length)
-    : 0;
-  const filteredOutCount = Math.max(0, state.rows.length - analysisRows.length);
-  const scopeText = hasActiveFilters()
-    ? `原始数据包含 ${formatInteger(state.rows.length)} 行；应用筛选后保留 ${formatInteger(analysisRows.length)} 行，筛除 ${formatInteger(filteredOutCount)} 行。`
-    : `数据集包含 ${formatInteger(state.rows.length)} 行，当前分析使用全部记录。`;
-
-  if (!activeFields.length) {
-    insights.push(scopeText);
-    insights.push(`数据集包含 ${formatInteger(state.fields.length)} 个原始字段。`);
-    insights.push("所有字段均已设为忽略，因此未生成统计、图表或字段相关的自动结论。");
-    state.insights = insights;
-    renderInsightGroups(insights);
-    return;
-  }
-
-  if (!analysisRows.length) {
-    insights.push(scopeText);
-    insights.push("当前筛选条件下没有记录，因此未生成描述性统计、分类分布或趋势结论。请调整或清除筛选条件。");
-    state.insights = insights;
-    renderInsightGroups(insights);
-    return;
-  }
-
-  const topNumeric = state.numericStats
-    .slice()
-    .sort((a, b) => Math.abs(b.max - b.min) - Math.abs(a.max - a.min))[0];
-  const firstCategory = findConcentratedCategory(state.categoryStats);
-  const hasCategoryValues = state.categoryStats.some((item) => item.top.length);
-  const dateProfile = getProfilesByType("date")
-    .find((profile) => fieldHasDateData(profile.field));
-
-  insights.push(scopeText);
-  insights.push(`当前有 ${formatInteger(activeFields.length)} 个字段参与分析${ignoredCount ? `，另有 ${formatInteger(ignoredCount)} 个字段已忽略` : ""}；其中数值字段 ${getProfilesByType("numeric").length} 个，分类字段 ${getProfilesByType("category").length} 个，日期字段 ${getProfilesByType("date").length} 个。`);
-  insights.push(`参与分析的字段共发现 ${formatInteger(activeMissing)} 个缺失值，缺失率为 ${formatPercent(missingRate)}；按参与分析字段计算的重复行数量为 ${formatInteger(analysisDuplicates)}。`);
-
-  if (topNumeric) {
-    insights.push(`数值字段「${topNumeric.field}」的平均值为 ${formatFieldNumber(topNumeric.field, topNumeric.mean)}，最低值为 ${formatFieldNumber(topNumeric.field, topNumeric.min)}，最高值为 ${formatFieldNumber(topNumeric.field, topNumeric.max)}。`);
-  } else {
-    insights.push("未识别到可用于统计的数值字段。");
-  }
-
-  if (firstCategory) {
-    const top = firstCategory.top[0];
-    insights.push(`分类字段「${firstCategory.field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`);
-  } else if (hasCategoryValues) {
-    insights.push(`分类字段的取值都比较分散（每个字段超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），没有适合概括的分类结论。`);
-  } else {
-    insights.push("未识别到适合生成频数统计的分类字段。");
-  }
-
-  if (dateProfile) {
-    insights.push(buildTrendInsight(dateProfile.field));
-  } else {
-    insights.push("未识别到日期字段，因此未生成时间趋势结论。");
-  }
-
-  state.insights = insights;
-  renderInsightGroups(insights);
+// A category field's values are concentrated enough to summarise when there are at most
+// INSIGHT_CATEGORY_MAX_DISTINCT distinct values in the current rows and the top category
+// repeats. The category conclusion and the category chart's default field both use it.
+function isConcentratedCategory(item) {
+  return Boolean(item.top.length && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT && item.top[0].count >= 2);
 }
 
-// The first category field, in field order, whose values are concentrated enough to
-// summarise: at most INSIGHT_CATEGORY_MAX_DISTINCT distinct values in the current rows
-// and a top category that repeats. The findings and the category chart's default field
-// both use it.
+// The first category field, in field order, that isConcentratedCategory().
 function findConcentratedCategory(categoryStats) {
-  return categoryStats.find((item) => (
-    item.top.length
-      && item.distinctCount <= INSIGHT_CATEGORY_MAX_DISTINCT
-      && item.top[0].count >= 2
-  ));
+  return categoryStats.find(isConcentratedCategory);
 }
 
-function renderInsightGroups(insights) {
-  const findings = insights.slice(1);
-  const keyFindings = findings.slice(0, 3);
-  const otherFindings = findings.slice(3);
-  const scopeLabel = hasActiveFilters()
-    ? `基于当前筛选数据：${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行`
-    : `基于完整数据：${formatInteger(state.rows.length)} 行`;
-  const renderItems = (items) => items.map((text) => `
-    <div class="insight-item">${escapeHtml(text)}</div>
-  `).join("");
+// The sentence under the category chart for the chart's selected field, "" when there is
+// nothing to say (no field, no rows). The field is looked up in state.categoryStats, which
+// is built from the current analysis rows.
+function buildCategoryInsight(field) {
+  if (!field || !getAnalysisRows().length) return "";
+  const item = state.categoryStats.find((entry) => entry.field === field);
+  if (!item) return "";
+  if (isConcentratedCategory(item)) {
+    const top = item.top[0];
+    return `分类字段「${field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`;
+  }
+  if (!item.top.length) return `「${field}」当前没有可统计的取值，不做概括。`;
+  return `「${field}」取值比较分散（超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），不做概括。`;
+}
 
-  dom.insights.innerHTML = `
-    <p class="insight-scope">${escapeHtml(scopeLabel)}</p>
-    <h3 class="insight-group-title">关键发现</h3>
-    <div class="insights">${renderItems(keyFindings)}</div>
-    ${otherFindings.length ? `
-      <details class="insights-more">
-        <summary>其他发现（${formatInteger(otherFindings.length)}）</summary>
-        <div class="insights">${renderItems(otherFindings)}</div>
-      </details>
-    ` : ""}
-  `;
+function renderCategoryInsight() {
+  state.chartInsights.category = buildCategoryInsight(dom.categoryChartField.value);
+  setChartInsight(dom.categoryChartInsight, state.chartInsights.category);
+}
+
+function renderTrendInsight() {
+  const field = dom.dateChartField.value;
+  state.chartInsights.trend = field && getAnalysisRows().length ? buildTrendInsight(field) : "";
+  setChartInsight(dom.dateChartInsight, state.chartInsights.trend);
+}
+
+// Both conclusions follow the chart selects, so every path that rebuilds the selects or
+// the analysis rows calls this after populateControls() / renderCharts(); a change of one
+// of the two selects only redoes its own sentence (script.js).
+function renderChartInsights() {
+  renderCategoryInsight();
+  renderTrendInsight();
+}
+
+function setChartInsight(element, text) {
+  element.textContent = text;
+  element.classList.toggle("hidden", !text);
 }
 
 const ROW_TABLE_PAGE_SIZE = 50;
@@ -1105,11 +1048,11 @@ function refreshFilteredAnalysis() {
   state.previewPage = 1;
   renderOverview();
   renderFilterCounts();
-  renderInsights();
   renderPreview();
   renderNumericStats();
   renderCategoryStats();
   renderCharts();
+  renderChartInsights();
   if (rerunV2Analysis) renderV2Analysis();
   else resetV2AnalysisState();
   state.analysisCompletedAt = new Date();
@@ -1133,7 +1076,6 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.categoryStats = buildCategoryStats(getAnalysisRows());
   state.previewPage = 1;
   renderOverview();
-  renderInsights();
   renderPreview();
   renderSchema();
   initializeFilterControls();
@@ -1142,6 +1084,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderCategoryStats();
   populateControls({ keepChartSelections: true });
   renderCharts();
+  renderChartInsights();
   resetV2AnalysisState();
   setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
   state.analysisCompletedAt = new Date();
@@ -1539,6 +1482,7 @@ function populateControls({ keepChartSelections = false } = {}) {
     ? previousCategoryChartField
     : findConcentratedCategory(state.categoryStats)?.field ?? categoryFields[0] ?? "";
   setSelectOptions(dom.dateChartField, dateProfiles.map((profile) => profile.field));
+  dom.dateChartField.value = dateProfiles[0]?.field ?? "";
   setSelectOptions(dom.dateChartMetric, numericFields, "记录数", true);
   dom.dateChartMetric.value = keepChartSelections && numericFields.includes(previousDateChartMetric)
     ? previousDateChartMetric
@@ -1956,7 +1900,7 @@ function resetAnalysisState() {
   state.sourceSheetName = "";
   state.sourceType = "";
   state.analysisCompletedAt = null;
-  state.insights = [];
+  state.chartInsights = { category: "", trend: "" };
   state.customAnalysis = null;
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
@@ -1970,7 +1914,8 @@ function resetAnalysisState() {
   dom.sourceName.removeAttribute("title");
   dom.reportTitle.textContent = "数据分析工作区";
   dom.overviewCards.innerHTML = "";
-  dom.insights.innerHTML = "";
+  setChartInsight(dom.categoryChartInsight, "");
+  setChartInsight(dom.dateChartInsight, "");
   dom.previewTable.innerHTML = "";
   dom.previewPageInfo.textContent = "";
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], 1, 1);
@@ -2021,7 +1966,7 @@ function resetAnalysisState() {
   dom.v2SumTable.innerHTML = "";
   dom.v2AvgTable.innerHTML = "";
   dom.v2AnalysisResults.classList.add("hidden");
-  document.querySelectorAll("#customSection details, #insightsSection details").forEach((details) => {
+  document.querySelectorAll("#customSection details").forEach((details) => {
     details.open = false;
   });
   document.querySelectorAll(".desktop-results-nav a").forEach((link, index) => {

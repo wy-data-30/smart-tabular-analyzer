@@ -104,6 +104,10 @@ dom.dropZone.addEventListener("drop", (event) => {
   dom.dateChartAggregate
 ].forEach((control) => control.addEventListener("change", renderCharts));
 
+dom.categoryChartField.addEventListener("change", renderCategoryInsight);
+
+dom.dateChartField.addEventListener("change", renderTrendInsight);
+
 dom.v2AnalyzeButton.addEventListener("click", renderV2Analysis);
 
 dom.globalClearFilters.addEventListener("click", clearAllFilters);

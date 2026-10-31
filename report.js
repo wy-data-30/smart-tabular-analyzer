@@ -393,7 +393,7 @@ function buildReportData(now = new Date()) {
     categoryStats,
     dateTrends: buildReportDateTrends(),
     customAnalysis: buildReportCustomAnalysis(),
-    insights: [...state.insights]
+    insights: [state.chartInsights.category, state.chartInsights.trend].filter(Boolean)
   };
 }
 

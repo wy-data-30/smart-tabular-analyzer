@@ -191,7 +191,6 @@ const resultSectionOrder = [
   "statisticsSection",
   "chartsSection",
   "customSection",
-  "insightsSection",
   "exportSection"
 ].map((id) => htmlSource.indexOf(`id="${id}"`));
 assert.equal(resultSectionOrder.every((position, index) => position >= 0 && (!index || position > resultSectionOrder[index - 1])), true);
@@ -693,7 +692,7 @@ evaluate(`(() => {
   state.sourceFileName = "销售 数据.xlsx";
   state.sourceSheetName = "华东<明细>";
   state.analysisCompletedAt = new Date(2026, 6, 17, 14, 30, 5);
-  state.insights = ["数据集包含 3 行、5 个字段。", "销售额整体上升。"];
+  state.chartInsights = { category: "分类字段「地区」中占比最高的类别是「华南」，出现 2 次，占比 66.7%。", trend: "销售额整体上升。" };
   state.customAnalysis = {
     metricField: "销售额",
     groupField: "地区",
@@ -728,8 +727,7 @@ assert.equal(reportData.categoryStats.find((item) => item.field === "测试 Top 
 assert.equal(reportData.dateTrends.find((item) => item.field === "日期").labels.length, 2);
 assert.equal(reportData.customAnalysis.metricField, "销售额");
 assert.equal(reportData.customAnalysis.rows[0].group, "华南");
-assert.ok(Array.isArray(reportData.insights));
-assert.ok(reportData.insights.some((item) => item.includes("数据集包含")));
+assert.deepEqual(reportData.insights, ["分类字段「地区」中占比最高的类别是「华南」，出现 2 次，占比 66.7%。", "销售额整体上升。"]);
 
 context.__reportData = reportData;
 const reportHtml = evaluate(`buildHtmlReport(__reportData, [{
@@ -817,7 +815,7 @@ evaluate(`(() => {
   state.sourceSheetName = "";
   state.sourceType = "csv";
   state.analysisCompletedAt = new Date(2026, 6, 17, 15, 0, 0);
-  state.insights = ["未识别到可用于统计的数值字段。"];
+  state.chartInsights = { category: "", trend: "" };
   state.customAnalysis = null;
 })()`);
 const noNumericReport = JSON.parse(evaluate(

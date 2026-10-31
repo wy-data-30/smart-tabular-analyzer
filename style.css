@@ -1671,6 +1671,16 @@ select:hover {
   height: 310px;
 }
 
+.chart-insight {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 7px 7px 0;
+  background: var(--primary-soft);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .chart-card.wide .chart-frame {
   height: 340px;
 }
@@ -1844,63 +1854,6 @@ select:hover {
   font-weight: 720;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.insights {
-  display: grid;
-  gap: 9px;
-}
-
-.insight-scope {
-  margin: 0 0 14px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.insight-group-title {
-  margin: 0 0 9px;
-  font-size: 15px;
-}
-
-.insights-more {
-  margin-top: 12px;
-  border-top: 1px solid var(--border);
-}
-
-.insights-more summary {
-  padding: 12px 0 4px;
-  color: var(--primary);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.insights-more .insights {
-  margin-top: 8px;
-}
-
-.insight-item {
-  position: relative;
-  padding: 12px 14px 12px 38px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--panel-subtle);
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-.insight-item::before {
-  position: absolute;
-  top: 12px;
-  left: 14px;
-  color: var(--primary);
-  content: "•";
-  font-size: 20px;
-  line-height: 16px;
 }
 
 .empty-note {

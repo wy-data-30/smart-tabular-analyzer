@@ -139,8 +139,7 @@
           <a href="#statisticsSection"><span>05</span>描述性统计</a>
           <a href="#chartsSection"><span>06</span>图表分析</a>
           <a href="#customSection"><span>07</span>自定义分析</a>
-          <a href="#insightsSection"><span>08</span>分析结论</a>
-          <a href="#exportSection"><span>09</span>导出</a>
+          <a href="#exportSection"><span>08</span>导出</a>
         </nav>
         <label class="mobile-results-nav" for="mobileSectionNav">
           <span>当前模块</span>
@@ -152,7 +151,6 @@
             <option value="statisticsSection">描述性统计</option>
             <option value="chartsSection">图表分析</option>
             <option value="customSection">自定义分析</option>
-            <option value="insightsSection">分析结论</option>
             <option value="exportSection">导出</option>
           </select>
         </label>
@@ -411,6 +409,7 @@
               <label class="chart-control" for="categoryChartField"><span>选择字段</span><select id="categoryChartField"></select></label>
             </div>
             <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表"></canvas></div>
+            <p id="categoryChartInsight" class="chart-insight hidden"></p>
           </div>
           <div class="chart-card wide">
             <div class="chart-header">
@@ -427,6 +426,7 @@
               </div>
             </div>
             <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas></div>
+            <p id="dateChartInsight" class="chart-insight hidden"></p>
           </div>
         </div>
       </section>
@@ -491,16 +491,6 @@
             </details>
           </div>
         </div>
-      </section>
-
-      <section id="insightsSection" class="section-block">
-        <div class="section-heading">
-          <div>
-            <p class="section-label">分析结论</p>
-            <h2>主要发现</h2>
-          </div>
-        </div>
-        <div id="insights" class="insights"></div>
       </section>
 
       <section id="exportSection" class="section-block export-section">
