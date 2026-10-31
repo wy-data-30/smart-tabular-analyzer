@@ -1482,3 +1482,22 @@ test("ordinary text and digit strings are read without calling trim() twice", ()
   assert.equal(scope.evaluate('isMissing(" a")'), false);
   assert.ok(trimCalls() > before);
 });
+
+// v2.6.1: the statistics table takes its median from the values it has already sorted.
+
+test("median() and the statistics table agree for odd, even, unsorted and overflowing values", () => {
+  const { context, evaluate } = createScriptContext();
+  const median = evaluate("median");
+  assert.equal(median([]), 0);
+  assert.equal(median([3, 1, 2]), 2);
+  assert.equal(median([5, 1, 4, 2]), 3);
+  assert.equal(median([1e308, 1e308]), 1e308);
+  assert.equal(median([1.7e308, 1.7e308]), 1.7e308);
+  assert.equal(median([-1.7e308, 1.7e308]), 0);
+
+  const unsorted = ["30", "10", "40", "20", "60", "50"];
+  const huge = ["1.7e308", "1.7e308", "1.7e308", "1.7e308", "1.7e308", "1.7e308"];
+  installDataset(context, evaluate, unsorted.map((value, index) => ({ 乱序: value, 巨大: huge[index] })));
+  const stats = JSON.parse(evaluate("JSON.stringify(buildNumericStats(state.rows))"));
+  assert.deepEqual(stats.map((item) => [item.field, item.median]), [["乱序", 35], ["巨大", 1.7e308]]);
+});

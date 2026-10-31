@@ -322,8 +322,10 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
-  state.numericStats = buildNumericStats(state.filteredRows);
+  // No filter yet: the analysis rows are the original rows, so one calculation serves both.
+  // The two share one array; nothing may modify it in place.
   state.qualityNumericStats = buildNumericStats(state.rows);
+  state.numericStats = state.qualityNumericStats;
   state.categoryStats = buildCategoryStats(state.filteredRows);
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
@@ -1149,8 +1151,15 @@ function refreshFilteredAnalysis() {
   setDataExportStatus("");
   state.analysisCompletedAt = null;
   updateExportButtons();
-  state.numericStats = buildNumericStats(getAnalysisRows());
-  state.categoryStats = buildCategoryStats(getAnalysisRows());
+  const analysisRows = getAnalysisRows();
+  // A filter only removes rows and keeps their order (filterRowsByConfig() is rows.filter()),
+  // so as many rows as the original means the same rows in the same order: the full
+  // statistics apply. They are then shared with state.qualityNumericStats; nothing may
+  // modify them in place.
+  state.numericStats = analysisRows.length === state.rows.length
+    ? state.qualityNumericStats
+    : buildNumericStats(analysisRows);
+  state.categoryStats = buildCategoryStats(analysisRows);
   state.previewPage = 1;
   renderOverview();
   renderFilterCounts();
@@ -1176,8 +1185,10 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   updateExportButtons();
   resetFilterState();
   setDataExportStatus("");
-  state.numericStats = buildNumericStats(getAnalysisRows());
+  // The filter was just reset, so the analysis rows are the original rows: one calculation
+  // serves both, shared as in commitTabularData().
   state.qualityNumericStats = buildNumericStats(state.rows);
+  state.numericStats = state.qualityNumericStats;
   state.categoryStats = buildCategoryStats(getAnalysisRows());
   state.previewPage = 1;
   renderOverview();

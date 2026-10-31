@@ -9,6 +9,9 @@ function countInvalidNumericValues(field, rows = getAnalysisRows()) {
   ), 0);
 }
 
+// The returned array and its objects are shared: state.numericStats can be the very same
+// array as state.qualityNumericStats (see refreshFilteredAnalysis()), so no caller may
+// modify them in place.
 function buildNumericStats(rows = getAnalysisRows()) {
   return getProfilesByType("numeric").flatMap((profile) => {
     const confirmedKeys = getConfirmedPlaceholderKeys(profile.field);
@@ -39,7 +42,7 @@ function buildNumericStats(rows = getAnalysisRows()) {
       count: values.length,
       invalidCount,
       mean: avg,
-      median: median(values),
+      median: medianOfSorted(sorted),
       min,
       max,
       std: standardDeviation(values, avg),
@@ -423,7 +426,12 @@ function compareNumbersDescending(left, right) {
 
 function median(values) {
   if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
+  return medianOfSorted([...values].sort((a, b) => a - b));
+}
+
+// Median of values already in ascending order.
+function medianOfSorted(sorted) {
+  if (!sorted.length) return 0;
   const middle = Math.floor(sorted.length / 2);
   if (sorted.length % 2) return sorted[middle];
   const lower = sorted[middle - 1];
