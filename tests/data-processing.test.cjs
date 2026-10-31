@@ -954,48 +954,6 @@ test("Excel sheets over the row limit below a first-row header are rejected when
   assert.equal(builtMessage, coarseMessage);
 });
 
-test("scenario templates use every selected mapping field", () => {
-  const { context, evaluate } = createScriptContext();
-  const rows = Array.from({ length: 12 }, (_, index) => ({
-    score: String(70 + index),
-    class: index % 2 ? "Class B" : "Class A",
-    subject: index % 3 ? "Math" : "English",
-    price: String(100 + index * 10),
-    item: index % 2 ? "Phone" : "Laptop",
-    platform: index % 2 ? "Market A" : "Market B",
-    city: index % 3 ? "Shanghai" : "Beijing",
-    condition: index % 2 ? "Good" : "Like New",
-    userId: `U-${index + 1}`,
-    event: index % 2 ? "view" : "click",
-    channel: index % 2 ? "search" : "direct",
-    device: index % 2 ? "mobile" : "desktop",
-    date: `2026-07-${String(index + 1).padStart(2, "0")}`
-  }));
-  installDataset(context, evaluate, rows);
-
-  context.__scoreMappings = { score: "score", class: "class", subject: "subject", examDate: "date" };
-  context.__usedMappings = {
-    price: "price", item: "item", platform: "platform", city: "city", condition: "condition", date: "date"
-  };
-  context.__behaviorMappings = {
-    userId: "userId", event: "event", channel: "channel", device: "device", date: "date"
-  };
-
-  const scoreResult = JSON.parse(evaluate("JSON.stringify(analyzeScoreTemplate(__scoreMappings))"));
-  const usedResult = JSON.parse(evaluate("JSON.stringify(analyzeUsedGoodsTemplate(__usedMappings))"));
-  const behaviorResult = JSON.parse(evaluate("JSON.stringify(analyzeBehaviorTemplate(__behaviorMappings))"));
-
-  assert.deepEqual([...new Set(scoreResult.table.rows.map((row) => row[0]))].sort(), ["class", "subject"]);
-  assert.deepEqual(
-    [...new Set(usedResult.table.rows.map((row) => row[0]))].sort(),
-    ["city", "condition", "item", "platform"]
-  );
-  assert.deepEqual(
-    [...new Set(behaviorResult.table.rows.map((row) => row[0]))].sort(),
-    ["channel", "device", "event"]
-  );
-});
-
 // detectHeaderRow() only picks which row is the header; rows are written the way
 // PapaParse header:false (CSV strings) or sheet_to_json raw values (Excel) give them.
 function detectedHeader(matrix, kind) {

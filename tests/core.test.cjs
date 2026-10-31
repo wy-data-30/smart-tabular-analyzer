@@ -147,7 +147,6 @@ assert.deepEqual(APP_SCRIPT_FILES, [
   "quality.js",
   "app.js",
   "importer.js",
-  "templates.js",
   "report.js",
   "script.js"
 ]);
@@ -618,8 +617,8 @@ assert.equal(
 );
 assert.equal(evaluate('state.categoryStats.some((item) => item.field === "备注")'), false);
 assert.equal(evaluate('getActiveProfiles().some((item) => item.field === "备注")'), false);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"numeric"}).includes("金额")'), true);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"any"}).includes("备注")'), false);
+assert.equal(evaluate('document.getElementById("numericChartField").innerHTML.includes("金额")'), true);
+assert.equal(evaluate('document.getElementById("categoryChartField").innerHTML.includes("备注")'), false);
 assert.equal(evaluate("JSON.stringify(state.rows)"), originalRows);
 
 evaluate("restoreAutomaticFieldTypes()");
@@ -632,7 +631,7 @@ evaluate('stageFieldTypeChange("渠道", "numeric")');
 evaluate("applyFieldConfiguration()");
 assert.equal(evaluate('state.profiles.find((item) => item.field === "渠道").conversionFailureCount'), 4);
 assert.equal(evaluate("state.numericStats.length"), 0);
-assert.equal(evaluate('buildTemplateFieldOptions({required:true, expected:"numeric"}).includes("渠道")'), false);
+assert.equal(evaluate('document.getElementById("numericChartField").innerHTML.includes("渠道")'), false);
 assert.equal(evaluate('JSON.stringify(buildDateTrend("下单日期", "渠道").labels)'), "[]");
 evaluate("restoreAutomaticFieldTypes()");
 

@@ -1709,9 +1709,7 @@ select:hover {
   font-size: 12px;
 }
 
-.field-selector-panel,
-.template-selector-panel,
-.template-mapping-grid {
+.field-selector-panel {
   display: grid;
   gap: 10px;
   align-items: end;
@@ -1726,21 +1724,7 @@ select:hover {
   grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
 }
 
-.template-selector-panel {
-  grid-template-columns: minmax(220px, 360px);
-}
-
-.template-mapping-grid {
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
-}
-
-.template-mapping-grid:empty {
-  display: none;
-}
-
-.field-selector-panel label,
-.template-selector-panel label,
-.template-mapping-grid label {
+.field-selector-panel label {
   display: grid;
   gap: 6px;
   color: var(--text-secondary);
@@ -1748,16 +1732,9 @@ select:hover {
   font-weight: 650;
 }
 
-.field-selector-panel select,
-.template-selector-panel select,
-.template-mapping-grid select {
+.field-selector-panel select {
   width: 100%;
   max-width: none;
-}
-
-.template-actions {
-  display: flex;
-  margin-bottom: 12px;
 }
 
 .analysis-prompt {
@@ -1776,8 +1753,7 @@ select:hover {
   font-weight: 620;
 }
 
-.v2-analysis-results,
-.template-results {
+.v2-analysis-results {
   display: grid;
   gap: 14px;
 }
@@ -2164,10 +2140,6 @@ select:focus-visible,
     grid-template-columns: 1fr;
   }
 
-  .template-mapping-grid {
-    grid-template-columns: repeat(2, minmax(160px, 1fr));
-  }
-
   .report-export-layout {
     grid-template-columns: 1fr;
   }
@@ -2405,9 +2377,7 @@ select:focus-visible,
     padding: 14px;
   }
 
-  .field-selector-panel,
-  .template-selector-panel,
-  .template-mapping-grid {
+  .field-selector-panel {
     grid-template-columns: 1fr;
   }
 
@@ -2415,8 +2385,7 @@ select:focus-visible,
     padding: 13px;
   }
 
-  .field-selector-panel button,
-  .template-actions button {
+  .field-selector-panel button {
     width: 100%;
   }
 

@@ -170,18 +170,6 @@ const dom = {
   v2SumTable: document.getElementById("v2SumTable"),
   v2AvgTable: document.getElementById("v2AvgTable"),
   v2TrendCard: document.getElementById("v2TrendCard"),
-  scenarioTemplate: document.getElementById("scenarioTemplate"),
-  templateMappingForm: document.getElementById("templateMappingForm"),
-  runTemplateAnalysis: document.getElementById("runTemplateAnalysis"),
-  templatePrompt: document.getElementById("templatePrompt"),
-  templateResults: document.getElementById("templateResults"),
-  templateSummaryCards: document.getElementById("templateSummaryCards"),
-  templateInsights: document.getElementById("templateInsights"),
-  templatePrimaryTable: document.getElementById("templatePrimaryTable"),
-  templateMainChartTitle: document.getElementById("templateMainChartTitle"),
-  templateSecondaryChartTitle: document.getElementById("templateSecondaryChartTitle"),
-  templateTrendCard: document.getElementById("templateTrendCard"),
-  templateTrendChartTitle: document.getElementById("templateTrendChartTitle"),
   dataExportOriginalCount: document.getElementById("dataExportOriginalCount"),
   dataExportFilteredCount: document.getElementById("dataExportFilteredCount"),
   dataExportDeduplicatedCount: document.getElementById("dataExportDeduplicatedCount"),
@@ -305,8 +293,6 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   populateControls();
   renderCharts();
   resetV2AnalysisState();
-  renderTemplateMappingForm();
-  resetTemplateResults("字段识别已完成。请选择分析模板并映射字段。");
   updateExportButtons();
   showResultsWorkspace();
 }
@@ -1104,7 +1090,6 @@ function refreshFilteredAnalysis() {
   const rerunV2Analysis = Boolean(
     state.customAnalysis && !dom.v2AnalysisResults.classList.contains("hidden")
   );
-  const rerunTemplateAnalysis = !dom.templateResults.classList.contains("hidden");
   setDataExportStatus("");
   state.analysisCompletedAt = null;
   updateExportButtons();
@@ -1127,7 +1112,6 @@ function refreshFilteredAnalysis() {
   renderCharts();
   if (rerunV2Analysis) renderV2Analysis();
   else resetV2AnalysisState();
-  if (rerunTemplateAnalysis) runTemplateAnalysis();
   state.analysisCompletedAt = new Date();
   updateExportButtons();
 }
@@ -1159,8 +1143,6 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   populateControls({ keepChartSelections: true });
   renderCharts();
   resetV2AnalysisState();
-  renderTemplateMappingForm();
-  resetTemplateResults("字段类型已更新。请重新选择分析字段或模板映射。");
   setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
@@ -2038,14 +2020,7 @@ function resetAnalysisState() {
   dom.v2PrimaryTable.innerHTML = "";
   dom.v2SumTable.innerHTML = "";
   dom.v2AvgTable.innerHTML = "";
-  dom.templatePrompt.textContent = "";
-  dom.templatePrompt.className = "analysis-prompt";
-  dom.templateSummaryCards.innerHTML = "";
-  dom.templateInsights.innerHTML = "";
-  dom.templatePrimaryTable.innerHTML = "";
   dom.v2AnalysisResults.classList.add("hidden");
-  dom.templateResults.classList.add("hidden");
-  dom.templateMappingForm.innerHTML = "";
   document.querySelectorAll("#customSection details, #insightsSection details").forEach((details) => {
     details.open = false;
   });

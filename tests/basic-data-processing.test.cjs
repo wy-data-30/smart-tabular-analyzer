@@ -2876,20 +2876,16 @@ test("CSV export still neutralizes -2200元 in a yuan column", () => {
   assert.equal(scope.evaluate("buildCsvExportContent(state.rows, state.fields)"), "金额\r\n'-2200元\r\n1200元\r\n800元");
 });
 
-test("the sales template sums yuan amounts like the main analysis", async () => {
+test("the main analysis sums yuan amounts per region and per day", async () => {
   const orders = await importStage3Fixture("订单表.csv");
   const result = JSON.parse(orders.evaluate(`JSON.stringify((() => {
-    const sales = analyzeSalesTemplate({ salesAmount: "金额", unitPrice: "", quantity: "", category: "产品", region: "大区", date: "下单日期" });
-    const regions = Object.fromEntries(sales.secondaryChart.labels.map((label, index) => [label, sales.secondaryChart.values[index]]));
-    const main = Object.fromEntries(groupNumericFieldByCategory("金额", "大区").map((group) => [group.name, group.sum]));
-    const trend = Object.fromEntries(sales.trendChart.labels.map((label, index) => [label, sales.trendChart.values[index]]));
-    const generic = analyzeGenericTemplate({ metric: "金额", group: "大区", date: "下单日期" });
-    return { regions, main, trend: [trend["2024-05-08"], trend["2024-05-20"]], genericTrend: generic.trendChart ? [generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-08")], generic.trendChart.values[generic.trendChart.labels.indexOf("2024-05-20")]] : null };
+    const regions = Object.fromEntries(groupNumericFieldByCategory("金额", "大区").map((group) => [group.name, group.sum]));
+    const trend = buildMetricDateTrend("下单日期", "金额", "sum");
+    const at = (label) => trend.values[trend.labels.indexOf(label)];
+    return { regions, trend: [at("2024-05-08"), at("2024-05-20")] };
   })())`));
   assert.equal(result.regions["华南"], 6025);
-  assert.deepEqual(result.regions, result.main);
   assert.deepEqual(result.trend, [3560, 4204]);
-  assert.deepEqual(result.genericTrend, [3560, 4204]);
 });
 
 // Numeric-looking category fields: placeholder spellings (confirmed or not) and
@@ -4201,4 +4197,21 @@ test("v2.7.0 quick grouping: the report has a custom-analysis section only after
   assert.equal(scope.evaluate("buildReportData().customAnalysis.completed"), false);
   scope.evaluate('dom.v2MetricField.value = "销售额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
   assert.equal(scope.evaluate("buildReportData().customAnalysis.completed"), true);
+});
+
+test("v2.7.0 templates: templates.js, its markup, styles, startup check and report entries are gone", () => {
+  const scope = createScriptContext();
+  const html = repoFile("index.html");
+  assert.equal(fs.existsSync(path.join(REPO_ROOT, "templates.js")), false);
+  assert.doesNotMatch(html, /templates\.js|scenarioTemplate|使用分析模板|id="template[A-Z]/);
+  assert.doesNotMatch(repoFile("style.css"), /\.template-/);
+  assert.deepEqual(typesOf(scope, ["runTemplateAnalysis", "renderTemplateMappingForm", "resetTemplateResults", "buildTemplateFieldOptions"]), ["undefined", "undefined", "undefined", "undefined"]);
+  assert.deepEqual(domKeys(scope).filter((key) => /template/i.test(key)), []);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.keys(REPORT_CHART_TITLES))")), [
+    "numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"
+  ]);
+  // The startup check names one representative function per remaining app script.
+  assert.deepEqual([...repoFile("script.js").matchAll(/\["([a-z]+\.js)", typeof /g)].map((match) => match[1]), [
+    "parsing.js", "profiling.js", "format.js", "stats.js", "quality.js", "app.js", "importer.js", "report.js"
+  ]);
 });

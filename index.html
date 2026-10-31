@@ -438,7 +438,7 @@
             <h2>按业务需要组合字段</h2>
           </div>
         </div>
-        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段和分析模板均为可选。</p>
+        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
         <div class="analysis-panel primary-analysis-panel">
           <div class="analysis-panel-heading">
@@ -491,50 +491,6 @@
             </details>
           </div>
         </div>
-
-        <details class="analysis-details">
-          <summary>使用分析模板</summary>
-          <div class="analysis-details-content">
-            <div class="analysis-panel-heading">
-              <h3 class="subsection-title">场景模板分析</h3>
-              <p>使用销售、成绩、价格、问卷或用户行为模板组织常用指标。</p>
-            </div>
-            <div class="template-selector-panel">
-              <label>分析模板
-                <select id="scenarioTemplate">
-                  <option value="generic">通用数据分析</option>
-                  <option value="sales">销售数据分析</option>
-                  <option value="score">成绩数据分析</option>
-                  <option value="usedGoods">二手商品价格分析</option>
-                  <option value="survey">问卷调查分析</option>
-                  <option value="behavior">用户行为分析</option>
-                </select>
-              </label>
-            </div>
-            <div id="templateMappingForm" class="template-mapping-grid"></div>
-            <div class="template-actions"><button id="runTemplateAnalysis" type="button">按模板生成分析</button></div>
-            <div id="templatePrompt" class="analysis-prompt" aria-live="polite"></div>
-            <div id="templateResults" class="template-results hidden">
-              <div id="templateSummaryCards" class="analysis-summary-grid"></div>
-              <div id="templateInsights" class="insights"></div>
-              <div class="table-wrap" tabindex="0" aria-label="模板分析结果，可横向滚动"><table id="templatePrimaryTable" aria-label="模板分析结果"></table></div>
-              <div class="chart-grid">
-                <div class="chart-card">
-                  <div class="chart-header"><h3 id="templateMainChartTitle">模板主图</h3></div>
-                  <div class="chart-frame"><canvas id="templateMainChart" role="img" aria-label="模板分析主图"></canvas></div>
-                </div>
-                <div class="chart-card">
-                  <div class="chart-header"><h3 id="templateSecondaryChartTitle">模板辅助图</h3></div>
-                  <div class="chart-frame"><canvas id="templateSecondaryChart" role="img" aria-label="模板分析辅助图"></canvas></div>
-                </div>
-                <div id="templateTrendCard" class="chart-card wide">
-                  <div class="chart-header"><h3 id="templateTrendChartTitle">时间趋势</h3></div>
-                  <div class="chart-frame"><canvas id="templateTrendChart" role="img" aria-label="模板分析时间趋势图"></canvas></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
       </section>
 
       <section id="insightsSection" class="section-block">
@@ -628,7 +584,6 @@
   <script src="quality.js?v=2.6.1"></script>
   <script src="app.js?v=2.6.1"></script>
   <script src="importer.js?v=2.6.1"></script>
-  <script src="templates.js?v=2.6.1"></script>
   <script src="report.js?v=2.6.1"></script>
   <script src="script.js?v=2.6.1"></script>
 </body>

@@ -5,10 +5,7 @@ const REPORT_CHART_TITLES = Object.freeze({
   categoryTopChart: "分类字段 Top 10",
   dateTrendChart: "日期字段趋势",
   v2TopGroupChart: "自定义分析 Top 10 分组",
-  v2SelectedTrendChart: "自定义分析时间趋势",
-  templateMainChart: "场景模板主图",
-  templateSecondaryChart: "场景模板辅助图",
-  templateTrendChart: "场景模板时间趋势"
+  v2SelectedTrendChart: "自定义分析时间趋势"
 });
 
 const REPORT_FILTER_MAX_VALUES = 10;
@@ -22,10 +19,7 @@ const REPORT_CHART_HEADING_IDS = Object.freeze({
   categoryTopChart: "categoryChartTitle",
   dateTrendChart: "dateChartTitle",
   v2TopGroupChart: "v2TopGroupTitle",
-  v2SelectedTrendChart: "v2TrendTitle",
-  templateMainChart: "templateMainChartTitle",
-  templateSecondaryChart: "templateSecondaryChartTitle",
-  templateTrendChart: "templateTrendChartTitle"
+  v2SelectedTrendChart: "v2TrendTitle"
 });
 
 function canExportReport() {

@@ -17,7 +17,6 @@ function ensureDomElementsPresent() {
     ["quality.js", typeof countDuplicateRows],
     ["app.js", typeof commitTabularData],
     ["importer.js", typeof parseDataFile],
-    ["templates.js", typeof runTemplateAnalysis],
     ["report.js", typeof buildReportData]
   ].filter(([, type]) => type !== "function").map(([file]) => file);
   const missingKeys = missingScripts.length
@@ -108,13 +107,6 @@ dom.dropZone.addEventListener("drop", (event) => {
 dom.v2AnalyzeButton.addEventListener("click", renderV2Analysis);
 
 dom.globalClearFilters.addEventListener("click", clearAllFilters);
-
-dom.scenarioTemplate.addEventListener("change", () => {
-  renderTemplateMappingForm();
-  resetTemplateResults(`已切换到「${getCurrentTemplate().name}」，请选择字段并生成分析。`);
-});
-
-dom.runTemplateAnalysis.addEventListener("click", runTemplateAnalysis);
 
 dom.exportFilteredCsv.addEventListener("click", () => exportProcessedCsv("filtered"));
 
