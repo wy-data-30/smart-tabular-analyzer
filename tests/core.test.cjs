@@ -336,8 +336,8 @@ assert.equal(evaluate('formatFieldNumber("价格", 1234.5)'), "1,234.5");
 assert.equal(evaluate('chartOptions("平均值", "转化率").scales.y.ticks.callback(0.1)'), "10%");
 
 context.__largeValues = Array.from({ length: 125_000 }, (_, index) => index - 62_500);
-assert.equal(evaluate("summarizeNumbers(__largeValues).min"), -62_500);
-assert.equal(evaluate("summarizeNumbers(__largeValues).max"), 62_499);
+assert.equal(evaluate("numericExtents(__largeValues).min"), -62_500);
+assert.equal(evaluate("numericExtents(__largeValues).max"), 62_499);
 assert.equal(
   evaluate("buildHistogram(__largeValues, 10).reduce((total, bin) => total + bin.count, 0)"),
   125_000

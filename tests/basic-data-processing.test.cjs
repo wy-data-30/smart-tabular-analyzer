@@ -2308,10 +2308,6 @@ test("confirmed placeholders leave Top 10, filter options, filter matches and gr
     JSON.parse(evaluate('JSON.stringify(groupNumericFieldByCategory("金额", "城市").map((group) => [group.name, group.count, group.sum]))')),
     [["未填写", 3, 120], ["上海", 2, 60], ["北京", 1, 30]]
   );
-  assert.deepEqual(
-    JSON.parse(evaluate('JSON.stringify(aggregateByCategory("金额", "城市", "sum").map((group) => [group.name, group.value]))')),
-    [["未填写", 120], ["上海", 60], ["北京", 30]]
-  );
 });
 
 test("a confirmed placeholder is no longer an ID duplicate, and undoing lists it again", () => {
@@ -4347,4 +4343,12 @@ test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 whe
   const normalized = JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({ insights: __oldInsights }).insights)"));
   assert.deepEqual(normalized, old);
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).insights)")), []);
+});
+
+test("v2.7.0 statistics helpers: the five functions only the removed features used are gone", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(
+    typesOf(scope, ["groupMetricRowsByField", "frequencyRows", "countNonMissingValues", "aggregateByCategory", "summarizeNumbers"]),
+    ["undefined", "undefined", "undefined", "undefined", "undefined"]
+  );
 });

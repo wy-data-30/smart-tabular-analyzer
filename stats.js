@@ -108,17 +108,6 @@ function groupNumericFieldByCategory(metricField, groupField) {
   return summarizeGroupedValues(groups);
 }
 
-function groupMetricRowsByField(metricRows, groupField) {
-  const groupKeys = getConfirmedPlaceholderKeys(groupField);
-  const groups = new Map();
-  metricRows.forEach((item) => {
-    const groupName = analysisValue(item.row[groupField], groupKeys) || "未填写";
-    if (!groups.has(groupName)) groups.set(groupName, []);
-    groups.get(groupName).push(item.value);
-  });
-  return summarizeGroupedValues(groups);
-}
-
 function summarizeGroupedValues(groups) {
   return Array.from(groups.entries())
     .map(([name, values]) => {
@@ -170,40 +159,12 @@ function buildTrendFromRows(dateField, valueGetter, aggregate) {
   return { labels, values };
 }
 
-function summarizeNumbers(values) {
-  if (!values.length) {
-    return { mean: 0, median: 0, min: 0, max: 0, std: 0 };
-  }
-  const { min, max } = numericExtents(values);
-  return {
-    mean: mean(values),
-    median: median(values),
-    min,
-    max,
-    std: standardDeviation(values)
-  };
-}
-
-function frequencyRows(field, limit = 50) {
-  const counts = countValues(field);
-  const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count, ratio: total ? count / total : 0 }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
-}
-
 function fieldHasNumericData(field, rows = getAnalysisRows()) {
   return getNumericValues(field, rows).length > 0;
 }
 
 function fieldHasDateData(field, rows = getAnalysisRows()) {
   return rows.some((row) => Boolean(parseFieldDate(field, row[field])));
-}
-
-function countNonMissingValues(field, rows = getAnalysisRows()) {
-  const confirmedKeys = getConfirmedPlaceholderKeys(field);
-  return rows.filter((row) => !isMissingOrConfirmed(row[field], confirmedKeys)).length;
 }
 
 // The trend conclusion always compares record counts; numeric fields and the
@@ -294,29 +255,6 @@ function buildDateTrend(dateField, numericField) {
       : `${getDateGranularity(dateField) === "year" ? "年度" : ""}记录数趋势`,
     axisLabel: hasMetric ? "平均值" : "记录数"
   };
-}
-
-function aggregateByCategory(metricField, groupField, method) {
-  const groupKeys = getConfirmedPlaceholderKeys(groupField);
-  const parseNumber = getFieldNumberParser(metricField);
-  const groups = new Map();
-  getAnalysisRows().forEach((row) => {
-    const group = analysisValue(row[groupField], groupKeys) || "未填写";
-    const value = parseNumber(row[metricField]);
-    if (value === null) return;
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(value);
-  });
-
-  return Array.from(groups.entries())
-    .map(([name, values]) => {
-      let value = 0;
-      if (method === "avg") value = mean(values);
-      else if (method === "median") value = median(values);
-      else value = sumNumbers(values);
-      return { name, value, count: values.length };
-    })
-    .sort((a, b) => compareNumbersDescending(a.value, b.value));
 }
 
 // Small integer ranges (scores, ratings) get one bar per value from min to max,
