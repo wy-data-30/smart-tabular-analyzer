@@ -148,6 +148,10 @@ const dom = {
   problemRowsLastPage: document.getElementById("problemRowsLastPage"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  suspectedTotalSection: document.getElementById("suspectedTotalSection"),
+  suspectedTotalDetails: document.getElementById("suspectedTotalDetails"),
+  formulaErrorSection: document.getElementById("formulaErrorSection"),
+  formulaErrorDetails: document.getElementById("formulaErrorDetails"),
   numberConversionSection: document.getElementById("numberConversionSection"),
   numberConversionDetails: document.getElementById("numberConversionDetails"),
   numericLookingSection: document.getElementById("numericLookingSection"),
@@ -295,7 +299,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.sourceName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
-  const headerNote = formatHeaderDetectionNote(state.headerDetection);
+  const headerNote = `${formatHeaderDetectionNote(state.headerDetection)}${formatSuspectedTotalStatus(state.suspectedTotals)}${formatFormulaErrorStatus(state.formulaErrors)}`;
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
@@ -1133,6 +1137,8 @@ function renderQuality() {
     ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
   renderParseWarningSummary();
+  renderSuspectedTotalDetails();
+  renderFormulaErrorDetails();
   // Before the outlier table, which returns early when there is no numeric field.
   refreshProblemView();
   renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
@@ -1227,6 +1233,36 @@ function renderParseWarningSummary() {
   dom.parseWarningSummary.innerHTML = `${escapeHtml(`CSV 解析警告：${formatInteger(count)} 条${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
 }
 
+// "疑似合计 / 小计行" and "公式错误单元格": lines of ready HTML, then footer, the whole
+// subsection hidden when there is none. They come before the tables they explain and
+// before the early return of renderQuality() (formula errors may be all a table has).
+function renderRowNoteSection(section, details, lines, footer = "") {
+  section.classList.toggle("hidden", !lines.length);
+  details.innerHTML = lines.length
+    ? `<ul class="number-note-list">${lines.map((line) => `<li>${line}</li>`).join("")}</ul>${footer}`
+    : "";
+}
+
+// At most SUSPECTED_TOTAL_LIST_LIMIT lines and one 查看 button: they are one category.
+function renderSuspectedTotalDetails() {
+  const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
+  const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
+  renderRowNoteSection(
+    dom.suspectedTotalSection,
+    dom.suspectedTotalDetails,
+    state.suspectedTotals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => escapeHtml(formatSuspectedTotal(item))),
+    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}</p>`
+  );
+}
+
+// One line and one 查看 button per field: each field is a category.
+function renderFormulaErrorDetails() {
+  renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, state.formulaErrors.map((item) => {
+    const text = formatFormulaError({ ...item, fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" });
+    return `${escapeHtml(text)} ${problemViewButton({ kind: "formulaError", field: item.field }, "查看")}`;
+  }));
+}
+
 // Delegated click handler of #qualitySection for the 查看 buttons, bound in script.js.
 function handleProblemViewClick(event) {
   const button = event.target.closest("button[data-problem-index]");
@@ -1264,7 +1300,7 @@ function goToProblemRowsPage(action) {
 }
 
 // Kinds whose rows have one cell to point at: the field of the category.
-const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate"]);
+const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError"]);
 
 // The open category's current page: category list, summary, table and pager.
 function renderProblemView() {
@@ -1285,7 +1321,7 @@ function renderProblemView() {
     row: item.index === null ? null : state.rows[item.index],
     line: item.line,
     note: item.note,
-    highlightField
+    highlightField: item.highlightField ?? highlightField
   })), { withNote: true });
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], page, pageCount);
 }
@@ -1971,6 +2007,8 @@ function resetAnalysisState() {
   dom.qualitySummary.innerHTML = "";
   dom.parseWarningSummary.innerHTML = "";
   dom.parseWarningSummary.classList.add("hidden");
+  renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
+  renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";

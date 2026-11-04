@@ -215,6 +215,16 @@
         <p class="section-note">本模块始终基于导入的原始数据计算，不受当前筛选条件影响。</p>
         <div id="qualitySummary" class="quality-summary"></div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
+        <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
+          <h3 class="subsection-title">疑似合计 / 小计行</h3>
+          <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。</p>
+          <div id="suspectedTotalDetails" class="number-note-details"></div>
+        </div>
+        <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
+          <h3 class="subsection-title">公式错误单元格</h3>
+          <p class="section-note">这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。</p>
+          <div id="formulaErrorDetails" class="number-note-details"></div>
+        </div>
         <div class="two-column">
           <div>
             <h3 class="subsection-title">缺失值检查</h3>

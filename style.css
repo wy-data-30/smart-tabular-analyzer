@@ -949,6 +949,26 @@ td .problem-view-button + .problem-view-button {
   margin-left: 8px;
 }
 
+.number-note-list .problem-view-button {
+  margin-left: 4px;
+}
+
+.row-note-footer {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* These subsections sit above the two tables, which have no top margin of their own. */
+.row-note-section {
+  margin-bottom: 24px;
+}
+
+/* Keeps a long 说明 readable when many fields share a narrow screen. */
+#problemRowsTable td:nth-child(2) {
+  min-width: 220px;
+}
+
 .problem-view-none {
   color: var(--text-secondary);
   font-size: 12px;

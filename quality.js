@@ -276,6 +276,8 @@ function buildNumericLookingSummary(profiles) {
 
 // A labelled row's value counts as a total within this share of a sum of detail rows.
 const SUSPECTED_TOTAL_TOLERANCE = 0.005;
+// The quality page and the report list at most this many suspected totals.
+const SUSPECTED_TOTAL_LIST_LIMIT = 20;
 // Ranges a total can cover, in the order they are tried for each column: the detail
 // rows since the previous total, every detail row above it, every detail row.
 const SUSPECTED_TOTAL_SCOPES = Object.freeze(["segment", "above", "all"]);
@@ -440,9 +442,9 @@ function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
 }
 
 // ---- Problem rows: the rows behind each quality-page count ----
-// A category is { kind, field, key } with kind one of missing, conversion, outlier,
-// duplicateRows, idDuplicate, placeholder, parseWarnings. Every list comes from the
-// same checks as its quality count and reads the original rows (state.rows), never
+// A category is { kind, field, key } with kind one of missing, formulaError, conversion,
+// outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every
+// list comes from the same checks as its quality count and reads the original rows (state.rows), never
 // the filters. Items are { index (into state.rows, or null), line (file row or
 // null), note, ... }, in file order; the duplicate kinds go group by group.
 
@@ -457,7 +459,9 @@ function listMissingRows(field) {
   if (!profile) return null;
   const items = [];
   state.rows.forEach((row, index) => {
-    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) items.push(problemRowItem(index, isMissing(row[field]) ? "空值" : "已按缺失处理"));
+    if (!isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
+    const error = state.sourceFormulaErrors.get(row)?.[field];
+    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按缺失处理"));
   });
   return { items, count: profile.missingCount };
 }
@@ -562,19 +566,41 @@ function listParseWarningRows() {
   return { items, count: items.length };
 }
 
-// Categories with rows to show, in this order: missing, format problems, outliers
-// (per field), duplicate rows, ID duplicates (per field), placeholders (per field
-// and key), parse warnings. count / unit describe the quality figure for labels:
+// Every suspected total row; the note names the columns that matched and the cell to
+// highlight is the label's.
+function listSuspectedTotalRows() {
+  if (!state.suspectedTotals.length) return null;
+  const items = state.suspectedTotals.map((item) => problemRowItem(item.index, formatSuspectedTotalMatches(item), { highlightField: item.field }));
+  return { items, count: items.length };
+}
+
+// Rows whose cell in this field held a formula error when imported.
+function listFormulaErrorRows(field) {
+  const summary = state.formulaErrors.find((item) => item.field === field);
+  if (!summary) return null;
+  const items = [];
+  state.rows.forEach((row, index) => {
+    const error = state.sourceFormulaErrors.get(row)?.[field];
+    if (error) items.push(problemRowItem(index, `公式错误 ${error}`));
+  });
+  return { items, count: summary.count };
+}
+
+// Categories with rows to show, in this order: missing, formula errors, format problems,
+// outliers (per field), duplicate rows, suspected totals, ID duplicates (per field),
+// placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
 // row, value, duplicateRow (without each group's kept row), duplicateValue, warning.
 function listProblemCategories() {
   return [
     ...state.profiles.filter((profile) => profile.missingCount > 0)
       .map((profile) => ({ kind: "missing", field: profile.field, count: profile.missingCount, unit: "row" })),
+    ...state.formulaErrors.map((item) => ({ kind: "formulaError", field: item.field, count: item.count, unit: "value" })),
     ...state.profiles.filter((profile) => profile.conversionFailureCount > 0)
       .map((profile) => ({ kind: "conversion", field: profile.field, count: profile.conversionFailureCount, unit: "value" })),
     ...getQualityNumericStats().filter((stat) => stat.outlierCount > 0)
       .map((stat) => ({ kind: "outlier", field: stat.field, count: stat.outlierCount, unit: "value" })),
     ...(state.duplicateRows > 0 ? [{ kind: "duplicateRows", count: state.duplicateRows, unit: "duplicateRow" }] : []),
+    ...(state.suspectedTotals.length ? [{ kind: "suspectedTotal", count: state.suspectedTotals.length, unit: "row" }] : []),
     ...state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0)
       .map((item) => ({ kind: "idDuplicate", field: item.field, count: item.duplicateValueCount, unit: "duplicateValue" })),
     ...state.placeholders.map((entry) => ({ kind: "placeholder", field: entry.field, key: entry.key, count: entry.count, unit: "row" })),
@@ -592,6 +618,8 @@ function listProblemRows(category) {
     case "idDuplicate": return listIdDuplicateRows(category.field);
     case "placeholder": return listPlaceholderRows(category.field, category.key);
     case "parseWarnings": return listParseWarningRows();
+    case "suspectedTotal": return listSuspectedTotalRows();
+    case "formulaError": return listFormulaErrorRows(category.field);
     default: return null;
   }
 }
