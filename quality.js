@@ -274,6 +274,30 @@ function buildNumericLookingSummary(profiles) {
   });
 }
 
+// Formula errors by field, in field order: { field, count, byError, lines }. They are
+// read once on import, so the summary does not follow the field configuration; ignored
+// fields are marked when shown. getErrors(row) gives a row's { field: "#DIV/0!" } or undefined.
+function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
+  const byField = new Map();
+  rows.forEach((row) => {
+    const errors = getErrors(row);
+    if (!errors) return;
+    fields.forEach((field) => {
+      const error = errors[field];
+      if (!error) return;
+      let item = byField.get(field);
+      if (!item) {
+        item = { field, count: 0, byError: Object.create(null), lines: [] };
+        byField.set(field, item);
+      }
+      item.count += 1;
+      item.byError[error] = (item.byError[error] || 0) + 1;
+      if (item.lines.length < ID_DUPLICATE_ROW_NUMBER_LIMIT) item.lines.push(getRowNumber(row));
+    });
+  });
+  return fields.flatMap((field) => (byField.has(field) ? [byField.get(field)] : []));
+}
+
 // ---- Problem rows: the rows behind each quality-page count ----
 // A category is { kind, field, key } with kind one of missing, conversion, outlier,
 // duplicateRows, idDuplicate, placeholder, parseWarnings. Every list comes from the

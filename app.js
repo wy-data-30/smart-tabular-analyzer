@@ -22,6 +22,11 @@ const state = {
   // buildNumericLookingSummary() of the profiles; imports, field configuration
   // and placeholder confirmations rebuild it, filters do not.
   numericLooking: [],
+  // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
+  // import; those cells read as "" and count as missing.
+  sourceFormulaErrors: new WeakMap(),
+  // buildFormulaErrorSummary() of the imported rows; only imports replace it.
+  formulaErrors: [],
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -216,7 +221,8 @@ function showResultsWorkspace() {
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
 // rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null) {
+// formulaErrors[i] is the { field: error text } of rows[i] or null; only Excel imports pass it.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -252,6 +258,13 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
   }
+  state.sourceFormulaErrors = new WeakMap();
+  const hasFormulaErrors = Array.isArray(formulaErrors) && formulaErrors.length === rows.length;
+  if (hasFormulaErrors) {
+    rows.forEach((row, index) => {
+      if (formulaErrors[index]) state.sourceFormulaErrors.set(row, formulaErrors[index]);
+    });
+  }
   state.placeholderConfirmations = Object.create(null);
   state.manualFieldTypes = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
@@ -262,6 +275,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
+  state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   // No filter yet: the analysis rows are the original rows, so one calculation serves both.
   // The two share one array; nothing may modify it in place.
@@ -1886,6 +1900,8 @@ function resetAnalysisState() {
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
   state.numericLooking = [];
+  state.sourceFormulaErrors = new WeakMap();
+  state.formulaErrors = [];
   state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];

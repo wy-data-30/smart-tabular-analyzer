@@ -4352,3 +4352,139 @@ test("v2.7.0 statistics helpers: the five functions only the removed features us
     ["undefined", "undefined", "undefined", "undefined", "undefined"]
   );
 });
+
+// v2.8.0: suspected total rows and Excel formula errors. Hints only: every existing result stays.
+const knownIssues = JSON.parse(fs.readFileSync(path.join(STAGE3_FIXTURES, "known-issues.json"), "utf8"));
+
+// A workbook from an array of rows where { e: code } is an error cell. origin moves the table away from A1.
+function buildErrorWorkbook(aoa, { origin = "A1", bookType = "xlsx" } = {}) {
+  const start = XLSX.utils.decode_cell(origin);
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa.map((row) => row.map((value) => (value && typeof value === "object" ? null : value))), { origin });
+  aoa.forEach((row, r) => row.forEach((value, c) => {
+    if (value && typeof value === "object") worksheet[XLSX.utils.encode_cell({ r: r + start.r, c: c + start.c })] = { t: "e", v: value.e };
+  }));
+  worksheet["!ref"] = XLSX.utils.encode_range({ s: start, e: { r: start.r + aoa.length - 1, c: start.c + Math.max(...aoa.map((row) => row.length)) - 1 } });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+  return XLSX.write(workbook, { type: "array", bookType });
+}
+
+const formulaErrors = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.formulaErrors)"));
+
+test("v2.8.0 errors: the fixture's cells by field, types and missing counts match known-issues.json", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  const expected = knownIssues["公式错误.xlsx"];
+  assert.deepEqual(formulaErrors(scope), expected.formulaErrors);
+  assert.deepEqual(importedSummary(scope.evaluate).types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(scope.evaluate("state.totalMissing"), expected.expectedTotals.totalMissing);
+  // Rows 7 and 12 hold nothing but errors and column G has no header: known limits, not listed.
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "2,3,4,5,6,8,9,10,11");
+  assert.equal(scope.evaluate('state.fields.join("|")'), "产品|单价|数量|金额|利润率|备注");
+  // The summary does not follow the field configuration.
+  const before = scope.evaluate("JSON.stringify(state.formulaErrors)");
+  scope.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("JSON.stringify(state.formulaErrors)"), before);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(scope.evaluate("JSON.stringify(state.formulaErrors)"), before);
+});
+
+test("v2.8.0 errors: a sheet with error cells imports exactly like the same sheet with blank cells", async () => {
+  const withErrors = [["名", "额", "说明"], ["A", 10, "好"], ["B", { e: 7 }, { e: 42 }], ["C", 30, { e: 0 }], ["D", { e: 15 }, "好"]];
+  const blank = withErrors.map((row) => row.map((value) => (value && typeof value === "object" ? null : value)));
+  const summarize = (scope) => scope.evaluate("JSON.stringify({ rows: state.rows, profiles: state.profiles, stats: state.qualityNumericStats, missing: state.totalMissing, categories: listProblemCategories().filter((item) => item.kind !== \"formulaError\") })");
+  const a = await importWorkbookFile(buildErrorWorkbook(withErrors));
+  const b = await importWorkbookFile(buildErrorWorkbook(blank));
+  assert.equal(summarize(a), summarize(b));
+  assert.deepEqual(formulaErrors(a).map((item) => [item.field, item.count]), [["额", 2], ["说明", 2]]);
+  assert.deepEqual(formulaErrors(b), []);
+});
+
+test("v2.8.0 errors: !ref away from A1, cells outside the table, rows and columns that drop out", async () => {
+  // A8 and B8 sit left of the table: a reader that forgets the column offset reads them for
+  // the first column, and one that forgets the row offset reads other rows' cells.
+  const scope = await importWorkbookFile((() => {
+    const worksheet = XLSX.utils.aoa_to_sheet([["名", "额", "备注"], ["A", 10, "好"], ["B", null, null], ["C", 30, "好"]], { origin: "C5" });
+    worksheet.D7 = { t: "e", v: 7 };
+    worksheet.E7 = { t: "e", v: 42 };
+    worksheet.A8 = { t: "e", v: 15 };
+    worksheet.B8 = { t: "e", v: 15 };
+    worksheet["!ref"] = "C5:E8";
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+    return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  })());
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "6,7,8");
+  assert.deepEqual(formulaErrors(scope), [
+    { field: "额", count: 1, byError: { "#DIV/0!": 1 }, lines: [7] },
+    { field: "备注", count: 1, byError: { "#N/A": 1 }, lines: [7] }
+  ]);
+  // Known limits: whole rows of errors and error-only columns without a header are not listed.
+  const dropped = await importWorkbookFile(buildErrorWorkbook([["名", "额", null], ["A", 1, { e: 7 }], [{ e: 7 }, { e: 42 }], ["B", 2], [{ e: 7 }, { e: 7 }]]));
+  assert.equal(dropped.evaluate('state.fields.join("|")'), "名|额");
+  assert.equal(dropped.evaluate("state.rows.length"), 2);
+  assert.deepEqual(formulaErrors(dropped), []);
+  // At most ten row numbers per field; the count stays whole.
+  const many = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ...Array.from({ length: 12 }, (_, index) => [`N${index}`, { e: 7 }])]));
+  assert.deepEqual(formulaErrors(many), [{ field: "额", count: 12, byError: { "#DIV/0!": 12 }, lines: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }]);
+});
+
+test("v2.8.0 errors: the text comes from cell.w of error cells only, then the code table, never #WTF?", async () => {
+  const { evaluate } = createExcelContext();
+  assert.deepEqual(JSON.parse(evaluate(`JSON.stringify([
+    readExcelErrorText({ t: "e", v: 7, w: "#DIV/0!" }),
+    readExcelErrorText({ t: "e", w: "#SPILL!" }),
+    readExcelErrorText({ t: "e", v: 42, w: "2024-01-01" }),
+    readExcelErrorText({ t: "e", v: 0 }),
+    readExcelErrorText({ t: "e", v: 99 }),
+    readExcelErrorText({ t: "e", w: "not-an-error" }),
+    readExcelErrorText({ t: "e", v: 255, w: "#WTF?" }),
+    readExcelErrorText({ t: "e", w: "#WTF?" })
+  ])`)), ["#DIV/0!", "#SPILL!", "#N/A", "#NULL!", "#错误", "#错误", "#错误", "#错误"]);
+  // SheetJS's own placeholder reaches cell.w through a real file too.
+  const placeholder = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ["B", { e: 255 }], ["C", 2]]));
+  assert.deepEqual(formulaErrors(placeholder), [{ field: "额", count: 1, byError: { "#错误": 1 }, lines: [3] }]);
+  // Empty-looking cells of other types are not errors, whatever their w says.
+  const scope = createExcelContext();
+  put(scope.context, "__sheet", { "!ref": "A1:B3", A1: { t: "s", v: "名" }, B1: { t: "s", v: "额" }, A2: { t: "s", v: "x" }, B2: { t: "s", v: "", w: "#DIV/0!" }, A3: { t: "s", v: "y" }, B3: { t: "z", w: "#N/A" } });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify((() => { const read = createExcelCellErrorReader(__sheet); return [read(1, 1), read(2, 1), read(1, 0), read(9, 9)]; })())")), ["", "", "", ""]);
+  // The reader is asked only about cells that read as empty.
+  const asked = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const seen = [];
+    buildExcelTabularData([["名", "额"], ["x", 1], ["y", ""]], [["名", "额"], ["x", 1], ["y", ""]], "S", null, 1, (row, column) => { seen.push([row, column]); return ""; });
+    return seen;
+  })())`));
+  assert.deepEqual(asked, [[2, 1]]);
+});
+
+test("v2.8.0 errors: xls files read the same, CSV text stays text", async () => {
+  const xls = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ["B", { e: 7 }], ["C", { e: 0 }], ["D", 2]], { bookType: "xls" }), "t.xls");
+  assert.deepEqual(formulaErrors(xls), [{ field: "额", count: 2, byError: { "#DIV/0!": 1, "#NULL!": 1 }, lines: [3, 4] }]);
+  // A format problem and a placeholder, no formula error.
+  const csv = await importCsvFile("名,额,说明\r\nA,1,#N/A\r\nB,2,好\r\nC,3,好\r\nD,4,好\r\nE,#DIV/0!,好\r\n");
+  assert.deepEqual(formulaErrors(csv), []);
+  assert.equal(csv.evaluate('getFieldProfile("额").conversionFailureCount'), 1);
+  assert.equal(csv.evaluate("state.placeholders.map((entry) => entry.key).join()"), "#N/A");
+});
+
+test("v2.8.0 state: a later commit and resetAnalysisState() clear the formula errors", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(state.rows[1])"), true);
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(state.rows[0])"), false);
+  put(scope.context, "__oldRow", scope.evaluate("state.rows[1]"));
+  put(scope.context, "__cityRows", [{ 城市: "上海" }]);
+  // The same import id, so resetAnalysisState() in beginImport() cannot hide a commit that keeps them.
+  scope.evaluate('commitTabularData(["城市"], __cityRows, "later.csv", state.activeImportId)');
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(__oldRow)"), false);
+  assert.equal(scope.evaluate("state.formulaErrors.length"), 0);
+  // A list of another length is not aligned with the rows: no error is kept.
+  put(scope.context, "__twoRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  scope.evaluate('commitTabularData(["城市"], __twoRows, "short.csv", state.activeImportId, [], "", null, null, null, [{ 城市: "#N/A" }])');
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(__twoRows[0])"), false);
+  assert.equal(scope.evaluate("state.formulaErrors.length"), 0);
+
+  const again = await importStage3Fixture("公式错误.xlsx");
+  put(again.context, "__keptRow", again.evaluate("state.rows[1]"));
+  again.evaluate("resetAnalysisState()");
+  assert.equal(again.evaluate("state.sourceFormulaErrors.has(__keptRow)"), false);
+  assert.equal(again.evaluate("state.formulaErrors.length"), 0);
+});
