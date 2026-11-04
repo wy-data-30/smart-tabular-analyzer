@@ -22,6 +22,11 @@ const state = {
   // buildNumericLookingSummary() of the profiles; imports, field configuration
   // and placeholder confirmations rebuild it, filters do not.
   numericLooking: [],
+  // findTotalLabelRows() of the original rows; only imports replace it.
+  totalLabelRows: [],
+  // buildSuspectedTotalSummary() of the original rows; imports, field configuration and
+  // placeholder confirmations rebuild it, filters do not.
+  suspectedTotals: [],
   // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
   // import; those cells read as "" and count as missing.
   sourceFormulaErrors: new WeakMap(),
@@ -275,6 +280,8 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
+  state.totalLabelRows = findTotalLabelRows(rows, fields);
+  state.suspectedTotals = buildSuspectedTotalSummary(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   // No filter yet: the analysis rows are the original rows, so one calculation serves both.
@@ -1079,6 +1086,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
+  state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1900,6 +1908,8 @@ function resetAnalysisState() {
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
   state.numericLooking = [];
+  state.totalLabelRows = [];
+  state.suspectedTotals = [];
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];
   state.manualFieldTypes = Object.create(null);

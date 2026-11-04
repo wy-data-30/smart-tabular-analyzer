@@ -274,6 +274,147 @@ function buildNumericLookingSummary(profiles) {
   });
 }
 
+// A labelled row's value counts as a total within this share of a sum of detail rows.
+const SUSPECTED_TOTAL_TOLERANCE = 0.005;
+// Ranges a total can cover, in the order they are tried for each column: the detail
+// rows since the previous total, every detail row above it, every detail row.
+const SUSPECTED_TOTAL_SCOPES = Object.freeze(["segment", "above", "all"]);
+
+// Rows with a total label, in row order: { index, field, label } with the first
+// labelled field in field order (any field, ignored ones too) and the cell's text.
+function findTotalLabelRows(rows, fields) {
+  const found = [];
+  rows.forEach((row, index) => {
+    for (const field of fields) {
+      if (totalRowLabel(row[field])) {
+        found.push({ index, field, label: String(row[field]).trim() });
+        return;
+      }
+    }
+  });
+  return found;
+}
+
+function emptyTotalAddends() {
+  return { sum: 0, count: 0, plain: 0, first: -1, last: -1 };
+}
+
+function addTotalAddend(addends, value, index, isPlain) {
+  addends.sum += value;
+  addends.count += 1;
+  if (isPlain) addends.plain += 1;
+  if (addends.first < 0) addends.first = index;
+  addends.last = index;
+}
+
+// Whether value equals a range's sum: a finite, non-zero sum (Infinity would pass the
+// comparison) of at least one row without a label.
+function matchesTotalAddends(value, addends) {
+  return addends.plain > 0 && Number.isFinite(addends.sum) && addends.sum !== 0
+    && Math.abs(value - addends.sum) <= SUSPECTED_TOTAL_TOLERANCE * Math.abs(addends.sum);
+}
+
+// The "all" range of a column without the target row itself.
+function withoutTotalAddend(column, index, value) {
+  const addends = { ...column.all, sum: column.all.sum - value, count: column.all.count - 1 };
+  const step = (from, by) => {
+    let position = from;
+    while (position >= 0 && position < column.numbers.length && (position === index || column.numbers[position] === null)) position += by;
+    return position;
+  };
+  if (addends.first === index) addends.first = step(index, 1);
+  if (addends.last === index) addends.last = step(index, -1);
+  return addends;
+}
+
+// One pass over the rows. boundaries never add to a sum and start a new segment;
+// targets get checked; labelled says which rows carry a label. Running sums instead of
+// differences of prefix sums, so a huge value earlier in a column neither overflows nor
+// absorbs the rows of a later segment. Returns index -> matches, grouped by scope.
+function checkTotalRows(columns, rowCount, labelled, boundaries, targets) {
+  const sums = columns.map((column) => {
+    const all = emptyTotalAddends();
+    column.numbers.forEach((value, index) => {
+      if (value !== null && !boundaries.has(index)) addTotalAddend(all, value, index, !labelled.has(index));
+    });
+    return { field: column.field, numbers: column.numbers, all, segment: emptyTotalAddends(), above: emptyTotalAddends() };
+  });
+  const hits = new Map();
+  for (let index = 0; index < rowCount; index += 1) {
+    const isBoundary = boundaries.has(index);
+    if (targets.has(index)) {
+      const groups = new Map();
+      sums.forEach((column) => {
+        const value = column.numbers[index];
+        if (value === null) return;
+        for (const scope of SUSPECTED_TOTAL_SCOPES) {
+          // A target that is not a boundary is a detail for the others, not for itself.
+          const addends = scope === "all" && !isBoundary ? withoutTotalAddend(column, index, value) : column[scope];
+          if (!matchesTotalAddends(value, addends)) continue;
+          const group = groups.get(scope) || { scope, fields: [], first: addends.first, last: addends.last, count: 0 };
+          group.fields.push(column.field);
+          group.first = Math.min(group.first, addends.first);
+          group.last = Math.max(group.last, addends.last);
+          group.count = Math.max(group.count, addends.count);
+          groups.set(scope, group);
+          return;
+        }
+      });
+      if (groups.size) hits.set(index, [...groups.values()]);
+    }
+    sums.forEach((column) => {
+      if (isBoundary) {
+        column.segment = emptyTotalAddends();
+        return;
+      }
+      const value = column.numbers[index];
+      if (value === null) return;
+      addTotalAddend(column.segment, value, index, !labelled.has(index));
+      addTotalAddend(column.above, value, index, !labelled.has(index));
+    });
+  }
+  return hits;
+}
+
+// Suspected total rows of the original rows, in row order: { index, line, field, label,
+// matches: [{ scope, fields, firstLine, lastLine, rowCount, contiguous }] }. Numeric
+// fields read as their profiles do (number strategy, confirmed placeholders are empty).
+// Rows that fail go back among the details for one more check of the rows that failed:
+// a row that merely says "合计" in a note must not hide the real total below it. The
+// rows that passed stay. getRowNumber(row) gives a row's file row or null. labelRows comes
+// from findTotalLabelRows(): labels depend only on rows and fields, so a rebuild reuses them.
+function buildSuspectedTotalSummary(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
+  if (!labelRows.length) return [];
+  const columns = profiles.filter((profile) => profile.typeKey === "numeric").map((profile) => {
+    const parseNumber = getNumberParser(profile.numberStrategy);
+    const field = profile.field;
+    return { field, numbers: rows.map((row) => (isMissingOrConfirmed(row[field], profile.confirmedKeys) ? null : parseNumber(row[field]))) };
+  });
+  if (!columns.length) return [];
+  const labelled = new Set(labelRows.map((item) => item.index));
+  const first = checkTotalRows(columns, rows.length, labelled, labelled, labelled);
+  const failed = new Set(labelRows.map((item) => item.index).filter((index) => !first.has(index)));
+  const second = failed.size ? checkTotalRows(columns, rows.length, labelled, new Set(first.keys()), failed) : new Map();
+  return labelRows.flatMap(({ index, field, label }) => {
+    const matches = first.get(index) || second.get(index);
+    if (!matches) return [];
+    return [{
+      index,
+      line: getRowNumber(rows[index]),
+      field,
+      label,
+      matches: matches.map((match) => ({
+        scope: match.scope,
+        fields: match.fields,
+        firstLine: getRowNumber(rows[match.first]),
+        lastLine: getRowNumber(rows[match.last]),
+        rowCount: match.count,
+        contiguous: match.last - match.first + 1 === match.count
+      }))
+    }];
+  });
+}
+
 // Formula errors by field, in field order: { field, count, byError, lines }. They are
 // read once on import, so the summary does not follow the field configuration; ignored
 // fields are marked when shown. getErrors(row) gives a row's { field: "#DIV/0!" } or undefined.

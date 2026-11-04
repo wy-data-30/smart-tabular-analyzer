@@ -4488,3 +4488,264 @@ test("v2.8.0 state: a later commit and resetAnalysisState() clear the formula er
   assert.equal(again.evaluate("state.sourceFormulaErrors.has(__keptRow)"), false);
   assert.equal(again.evaluate("state.formulaErrors.length"), 0);
 });
+
+const suspectedTotals = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals)"));
+const totalLines = (scope) => suspectedTotals(scope).map((item) => item.line);
+const totalsCsv = (rows) => `${rows.map((row) => row.join(",")).join("\r\n")}\r\n`;
+
+test("v2.8.0 labels: whole cells only, with a short Chinese prefix, notes and colons removed", () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  const matches = {
+    "合计": "合计", "合\u3000计": "合计", "合计：": "合计", "合计:": "合计", "合计（元）": "合计", "合计(元)": "合计", "合计（元）：": "合计", "合计：（元）": "合计",
+    "上海 小计": "上海小计", "华东区合计": "华东区合计", "总计": "总计", "总和": "总和", "汇总": "汇总", "汇\u3000总": "汇总", "总 和": "总和", "累计": "累计", "本月累计": "本月累计",
+    "TOTAL": "TOTAL", "Grand total:": "Grandtotal", "Total (USD)": "Total", "Sub-total": "Sub-total", "Sub total": "Subtotal", "sum": "sum", "\uFF54\uFF4F\uFF54\uFF41\uFF4C": "total", "\u017Fum": "sum", "T o t a l": "Total",
+    [`${"一".repeat(12)}合计`]: `${"一".repeat(12)}合计`
+  };
+  for (const [value, expected] of Object.entries(matches)) assert.equal(label(value), expected, JSON.stringify(value));
+  const others = [`${"一".repeat(13)}合计`, "合计金额", "小计说明", "Total Sales", "SUMMARY", "统计", "共计", "合共", "", "   ", "\u3000",
+    "（合计）", "合计（元）（含税）", "合计[元]", "合计【元】", "Sub\u2010total", "合\u200B计"];
+  for (const value of others) assert.equal(label(value), "", JSON.stringify(value));
+  for (const expression of ["12", 'new Date("2024-01-01")', "null", "undefined", "true"]) {
+    assert.equal(evaluate(`totalRowLabel(${expression})`), "", expression);
+  }
+});
+
+test("v2.8.0 labels: a prefix that is only a status word is no label, a longer one still is", async () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  for (const value of ["已汇总", "未汇总", "不累计", "无合计", "無合计", "非合计", "待汇总", "是否汇总", "尚未汇总", "暂未汇总", "暂不汇总", "暫未匯總", "暫不匯總", "已匯總", "未合計", "已 汇总", "已\u3000匯總"]) {
+    assert.equal(label(value), "", value);
+  }
+  // The whole prefix must be the status word: these only begin or end with one.
+  for (const value of ["南非小计", "东非合计", "上海小计", "无锡合计", "未名湖小计", "不丹合计", "已汇总合计"]) {
+    assert.equal(label(value), value, value);
+  }
+  // A status column must neither be flagged nor split the details of the real total.
+  const scope = await importCsvFile(totalsCsv([["名", "状态", "数量"], ["A", "已汇总", 2], ["B", "处理中", 1], ["C", "已汇总", 1], ["D", "处理中", 2], ["E", "处理中", 3], ["合计", "", 9]]));
+  assert.deepEqual(suspectedTotals(scope).map((item) => [item.line, item.label, item.matches[0].rowCount]), [[7, "合计", 5]]);
+});
+
+test("v2.8.0 labels: traditional keywords count, with a prefix and full-width spaces", async () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  for (const value of ["合計", "總計", "小計", "總和", "匯總", "彙總", "累計", "台北小計"]) assert.equal(label(value), value, value);
+  assert.equal(label("合\u3000計"), "合計");
+  assert.equal(label("匯 總"), "匯總");
+  assert.equal(label("合計金額"), "");
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["甲", 10], ["乙", 20], ["台北小計", 30], ["丙", 5], ["總計", 35]]))), [4, 6]);
+});
+
+test("v2.8.0 labels: the prefilter lets through every keyword and every code point that normalizes into a keyword character", () => {
+  const { evaluate } = createScriptContext();
+  const prefilter = evaluate("TOTAL_LABEL_PREFILTER");
+  for (const keyword of ["合计", "总计", "小计", "总和", "汇总", "累计", "合計", "總計", "小計", "總和", "匯總", "彙總", "累計", "total", "TOTAL", "sum", "SUM"]) {
+    assert.ok(prefilter.test(keyword), keyword);
+  }
+  const keywordCharacters = new Set("合计总小和汇累計總匯彙totalsumgrandbTOTALSUMGRANDB");
+  const missed = [];
+  let checked = 0;
+  for (let code = 0x80; code <= 0x10ffff; code += 1) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    const character = String.fromCodePoint(code);
+    const normalized = character.normalize("NFKC");
+    if (normalized === character || ![...normalized].some((piece) => keywordCharacters.has(piece))) continue;
+    checked += 1;
+    if (!prefilter.test(character)) missed.push(code.toString(16));
+  }
+  assert.ok(checked > 500);
+  assert.deepEqual(missed, []);
+});
+
+test("v2.8.0 performance: a text file without labels never normalizes a plain cell and no numbers are read", async () => {
+  const scope = await importCsvFile(totalsCsv([["名", "额"], ["甲", "1"], ["乙", "2"], ["丙", "3"]]));
+  const calls = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const original = String.prototype.normalize;
+    let normalized = 0;
+    String.prototype.normalize = function (...args) { normalized += 1; return original.apply(this, args); };
+    const rows = Array.from({ length: 200 }, (_, index) => ({ 名: "门店" + index, 额: String(index) }));
+    const result = buildSuspectedTotalSummary(rows, ["名", "额"], [{ field: "额", typeKey: "numeric", get numberStrategy() { throw new Error("read the number strategy"); }, confirmedKeys: [] }], () => null);
+    String.prototype.normalize = original;
+    return { normalized, result };
+  })())`));
+  assert.deepEqual(calls, { normalized: 0, result: [] });
+});
+
+test("v2.8.0 performance: a rebuild reuses the labels found on import, without scanning the cells again", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const labelChecks = JSON.parse(store.evaluate(`JSON.stringify((() => {
+    const original = totalRowLabel;
+    let calls = 0;
+    totalRowLabel = (value) => { calls += 1; return original(value); };
+    stageFieldTypeChange("销售额", "category");
+    applyFieldConfiguration();
+    const rebuild = calls;
+    findTotalLabelRows(state.rows, state.fields);
+    totalRowLabel = original;
+    return { rebuild, scanned: calls > rebuild, kept: state.suspectedTotals.length };
+  })())`));
+  assert.deepEqual(labelChecks, { rebuild: 0, scanned: true, kept: 1 });
+});
+
+test("v2.8.0 fixtures: the store report's row 33 and the region table match known-issues.json", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const region = await importStage3Fixture("分区小计表.csv");
+  const pick = (scope) => suspectedTotals(scope).map((item) => ({ line: item.line, label: item.label, field: item.field, matches: item.matches }));
+  assert.deepEqual(pick(store), knownIssues["门店报表.xlsx"].suspectedTotals);
+  assert.deepEqual(pick(region), knownIssues["分区小计表.csv"].suspectedTotals);
+  assert.deepEqual(importedSummary(region.evaluate).types, knownIssues["分区小计表.csv"].expectedTypes.map((item) => item.expected));
+  assert.equal(region.evaluate("state.headerDetection"), null);
+  assert.equal(region.evaluate("state.totalMissing"), knownIssues["分区小计表.csv"].expectedTotals.totalMissing);
+});
+
+test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["公式错误.xlsx"]);
+});
+
+test("v2.8.0 totals: the three ranges, each tried in order", async () => {
+  const cases = [
+    // No detail above the first row: only the whole table can match.
+    [[["名", "额"], ["合计", 30], ["A", 10], ["B", 20]], [[2, "all", 3, 4, 2]]],
+    [[["名", "额"], ["A", 10], ["合计", 60], ["B", 20], ["C", 30]], [[3, "all", 2, 5, 3]]],
+    // The total below subtotals adds up the details only, not the subtotals.
+    [[["名", "额"], ["A", 10], ["小计", 10], ["B", 20], ["小计", 20], ["总计", 30]], [[3, "segment", 2, 2, 1], [5, "segment", 4, 4, 1], [6, "above", 2, 4, 2]]],
+    // Two totals in a row: the second has no detail since the first, so it matches everything above.
+    [[["名", "额"], ["A", 10], ["B", 20], ["小计", 30], ["合计", 30]], [[4, "segment", 2, 3, 2], [5, "above", 2, 3, 2]]],
+    // Returns count as negative; a total can be negative.
+    [[["名", "额"], ["A", 100], ["退货", -30], ["合计", 70]], [[4, "segment", 2, 3, 2]]],
+    [[["名", "额"], ["A", -10], ["B", -20], ["合计", -30]], [[4, "segment", 2, 3, 2]]]
+  ];
+  for (const [rows, expected] of cases) {
+    const scope = await importCsvFile(totalsCsv(rows));
+    const actual = suspectedTotals(scope).map((item) => [item.line, item.matches[0].scope, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]);
+    assert.deepEqual(actual, expected, JSON.stringify(rows));
+  }
+});
+
+test("v2.8.0 totals: columns that match different ranges are grouped by range", async () => {
+  // 额 adds up since the subtotal, 量 only over every detail above it.
+  const scope = await importCsvFile(totalsCsv([["名", "额", "量"], ["A", 10, 1], ["B", 20, 2], ["小计", 30, 99], ["C", 40, 4], ["D", 50, 5], ["总计", 90, 12]]));
+  const last = suspectedTotals(scope).find((item) => item.line === 7);
+  assert.deepEqual(last.matches.map((match) => [match.scope, match.fields, match.firstLine, match.lastLine, match.rowCount, match.contiguous]), [
+    ["segment", ["额"], 5, 6, 2, true],
+    ["above", ["量"], 2, 6, 4, false]
+  ]);
+});
+
+test("v2.8.0 totals: counterexamples stay silent, the tolerance is 0.5% of the sum", async () => {
+  const silent = [
+    [["名", "额"], ["A", 10], ["B", 20], ["合计", 31]],
+    [["名", "额"], ["合计", 99], ["A", 10], ["B", 20]],
+    // Adds up but says nothing.
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 30]],
+    // A zero sum never matches, not even a zero cell.
+    [["名", "额"], ["A", 5], ["退货", -5], ["合计", 0]],
+    [["名", "额"], ["A", 100], ["B", 100], ["合计", 201.2]],
+    // Only an empty or unreadable cell on the total row.
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 30], ["合计", ""]],
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 5], ["D", 5], ["E", 5], ["合计", "见附表"]],
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 5], ["D", 5], ["E", 5], ["合计", "N/A"]],
+    // No numeric field at all.
+    [["名", "说明"], ["A", "甲"], ["合计", "乙"]]
+  ];
+  for (const rows of silent) assert.deepEqual(totalLines(await importCsvFile(totalsCsv(rows))), [], JSON.stringify(rows));
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", 100], ["B", 100], ["合计", 201]]))), [4]);
+});
+
+test("v2.8.0 totals: one column is enough, ratio columns and cells that are not numbers stay out", async () => {
+  const scope = await importCsvFile(totalsCsv([["名", "额", "量", "比"], ["A", 10, 1, "0.2"], ["B", 20, "", "0.3"], ["C", "待定", 2, "0.4"], ["D", 5, 1, "0.5"], ["E", 5, 1, "0.1"], ["F", 5, 1, "0.2"], ["合计", 45, 6, "0.28"]]));
+  const [item] = suspectedTotals(scope);
+  assert.equal(item.line, 8);
+  assert.deepEqual(item.matches.map((match) => [match.scope, match.fields, match.firstLine, match.lastLine, match.rowCount, match.contiguous]), [["segment", ["额", "量"], 2, 7, 5, false]]);
+});
+
+test("v2.8.0 totals: rows whose label did not add up go back among the details for one more check", async () => {
+  // Row 3 only says 合计 in its note: the real total below must not get lost.
+  const note = await importCsvFile(totalsCsv([["名", "备注", "额"], ["A", "", 10], ["B", "合计", 20], ["C", "", 30], ["总计", "", 60]]));
+  assert.deepEqual(suspectedTotals(note).map((item) => [item.line, item.label, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]), [[5, "总计", 2, 4, 3]]);
+  // A wrong subtotal must not take the rows that passed the first check down with it.
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", 20], ["小计", 35], ["C", 40], ["D", 50], ["小计", 90], ["总计", 120]]))), [7, 8]);
+  // Labels on every row: no plain detail, so equal neighbours are not totals.
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["城市", "类型", "额"], ["上海", "小计", 100], ["杭州", "小计", 100], ["宁波", "小计", 300]]))), []);
+  // Only one more check: the total below the note and two subtotals stays out (known limit).
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "备注", "额"], ["a", "合计", 10], ["b", "", 20], ["上海小计", "", 30], ["c", "", 40], ["d", "", 50], ["杭州小计", "", 90], ["总计", "", 120]]))), [4, 7]);
+  // The row checked again is no addend of its own "whole table" range.
+  const top = await importCsvFile(totalsCsv([["名", "备注", "额"], ["总计", "", 60], ["A", "", 10], ["B", "合计", 20], ["C", "", 30]]));
+  assert.deepEqual(suspectedTotals(top).map((item) => [item.line, item.matches[0].scope, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]), [[2, "all", 3, 5, 3]]);
+});
+
+test("v2.8.0 totals: huge values neither match by overflow nor hide a later segment", async () => {
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", "1e308"], ["B", "1e308"], ["合计", 5]]))), []);
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", "1e308"], ["B", "1e308"], ["小计", "1e308"], ["C", 1], ["D", 2], ["小计", 3]]))), [7]);
+  const absorbed = await importCsvFile(totalsCsv([["名", "额"], ["A", "100000000000000000"], ["小计", "100000000000000000"], ["B", 1], ["C", 1], ["小计", 2]]));
+  assert.deepEqual(totalLines(absorbed), [3, 6]);
+});
+
+test("v2.8.0 totals: numbers read with the field's strategy, labels in any field, the first one in field order", async () => {
+  const units = await importCsvFile(totalsCsv([["名", "额"], ["A", "1万"], ["B", "2万"], ["合计", "3万"]]));
+  assert.deepEqual(totalLines(units), [4]);
+  const first = await importCsvFile(totalsCsv([["名", "备注", "额"], ["A", "", 10], ["B", "", 20], ["华东合计", "小计", 30]]));
+  assert.deepEqual(suspectedTotals(first).map((item) => [item.field, item.label]), [["名", "华东合计"]]);
+  const store = await importStage3Fixture("门店报表.xlsx");
+  store.evaluate('stageFieldTypeChange("门店编号", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(totalLines(store), [33]);
+  assert.equal(suspectedTotals(store)[0].field, "门店编号");
+});
+
+test("v2.8.0 refresh: field configuration and confirmations rebuild the totals, filters do not", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const status = store.elements.get("statusPanel").textContent;
+  put(store.context, "__before", store.evaluate("state.suspectedTotals"));
+  applyFilterState(store, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(store.evaluate("state.suspectedTotals === __before"), true);
+  store.evaluate('stageFieldTypeChange("销售额", "category"); applyFieldConfiguration()');
+  assert.deepEqual(suspectedTotals(store)[0].matches[0].fields, ["成本"]);
+  store.evaluate('stageFieldTypeChange("成本", "category"); applyFieldConfiguration()');
+  assert.deepEqual(suspectedTotals(store), []);
+  store.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(totalLines(store), [33]);
+  assert.equal(store.elements.get("statusPanel").textContent, status);
+
+  const placeholder = await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", "N/A"], ["C", "N/A"], ["D", 20], ["合计", 30]]));
+  assert.equal(placeholder.evaluate('getFieldProfile("额").typeKey'), "category");
+  assert.deepEqual(totalLines(placeholder), []);
+  placeholder.evaluate('confirmPlaceholder("额", "N/A")');
+  assert.deepEqual(totalLines(placeholder), [6]);
+  placeholder.evaluate('undoPlaceholderConfirmation("额", "N/A")');
+  assert.deepEqual(totalLines(placeholder), []);
+});
+
+test("v2.8.0 state: a later commit and resetAnalysisState() clear the labels and the totals", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(store.evaluate("state.totalLabelRows.length"), 1);
+  put(store.context, "__plainRows", [{ 城市: "上海" }]);
+  store.evaluate('commitTabularData(["城市"], __plainRows, "later.csv", state.activeImportId)');
+  assert.equal(store.evaluate("state.totalLabelRows.length"), 0);
+  assert.equal(store.evaluate("state.suspectedTotals.length"), 0);
+  const again = await importStage3Fixture("门店报表.xlsx");
+  again.evaluate("resetAnalysisState()");
+  assert.equal(again.evaluate("state.totalLabelRows.length"), 0);
+  assert.equal(again.evaluate("state.suspectedTotals.length"), 0);
+});
+
+test("v2.8.0 totals: the check changes nothing, the rows and every count stay as they were", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  // Row 33 still counts as data: known-issues.json S5.
+  assert.equal(store.evaluate("state.rows.length"), 29);
+  assert.equal(store.evaluate("state.totalMissing"), 4);
+  assert.equal(store.evaluate('getQualityNumericStats().find((stat) => stat.field === "销售额").count'), 29);
+  assert.equal(store.evaluate('getQualityNumericStats().find((stat) => stat.field === "销售额").outlierCount'), 1);
+  assert.equal(store.evaluate('state.rows[28]["门店编号"]'), "合计");
+  assert.equal(store.evaluate('Object.keys(state.rows[28]).join("|")'), "门店编号|门店名称|城市|开业日期|销售额|成本|毛利率|店长");
+});
