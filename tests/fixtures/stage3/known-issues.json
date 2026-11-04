@@ -103,7 +103,7 @@
       { "id": "S2", "type": "标题行（制表日期）", "field": "（整行）", "value": "制表日期：2024-08-01", "dataRows": [], "fileLines": [2] },
       { "id": "S3", "type": "空行", "field": "（整行）", "value": "", "dataRows": [], "fileLines": [3] },
       { "id": "S4", "type": "百分比格式（应识别为百分比）", "field": "毛利率", "value": "0.00% 格式", "dataRows": "1-29", "fileLines": "5-33" },
-      { "id": "S5", "type": "合计行（范围外，只记录现状）", "field": "门店编号 / 销售额 / 成本 / 毛利率", "value": "合计", "dataRows": [29], "fileLines": [33], "note": "会让销售额、成本各多 1 个异常值，并让门店名称、城市、开业日期、店长各多 1 个缺失" }
+      { "id": "S5", "type": "疑似合计行（v2.8.0 只提示，计数不变）", "field": "门店编号 / 销售额 / 成本 / 毛利率", "value": "合计", "dataRows": [29], "fileLines": [33], "note": "「合计」写在门店编号（ID 字段）。销售额 17148300、成本都等于第 5–32 行之和（范围 a）；毛利率对不上，不要求。这一行仍计入：会让销售额、成本各多 1 个异常值，并让门店名称、城市、开业日期、店长各多 1 个缺失" }
     ],
     "expectedTypes": [
       { "field": "门店编号", "nonMissing": 29, "numericRate": "0/29", "dateRate": "0/29", "uniqueRate": "29/29", "expected": "id", "reason": "字段名含「编号」" },
@@ -115,6 +115,69 @@
       { "field": "毛利率", "nonMissing": 29, "numericRate": "29/29", "dateRate": "0/29", "uniqueRate": "未预先计算", "expected": "numeric（numericFormat=percent）", "reason": "29 个数值单元格全是 0.00%" },
       { "field": "店长", "nonMissing": 28, "numericRate": "0/28", "dateRate": "0/28", "uniqueRate": "26/28=92.9%", "expected": "category" }
     ],
-    "expectedTotals": { "duplicateRows": 0, "totalMissing": 4, "formatProblems": 0, "outliers": "销售额 1、成本 1（合计行）；毛利率未预先计算" }
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 4, "formatProblems": 0, "outliers": "销售额 1、成本 1（合计行）；毛利率未预先计算" },
+    "suspectedTotals": [
+      { "line": 33, "label": "合计", "field": "门店编号", "matches": [{ "scope": "segment", "fields": ["销售额", "成本"], "firstLine": 5, "lastLine": 32, "rowCount": 28, "contiguous": true }] }
+    ]
+  },
+  "分区小计表.csv": {
+    "encoding": "UTF-8 BOM，CRLF",
+    "headerFileLine": 1,
+    "dataRows": 14,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "T1", "type": "小计（半角空格）", "field": "门店", "value": "上海 小计", "dataRows": [4], "fileLines": [5], "note": "销售额 120.3+98.6+150.4=369.3，写 369.4；成本 84.2+70.1+101.5=255.8，写 255.9；占比 15+12+19=46%" },
+      { "id": "T2", "type": "小计（无空格）", "field": "门店", "value": "杭州小计", "dataRows": [7], "fileLines": [8], "note": "销售额 88.5+76.2=164.7，写 164.8；成本 63.4+55.1=118.5，写 118.4；占比 11+10=21%" },
+      { "id": "T3", "type": "小计（单店，括号说明）", "field": "门店", "value": "宁波小计（单店）", "dataRows": [9], "fileLines": [10], "note": "1 个加数：52.7、38.6、7%" },
+      { "id": "T4", "type": "小计（结尾冒号）", "field": "门店", "value": "南京 小计：", "dataRows": [13], "fileLines": [14], "note": "销售额 101.1+67.9+45.3=214.3，写 214.2；成本 72.5+49.8+33.2=155.5，写 155.6；占比 13+8+6=27%" },
+      { "id": "T5", "type": "合计（全角空格，放在最后）", "field": "门店", "value": "合\u3000计", "dataRows": [14], "fileLines": [15], "note": "销售额 9 行明细 = 801.0，写 801.1（小计之和）；成本 568.4，写 568.5；占比明细 101% 写 100%，差 1% 超过 0.5%，这一列对不上" },
+      { "id": "T6", "type": "反例：表头在第 1 行", "field": "（整个文件）", "value": "不能误跳表头", "dataRows": [], "fileLines": [1] }
+    ],
+    "expectedTypes": [
+      { "field": "门店", "nonMissing": 14, "numericRate": "0/14", "dateRate": "0/14", "uniqueRate": "14/14=100%", "expected": "id", "reason": "唯一率规则：非空≥12、唯一率≥98%、数值率和日期率<70%（门店名和 5 个标签都不重复）" },
+      { "field": "城市", "nonMissing": 13, "numericRate": "0/13", "dateRate": "0/13", "uniqueRate": "4/13", "expected": "category", "reason": "合计行为空，缺失 1" },
+      { "field": "销售额", "nonMissing": 14, "numericRate": "14/14", "dateRate": "0/14", "uniqueRate": "13/14（52.7 两次）", "expected": "numeric" },
+      { "field": "成本", "nonMissing": 14, "numericRate": "14/14", "dateRate": "0/14", "uniqueRate": "13/14（38.6 两次）", "expected": "numeric" },
+      { "field": "占比", "nonMissing": 14, "numericRate": "14/14", "dateRate": "0/14", "uniqueRate": "13/14（7% 两次）", "expected": "numeric", "reason": "每个值都带 %，numericFormat=percent" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 1, "formatProblems": 0 },
+    "suspectedTotals": [
+      { "line": 5, "label": "上海 小计", "field": "门店", "matches": [{ "scope": "segment", "fields": ["销售额", "成本", "占比"], "firstLine": 2, "lastLine": 4, "rowCount": 3, "contiguous": true }] },
+      { "line": 8, "label": "杭州小计", "field": "门店", "matches": [{ "scope": "segment", "fields": ["销售额", "成本", "占比"], "firstLine": 6, "lastLine": 7, "rowCount": 2, "contiguous": true }] },
+      { "line": 10, "label": "宁波小计（单店）", "field": "门店", "matches": [{ "scope": "segment", "fields": ["销售额", "成本", "占比"], "firstLine": 9, "lastLine": 9, "rowCount": 1, "contiguous": true }] },
+      { "line": 14, "label": "南京 小计：", "field": "门店", "matches": [{ "scope": "segment", "fields": ["销售额", "成本", "占比"], "firstLine": 11, "lastLine": 13, "rowCount": 3, "contiguous": true }] },
+      { "line": 15, "label": "合\u3000计", "field": "门店", "matches": [{ "scope": "above", "fields": ["销售额", "成本"], "firstLine": 2, "lastLine": 13, "rowCount": 9, "contiguous": false }] }
+    ]
+  },
+  "公式错误.xlsx": {
+    "sheet": "公式错误",
+    "headerFileLine": 1,
+    "dataRows": 9,
+    "fileLineOf": "第 2–6、8–11 行（第 7、12 行整行错误，不导入）",
+    "issues": [
+      { "id": "E1", "type": "数值列里的错误", "field": "数量", "value": "#N/A", "fileLines": [4] },
+      { "id": "E2", "type": "数值列里的错误", "field": "金额", "value": "#VALUE!", "fileLines": [4] },
+      { "id": "E3", "type": "数值列里的错误", "field": "利润率", "value": "#DIV/0! 2 个、#REF! 1 个", "fileLines": [3, 5, 9] },
+      { "id": "E4", "type": "文本列里的错误", "field": "备注", "value": "#NULL!、#SPILL!（只有 w，没有 v）", "fileLines": [5, 6] },
+      { "id": "E5", "type": "真正的空格（对照）", "field": "备注", "value": "空值", "fileLines": [8] },
+      { "id": "E6", "type": "看不到：数据中间整行错误", "field": "（整行）", "value": "#N/A × 6", "fileLines": [7], "note": "当空行跳过，其中的错误不列出（已知限制）" },
+      { "id": "E7", "type": "看不到：表尾整行错误", "field": "（整行）", "value": "#VALUE! × 6", "fileLines": [12], "note": "表尾裁掉，不列出（已知限制）" },
+      { "id": "E8", "type": "看不到：表头为空且只有错误值的列", "field": "G 列", "value": "#REF!", "fileLines": [3], "note": "getExcelUsedColumnIndexes() 去掉这一列（已知限制）" }
+    ],
+    "expectedTypes": [
+      { "field": "产品", "nonMissing": 9, "numericRate": "0/9", "dateRate": "0/9", "uniqueRate": "9/9", "expected": "category", "reason": "非空 9 个 <12，不触发唯一率 ID 规则" },
+      { "field": "单价", "nonMissing": 9, "numericRate": "9/9", "dateRate": "0/9", "uniqueRate": "9/9", "expected": "numeric" },
+      { "field": "数量", "nonMissing": 8, "numericRate": "8/8", "dateRate": "0/8", "uniqueRate": "未预先计算", "expected": "numeric", "reason": "错误格算缺失，不进分母" },
+      { "field": "金额", "nonMissing": 8, "numericRate": "8/8", "dateRate": "0/8", "uniqueRate": "未预先计算", "expected": "numeric", "reason": "同上" },
+      { "field": "利润率", "nonMissing": 6, "numericRate": "6/6", "dateRate": "0/6", "uniqueRate": "6/6", "expected": "numeric", "reason": "同上" },
+      { "field": "备注", "nonMissing": 6, "numericRate": "0/6", "dateRate": "0/6", "uniqueRate": "1/6", "expected": "category", "reason": "缺失 3：#NULL!、#SPILL!、1 个空格" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 8, "formatProblems": 0, "formulaErrorCells": 7 },
+    "formulaErrors": [
+      { "field": "数量", "count": 1, "byError": { "#N/A": 1 }, "lines": [4] },
+      { "field": "金额", "count": 1, "byError": { "#VALUE!": 1 }, "lines": [4] },
+      { "field": "利润率", "count": 3, "byError": { "#DIV/0!": 2, "#REF!": 1 }, "lines": [3, 5, 9] },
+      { "field": "备注", "count": 2, "byError": { "#NULL!": 1, "#SPILL!": 1 }, "lines": [5, 6] }
+    ]
   }
 }

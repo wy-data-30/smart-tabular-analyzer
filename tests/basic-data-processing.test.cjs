@@ -3192,7 +3192,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 11);
+  assert.equal(scopes.length, 13);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3302,7 +3302,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 11);
+  assert.equal(scopes.length, 13);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
