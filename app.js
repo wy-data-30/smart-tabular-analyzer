@@ -303,9 +303,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning");
+    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning", Boolean(headerNote));
   } else {
-    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success");
+    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
 
   renderOverview();
@@ -2069,8 +2069,10 @@ function emptyTable(message) {
   `;
 }
 
-function setStatus(message, tone = "") {
-  dom.statusPanel.className = `status-panel${tone ? ` ${tone}` : ""}`;
+// hasNote keeps a successful status on screen once results show (style.css): its message
+// says something the page does not say at the top.
+function setStatus(message, tone = "", hasNote = false) {
+  dom.statusPanel.className = `status-panel${tone ? ` ${tone}` : ""}${hasNote ? " has-note" : ""}`;
   dom.statusPanel.textContent = message;
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));

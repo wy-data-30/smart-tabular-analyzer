@@ -4990,3 +4990,38 @@ test("v2.8.0 state: a later commit and resetAnalysisState() empty both sections"
   assert.equal(store.elements.get("suspectedTotalSection").classList.contains("hidden"), true);
   assert.equal(store.elements.get("suspectedTotalDetails").innerHTML, "");
 });
+
+test("the import status keeps has-note when it carries a note: header rows, totals, formula errors", async () => {
+  const statusClass = (scope) => scope.elements.get("statusPanel").className;
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(statusClass(store), "status-panel success has-note");
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.match(grades.elements.get("statusPanel").textContent, /已跳过上方 1 行/);
+    assert.equal(statusClass(grades), "status-panel success has-note");
+  }
+  assert.equal(statusClass(await importStage3Fixture("分区小计表.csv")), "status-panel success has-note");
+  assert.equal(statusClass(await importStage3Fixture("公式错误.xlsx")), "status-panel success has-note");
+  const warned = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n合计,30\r\n");
+  assert.equal(statusClass(warned), "status-panel warning has-note");
+
+  const sample = await importCsvFile(readExampleCsv("sample-data.csv"), "sample-data.csv");
+  assert.equal(sample.elements.get("statusPanel").textContent, "sample-data.csv 已成功载入，分析结果已生成。");
+  assert.equal(statusClass(sample), "status-panel success");
+  const warnedOnly = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n");
+  assert.equal(statusClass(warnedOnly), "status-panel warning");
+
+  // Any later message replaces the import's: a plain import and a report message drop the class.
+  put(store.context, "__plainRows", [{ 城市: "上海" }]);
+  store.evaluate('commitTabularData(["城市"], __plainRows, "later.csv", state.activeImportId)');
+  assert.equal(statusClass(store), "status-panel success");
+  const again = await importStage3Fixture("门店报表.xlsx");
+  again.evaluate('setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(statusClass(again), "status-panel success");
+});
+
+test("only a successful status without a note is hidden once results show", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "style.css"), "utf8");
+  assert.match(css, /body\.has-results #statusPanel\.success:not\(\.has-note\)\s*\{\s*display:\s*none;\s*\}/);
+  assert.doesNotMatch(css, /body\.has-results #statusPanel\.success\s*\{/);
+});
