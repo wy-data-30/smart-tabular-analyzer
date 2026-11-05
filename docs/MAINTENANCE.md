@@ -89,6 +89,7 @@
    - `sheet_to_json({ raw: true, defval: "" })` 把错误格读成 `null`（#NULL!）或 `""`（其余）。
    - 代码表 `ci`：0 #NULL!、7 #DIV/0!、15 #VALUE!、23 #REF!、29 #NAME?、36 #NUM!、42 #N/A、43 #GETTING_DATA，255 #WTF? 是内部占位，`readExcelErrorText()` 排除它。
    `公式错误.xlsx` 和 v2.8.0 的测试要全部通过。`.ods` 在 `parseDataFile()` 上传时就被拒绝；SheetJS 读 ODS 时错误单元格整个读不出来，所以以后若要支持 ODS，公式错误列不出。
+   升级 SheetJS 时，还要确认 `sheet_to_json({ raw: true })` 在 `cellDates: true` 下对带日期格式的文本格和布尔格的返回值（见 `docs/ARCHITECTURE.md` 的“日期格式下的文本和布尔单元格”）：0.20.3 把文本格读成 Invalid Date 或日期（空串和空格是 1899-12-31，文本“45418”是 2024-05-06），布尔 TRUE 读成 1900-01-01，单元格对象本身的 `t` 和 `v` 是对的；`restoreNonDateCellsUnderDateFormat()` 依赖这一点。如果新版改了这个行为，这个函数可能就不再需要，先看 v2.8.1 的测试再决定。
 6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
 
 不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。

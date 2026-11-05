@@ -1636,7 +1636,7 @@ const LINE_NUMBER_CSV_LINES = [
 ];
 
 test("CSV row numbers are the same for LF, CR-only and CRLF with a BOM", async () => {
-  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "﻿"]]) {
+  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "\uFEFF"]]) {
     const scope = await importCsvFile(`${bom}${LINE_NUMBER_CSV_LINES.join(linebreak)}${linebreak}`);
     assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => row[\"学号\"]))")), ["S01", "S02", "S01", "S03"], label);
     assert.deepEqual(sourceRowNumbers(scope.evaluate), [4, 5, 9, 11], label);
@@ -5132,4 +5132,106 @@ test("v2.8.0 report: the formula error note matches the page and comes before th
   assert.ok(!(totalsOnly.html + totalsOnly.markdown).includes(note));
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
   assert.ok(!(clean.html + clean.markdown).includes(note));
+});
+
+// v2.8.1: SheetJS applies a date number format to text and boolean cells under
+// sheet_to_json(raw: true), so the importer gives them their own value back. These sheets
+// are built cell by cell, with shared strings as Excel stores them.
+const DATE_FORMAT = "yyyy-mm-dd";
+// Excel serial numbers: 45418 is 2024-05-06.
+const dateCell = (serial) => ({ t: "n", v: serial, z: DATE_FORMAT });
+const textCell = (text, format) => (format ? { t: "s", v: text, z: format } : { t: "s", v: text });
+
+function buildCellSheetBuffer(cells, ref, bookType = "xlsx") {
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, { "!ref": ref, ...JSON.parse(JSON.stringify(cells)) }, "S");
+  return XLSX.write(workbook, { type: "buffer", bookType, bookSST: true });
+}
+
+async function importCellSheet(cells, ref, bookType = "xlsx") {
+  const scope = createExcelContext();
+  const bytes = buildCellSheetBuffer(cells, ref, bookType);
+  put(scope.context, "__cellFile", {
+    name: bookType === "xlsx" ? "cells.xlsx" : "cells.xls",
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+  await scope.evaluate("parseDataFile(__cellFile)");
+  return scope;
+}
+
+const cellSheetFields = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.fields)"));
+const cellSheetColumn = (scope, field) => JSON.parse(scope.evaluate(`JSON.stringify(state.rows.map((row) => row[${JSON.stringify(field)}]))`));
+const cellSheetProfile = (scope, field) => JSON.parse(scope.evaluate(`JSON.stringify(getFieldProfile(${JSON.stringify(field)}))`));
+
+// A whole column under a date format, its header too: six dates and two texts.
+const WHOLE_DATE_COLUMN = {
+  A1: textCell("姓名"), B1: textCell("入职日期", DATE_FORMAT),
+  A2: textCell("甲"), B2: dateCell(45418),
+  A3: textCell("乙"), B3: textCell("待定", DATE_FORMAT),
+  A4: textCell("丙"), B4: textCell("2021/3/5", DATE_FORMAT),
+  A5: textCell("丁"), B5: dateCell(45419),
+  A6: textCell("戊"), B6: dateCell(45420),
+  A7: textCell("己"), B7: dateCell(45421),
+  A8: textCell("庚"), B8: dateCell(45422),
+  A9: textCell("辛"), B9: dateCell(45423)
+};
+
+for (const bookType of ["xlsx", "biff8"]) {
+  test(`v2.8.1 a whole column under a date format imports with its header and texts (${bookType})`, async () => {
+    const scope = await importCellSheet(WHOLE_DATE_COLUMN, "A1:B9", bookType);
+    assert.deepEqual(cellSheetFields(scope), ["姓名", "入职日期"]);
+    assert.deepEqual(cellSheetColumn(scope, "入职日期"), ["2024-05-06", "待定", "2021/3/5", "2024-05-07", "2024-05-08", "2024-05-09", "2024-05-10", "2024-05-11"]);
+    const profile = cellSheetProfile(scope, "入职日期");
+    assert.equal(profile.typeKey, "date");
+    assert.equal(profile.missingCount, 0);
+    assert.equal(profile.conversionFailureCount, 1);
+    assert.deepEqual(profile.conversionFailureSamples, ["待定"]);
+  });
+}
+
+test("v2.8.1 empty, blank, boolean and number-like cells under a date format keep their own values", async () => {
+  const cells = {
+    A1: textCell("名"), B1: textCell("值"),
+    A2: textCell("空串"), B2: textCell("", DATE_FORMAT),
+    A3: textCell("全空格"), B3: textCell("  ", DATE_FORMAT),
+    A4: textCell("公式空串"), B4: { t: "s", v: "", f: 'IF(1=1,"",1)', z: DATE_FORMAT },
+    A5: textCell("布尔"), B5: { t: "b", v: true, z: DATE_FORMAT },
+    A6: textCell("数字文本"), B6: textCell("45418", DATE_FORMAT),
+    A7: textCell("真日期"), B7: dateCell(45418)
+  };
+  const scope = await importCellSheet(cells, "A1:B7");
+  const values = cellSheetColumn(scope, "值");
+  assert.deepEqual(values, ["", "  ", "", "true", "45418", "2024-05-06"]);
+  assert.equal(cellSheetProfile(scope, "值").missingCount, 3);
+  assert.ok(!values.includes("1899-12-31"));
+  assert.ok(!values.includes("1900-01-01"));
+});
+
+test("v2.8.1 guard: dates stay dates and cells without a date format read as before", async () => {
+  const cells = {
+    A1: textCell("真日期"), B1: textCell("文本"), C1: textCell("数字"), D1: textCell("小数"), E1: textCell("带时间"),
+    A2: dateCell(45418), B2: textCell("待定"), C2: { t: "n", v: 45418 }, D2: { t: "n", v: 3.5, z: "0.00" }, E2: { t: "n", v: 45418.4375, z: "yyyy-mm-dd hh:mm" },
+    A3: dateCell(45419), B3: textCell("2021/3/5"), C3: { t: "n", v: 7 }, D3: { t: "n", v: 45418, z: "0.00" }, E3: { t: "n", v: 45419.5, z: "yyyy-mm-dd hh:mm" },
+    A4: dateCell(45420), B4: textCell("  "), C4: { t: "b", v: true }, D4: textCell("x", "0.00"), E4: dateCell(45420)
+  };
+  const scope = await importCellSheet(cells, "A1:E4");
+  assert.deepEqual(cellSheetColumn(scope, "真日期"), ["2024-05-06", "2024-05-07", "2024-05-08"]);
+  assert.deepEqual(cellSheetColumn(scope, "文本"), ["待定", "2021/3/5", "  "]);
+  assert.deepEqual(cellSheetColumn(scope, "数字"), ["45418", "7", "true"]);
+  assert.deepEqual(cellSheetColumn(scope, "小数"), ["3.5", "45418", "x"]);
+  assert.deepEqual(cellSheetColumn(scope, "带时间"), ["2024-05-06", "2024-05-07", "2024-05-08"]);
+});
+
+test("v2.8.1 cells under a date format are found on a sheet that does not start at A1", async () => {
+  const cells = {
+    B3: textCell("名"), C3: textCell("入职日期", DATE_FORMAT),
+    B4: textCell("甲"), C4: dateCell(45418),
+    B5: textCell("乙"), C5: textCell("待定", DATE_FORMAT),
+    B6: textCell("丙"), C6: { t: "b", v: true, z: DATE_FORMAT }
+  };
+  const scope = await importCellSheet(cells, "B3:C6");
+  assert.deepEqual(cellSheetFields(scope), ["名", "入职日期"]);
+  assert.deepEqual(cellSheetColumn(scope, "入职日期"), ["2024-05-06", "待定", "true"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map(getSourceRowNumber))")), [4, 5, 6]);
 });
