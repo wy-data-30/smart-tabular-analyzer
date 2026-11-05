@@ -1,4 +1,4 @@
-// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。
+// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。
 
 const ENCODING_LABELS = {
   auto: "自动识别",

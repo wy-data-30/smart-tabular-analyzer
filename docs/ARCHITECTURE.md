@@ -19,13 +19,13 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 | 顺序 | 文件 | 职责 |
 | --- | --- | --- |
-| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。 |
+| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
-| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。 |
+| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行和公式错误单元格的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。 |
-| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
+| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染。 |
-| 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。 |
+| 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。 |
 | 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。 |
 | 9 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
 
@@ -122,6 +122,8 @@ flowchart LR
 | 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
 | 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
 | 疑似数值列 | `numericLooking` | `buildNumericLookingSummary(state.profiles)` 的结果。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 整体替换，`resetAnalysisState()` 清成 `[]`，筛选不改它（见“数字策略”） |
+| 疑似合计 / 小计行 | `totalLabelRows`, `suspectedTotals` | `findTotalLabelRows()` 找到的标签行（只有导入替换）；`buildSuspectedTotalSummary()` 的结果（导入和 `rebuildAnalysisFromProfiles()` 替换）。`resetAnalysisState()` 清成 `[]`，筛选不改它们（见“疑似合计 / 小计行”） |
+| 公式错误单元格 | `sourceFormulaErrors`, `formulaErrors` | `WeakMap<行对象, { 字段: 错误文字 }>`；`buildFormulaErrorSummary()` 的结果。都只在导入时写入，字段配置、确认和筛选不改它们，`resetAnalysisState()` 清空（见“公式错误单元格”） |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `chartInsights`, `customAnalysis` | 当前统计、原始质量统计、图表下的两句结论（`{ category, trend }`，空字符串表示不显示，见“Statistics”）和自定义分析快照。没有筛选掉任何行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告（全部保存，每条 `{ row, code, message }`，`row` 是精确的文件行号或 `null`，见“数据行的文件行号”） |
 | 数据预览 | `previewPage` | 预览的页码（从 1 开始），`renderPreview()` 把它夹到有效范围；导入、筛选变化和字段配置（含疑似缺失值确认）回到 1，`resetAnalysisState()` 也设为 1（见“问题行”） |
@@ -137,7 +139,7 @@ flowchart LR
 - `beginImport()`：递增 `activeImportId`、取消旧读取、清空旧分析并锁定导入控件。
 - `isCurrentImport(importId)`：判断异步结果是否仍属于当前导入。
 - `abortActiveFileRead()`：中止仍在运行的 `FileReader`。
-- `commitTabularData(...)`：成功导入的统一提交点；写入状态、生成派生数据并触发首轮渲染。第 9 个参数 `rowNumbers`（默认 `null`）与 `rows` 一一对应，长度一致时才写入 `sourceRowNumbers`。
+- `commitTabularData(...)`：成功导入的统一提交点；写入状态、生成派生数据并触发首轮渲染。第 9 个参数 `rowNumbers`（默认 `null`）与 `rows` 一一对应，长度一致时才写入 `sourceRowNumbers`；第 10 个参数 `formulaErrors`（默认 `null`）同样与 `rows` 一一对应，长度一致时才写入 `sourceFormulaErrors`，只有 Excel 导入传它。
 - `getSourceRowNumber(row)`：返回行对象的文件行号；没经过 `commitTabularData()`（例如测试直接给 `state.rows` 赋值）或导入没给行号时返回 `null`。
 - `getAnalysisRows()`：只有 `filterSourceRows === state.rows` 时才返回 `filteredRows`，否则回退到原始行。
 - `refreshFilteredAnalysis()`：筛选后重算当前范围的统计、结论、图表和导出状态。
@@ -241,7 +243,7 @@ flowchart LR
 - **重试路径**：跳过标题行后的重新解析，在切片文本上算出的行号再加上 `retry.lineOffset`。
 - **不做扫描的情况**：超过行数上限、表头类错误、只有表头或空文件，都在第二遍扫描之前就报错；只有直接调用 `handleParsedData()`、没有原文时（测试中常见）也不扫描，警告的行号为 `null`。
 - **计数**：`lineNumbersAtOffsets(text, offsets)` 按偏移量升序增量计数，整份文件只扫一遍，规则与原来逐个用 `/\r\n|\r|\n/` 计数相同（`"\r\n"` 算一次换行）；偏移量变小时从头重数。
-- **存放**：导入器把 `rowNumbers` 传给 `commitTabularData()` 的第 9 个参数，提交时写进 `state.sourceRowNumbers`（WeakMap），由 `getSourceRowNumber(row)` 读取。
+- **存放**：导入器把 `rowNumbers` 传给 `commitTabularData()` 的第 9 个参数，提交时写进 `state.sourceRowNumbers`（WeakMap），由 `getSourceRowNumber(row)` 读取。第 10 个参数是公式错误（v2.8.0），见“公式错误单元格”。
 - **代价**：10 万行 CSV 的完整导入约多 50–100 ms（Node 内测量）。v2.6.0 的两套行号和全部警告不改变这个量级（10 万 × 5 列与 v2.5.0 相差约 0.1%）。
 
 **输入 / 输出**
@@ -320,6 +322,7 @@ UTF-8 BOM
 | `validateExcelWorksheetLimits()` | 根据工作表使用区域粗检行数和 200 列；行数额外留出 `HEADER_SCAN_ROWS` 行给表头上方的标题行 |
 | `buildExcelTabularData()` | 去除首尾空行、经 `findExcelHeaderPosition()` 确定表头行、按表头以下的数据行检查 100,000 行上限、识别使用列、验证表头并生成 `{ fields, rows, rowNumbers }`，跳过标题行时另带 `headerDetection` |
 | `normalizeExcelCellValue()` | Date 转 `YYYY-MM-DD`，其他原始标量转字符串 |
+| `createExcelCellErrorReader(worksheet)` / `readExcelErrorText(cell)` | `buildExcelTabularData()` 第 6 个参数：只对读出为空的格调用，只在 `cell.t === "e"` 时读 `cell.w`（错误自己的文字，不受时区影响），排除 SheetJS 的内部占位 `#WTF?`，再查代码表，都没有写“#错误”。见“公式错误单元格” |
 
 `readExcelSheetTable()` 当前使用：
 
@@ -468,7 +471,9 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` / `countPendingPlaceholderFields(entries)`：疑似缺失值和还有待确认写法的字段数，见下文“疑似缺失值”。
 - `groupIdValueIndexes(rows, field, confirmedKeys)` / `sortIdDuplicates(indexesByValue)`：ID 字段按值分组（值按首次出现）和质量页表格的排序（出现次数降序、同次数按首次出现），`buildIdDuplicateSummary()` 和问题行共用。
 - `listProblemCategories()` / `listProblemRows(category)`：问题行，见下文“问题行”。
-- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()` 和 `renderPlaceholderDetails()`；摘要下方的“CSV 解析警告：N 条，涉及 M 行”由 `renderParseWarningSummary()` 写入，没有警告时隐藏；各计数旁的“查看”按钮和查看区的刷新见“问题行”。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），之后是“ID 重复字段：N”（N > 0 为 warning，否则为 success），最后一项是“疑似缺失值：N 个字段”（同样的颜色规则）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。两个详情 renderer，以及“按单位读取的数字”“疑似数值列”两个小节（见“数字策略”），都在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示它们。
+- `findTotalLabelRows(rows, fields)` / `buildSuspectedTotalSummary(rows, fields, profiles, getRowNumber, labelRows)`：疑似合计 / 小计行，见下文同名一节。
+- `buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber)`：公式错误单元格，见下文同名一节。
+- `renderQuality()`：渲染摘要、逐字段缺失与“无法转换”表、数值异常值表，并调用 `renderIdDuplicateDetails()` 和 `renderPlaceholderDetails()`；摘要下方的“CSV 解析警告：N 条，涉及 M 行”由 `renderParseWarningSummary()` 写入，没有警告时隐藏；它下面的“疑似合计 / 小计行”“公式错误单元格”两个小节由 `renderSuspectedTotalDetails()`、`renderFormulaErrorDetails()` 写入，也在提前 return 之前；各计数旁的“查看”按钮和查看区的刷新见“问题行”。摘要中的“格式问题：N 个值”是全部字段 `conversionFailureCount` 之和（N > 0 为 warning），之后是“ID 重复字段：N”（N > 0 为 warning，否则为 success），最后一项是“疑似缺失值：N 个字段”（同样的颜色规则）；表格的“无法转换”列显示条数和最多 3 个样例（经 `escapeHtml()`），条数 > 0 时使用 `.cell-warning`。两个详情 renderer，以及“按单位读取的数字”“疑似数值列”两个小节（见“数字策略”），都在“没有数值字段时提前 return”之前调用，没有数值字段的表也会显示它们。
 
 异常值规则为：
 
@@ -534,15 +539,17 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **手动类型记录**：`state.manualFieldTypes` 是“字段 → 用户应用的类型”，只记和自动识别不同的类型，每次提交整体替换为空，`resetAnalysisState()` 清空。`applyFieldConfiguration()` 以现有记录为起点，只重新判定草稿和应用前 `typeKey` 不同的字段：草稿 ≠ `inferredTypeKey` 就记录，否则删除（选了和自动识别一样的类型不算手动）；其余字段保留原记录。这一点是必要的：确认可能让手动类型恰好等于新的自动识别结果，此时对别的字段应用配置不能把记录清掉，否则撤销确认后字段会回到自动识别的类型。没做过确认时，这和“当前类型 ≠ 自动识别类型”完全等价。`restoreAutomaticFieldTypes()` 清空记录，但不撤销确认；`hasAutomaticTypeDifferences()` 在有记录时也返回 `true`。记录只在确认路径和“恢复自动识别”按钮的可用性上被读到。
 - **确认后的影响（预估）**：`inferFieldTypeKey(field, { nonMissingCount, uniqueCount, numericCount, dateCount })` 是从 `buildColumnProfile()` 抽出来的类型判断，两边共用，不另写一份规则；profile 为此新增 `numericCount`、`dateCount`。`previewPlaceholderConfirmation(field, keys)` 以当前已确认的状态为基础，经 `estimateConfirmedProfile()` 走算术捷径：确认的写法都不能转数值或日期，所以数值数、日期数不变；非空数减去被去掉的单元格数，唯一值数减去被去掉的不同 `normalizeValue()` 值的个数（「Ｎ／Ａ」和「N/A」是同一个 key，但在 `normalizeValue()` 下是两个值）。写法不提供 dmy / mdy 证据，只有年份名字段（`isYearFieldName()`）的 `allowYearOnly` 会因为非空数变化而改变；对年份名字段，对剩下的值重算 `buildDateStrategy()`，和原策略不同就完整跑一次 `buildColumnProfile()`，其余字段直接走捷径。结果是 `{ typeKey, inferredTypeKey, missingCount, uniqueCount, conversionFailureCount, estimated }`，有手动记录时 `typeKey` 取手动类型。`previewAllCommonPlaceholders()` 列出全部确认常见写法后类型会变的字段。10 万行 × 20 列、7 条待确认时，逐条预估共约 0.43 s（完整重跑约 3.1 s），导入因此多出约 0.7 s（Node 内测量）。
 - **质量页**：pill“疑似缺失值：N 个字段”放在“ID 重复字段”之后，N 是还有待确认写法的非忽略字段数（`countPendingPlaceholderFields()`），N > 0 为 warning，否则为 success。`#placeholderDetails` 由 `renderPlaceholderDetails()` 写入：每个“字段 × key”一行。待确认的写出次数、行号、确认后缺失值的变化和类型，按钮“按缺失处理”；已确认的写“已按缺失处理”，被忽略的字段在字段名后标“（字段已忽略）”，按钮“撤销”。一个字段有两条以上待确认时，加一行“全部确认后”。第二档写法下附“也可能是有效值”的提示，写法是「-」时再加会计格式的说明。顶部是“全部确认常见写法（N 处）”按钮（N 是待确认的常见“字段 × 写法”条数），旁边列出类型会变的字段。没有检出时写“没有发现疑似缺失值。”。文字由 `format.js` 的 `formatPlaceholderValue()`（key 加「」，原文和 key 不同时附“（原文：…）”）、`formatPlaceholderRows()`（“（第 15 行）”，超过 10 行时“（第 2、…、11 行等）”，没有行号时“（行号：—）”）、`formatPlaceholderChange()`、`formatPendingPlaceholder()`、`formatConfirmedPlaceholder()` 和 `formatPlaceholderNotes()` 生成，写入页面前都经过 `escapeHtml()`。按钮带 `data-placeholder-index`（`state.placeholders` 的下标）或 `data-placeholder-all`，`aria-describedby` 指向这一行的文字；属性里不写字段名。`script.js` 给 `#placeholderDetails` 绑一个委托的 click（`handlePlaceholderClick()`）。`#placeholderMessage`（`role="status"`）在 `#placeholderDetails` 之外，重绘不会把消息清掉。
-- **Excel 公式错误单元格**：SheetJS 按 `raw: true, defval: ""` 读出时，#NULL! 为 `null`，#DIV/0!、#VALUE!、#REF!、#NAME?、#NUM!、#N/A 为 `""`，导入后都已经是缺失值，不会出现在疑似值列表里；CSV 里写成文本的 "#N/A" 则是常见写法，要用户确认。
+- **Excel 公式错误单元格**：SheetJS 按 `raw: true, defval: ""` 读出时，#NULL! 为 `null`，#DIV/0!、#VALUE!、#REF!、#NAME?、#NUM!、#N/A、#SPILL! 等为 `""`，导入后都已经是缺失值，不会出现在疑似值列表里，由“公式错误单元格”一节（v2.8.0）列出；CSV 里写成文本的 "#N/A" 则是常见写法，要用户确认。
 
 ### 问题行（v2.6.0）
 
 质量页的每个计数都能点“查看”，列出它背后的行：文件行号、一句说明和全部原始列。列出的行由计算计数的同一份判断产生，不另写一份规则。
 
-- **类别**（`listProblemCategories()`，顺序固定）：缺失（按字段，被忽略的字段也有，和缺失值表一致）、格式问题（按字段）、异常值（按数值字段）、整行重复、ID 重复值（按字段）、疑似缺失值（按“字段 × 写法”，已确认的和字段已忽略的也有）、解析警告。只列有问题行的类别。疑似非唯一的 ID 字段、“按单位读取的数字”“疑似数值列”不给入口。每个类别是 `{ kind, field, key, count, unit }`，`count` 是质量页上的数，`unit` 是 row / value / duplicateRow / duplicateValue / warning。
+- **类别**（`listProblemCategories()`，顺序固定）：缺失（按字段，被忽略的字段也有，和缺失值表一致）、公式错误（v2.8.0，按字段，被忽略的字段也有）、格式问题（按字段）、异常值（按数值字段）、整行重复、疑似合计 / 小计行（v2.8.0，整类一个）、ID 重复值（按字段）、疑似缺失值（按“字段 × 写法”，已确认的和字段已忽略的也有）、解析警告。只列有问题行的类别。疑似非唯一的 ID 字段、“按单位读取的数字”“疑似数值列”不给入口。每个类别是 `{ kind, field, key, count, unit }`，`count` 是质量页上的数，`unit` 是 row / value / duplicateRow / duplicateValue / warning。
 - **列表**（`listProblemRows(category)`，`quality.js`）：返回 `{ items, count, ... }`，每项 `{ index（state.rows 的下标或 null）, line（文件行号或 null）, note, ... }`；类别已不存在时返回 `null`。都基于原始 `state.rows`，不跟随筛选，按已应用的字段配置：
-  - 缺失：`isMissingOrConfirmed(value, profile.confirmedKeys)`，说明“空值”或“已按缺失处理”。条数 = `profile.missingCount`。
+  - 缺失：`isMissingOrConfirmed(value, profile.confirmedKeys)`，说明“空值”“已按缺失处理”，或者（v2.8.0）“公式错误 #DIV/0!”。条数 = `profile.missingCount`。
+  - 公式错误：`state.sourceFormulaErrors` 里这个字段有错误的行，说明“公式错误 #DIV/0!”，高亮的格是空的（靠背景和边框看见）。条数 = 汇总的 `count`，按值计。
+  - 疑似合计 / 小计行：`state.suspectedTotals` 的每一行，说明写对上的列和行范围。这一类没有固定的字段，每行高亮自己的标签格：条目带 `highlightField`，`renderProblemView()` 优先用它（`item.highlightField ?? highlightField`）。条数 = `suspectedTotals.length`。
   - 格式问题：`getProfileConversionCheck(profile, profile.typeKey)`（`profiling.js`）对 profile 计为非缺失的值逐个判断：数值按 profile 的数字策略转换结果为 `null`，日期按 profile 的日期策略 `toDate()` 为假，和 `buildColumnProfile()` 循环里的两种写法同义，所以手动类型、确认后重建都同口径。说明“无法转换为数值 / 日期”。条数 = `profile.conversionFailureCount`（按字段时一行最多一个值）。不使用 `countConversionFailuresForValues()` 那条兜底（日期不带策略）。
   - 异常值：`getQualityNumericStats()` 的上下界、同一个数字解析函数、严格越界；转换失败的值不算。说明“高于上界 X / 低于下界 X”。条数 = `outlierCount`。
   - 整行重复：`buildExactRowKey(row, state.fields)` 分组，组按首次出现，每组第一行标“（保留）”（`kept: true`），和去重导出一致。列出行数 = `duplicateRows` + 组数。
@@ -558,6 +565,34 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **数据预览分页**：`renderPreview()` 用同一个 `buildRowTableHtml()`（文件行号列 + 全部字段，行号为空写“—”，普通单元格是不带属性的 `<td>值</td>`），每页 `ROW_TABLE_PAGE_SIZE`（50）行，“第 X / Y 页，共 N 行”和首页 / 上一页 / 下一页 / 末页（`goToPreviewPage()`），仍跟随筛选。`state.previewPage` 由 `getRowPage()` 夹到有效范围（不是数字时当第 1 页），所以没有分页 state 时也能工作；导入、筛选变化和字段配置回到第 1 页。
 - **导出**：“导出这一类”（`exportProblemRows()`，`report.js`）导出整类全部行，不是当前页，见“报告与数据导出”。
 - **不做**：HTML / Markdown 报告里的问题行明细；“全部问题行”汇总视图。
+
+### 疑似合计 / 小计行（v2.8.0）
+
+有些表在数据中间或末尾写了合计、小计。它们会被当成普通数据，让求和、平均值和异常值偏大。这里**只提示、不排除**：`state.rows`、统计、图表、筛选、去重和导出都不变（测试 `v2.8.0 totals: the check changes nothing…` 固定）。
+
+- **标签**（`totalRowLabel()`，`parsing.js`）：只看字符串。规范化：NFKC → 去掉全部空白 → 去结尾冒号 → 去结尾一个不嵌套的括号注释 → 再去结尾冒号。之后整格是“最多 12 个字的前缀 + 合计 / 总计 / 小计 / 总和 / 汇总 / 累计（或繁体 合計 / 總計 / 小計 / 總和 / 匯總 / 彙總 / 累計）”，或不分大小写的 total / grandtotal / subtotal / sub-total / sum。前缀**整个等于**已、未、不、无、無、非、待、是否、尚未、暂未、暂不、暫未、暫不 时不算（“已汇总”不算，“南非小计”“无锡合计”算）。
+- **不算标签的写法**：共计、合共；`（合计）`、`合计（元）（含税）`、`合计[元]`、`合计【元】`（`合计：（元）` 算）；Sub-total 用 U+2010 连字符；中间带零宽空格的写法（U+200B 在开头时会被当成前缀的一个字，算标签）。
+- **预筛**：`TOTAL_LABEL_PREFILTER` 只让可能规范化成关键词的字符串走 NFKC。中文关键词都含 `[计总計總]` 之一，所以“汇款”这类文字不走慢路径；全码位枚举的测试固定它不漏。没有标签的表不做 NFKC，也不读任何数字。
+- **标签行**（`findTotalLabelRows()`）：每行取字段顺序里第一个是标签的格，记下原文。标签由单元格决定，和字段配置无关，所以只在导入时算一次（`state.totalLabelRows`）。
+- **核对**（`buildSuspectedTotalSummary()` / `checkTotalRows()`）：只看已应用类型为数值的字段，按字段的数字策略读数（`getNumberParser(profile.numberStrategy)`，所以“2200元”能对上）。每列按文件顺序试三种范围，用上第一个对上的：`segment`（上一个合计之后的明细）、`above`（上方全部明细）、`all`（全部明细，不含自己）。对上的条件：加数里至少一行不带标签，`Number.isFinite(sum)`，和不为 0，`|值 − 和| ≤ 0.5% × |和|`（`SUSPECTED_TOTAL_TOLERANCE`）。用滚动和，极端数值不会因为溢出而对上，也不会挡住后面的区段。一列对上就算这一行命中；不同的列可以对上不同的范围，`matches` 按范围分组。
+- **两轮（只做一轮补救）**：第一轮全部标签行都不算明细。有没通过的行时做第二轮：没通过的行回到明细，第一轮通过的行保留为分隔，只核对没通过的行。这样一行恰好带标签的明细（备注写“合计”）不会让真合计漏掉。
+- **已知残留**：第二轮只做一次。第一条明细带标签 + 两段小计 + 总计的表，第一轮对上后面的小计，第二轮对上这条明细所在段的小计，总计仍可能漏掉。
+- **结果**：`[{ index, line, field, label, matches: [{ scope, fields, firstLine, lastLine, rowCount, contiguous }] }]`。不存加数的行号列表（5,000 个小计时内存上界太大），只存首尾行号和行数。`line` 或范围的行号为 `null` 时，文字写“有一行”“上方 N 行明细之和”“全表 N 行明细之和”。
+- **触发点**：`commitTabularData()` 算标签和结果；`rebuildAnalysisFromProfiles()` 复用标签重算结果（字段配置、疑似缺失值确认 / 撤销会改变数值列和读数）；筛选不碰，基于原始数据；`resetAnalysisState()` 清空。状态栏的句子只在导入时写。
+- **开销**：只影响带标签行的文件。**有标签行时，每次重建都会按字段解析全部数值列**，不做缓存。10 万 × 20 列、1 格“合计”（不命中），字段配置重建的中位数从 4,218 ms 到 5,085 ms，多约 0.9 s（+20.6%），`buildSuspectedTotalSummary()` 单独约 0.93 s（Node 24，假 DOM，交替各 5 次；这次重建把一列改成了分类，读 9 个数值列）。没有标签行的文件 0 ms。
+- **质量页**：静态小节 `#suspectedTotalSection` 在解析警告下方、两栏表格之上，没有命中时隐藏，不新增 pill（`pillTexts()` 的断言固定恰好 6 项）。最多列 `SUSPECTED_TOTAL_LIST_LIMIT`（20）条，超出时写“共 N 行，只列出前 20 行。全部行请点「查看」。”。整节只有一个“查看”，因为整类是一个问题行类别。说明句见“报告与数据导出”。
+- **状态栏**：一行写“第 N 行「标签」疑似合计行，目前仍计入统计，详情见“数据质量”。”；多行写“发现 N 行疑似合计 / 小计（第 a、b… 行），……”，最多列 5 个行号。写在表头说明之后，警告分支也有。状态栏为什么看得见见“界面渲染”。
+
+### 公式错误单元格（v2.8.0）
+
+Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入后就是缺失值。这一项不改结果，只是把它们和真正的空格分开列出：类型判断、统计、缺失数都和同一张表写成空格时相同（测试固定）。
+
+- **读取**：`buildExcelTabularData()` 第 6 个参数 `readCellError(rowIndex, columnIndex)`，由 `createExcelCellErrorReader(worksheet)` 生成，地址按 `!ref` 起点换算。只对读出为空的格调用。`readExcelErrorText(cell)` 只在 `cell.t === "e"` 时读 `cell.w`：这是错误自己的文字，不是格式化的值，不受时区影响（“不读 `cell.w`”的约束指日期和数字单元格），#SPILL! / #CALC! / #FIELD! 也只有它（`v` 是 `undefined`）。文字要符合 `/^#[A-Z0-9/_!?]+$/` 且不是 SheetJS 的内部占位 `#WTF?`，否则查代码表，再没有就写“#错误”。
+- **存放**：导入结果带可选的 `formulaErrors`（与 `rows` 一一对应，每项 `{ 字段: 错误文字 }` 或 `null`，整份没有错误时不带），经 `commitTabularData()` 第 10 个参数写进 `state.sourceFormulaErrors`（WeakMap），错误对象用 `Object.create(null)`，防止 `__proto__` 这类字段名。`buildFormulaErrorSummary()` 汇总到 `state.formulaErrors = [{ field, count, byError, lines }]`，`lines` 最多 10 个（`ID_DUPLICATE_ROW_NUMBER_LIMIT`）。
+- **触发点**：只在导入时算；字段配置、确认和筛选都不改；`resetAnalysisState()` 清空。字段被忽略时仍列出，写“（字段已忽略）”。
+- **质量页**：静态小节 `#formulaErrorSection` 在“疑似合计 / 小计行”之后，每个字段一行和一个“查看”（每个字段是一个问题行类别），在 `renderQuality()` 提前 return 之前渲染，没有数值字段的表也显示。
+- **状态栏**：“发现 N 个公式错误单元格，已按缺失值处理，详情见“数据质量”。”，写在疑似合计那句之后。
+- **不列出的**：数据中间或表尾整行都是错误值的行（当空行跳过或裁掉，行号跳过）；全部数据行都是错误（报“只有表头”）；表头上方的错误（当空行裁掉）；标题行旁边的错误格；表头行里的错误格（报“缺少表头”）；表头为空且整列只有错误值的列（`getExcelUsedColumnIndexes()` 去掉）。CSV 里的“#DIV/0!”是文字，按原来的规则算格式问题或疑似缺失值。
 
 ## 7. Statistics（统计分析）
 
@@ -771,6 +806,8 @@ exportHtmlReport() / exportMarkdownReport()
 - 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
 - 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。HTML / Markdown 报告在“数值异常值”之后加“ID 字段重复值”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。HTML 质量摘要句末尾追加“；ID 重复字段：N”，Markdown 在“解析警告”后加一条“- ID 重复字段：N”。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
 - 报告快照的 `quality.placeholders` 由 `buildReportPlaceholders()` 生成：`{ confirmed: [{ field, key, rawValues, count, fieldIgnored }], pending: [{ field, key, tier, rawValues, count, rowNumbers, effect }] }`，`effect` 是质量页上同样的“确认后缺失值 0 → 1，类型仍为数值”文字。HTML / Markdown 报告在“各字段缺失情况”之后加“疑似缺失值”一节：由 `buildReportPlaceholderSection()` 生成同一份内容，已确认的写成“字段 / 写法 / 出现次数 / 状态”表（被忽略的字段状态为“已按缺失处理（字段已忽略）”），待确认的写成“字段 / 写法 / 档位 / 出现次数 / 文件行号 / 确认后的影响”表，有第二档写法时表后加一条以“说明：”开头的提示；快照存在但没有检出时写“没有发现疑似缺失值。”。只有有检出或有确认时，HTML 质量摘要句才追加“；疑似缺失值：N 个字段”，Markdown 在“ID 重复字段”后加一条“- 疑似缺失值：N 个字段”（N 同质量页 pill）。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义，Markdown 的说明文字经 `escapeMarkdownText()`，每行都以固定文字开头，不以用户的字段名或值开头。`normalizeReportSnapshot()` 遇到缺少这个字段或 `confirmed` / `pending` 不是数组的快照取 `null`，这一节和摘要里的这一项都不输出。
+- 报告快照的 `quality.suspectedTotals`（全部行，深拷贝）和 `quality.formulaErrors`（深拷贝，带 `fieldIgnored`）来自 `state`，不随筛选变化；旧快照为 `null`。`buildReportRowNoteSections()` 生成两节和摘要计数：“缺失值总数”那段之后加“疑似合计 / 小计行：N 行”“公式错误：N 个单元格”，“各字段缺失情况”之前加两节，文字和质量页相同。没有命中时节和计数都不输出。疑似合计最多列 `SUSPECTED_TOTAL_LIST_LIMIT`（20）条，超出时写“共 N 行，只列出前 20 行。”，摘要计数写全部行数；报告没有“查看”，不写“全部行请点「查看」”。
+- 这两节的说明句放在列表之前，和页面同文：`format.js` 的 `SUSPECTED_TOTAL_NOTE`、`FORMULA_ERROR_NOTE` 给报告用，`index.html` 里是静态文字，两条测试固定两边相同。
 - 报告快照的 `fieldTypes[].numberUnit`、`quality.numberConversions` 和 `quality.numericLooking`，以及“按单位读取的数字”“疑似数值列”两节和带单位的字段标签，见“数字策略”。
 
 **与其他模块的关系**
@@ -823,6 +860,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 - 输入：全局 state、DOM 事件和控件值。
 - 输出：`innerHTML`、`textContent`、class、disabled、ARIA 属性、滚动和焦点等浏览器副作用。
 - 表格和文本模板在写入 `innerHTML` 前使用 `escapeHtml()`；状态文字优先使用 `textContent`。
+- 状态栏（v2.8.0）：`body.has-results #statusPanel.success:not(.has-note)` 隐藏导入成功后的普通消息。消息带说明句（表头位置、疑似合计、公式错误）时，`commitTabularData()` 经 `setStatus(message, tone, true)` 加 `has-note` 类，状态栏留在页面上；之后任何一条 `setStatus()` 消息都整体替换 `className`，所以导出报告成功后这条说明和状态栏一起消失（已接受，留给阶段五）。状态栏也没有关闭按钮。表头说明从 v2.2.0 加入起到 v2.8.0 之前，导入成功时都被旧规则 `#statusPanel.success` 隐藏，只在 DOM 里。
 
 **与其他模块的关系**
 
