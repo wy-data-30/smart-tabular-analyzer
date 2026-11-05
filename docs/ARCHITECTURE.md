@@ -25,7 +25,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。 |
 | 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染。 |
-| 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。 |
+| 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。 |
 | 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。 |
 | 9 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
 
@@ -318,7 +318,8 @@ UTF-8 BOM
 | `showExcelSheetSelection(...)` | 把完整工作簿保存到 `state.pendingExcel` 并显示工作表下拉框 |
 | `analyzeSelectedExcelSheet()` | 校验待选状态和当前选择 |
 | `importExcelSheet(...)` | 校验 `!ref`，经 `readExcelSheetTable()` 读取所选工作表并提交 |
-| `readExcelSheetTable(worksheet, sheetName)` | 粗检上限、`sheet_to_json` 并调用 `buildExcelTabularData()`，传入 `!ref` 起始行号用于换算文件行号 |
+| `readExcelSheetTable(worksheet, sheetName)` | 粗检上限、`sheet_to_json`、还原日期格式下的文本和布尔单元格，再调用 `buildExcelTabularData()`，传入 `!ref` 起始行号用于换算文件行号 |
+| `restoreNonDateCellsUnderDateFormat(rawRows, worksheet)` | 在 `rawRows` 上原地修正：值是 Date 的位置，按 `!ref` 起点查单元格，`t` 是 `"s"` 或 `"b"` 就换成 `cell.v`。见下文“日期格式下的文本和布尔单元格” |
 | `validateExcelWorksheetLimits()` | 根据工作表使用区域粗检行数和 200 列；行数额外留出 `HEADER_SCAN_ROWS` 行给表头上方的标题行 |
 | `buildExcelTabularData()` | 去除首尾空行、经 `findExcelHeaderPosition()` 确定表头行、按表头以下的数据行检查 100,000 行上限、识别使用列、验证表头并生成 `{ fields, rows, rowNumbers }`，跳过标题行时另带 `headerDetection` |
 | `normalizeExcelCellValue()` | Date 转 `YYYY-MM-DD`，其他原始标量转字符串 |
@@ -334,6 +335,20 @@ XLSX.utils.sheet_to_json(worksheet, {
   blankrows: true
 })
 ```
+
+**日期格式下的文本和布尔单元格（v2.8.1）**：`cellDates: true` 时，SheetJS 0.20.3 的 `sheet_to_json(raw: true)` 对带日期数字格式的文本格（`t: "s"`）和布尔格（`t: "b"`）也套用日期转换。单元格对象本身是对的，只是返回值变了：
+
+| 单元格（都套了日期格式） | `sheet_to_json` 返回 | v2.8.0 的结果 |
+| --- | --- | --- |
+| 文本“待定”“2021/3/5” | Invalid Date | 空值，算缺失，没有提示 |
+| 空串（含公式返回的空串）、全空格 | Date 1899-12-31 | 凭空多出 `1899-12-31` |
+| 文本“45418” | Date 2024-05-06 | 变成 `2024-05-06` |
+| 布尔 TRUE | Date 1900-01-01 | 变成 `1900-01-01` |
+| 表头格（整列设成日期格式时表头也带格式） | Invalid Date | 整个文件报“未识别到有效文本表头” |
+
+所以 `readExcelSheetTable()` 在 `sheet_to_json` 之后、`buildExcelTabularData()` 之前调用 `restoreNonDateCellsUnderDateFormat()`：只有值是 Date 的位置才查单元格，`t` 是 `"s"` 或 `"b"` 的换回 `cell.v`，`"n"`、`"d"` 和查不到的保持原样。表头检测、表头校验和数据行用的都是这同一份 `rawRows`；公式错误读取器只对读出为空的格查单元格，看到的也是修正后的值。读的是原始值 `v`，不是受时区影响的 `w`。
+
+修正之后这些格按普通值处理：“待定”在日期字段里算格式问题，空串和全空格算缺失，布尔读成 `"true"`，文本“45418”读成 `"45418"`。不处理的情况：只有时间的格（`hh:mm`）是真数字格（`t: "n"`），仍读成 `1899-12-31`。
 
 生产调用把同一份 `rawRows` 同时传给 `buildExcelTabularData(formattedRows, rawRows)` 的两个参数；当前没有另外读取一份格式化显示值。百分比格式会被识别（只看表头以下前 1,000 行，`EXCEL_FORMAT_SAMPLE_ROWS`；跳过标题行时取样起点跟着新表头走），货币等其他格式仍不读取。
 
