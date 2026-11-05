@@ -8,6 +8,7 @@ const { createScriptContext } = require("./test-context.cjs");
 const XLSX = require(path.join(__dirname, "..", "vendor", "xlsx-0.20.3.full.min.js"));
 const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.js"));
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
 function put(context, name, value) {
   context[name] = value;
@@ -3192,7 +3193,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 13);
+  assert.equal(scopes.length, 14);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3304,7 +3305,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 13);
+  assert.equal(scopes.length, 14);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -5234,4 +5235,61 @@ test("v2.8.1 cells under a date format are found on a sheet that does not start 
   assert.deepEqual(cellSheetFields(scope), ["名", "入职日期"]);
   assert.deepEqual(cellSheetColumn(scope, "入职日期"), ["2024-05-06", "待定", "true"]);
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map(getSourceRowNumber))")), [4, 5, 6]);
+});
+
+// v2.9.0: date styles, constant columns and look-alike values, only hints. The guard below
+// keeps everything v2.8.1 computed; the fixture 写法不一致.csv holds what the checks look for.
+test("v2.9.0 fixture: 写法不一致.csv has the bytes, types and totals of known-issues.json", async () => {
+  const bytes = fs.readFileSync(path.join(STAGE3_FIXTURES, "写法不一致.csv"));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = bytes.toString("utf8");
+  assert.equal(text.split("\r\n").length - 1, 25);
+  assert.equal(text.split("\n").length - 1, 25);
+  // The cells that are the point of the fixture, written as escapes here too.
+  assert.ok(text.includes("\u3000华东,"));
+  assert.ok(text.includes("华东\u200B,"));
+  assert.ok(text.includes("\uFF28\uFF24,"));
+
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const expected = knownIssues["写法不一致.csv"];
+  const summary = importedSummary(scope.evaluate);
+  assert.equal(summary.rows, expected.dataRows);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.duplicateRows, expected.expectedTotals.duplicateRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.profiles.reduce((sum, profile) => sum + profile.conversionFailureCount, 0)"), expected.expectedTotals.formatProblems);
+  assert.equal(scope.evaluate("state.headerDetection"), null);
+  // ID duplicates compare as before: SKU-002 with a trailing space repeats, sku-001 does not.
+  assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["商品编号", [["SKU-002", 2, [4, 5]]]]]);
+});
+
+// The state v2.8.1 computed, by file: profiles, statistics, quality figures, existing problem rows.
+// Regenerate tests/fixtures/v2.8.1-guard.json (see docs/TESTING.md) or remove this guard in the
+// version that changes these results on purpose, and say so in its PR.
+const V281_GUARD_KINDS = ["missing", "formulaError", "conversion", "outlier", "duplicateRows", "suspectedTotal", "idDuplicate", "placeholder", "parseWarnings"];
+const v281GuardDigest = (scope) => crypto.createHash("sha256").update(scope.evaluate(`JSON.stringify({
+  rows: state.rows, profiles: state.profiles, numericStats: state.numericStats, qualityNumericStats: state.qualityNumericStats, categoryStats: state.categoryStats,
+  duplicateRows: state.duplicateRows, totalMissing: state.totalMissing, idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking,
+  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: deduplicateRows(state.rows, state.fields).length,
+  problems: listProblemCategories().filter((category) => ${JSON.stringify(V281_GUARD_KINDS)}.includes(category.kind)).map((category) => [category, listProblemRows(category).items])
+})`)).digest("hex").slice(0, 32);
+
+test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixtures and examples", async () => {
+  const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
+  const actual = {};
+  for (const fileName of STAGE3_IMPORT_FILES) {
+    if (fileName === "写法不一致.csv") continue;
+    const scope = await importStage3Fixture(fileName);
+    actual[fileName] = v281GuardDigest(scope);
+    scope.evaluate("confirmAllCommonPlaceholders()");
+    actual[`${fileName}（全部确认后）`] = v281GuardDigest(scope);
+  }
+  for (const fileName of EXAMPLE_CSV_FILES) {
+    const scope = await importCsvFile(readExampleCsv(fileName), fileName);
+    actual[fileName] = v281GuardDigest(scope);
+    scope.evaluate("confirmAllCommonPlaceholders()");
+    actual[`${fileName}（全部确认后）`] = v281GuardDigest(scope);
+  }
+  assert.deepEqual(actual, expected);
 });

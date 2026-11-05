@@ -179,5 +179,55 @@
       { "field": "利润率", "count": 3, "byError": { "#DIV/0!": 2, "#REF!": 1 }, "lines": [3, 5, 9] },
       { "field": "备注", "count": 2, "byError": { "#NULL!": 1, "#SPILL!": 1 }, "lines": [5, 6] }
     ]
+  },
+  "写法不一致.csv": {
+    "encoding": "UTF-8 BOM，CRLF",
+    "headerFileLine": 1,
+    "dataRows": 24,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "W1", "type": "日期写法混用", "field": "下单日期", "value": "主写法 年-月-日 16 个；年/月/日 3、中文 2、年.月.日 1", "fileLines": [4, 8, 9, 11, 13, 20], "note": "第 6 行 2024-3-5（不补零）、第 7 行 2024-03-06 10:30（带时间）都算主写法；第 4 行 2024/03/07 和第 8 行 2024/3/8 算同一种" },
+      { "id": "W2", "type": "格式问题（不算写法）", "field": "下单日期", "value": "待定", "fileLines": [15] },
+      { "id": "W3", "type": "缺失（不算写法）", "field": "下单日期", "value": "空值", "fileLines": [16] },
+      { "id": "W4", "type": "常量列", "field": "状态", "value": "正常 24 行，没有空值", "fileLines": [] },
+      { "id": "W5", "type": "首尾空格", "field": "商品编号", "value": "SKU-002 + 尾部半角空格（同时是 ID 重复）", "fileLines": [5] },
+      { "id": "W6", "type": "大小写", "field": "商品编号", "value": "SKU-001 / sku-001（不算 ID 重复）", "fileLines": [2, 3] },
+      { "id": "W7", "type": "首尾空格", "field": "区域", "value": "华东 + 半角空格、\u3000 + 华东", "fileLines": [5, 6] },
+      { "id": "W8", "type": "不可见字符", "field": "区域", "value": "华东 + \u200B", "fileLines": [7] },
+      { "id": "W9", "type": "全角半角 + 大小写", "field": "区域", "value": "HD / \uFF28\uFF24 / hd", "fileLines": [18, 19, 20, 21] },
+      { "id": "W10", "type": "中间空格多少", "field": "区域", "value": "上海 浦东 / 上海两个空格浦东", "fileLines": [22, 23, 24] },
+      { "id": "W11", "type": "反例：不合并", "field": "区域", "value": "华东 / 华东区；上海 浦东 / 上海浦东", "fileLines": [13, 14, 25] },
+      { "id": "W12", "type": "全角半角 + 大小写", "field": "客户", "value": "ABC公司 / \uFF21\uFF22\uFF23公司 / abc公司", "fileLines": [2, 4, 6, 8, 9, 15, 17, 19, 21, 23], "note": "第 8 行全角，第 9 行小写" },
+      { "id": "W13", "type": "反例：疑似缺失值不进写法组，也不算首尾空格", "field": "客户", "value": "N/A、N/A + 尾部空格、n/a", "fileLines": [11, 12, 13] }
+    ],
+    "expectedTypes": [
+      { "field": "商品编号", "nonMissing": 24, "numericRate": "0/24", "dateRate": "0/24", "uniqueRate": "23/24", "expected": "id", "reason": "字段名含「编号」" },
+      { "field": "下单日期", "nonMissing": 23, "numericRate": "0/23", "dateRate": "22/23=95.7%", "uniqueRate": "23/23", "expected": "date", "reason": "日期率≥70%，不触发唯一率 ID 规则；日期率≥80%" },
+      { "field": "区域", "nonMissing": 24, "numericRate": "0/24", "dateRate": "0/24", "uniqueRate": "10/24=41.7%", "expected": "category", "reason": "去首尾空格后 10 个不同值" },
+      { "field": "客户", "nonMissing": 23, "numericRate": "0/23", "dateRate": "0/23", "uniqueRate": "6/23", "expected": "category", "reason": "N/A 和 n/a 是不同值；缺失 1" },
+      { "field": "状态", "nonMissing": 24, "numericRate": "0/24", "dateRate": "0/24", "uniqueRate": "1/24", "expected": "category" },
+      { "field": "金额", "nonMissing": 24, "numericRate": "24/24", "dateRate": "0/24", "uniqueRate": "24/24", "expected": "numeric", "reason": "数值率≥70%，不触发唯一率 ID 规则" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 2, "formatProblems": 1 },
+    "dateStyles": [
+      { "field": "下单日期", "mainKey": "ymdDash", "otherCount": 6, "otherLines": [4, 8, 9, 11, 13, 20], "styles": [
+        { "key": "ymdDash", "count": 16, "sample": "2024-03-01", "firstLine": 2 },
+        { "key": "ymdSlash", "count": 3, "sample": "2024/03/07", "firstLine": 4 },
+        { "key": "chinese", "count": 2, "sample": "2024年3月9日", "firstLine": 9 },
+        { "key": "ymdDot", "count": 1, "sample": "2024.3.13", "firstLine": 13 }
+      ] }
+    ],
+    "constantFields": [
+      { "field": "状态", "value": "正常", "count": 24, "missingCount": 0 }
+    ],
+    "lookAlikes": [
+      { "field": "商品编号", "edgeSpaceCount": 1, "groupCount": 1, "rowCount": 3, "groups": [{ "variants": [["SKU-001", 1], ["sku-001", 1]], "reasons": ["case"], "rowCount": 2 }] },
+      { "field": "区域", "edgeSpaceCount": 2, "groupCount": 3, "rowCount": 18, "groups": [
+        { "variants": [["华东", 10], ["华东\u200B", 1]], "reasons": ["invisible"], "rowCount": 11 },
+        { "variants": [["HD", 2], ["\uFF28\uFF24", 1], ["hd", 1]], "reasons": ["compat", "case"], "rowCount": 4 },
+        { "variants": [["上海 浦东", 2], ["上海  浦东", 1]], "reasons": ["innerSpace"], "rowCount": 3 }
+      ] },
+      { "field": "客户", "edgeSpaceCount": 0, "groupCount": 1, "rowCount": 10, "groups": [{ "variants": [["ABC公司", 8], ["\uFF21\uFF22\uFF23公司", 1], ["abc公司", 1]], "reasons": ["compat", "case"], "rowCount": 10 }] }
+    ]
   }
 }
