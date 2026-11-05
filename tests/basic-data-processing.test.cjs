@@ -5293,3 +5293,78 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   }
   assert.deepEqual(actual, expected);
 });
+
+test("v2.9.0 Excel: date cells are recorded per row and column, with title rows and a shifted !ref", () => {
+  const scope = createExcelContext();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ["2024 报表"],
+    [],
+    ["名", "日期", "文本日期"],
+    ["甲", 45000, "2024-01-01"],
+    ["", "", ""],
+    ["乙", "2024-01-01", 45001],
+    ["丙", 45002, "x"]
+  ], { origin: "B3" });
+  for (const address of ["C6", "D8", "C9"]) {
+    worksheet[address].t = "n";
+    worksheet[address].z = DATE_FORMAT;
+  }
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+  put(scope.context, "__buffer", XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
+  scope.evaluate('importExcelSheet(readExcelWorkbook(__buffer), "s.xlsx", "S", beginImport())');
+  const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [getSourceRowNumber(row), state.sourceDateCells.get(row) || null, row.日期, row.文本日期]))"));
+  assert.deepEqual(read.map(([line, cells]) => [line, cells && Object.keys(cells).sort()]), [[6, ["日期"]], [8, ["文本日期"]], [9, ["日期"]]]);
+  // A date cell and a text with the same characters read alike but are told apart.
+  assert.equal(read[1][2], "2024-01-01");
+  assert.equal(read[1][1].日期, undefined);
+});
+
+test("v2.9.0 Excel: only real date cells count, and a file without them adds nothing", async () => {
+  const cells = {
+    A1: textCell("名"), B1: textCell("值", DATE_FORMAT),
+    A2: textCell("真日期"), B2: dateCell(45418),
+    A3: textCell("文本"), B3: textCell("待定", DATE_FORMAT),
+    A4: textCell("空串"), B4: textCell("", DATE_FORMAT),
+    A5: textCell("布尔"), B5: { t: "b", v: true, z: DATE_FORMAT },
+    A6: textCell("文本日期"), B6: textCell("2024-05-06", DATE_FORMAT),
+    A7: textCell("数字"), B7: { t: "n", v: 45418, z: "0.00" },
+    // Known limitation: a time-only cell is a real number cell and reads as this date.
+    A8: textCell("只有时间"), B8: { t: "n", v: 0.4375, z: "hh:mm" }
+  };
+  const scope = await importCellSheet(cells, "A1:B8");
+  const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [row.名, row.值, Boolean(state.sourceDateCells.get(row)?.值)]))"));
+  assert.deepEqual(read, [
+    ["真日期", "2024-05-06", true],
+    ["文本", "待定", false],
+    ["空串", "", false],
+    ["布尔", "true", false],
+    ["文本日期", "2024-05-06", false],
+    ["数字", "45418", false],
+    ["只有时间", "1899-12-31", true]
+  ]);
+  const plain = createExcelContext();
+  const direct = plain.evaluate('buildExcelTabularData([["名", "日"], ["甲", "x"]], [["名", "日"], ["甲", "x"]])');
+  assert.equal(direct.dateCells, undefined);
+  // A Date that reads as empty is no date cell.
+  const invalid = plain.evaluate('buildExcelTabularData([["名", "日"], ["甲", new Date(NaN)]], [["名", "日"], ["甲", new Date(NaN)]])');
+  assert.equal(invalid.rows[0].日, "");
+  assert.equal(invalid.dateCells, undefined);
+});
+
+test("v2.9.0 state: a commit replaces the date cells and resetAnalysisState() clears them", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  put(roster.context, "__keptRow", roster.evaluate("state.rows[0]"));
+  assert.equal(roster.evaluate("state.sourceDateCells.has(__keptRow)"), true);
+  // Without beginImport(): the commit itself replaces them.
+  roster.evaluate('commitTabularData(["城市"], [{ 城市: "上海" }], "later.csv", state.activeImportId)');
+  assert.equal(roster.evaluate("state.sourceDateCells.has(__keptRow)"), false);
+  // A list that does not match the rows is left out, as for row numbers and formula errors.
+  roster.evaluate('commitTabularData(["日期"], [{ 日期: "2024-01-01" }], "short.csv", state.activeImportId, [], "", null, null, null, null, [{ 日期: true }, { 日期: true }])');
+  assert.equal(roster.evaluate("state.sourceDateCells.has(state.rows[0])"), false);
+
+  const cleared = await importStage3Fixture("花名册.xlsx");
+  put(cleared.context, "__keptRow", cleared.evaluate("state.rows[0]"));
+  cleared.evaluate("resetAnalysisState()");
+  assert.equal(cleared.evaluate("state.sourceDateCells.has(__keptRow)"), false);
+});

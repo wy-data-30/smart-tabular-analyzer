@@ -32,6 +32,9 @@ const state = {
   sourceFormulaErrors: new WeakMap(),
   // buildFormulaErrorSummary() of the imported rows; only imports replace it.
   formulaErrors: [],
+  // Row object -> { field: true } for Excel date cells, which read as YYYY-MM-DD text; set
+  // only by commitTabularData() from an Excel import.
+  sourceDateCells: new WeakMap(),
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -231,7 +234,8 @@ function showResultsWorkspace() {
 // importer when title rows were skipped above the header, otherwise null.
 // rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
 // formulaErrors[i] is the { field: error text } of rows[i] or null; only Excel imports pass it.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null) {
+// dateCells[i] is the { field: true } of the date cells of rows[i] or null; only Excel imports pass it.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null, dateCells = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -272,6 +276,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (hasFormulaErrors) {
     rows.forEach((row, index) => {
       if (formulaErrors[index]) state.sourceFormulaErrors.set(row, formulaErrors[index]);
+    });
+  }
+  state.sourceDateCells = new WeakMap();
+  if (Array.isArray(dateCells) && dateCells.length === rows.length) {
+    rows.forEach((row, index) => {
+      if (dateCells[index]) state.sourceDateCells.set(row, dateCells[index]);
     });
   }
   state.placeholderConfirmations = Object.create(null);
@@ -1946,6 +1956,7 @@ function resetAnalysisState() {
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
+  state.sourceDateCells = new WeakMap();
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];
   state.manualFieldTypes = Object.create(null);
