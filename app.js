@@ -35,6 +35,11 @@ const state = {
   // Row object -> { field: true } for Excel date cells, which read as YYYY-MM-DD text; set
   // only by commitTabularData() from an Excel import.
   sourceDateCells: new WeakMap(),
+  // buildDateStyleSummary(); imports, field configuration and placeholder confirmations
+  // rebuild it, filters do not.
+  dateStyles: [],
+  // createFormatScans(): what that summary reads from the rows; only imports replace it.
+  formatScans: createFormatScans(),
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -230,6 +235,12 @@ function showResultsWorkspace() {
   });
 }
 
+// The format-consistency summaries: on import, field configuration and placeholder
+// confirmations, never on a filter.
+function refreshFormatConsistency() {
+  state.dateStyles = buildDateStyleSummary(state.rows, state.profiles, (row) => state.sourceDateCells.get(row), getSourceRowNumber, state.formatScans);
+}
+
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
 // rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
@@ -278,6 +289,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
       if (formulaErrors[index]) state.sourceFormulaErrors.set(row, formulaErrors[index]);
     });
   }
+  state.formatScans = createFormatScans();
   state.sourceDateCells = new WeakMap();
   if (Array.isArray(dateCells) && dateCells.length === rows.length) {
     rows.forEach((row, index) => {
@@ -297,6 +309,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.totalLabelRows = findTotalLabelRows(rows, fields);
   state.suspectedTotals = buildSuspectedTotalSummary(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
+  refreshFormatConsistency();
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   // No filter yet: the analysis rows are the original rows, so one calculation serves both.
   // The two share one array; nothing may modify it in place.
@@ -1101,6 +1114,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  refreshFormatConsistency();
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1956,6 +1970,8 @@ function resetAnalysisState() {
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
+  state.formatScans = createFormatScans();
+  state.dateStyles = [];
   state.sourceDateCells = new WeakMap();
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];

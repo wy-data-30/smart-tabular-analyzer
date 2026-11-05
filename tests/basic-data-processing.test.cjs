@@ -5368,3 +5368,199 @@ test("v2.9.0 state: a commit replaces the date cells and resetAnalysisState() cl
   cleared.evaluate("resetAnalysisState()");
   assert.equal(cleared.evaluate("state.sourceDateCells.has(__keptRow)"), false);
 });
+
+const dateStylesOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.dateStyles)"));
+const setFieldType = (scope, field, typeKey) => scope.evaluate(`state.fieldTypeDrafts[${JSON.stringify(field)}] = ${JSON.stringify(typeKey)}; applyFieldConfiguration()`);
+
+// [written, order, style].
+const DATE_STYLE_CASES = [
+  ["2024-05-06", "none", "ymdDash"], ["2024-5-6", "none", "ymdDash"], ["2024/05/06", "none", "ymdSlash"], ["2024/5/6", "none", "ymdSlash"],
+  ["2024.5.6", "none", "ymdDot"], ["2024年5月6日", "none", "chinese"], ["2024年5月6", "none", "chinese"], ["2024 年 5 月 6 日", "none", "chinese"],
+  ["2024-05-06 10:30", "none", "ymdDash"], ["2024-05-06T10:30:00Z", "none", "ymdDash"], ["06/05/2024", "dmy", "dmy"], ["06/05/2024", "mdy", "mdy"],
+  ["06-05-2024", "dmy", "dmy"], ["06.05.2024", "mdy", "mdy"],
+  ["06/05/2024", "none", null], ["06/05/2024", "conflict", null], ["05/05/2024", "none", "dayMonthSame"], ["05/05/2024", "conflict", "dayMonthSame"],
+  ["05/05/2024", "dmy", "dmy"], ["13/05/2024", "conflict", "dmy"], ["05/13/2024", "conflict", "mdy"], ["13/05/2024", "mdy", "dmy"],
+  ["May 6, 2024", "none", "english"], ["6 May 2024", "none", "english"], ["Mon, 6 May 2024", "none", "english"], ["2024-May-06", "none", "english"],
+  ["\u00A02024/5/6 ", "none", "ymdSlash"], ["\u30002024年5月6日", "none", "chinese"], ["2024-13-01", "none", null], ["2024/5/6/7", "none", null],
+  ["待定", "none", null], ["20240506", "none", null], ["", "none", null], ["N/A", "none", null]
+];
+
+test("v2.9.0 dateStyleOf: each writing's style, padding and a time part make no new style", () => {
+  const { evaluate, context } = createScriptContext();
+  for (const [text, order, style] of DATE_STYLE_CASES) {
+    put(context, "__text", text);
+    assert.equal(evaluate(`dateStyleOf(__text, { order: ${JSON.stringify(order)} })`), style, `${text} ${order}`);
+  }
+  assert.equal(evaluate('dateStyleOf("2024", { allowYearOnly: true, order: "none" })'), "yearOnly");
+  assert.equal(evaluate('dateStyleOf("2024年", { allowYearOnly: true, order: "none" })'), "yearOnly");
+  assert.equal(evaluate('dateStyleOf("2024", { order: "none" })'), null);
+});
+
+test("v2.9.0 guard: dateStyleOf() is null exactly when toDate() is null", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const days = ["1", "01", "6", "06", "12", "13", "29", "31", "32", "0", "00"];
+    const years = ["2024", "1999", "0999", "24", "20240"];
+    const times = ["", " 10:30", "T10:30:00Z", " 25:00", " 10:30:00.123+08:00", " 10:30 PM"];
+    const months = ["May", "may.", "sept", "Foo", "december"];
+    const texts = [];
+    for (const year of years) for (const month of days) for (const day of days) for (const time of times) {
+      for (const separator of ["-", "/", ".", " ", ""]) {
+        texts.push(year + separator + month + separator + day + time, day + separator + month + separator + year + time);
+      }
+      texts.push(year + "年" + month + "月" + day + "日" + time, year + " 年 " + month + " 月 " + day + time);
+    }
+    for (const month of months) for (const day of days) for (const year of years) for (const time of times) {
+      texts.push(month + " " + day + ", " + year + time, day + " " + month + " " + year + time, "Mon, " + day + " " + month + " " + year + time, year + "-" + month + "-" + day);
+    }
+    const strategies = [{ order: "none" }, { order: "dmy" }, { order: "mdy" }, { order: "conflict" }, { order: "none", allowYearOnly: true }];
+    let checked = 0;
+    let readable = 0;
+    const mismatches = [];
+    const styles = new Set();
+    for (const text of [...texts, "2024", "2024年", " 2024 ", "", " ", "N/A", "—"]) {
+      for (const strategy of strategies) {
+        for (const value of [text, " " + text + "\\u3000"]) {
+          const style = dateStyleOf(value, strategy);
+          const date = toDate(value, strategy);
+          checked += 1;
+          if (date) readable += 1;
+          if (style) styles.add(style);
+          if ((style === null) !== (date === null)) mismatches.push([value, strategy.order, style]);
+        }
+      }
+    }
+    return { checked, readable, mismatches: mismatches.slice(0, 10), styles: [...styles].sort() };
+  })())`));
+  assert.deepEqual(result.mismatches, []);
+  assert.ok(result.checked > 100000, String(result.checked));
+  assert.ok(result.readable > 5000, String(result.readable));
+  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
+});
+
+test("v2.9.0 date styles: the fixture and the roster, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  const expected = knownIssues["写法不一致.csv"].dateStyles;
+  const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
+  assert.deepEqual(dateStylesOf(writing).map(({ field, mainKey, otherCount, styles }) => ({ field, mainKey, otherCount, styles })), expected.map(({ field, mainKey, otherCount, styles }) => ({ field, mainKey, otherCount, styles })));
+  const roster = scopes.find(([name]) => name === "花名册.xlsx")[1];
+  assert.deepEqual(dateStylesOf(roster), [{
+    field: "入职日期", mainKey: "excelCell", otherCount: 6,
+    styles: [
+      { key: "excelCell", count: 24, sample: "2016-04-01", firstLine: 2 },
+      { key: "ymdSlash", count: 2, sample: "2021/3/5", firstLine: 6 },
+      { key: "chinese", count: 2, sample: "2021年3月5日", firstLine: 10 },
+      { key: "ymdDot", count: 2, sample: "2021.03.05", firstLine: 15 }
+    ]
+  }]);
+  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx"]);
+});
+
+test("v2.9.0 date styles: the most frequent style is the main one, ties go to the first seen", async () => {
+  // The first value is not the most frequent one, so the order tells the rule apart.
+  const scope = await importCsvFile("日期,序\r\n2024/1/1,1\r\n2024-01-02,2\r\n2024-01-03,3\r\n2024.1.4,4\r\n2024.1.5,5\r\n", "m.csv");
+  assert.deepEqual(dateStylesOf(scope)[0].styles.map(({ key, count }) => [key, count]), [["ymdDash", 2], ["ymdDot", 2], ["ymdSlash", 1]]);
+  assert.equal(dateStylesOf(scope)[0].mainKey, "ymdDash");
+  assert.equal(dateStylesOf(scope)[0].otherCount, 3);
+  // Padding and a time part alone are one style.
+  const same = await importCsvFile("日期,序\r\n2024-1-1,1\r\n2024-01-02,2\r\n2024-01-03 10:30,3\r\n", "s.csv");
+  assert.deepEqual(dateStylesOf(same), []);
+  // A value that cannot be read is a format problem, not a style.
+  const unread = await importCsvFile("日期,序\r\n2024-01-01,1\r\n2024-01-02,2\r\n2024-01-03,3\r\n2024-01-04,4\r\n待定,5\r\n", "u.csv");
+  assert.equal(unread.evaluate("state.profiles[0].typeKey"), "date");
+  assert.deepEqual(dateStylesOf(unread), []);
+});
+
+test("v2.9.0 a field read by year has no date styles", async () => {
+  const scope = await importCsvFile(`年份\r\n${["2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024/1/1"].join("\r\n")}\r\n`, "y.csv");
+  assert.equal(scope.evaluate("state.profiles[0].typeKey"), "date");
+  assert.equal(scope.evaluate("state.profiles[0].dateStrategy.granularity"), "year");
+  assert.deepEqual(dateStylesOf(scope), []);
+});
+
+test("v2.9.0 date styles follow the field configuration and confirmations, not the filters", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  writing.evaluate('__styles = state.dateStyles; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__styles === state.dateStyles"), true);
+  assert.equal(writing.evaluate("getAnalysisRows().length"), 3);
+  setFieldType(writing, "下单日期", "category");
+  assert.deepEqual(dateStylesOf(writing), []);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(dateStylesOf(writing)[0].otherCount, 6);
+  // A confirmation rebuilds them too, with the same result.
+  writing.evaluate('__styles = state.dateStyles; confirmPlaceholder("客户", "N/A")');
+  assert.equal(writing.evaluate("__styles === state.dateStyles"), false);
+  assert.equal(dateStylesOf(writing)[0].otherCount, 6);
+
+  // A text field made a date field is read then, with its own strategy.
+  const later = await importCsvFile("文字,序\r\n2024-01-01,1\r\n2024/1/2,2\r\nx,3\r\ny,4\r\nz,5\r\n", "l.csv");
+  assert.equal(later.evaluate("state.profiles[0].typeKey"), "category");
+  assert.deepEqual(dateStylesOf(later), []);
+  setFieldType(later, "文字", "date");
+  assert.deepEqual(dateStylesOf(later)[0].styles.map(({ key, count }) => [key, count]), [["ymdDash", 1], ["ymdSlash", 1]]);
+
+  const roster = await importStage3Fixture("花名册.xlsx");
+  setFieldType(roster, "入职日期", "category");
+  assert.deepEqual(dateStylesOf(roster), []);
+  setFieldType(roster, "入职日期", "date");
+  assert.equal(dateStylesOf(roster)[0].otherCount, 6);
+});
+
+test("v2.9.0 a rebuild reads the date cells only for a field it has not scanned yet", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const count = (action) => scope.evaluate(`(() => {
+    const each = forEachDateStyle;
+    let calls = 0;
+    forEachDateStyle = (...args) => { calls += 1; return each(...args); };
+    ${action};
+    forEachDateStyle = each;
+    return calls;
+  })()`);
+  assert.equal(count("applyFieldConfiguration()"), 0);
+  assert.equal(count('confirmPlaceholder("客户", "N/A")'), 0);
+  assert.equal(count('state.fieldTypeDrafts["状态"] = "date"; applyFieldConfiguration()'), 1);
+  assert.equal(count('state.fieldTypeDrafts["状态"] = "category"; applyFieldConfiguration()'), 0);
+  // Each distinct text is classified once: 3000 rows, 3 texts.
+  const small = createScriptContext();
+  put(small.context, "__rows", Array.from({ length: 3000 }, (_, index) => ({ 日期: ["2024-01-01", "2024/1/2", "2024.1.3"][index % 3] })));
+  assert.equal(small.evaluate(`(() => {
+    const style = dateStyleOf;
+    let calls = 0;
+    dateStyleOf = (...args) => { calls += 1; return style(...args); };
+    const profile = buildColumnProfile("日期", __rows);
+    buildDateStyleSummary(__rows, [profile], () => undefined, () => null);
+    dateStyleOf = style;
+    return calls;
+  })()`), 3);
+});
+
+test("v2.9.0 state: a later commit and resetAnalysisState() replace the date styles and their scans", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  // The same field name with other cells, without beginImport().
+  scope.evaluate('commitTabularData(["下单日期"], Array.from({ length: 3 }, (_, index) => ({ 下单日期: "2024-01-0" + (index + 1) })), "later.csv", state.activeImportId)');
+  assert.deepEqual(dateStylesOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  assert.equal(dateStylesOf(cleared).length, 1);
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(dateStylesOf(cleared), []);
+  assert.equal(cleared.evaluate("state.formatScans.dateStyles.size"), 0);
+});
+
+test("v2.9.0 texts: the date style line and how whitespace is shown", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.equal(roster.evaluate("formatDateStyleLine(state.dateStyles[0])"), "「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。");
+  const { evaluate, context } = createScriptContext();
+  const shown = (text) => {
+    put(context, "__text", text);
+    return evaluate("formatVisibleText(__text)");
+  };
+  assert.equal(shown("华东 "), "华东␣");
+  assert.equal(shown("  华东"), "␣␣华东");
+  assert.equal(shown("上海  浦东"), "上海␣␣浦东");
+  assert.equal(shown("上海 浦东"), "上海 浦东");
+  assert.equal(shown("\u3000华东\u00A0"), "[全角空格]华东[不换行空格]");
+  assert.equal(shown("华\u200B东\uFEFF"), "华[零宽字符]东[零宽字符]");
+  assert.equal(shown("华\u00AD东\u200E"), "华[软连字符]东[方向符]");
+  assert.equal(shown("a\tb"), "a[制表符]b");
+  assert.equal(shown("\u2003x"), "[空白]x");
+});

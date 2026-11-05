@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -441,6 +441,62 @@ function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
   return fields.flatMap((field) => (byField.has(field) ? [byField.get(field)] : []));
 }
 
+// ---- Format consistency: date styles, constant columns, look-alike values ----
+
+// Scans of the imported rows that a rebuild can reuse, like state.totalLabelRows: a field's
+// date styles depend only on its cells, its date cells and its date strategy, which stays the
+// same for a field not read by year (placeholders give no order evidence, contract 17).
+function createFormatScans() {
+  return { dateStyles: new Map() };
+}
+
+// Calls visit(index, style, value) for every row of a field with a date style, the Excel
+// date cell first. Each distinct text is classified once.
+function forEachDateStyle(rows, profile, getDateCells, visit) {
+  const field = profile.field;
+  const styleByText = new Map();
+  rows.forEach((row, index) => {
+    const value = row[field];
+    let style;
+    if (getDateCells(row)?.[field]) {
+      style = DATE_STYLE_EXCEL_CELL;
+    } else {
+      style = styleByText.get(value);
+      if (style === undefined) {
+        style = dateStyleOf(value, profile.dateStrategy);
+        styleByText.set(value, style);
+      }
+    }
+    if (style) visit(index, style, value);
+  });
+}
+
+function scanDateStyles(rows, profile, getDateCells, getRowNumber, scans) {
+  const cached = scans.dateStyles.get(profile.field);
+  if (cached) return cached;
+  const styles = new Map();
+  forEachDateStyle(rows, profile, getDateCells, (index, key, value) => {
+    const style = styles.get(key);
+    if (style) style.count += 1;
+    else styles.set(key, { key, count: 1, sample: displayValue(value), firstLine: getRowNumber(rows[index]) });
+  });
+  const sorted = [...styles.values()].sort((a, b) => b.count - a.count);
+  scans.dateStyles.set(profile.field, sorted);
+  return sorted;
+}
+
+// Fields whose readable dates are written in two or more styles, in field order: applied
+// date fields that are not read by year. { field, styles: [{ key, count, sample, firstLine }],
+// mainKey, otherCount }: styles run from most to fewest values, ties by first appearance,
+// and the first is the main one.
+function buildDateStyleSummary(rows, profiles, getDateCells, getRowNumber, scans = createFormatScans()) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey !== "date" || profile.dateStrategy?.granularity === "year") return [];
+    const sorted = scanDateStyles(rows, profile, getDateCells, getRowNumber, scans);
+    if (sorted.length < 2) return [];
+    return [{ field: profile.field, styles: sorted, mainKey: sorted[0].key, otherCount: sorted.slice(1).reduce((sum, style) => sum + style.count, 0) }];
+  });
+}
 // ---- Problem rows: the rows behind each quality-page count ----
 // A category is { kind, field, key } with kind one of missing, formulaError, conversion,
 // outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every

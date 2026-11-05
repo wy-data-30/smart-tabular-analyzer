@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行和公式错误单元格的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格和日期写法的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -317,6 +317,45 @@ function formatPlaceholderNotes(keys) {
     : "";
 }
 
+// Names of the date styles, as a user would recognise them in Excel.
+const DATE_STYLE_NAMES = Object.freeze({
+  excelCell: "Excel 日期单元格",
+  ymdDash: "文本 年-月-日",
+  ymdSlash: "文本 年/月/日",
+  ymdDot: "文本 年.月.日",
+  chinese: "文本 中文年月日",
+  dmy: "文本 日/月/年",
+  mdy: "文本 月/日/年",
+  dayMonthSame: "文本 日和月相同（看不出先后）",
+  english: "文本 英文月份",
+  yearOnly: "只写年份"
+});
+
+const VISIBLE_TEXT_NAMES = Object.freeze({
+  "\t": "[制表符]", "\n": "[换行]", "\r": "[换行]", "\u00A0": "[不换行空格]", "\u3000": "[全角空格]",
+  "\u00AD": "[软连字符]", "\u200E": "[方向符]", "\u200F": "[方向符]",
+  "\u200B": "[零宽字符]", "\u200C": "[零宽字符]", "\u200D": "[零宽字符]", "\u2060": "[零宽字符]", "\uFEFF": "[零宽字符]"
+});
+const VISIBLE_TEXT_PATTERN = new RegExp(`[\\s${INVISIBLE_CHARACTER_CLASS}]`, "g");
+
+// A text with its whitespace and invisible characters shown: "␣" for a half-width space at
+// an end or in a run (a single space inside stays), a name in brackets for the others.
+// Plain text; callers escape it for their output format.
+function formatVisibleText(text) {
+  return String(text)
+    .replace(/^ +| +$| {2,}/g, (spaces) => "␣".repeat(spaces.length))
+    .replace(VISIBLE_TEXT_PATTERN, (character) => (character === " " ? " " : VISIBLE_TEXT_NAMES[character] || "[空白]"));
+}
+
+function formatDateStylePart({ key, count, sample }) {
+  return `${DATE_STYLE_NAMES[key]} ${formatInteger(count)} 个（如 ${formatVisibleText(sample)}）`;
+}
+
+// 「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、…。
+function formatDateStyleLine({ field, styles, otherCount }) {
+  const [main, ...others] = styles;
+  return `「${field}」：主写法是 ${formatDateStylePart(main)}；另有 ${formatInteger(otherCount)} 行是别的写法：${others.map(formatDateStylePart).join("、")}。`;
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
