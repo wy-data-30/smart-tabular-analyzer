@@ -1636,7 +1636,7 @@ const LINE_NUMBER_CSV_LINES = [
 ];
 
 test("CSV row numbers are the same for LF, CR-only and CRLF with a BOM", async () => {
-  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "﻿"]]) {
+  for (const [label, linebreak, bom] of [["LF", "\n", ""], ["CR", "\r", ""], ["CRLF+BOM", "\r\n", "\uFEFF"]]) {
     const scope = await importCsvFile(`${bom}${LINE_NUMBER_CSV_LINES.join(linebreak)}${linebreak}`);
     assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => row[\"学号\"]))")), ["S01", "S02", "S01", "S03"], label);
     assert.deepEqual(sourceRowNumbers(scope.evaluate), [4, 5, 9, 11], label);
