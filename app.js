@@ -35,11 +35,12 @@ const state = {
   // Row object -> { field: true } for Excel date cells, which read as YYYY-MM-DD text; set
   // only by commitTabularData() from an Excel import.
   sourceDateCells: new WeakMap(),
-  // buildDateStyleSummary() and buildConstantFieldSummary(); imports, field configuration and
-  // placeholder confirmations rebuild them, filters do not.
+  // buildDateStyleSummary(), buildConstantFieldSummary() and buildLookAlikeSummary(); imports,
+  // field configuration and placeholder confirmations rebuild them, filters do not.
   dateStyles: [],
   constantFields: [],
-  // createFormatScans(): what that summary reads from the rows; only imports replace it.
+  lookAlikes: [],
+  // createFormatScans(): what those summaries read from the rows; only imports replace it.
   formatScans: createFormatScans(),
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
@@ -241,6 +242,7 @@ function showResultsWorkspace() {
 function refreshFormatConsistency() {
   state.dateStyles = buildDateStyleSummary(state.rows, state.profiles, (row) => state.sourceDateCells.get(row), getSourceRowNumber, state.formatScans);
   state.constantFields = buildConstantFieldSummary(state.profiles);
+  state.lookAlikes = buildLookAlikeSummary(state.rows, state.profiles, state.formatScans);
 }
 
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
@@ -1975,6 +1977,7 @@ function resetAnalysisState() {
   state.formatScans = createFormatScans();
   state.dateStyles = [];
   state.constantFields = [];
+  state.lookAlikes = [];
   state.sourceDateCells = new WeakMap();
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];

@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法和常量列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -359,6 +359,30 @@ function formatDateStyleLine({ field, styles, otherCount }) {
 // 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。
 function formatConstantField({ field, value, count, missingCount }) {
   return `「${field}」：只有一种取值「${formatVisibleText(value)}」（${formatInteger(count)} 行）${missingCount ? `，另有 ${formatInteger(missingCount)} 行缺失` : ""}。`;
+}
+
+const LOOK_ALIKE_REASON_NAMES = Object.freeze({ compat: "全角半角或兼容写法", case: "大小写", invisible: "不可见字符", innerSpace: "中间空格多少" });
+
+function formatLookAlikeReasons(reasons) {
+  return reasons.map((reason) => LOOK_ALIKE_REASON_NAMES[reason]).join("、");
+}
+
+// 「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）
+function formatLookAlikeGroup({ variants, variantCount = variants.length, reasons }) {
+  const texts = variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个`).join(" / ");
+  return `${texts}${variantCount > variants.length ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`;
+}
+
+// 「区域」共 18 行：首尾空格 2 格（如「华东␣」）；只有不可见字符 1 格；3 组写法不同：…；…。
+function formatLookAlikeLine({ field, edgeSpaceCount, edgeSample, invisibleOnlyCount = 0, groups, groupCount, rowCount }) {
+  const parts = [];
+  if (edgeSpaceCount) parts.push(`首尾空格 ${formatInteger(edgeSpaceCount)} 格（如「${formatVisibleText(edgeSample)}」）`);
+  if (invisibleOnlyCount) parts.push(`只有不可见字符 ${formatInteger(invisibleOnlyCount)} 格`);
+  if (groupCount) {
+    const overflow = groupCount > groups.length ? `，只列出前 ${groups.length} 组` : "";
+    parts.push(`${formatInteger(groupCount)} 组写法不同${overflow}：${groups.map(formatLookAlikeGroup).join("；")}`);
+  }
+  return `「${field}」共 ${formatInteger(rowCount)} 行：${parts.join("；")}。`;
 }
 
 function escapeHtml(value) {

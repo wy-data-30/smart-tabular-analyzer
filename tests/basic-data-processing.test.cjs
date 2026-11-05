@@ -5645,3 +5645,201 @@ test("v2.9.0 constant columns read the profiles only, and a commit or reset repl
   cleared.evaluate("resetAnalysisState()");
   assert.deepEqual(constantsOf(cleared), []);
 });
+
+const lookAlikesOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.lookAlikes)"));
+
+test("v2.9.0 hasEdgeWhitespace() agrees with trim() on every UTF-16 unit at either end", () => {
+  const { evaluate } = createScriptContext();
+  const mismatches = JSON.parse(evaluate(`JSON.stringify((() => {
+    const bad = [];
+    for (let code = 0; code <= 0xffff; code += 1) {
+      const character = String.fromCharCode(code);
+      for (const text of [character + "x", "x" + character, "x" + character + "x"]) {
+        if (hasEdgeWhitespace(text) !== (text.trim() !== text)) bad.push(code);
+      }
+    }
+    return bad.slice(0, 10);
+  })())`));
+  assert.deepEqual(mismatches, []);
+  assert.equal(evaluate('hasEdgeWhitespace("\\u200b华东")'), false);
+  assert.equal(evaluate('hasEdgeWhitespace("\\ufeff华东")'), true);
+  assert.equal(evaluate('hasEdgeWhitespace("")'), false);
+});
+
+test("v2.9.0 lookAlikeKey: what merges and what stays apart", () => {
+  const { evaluate, context } = createScriptContext();
+  const same = (a, b) => {
+    put(context, "__a", a);
+    put(context, "__b", b);
+    return evaluate("lookAlikeKey(__a) === lookAlikeKey(__b)");
+  };
+  for (const [a, b] of [
+    ["ABC公司", "\uFF21\uFF22\uFF23公司"], ["ABC公司", "abc公司"], ["华东（一）", "华东(一)"], ["华东", "华东\u200B"], ["华东", "\u200B华东"], ["华东", "华\u200B东"],
+    ["华东", "华\u200C东"], ["华东", "华\u200D东"], ["华东", "华\u2060东"], ["华东", "华\uFEFF东"], ["华东", "华东\u00AD"], ["华东", "华\u00AD东"], ["华东", "华东\u200E"], ["华东", "华东\u200F"],
+    ["上海  浦东", "上海 浦东"], ["上海\u3000浦东", "上海 浦东"], ["上海\t浦东", "上海 浦东"],
+    ["Ⅱ", "II"], ["①", "1"], ["ﾃｽﾄ", "テスト"], ["İ", "i̇"], ["K", "k"], ["㎡", "m2"], ["华东 \u200B", "华东"]
+  ]) assert.equal(same(a, b), true, `${a} / ${b}`);
+  for (const [a, b] of [["上海 浦东", "上海浦东"], ["华东", "华东区"], ["華东", "华东"], ["张 三", "张三"], ["ı", "i"], ["华东", "华东\uFE0F"]]) assert.equal(same(a, b), false, `${a} / ${b}`);
+  for (const text of ["\u200B\u200C", "\u00AD", "\u200E", "\u200F", "\u2060"]) {
+    put(context, "__text", text);
+    assert.equal(evaluate("lookAlikeKey(__text)"), "", text);
+  }
+});
+
+test("v2.9.0 lookAlikeKey leaves pure ASCII texts out of NFKC", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__rows", Array.from({ length: 200 }, (_, index) => ({ 编号: `ORDER-LONG-${index}` })));
+  const calls = scope.evaluate(`(() => {
+    const original = String.prototype.normalize;
+    let count = 0;
+    String.prototype.normalize = function (...args) { count += 1; return original.apply(this, args); };
+    buildLookAlikeSummary(__rows, [{ field: "编号", typeKey: "id" }]);
+    String.prototype.normalize = original;
+    return count;
+  })()`);
+  assert.equal(calls, 0);
+});
+
+test("v2.9.0 lookAlikeReasons: one writing's difference names only its own reason", () => {
+  const { evaluate, context } = createScriptContext();
+  const reasons = (texts) => {
+    put(context, "__texts", texts);
+    return JSON.parse(evaluate("JSON.stringify(lookAlikeReasons(__texts))"));
+  };
+  assert.deepEqual(reasons(["ABC", "abc"]), ["case"]);
+  assert.deepEqual(reasons(["ABC", "\uFF21\uFF22\uFF23"]), ["compat"]);
+  assert.deepEqual(reasons(["HD", "\uFF28\uFF24", "hd"]), ["compat", "case"]);
+  // Both full-width, one with a zero-width character: not a width difference.
+  assert.deepEqual(reasons(["\uFF21\uFF22", "\uFF21\uFF22\u200B"]), ["invisible"]);
+  assert.deepEqual(reasons(["华东", "华东\u00AD", "华东\u200E"]), ["invisible"]);
+  assert.deepEqual(reasons(["上海 浦东", "上海  浦东"]), ["innerSpace"]);
+  assert.deepEqual(reasons(["上海 浦东", "上海\u3000浦东"]), ["compat"]);
+  assert.deepEqual(reasons(["华东 \u200B", "华东"]), ["invisible"]);
+  // Either step alone unifies the Kelvin sign and K: still some reason.
+  assert.deepEqual(reasons(["K", "K"]), ["compat"]);
+});
+
+test("v2.9.0 look-alike values: the fixture, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
+  const summary = lookAlikesOf(writing);
+  assert.deepEqual(summary.map(({ field, edgeSpaceCount, groupCount, rowCount, groups }) => ({
+    field, edgeSpaceCount, groupCount, rowCount,
+    groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
+  })), knownIssues["写法不一致.csv"].lookAlikes);
+  assert.ok(summary.every((item) => item.invisibleOnlyCount === 0));
+  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv"]);
+  // ID duplicates and look-alikes count apart: SKU-002 with a space is a duplicate value and
+  // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
+  assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
+  assert.equal(summary[0].edgeSpaceCount, 1);
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 18 行：首尾空格 2 格（如「华东␣」）；3 组写法不同：「华东」10 个 / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个 / 「上海␣␣浦东」1 个（中间空格多少）。");
+});
+
+test("v2.9.0 look-alike values skip placeholders, numbers and dates", async () => {
+  const scope = await importCsvFile("分类,数值,日期\r\n N/A,1,2024-01-01\r\nn/a,1.0,2024-01-02\r\nx , 1,2024-01-03 \r\nx,1,2024-01-04\r\ny,2,2024-01-05\r\n", "l.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "numeric", "date"]);
+  assert.deepEqual(lookAlikesOf(scope).map((item) => [item.field, item.edgeSpaceCount, item.groupCount, item.rowCount]), [["分类", 1, 0, 1]]);
+});
+
+test("v2.9.0 cells of nothing but invisible characters are counted per field", async () => {
+  const scope = await importCsvFile("备注,序\r\n\u200B,1\r\n\u00AD,2\r\n\u200E,3\r\n甲,4\r\n乙,5\r\n丙,6\r\n", "z.csv");
+  // They are not missing values: trim() cannot remove them.
+  assert.equal(scope.evaluate('getFieldProfile("备注").missingCount'), 0);
+  const [item] = lookAlikesOf(scope);
+  assert.deepEqual([item.field, item.invisibleOnlyCount, item.edgeSpaceCount, item.groupCount, item.rowCount], ["备注", 3, 0, 0, 3]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「备注」共 3 行：只有不可见字符 3 格。");
+  // With other findings, and a cell with both counts in both but once in the rows.
+  const mixed = await importCsvFile("备注,序\r\n\u200B ,1\r\n甲 ,2\r\nAB,3\r\nab,4\r\n丙,5\r\n", "m.csv");
+  const [both] = lookAlikesOf(mixed);
+  assert.deepEqual([both.invisibleOnlyCount, both.edgeSpaceCount, both.groupCount, both.rowCount], [1, 2, 1, 4]);
+  assert.match(mixed.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /共 4 行：首尾空格 2 格.*只有不可见字符 1 格；1 组写法不同/);
+  // Zero stays out of the line.
+  const none = await importCsvFile("备注,序\r\nAB,1\r\nab,2\r\n", "n.csv");
+  assert.doesNotMatch(none.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /不可见字符/);
+  // Fields that are not category or ID are not read.
+  const numeric = await importCsvFile("金额,序\r\n1,1\r\n2,2\r\n3,3\r\n4,4\r\n5,5\r\n6,6\r\n7,7\r\n8,8\r\n9,9\r\n\u200B,10\r\n", "o.csv");
+  assert.equal(numeric.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  assert.deepEqual(lookAlikesOf(numeric), []);
+});
+
+test("v2.9.0 look-alike lists stop at the limits but count everything", async () => {
+  const many = Array.from({ length: 12 }, (_, index) => [`K${index}`, `k${index}`]).flat();
+  const overflow = await importCsvFile(`分类\r\n${many.join("\r\n")}\r\n`, "o.csv");
+  const [item] = lookAlikesOf(overflow);
+  assert.deepEqual([item.groups.length, item.groupCount, item.rowCount], [10, 12, 24]);
+  assert.match(overflow.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /12 组写法不同，只列出前 10 组：/);
+  // Twelve writings of one value: ten shown and how many there are.
+  const spellings = ["abcd", "Abcd", "aBcd", "abCd", "abcD", "ABcd", "AbCd", "AbcD", "aBCd", "aBcD", "abCD", "ABCd"];
+  const variants = await importCsvFile(`分类,序\r\n${spellings.map((text, index) => `${text},${index}`).join("\r\n")}\r\n`, "v.csv");
+  // 12 distinct values of 12 make it an ID field by uniqueness: still read.
+  const [group] = lookAlikesOf(variants)[0].groups;
+  assert.deepEqual([group.variants.length, group.variantCount, group.rowCount], [10, 12, 12]);
+  assert.match(variants.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), / 等 12 种（大小写）/);
+  // Groups by rows, most first; writings by count, most first, not by first appearance.
+  const sorted = await importCsvFile("分类,序\r\nx,1\r\nA,2\r\nb,3\r\nB,4\r\nB,5\r\nB,6\r\nX,7\r\n", "s.csv");
+  assert.deepEqual(lookAlikesOf(sorted)[0].groups.map((entry) => entry.variants.map(({ text, count }) => [text, count])), [[["B", 3], ["b", 1]], [["x", 1], ["X", 1]]]);
+});
+
+test("v2.9.0 look-alike work runs once per distinct text, and a rebuild reuses it", async () => {
+  const small = createScriptContext();
+  put(small.context, "__rows", Array.from({ length: 3000 }, (_, index) => ({ 城市: ["上海", "北京", "abc"][index % 3] })));
+  assert.equal(small.evaluate(`(() => {
+    const original = lookAlikeKey;
+    let count = 0;
+    lookAlikeKey = (text) => { count += 1; return original(text); };
+    const profile = buildColumnProfile("城市", __rows);
+    buildLookAlikeSummary(__rows, [profile]);
+    lookAlikeKey = original;
+    return count;
+  })()`), 3);
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const count = (action) => scope.evaluate(`(() => {
+    const collect = collectFieldWritings;
+    let calls = 0;
+    collectFieldWritings = (...args) => { calls += 1; return collect(...args); };
+    ${action};
+    collectFieldWritings = collect;
+    return calls;
+  })()`);
+  assert.equal(count("applyFieldConfiguration()"), 0);
+  assert.equal(count('confirmPlaceholder("客户", "N/A")'), 0);
+  // 金额 was numeric on import, so this is its first scan.
+  assert.equal(count('state.fieldTypeDrafts["金额"] = "category"; applyFieldConfiguration()'), 1);
+  assert.equal(count('state.fieldTypeDrafts["金额"] = "numeric"; applyFieldConfiguration()'), 0);
+});
+
+test("v2.9.0 look-alike values follow the field configuration, not the filters or confirmations", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  const fields = () => lookAlikesOf(writing).map((item) => item.field);
+  writing.evaluate('__looks = state.lookAlikes; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__looks === state.lookAlikes"), true);
+  setFieldType(writing, "区域", "ignore");
+  assert.deepEqual(fields(), ["商品编号", "客户"]);
+  setFieldType(writing, "区域", "numeric");
+  assert.deepEqual(fields(), ["商品编号", "客户"]);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fields(), ["商品编号", "区域", "客户"]);
+  // Placeholder spellings are left out, confirmed or not: confirming moves nothing.
+  const before = JSON.stringify(lookAlikesOf(writing));
+  writing.evaluate('confirmPlaceholder("客户", "N/A"); confirmPlaceholder("客户", "n/a")');
+  assert.equal(JSON.stringify(lookAlikesOf(writing)), before);
+  writing.evaluate('undoPlaceholderConfirmation("客户", "N/A")');
+  assert.equal(JSON.stringify(lookAlikesOf(writing)), before);
+  // The roster's date column as a category holds nothing to report.
+  const roster = await importStage3Fixture("花名册.xlsx");
+  setFieldType(roster, "入职日期", "category");
+  assert.deepEqual(lookAlikesOf(roster), []);
+});
+
+test("v2.9.0 state: a later commit and resetAnalysisState() replace the look-alike values and scans", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  assert.equal(lookAlikesOf(scope).length, 3);
+  // The same field name with other cells, without beginImport().
+  scope.evaluate('commitTabularData(["区域"], [{ 区域: "甲" }, { 区域: "乙" }], "later.csv", state.activeImportId)');
+  assert.deepEqual(lookAlikesOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(lookAlikesOf(cleared), []);
+  assert.equal(cleared.evaluate("state.formatScans.writings.size"), 0);
+});
