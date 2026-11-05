@@ -1,4 +1,4 @@
-// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，最后交给 commitTabularData() 提交。
+// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。
 
 const ENCODING_LABELS = {
   auto: "自动识别",
@@ -122,17 +122,17 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null } = readExcelSheetTable(worksheet, sheetName);
+  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null } = readExcelSheetTable(worksheet, sheetName);
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers, formulaErrors);
 }
 
 // Reads one worksheet into { fields, rows, rowNumbers, numberFormatHints } plus
-// headerDetection when title rows above the header were skipped. Row numbers
-// follow the !ref start.
+// headerDetection when title rows above the header were skipped and formulaErrors
+// when cells hold formula errors. Row numbers follow the !ref start.
 function readExcelSheetTable(worksheet, sheetName) {
   validateExcelWorksheetLimits(worksheet, sheetName);
 
@@ -147,7 +147,8 @@ function readExcelSheetTable(worksheet, sheetName) {
     rawRows,
     sheetName,
     createExcelNumberFormatReader(worksheet),
-    XLSX.utils.decode_range(worksheet["!ref"]).s.r + 1
+    XLSX.utils.decode_range(worksheet["!ref"]).s.r + 1,
+    createExcelCellErrorReader(worksheet)
   );
 }
 
@@ -158,8 +159,8 @@ const EXCEL_FORMAT_SAMPLE_ROWS = 1000;
 
 // Returns a reader for one sheet_to_json({ header: 1 }) row index: numeric
 // cells get cell.z, every other position stays empty. Formatted text (cell.w)
-// is never used because it depends on the runtime time zone and can shift
-// dates by one day.
+// is not used for values because it depends on the runtime time zone and can shift
+// dates by one day; only error cells read it (readExcelErrorText()).
 function createExcelNumberFormatReader(worksheet) {
   const range = XLSX.utils.decode_range(worksheet["!ref"]);
   const columnNames = [];
@@ -173,6 +174,30 @@ function createExcelNumberFormatReader(worksheet) {
       if (cell?.t === "n") formats[columnIndex] = String(cell.z ?? "General");
     });
     return formats;
+  };
+}
+
+// SheetJS's error codes; cell.v holds one of them. Its own placeholder for an unknown code
+// (255, "#WTF?") is no Excel error and is left out, so it reads as "#错误".
+const EXCEL_ERROR_CODES = Object.freeze({ 0: "#NULL!", 7: "#DIV/0!", 15: "#VALUE!", 23: "#REF!", 29: "#NAME?", 36: "#NUM!", 42: "#N/A", 43: "#GETTING_DATA" });
+const EXCEL_ERROR_TEXT_PATTERN = /^#[A-Z0-9/_!?]+$/;
+const EXCEL_UNKNOWN_ERROR_TEXT = "#WTF?";
+
+// The text of a t:"e" cell. Only such cells read cell.w: it is the error's own text,
+// not a formatted value, so the time zone cannot change it, and #SPILL! / #CALC! have
+// nothing else (no cell.v).
+function readExcelErrorText(cell) {
+  if (cell.w !== EXCEL_UNKNOWN_ERROR_TEXT && EXCEL_ERROR_TEXT_PATTERN.test(cell.w)) return cell.w;
+  return EXCEL_ERROR_CODES[cell.v] ?? "#错误";
+}
+
+// Returns a reader for one position of a sheet_to_json({ header: 1 }) table: the error
+// text of a t:"e" cell, otherwise "". Called only for cells that read as empty.
+function createExcelCellErrorReader(worksheet) {
+  const range = XLSX.utils.decode_range(worksheet["!ref"]);
+  return (rowIndex, columnIndex) => {
+    const cell = worksheet[XLSX.utils.encode_col(range.s.c + columnIndex) + (range.s.r + rowIndex + 1)];
+    return cell?.t === "e" ? readExcelErrorText(cell) : "";
   };
 }
 
@@ -202,8 +227,10 @@ function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readN
 }
 
 // firstRowNumber is the worksheet row number of formattedRows[0] (the !ref start row);
-// rowNumbers[i] is the worksheet row of rows[i].
-function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1) {
+// rowNumbers[i] is the worksheet row of rows[i]; formulaErrors[i] the { field: error text }
+// of rows[i] or null (formulaErrors itself is left out without any error). readCellError(rowIndex,
+// columnIndex) is asked only about cells that read as empty.
+function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1, readCellError = null) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
     index,
@@ -252,13 +279,20 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
 
   const keptPairs = dataPairs
     .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])));
+  let formulaErrors = null;
   const rows = keptPairs
-    .map((pair) => fields.reduce((row, field, fieldIndex) => {
+    .map((pair, position) => fields.reduce((row, field, fieldIndex) => {
       const columnIndex = usedColumnIndexes[fieldIndex];
       row[field] = normalizeExcelCellValue(
         pair.formatted[columnIndex],
         pair.raw[columnIndex]
       );
+      const error = row[field] === "" && readCellError ? readCellError(pair.index, columnIndex) : "";
+      if (error) {
+        formulaErrors ??= new Array(keptPairs.length).fill(null);
+        formulaErrors[position] ??= Object.create(null);
+        formulaErrors[position][field] = error;
+      }
       return row;
     }, Object.create(null)));
 
@@ -267,6 +301,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   }
 
   const result = { fields, rows, rowNumbers: keptPairs.map((pair) => firstRowNumber + pair.index) };
+  if (formulaErrors) result.formulaErrors = formulaErrors;
   if (headerPosition) {
     // Rows above the header count as headerRowNumber - 1; only non-empty ones are kept.
     result.headerDetection = {

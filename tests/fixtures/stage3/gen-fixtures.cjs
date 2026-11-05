@@ -225,6 +225,63 @@ const stores = [
   fs.writeFileSync(path.join(OUT, "门店报表.xlsx"), XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 }
 
+// ---------- 5. 分区小计表.csv：UTF-8 BOM、CRLF，表头在第 1 行；每个城市后一行小计，最后一行合计 ----------
+// 金额一位小数，小计和合计是舍入后的值（与明细之和差 0.1，在 0.5% 内）；占比是整数百分比。
+const regionHeader = ["门店", "城市", "销售额", "成本", "占比"];
+const regionRows = [
+  ["人民路店", "上海", "120.3", "84.2", "15%"],
+  ["徐家汇店", "上海", "98.6", "70.1", "12%"],
+  ["静安寺店", "上海", "150.4", "101.5", "19%"],
+  ["上海 小计", "上海", "369.4", "255.9", "46%"],
+  ["西湖店", "杭州", "88.5", "63.4", "11%"],
+  ["武林店", "杭州", "76.2", "55.1", "10%"],
+  ["杭州小计", "杭州", "164.8", "118.4", "21%"],
+  ["天一店", "宁波", "52.7", "38.6", "7%"],
+  ["宁波小计（单店）", "宁波", "52.7", "38.6", "7%"],
+  ["新街口店", "南京", "101.1", "72.5", "13%"],
+  ["夫子庙店", "南京", "67.9", "49.8", "8%"],
+  ["河西店", "南京", "45.3", "33.2", "6%"],
+  ["南京 小计：", "南京", "214.2", "155.6", "27%"],
+  ["合\u3000计", "", "801.1", "568.5", "100%"]
+];
+fs.writeFileSync(path.join(OUT, "分区小计表.csv"),
+  Buffer.from(`${BOM}${[regionHeader, ...regionRows].map(csvLine).join("\r\n")}\r\n`, "utf8"));
+
+// ---------- 6. 公式错误.xlsx：表头在第 1 行，错误单元格；#SPILL! 只能改 sheet XML 写入 ----------
+{
+  const E = { NULL: 0x00, DIV0: 0x07, VALUE: 0x0f, REF: 0x17, NA: 0x2a };
+  const err = (code) => ({ err: code });
+  const aoa = [
+    ["产品", "单价", "数量", "金额", "利润率", "备注"],
+    ["P01", 10, 5, 50, 0.2, "正常"],
+    ["P02", 12, 4, 48, err(E.DIV0), "正常", err(E.REF)],
+    ["P03", 15, err(E.NA), err(E.VALUE), 0.25, "正常"],
+    ["P04", 8, 6, 48, err(E.REF), err(E.NULL)],
+    ["P05", 20, 3, 60, 0.3, err(E.VALUE)],
+    [err(E.NA), err(E.NA), err(E.NA), err(E.NA), err(E.NA), err(E.NA)],
+    ["P07", 9, 7, 63, 0.18, null],
+    ["P08", 11, 2, 22, err(E.DIV0), "正常"],
+    ["P09", 14, 8, 112, 0.22, "正常"],
+    ["P10", 16, 5, 80, 0.27, "正常"],
+    [err(E.VALUE), err(E.VALUE), err(E.VALUE), err(E.VALUE), err(E.VALUE), err(E.VALUE)]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa.map((row) => row.map((v) => (v && typeof v === "object" ? null : v))));
+  aoa.forEach((row, r) => row.forEach((v, c) => {
+    if (v && typeof v === "object") ws[XLSX.utils.encode_cell({ r, c })] = { t: "e", v: v.err };
+  }));
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: 6 } });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "公式错误");
+  const container = XLSX.CFB.read(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  const sheet = container.FileIndex[container.FullPaths.findIndex((name) => name.endsWith("xl/worksheets/sheet1.xml"))];
+  const xml = Buffer.from(sheet.content).toString("utf8");
+  const patched = xml.replace('<c r="F6" t="e"><v>#VALUE!</v></c>', '<c r="F6" t="e"><v>#SPILL!</v></c>');
+  if (patched === xml) throw new Error("没有找到 F6 的错误单元格");
+  sheet.content = Buffer.from(patched, "utf8");
+  sheet.size = sheet.content.length;
+  fs.writeFileSync(path.join(OUT, "公式错误.xlsx"), XLSX.CFB.write(container, { fileType: "zip", type: "buffer" }));
+}
+
 console.log(`fixtures written to ${OUT}`);
 for (const name of fs.readdirSync(OUT).sort()) {
   console.log(`${name}\t${fs.statSync(path.join(OUT, name)).size} bytes`);

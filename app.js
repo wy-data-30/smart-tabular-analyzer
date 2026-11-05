@@ -22,6 +22,16 @@ const state = {
   // buildNumericLookingSummary() of the profiles; imports, field configuration
   // and placeholder confirmations rebuild it, filters do not.
   numericLooking: [],
+  // findTotalLabelRows() of the original rows; only imports replace it.
+  totalLabelRows: [],
+  // buildSuspectedTotalSummary() of the original rows; imports, field configuration and
+  // placeholder confirmations rebuild it, filters do not.
+  suspectedTotals: [],
+  // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
+  // import; those cells read as "" and count as missing.
+  sourceFormulaErrors: new WeakMap(),
+  // buildFormulaErrorSummary() of the imported rows; only imports replace it.
+  formulaErrors: [],
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -138,6 +148,10 @@ const dom = {
   problemRowsLastPage: document.getElementById("problemRowsLastPage"),
   qualityTable: document.getElementById("qualityTable"),
   outlierTable: document.getElementById("outlierTable"),
+  suspectedTotalSection: document.getElementById("suspectedTotalSection"),
+  suspectedTotalDetails: document.getElementById("suspectedTotalDetails"),
+  formulaErrorSection: document.getElementById("formulaErrorSection"),
+  formulaErrorDetails: document.getElementById("formulaErrorDetails"),
   numberConversionSection: document.getElementById("numberConversionSection"),
   numberConversionDetails: document.getElementById("numberConversionDetails"),
   numericLookingSection: document.getElementById("numericLookingSection"),
@@ -216,7 +230,8 @@ function showResultsWorkspace() {
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
 // rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null) {
+// formulaErrors[i] is the { field: error text } of rows[i] or null; only Excel imports pass it.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -252,6 +267,13 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (Array.isArray(rowNumbers) && rowNumbers.length === rows.length) {
     rows.forEach((row, index) => state.sourceRowNumbers.set(row, rowNumbers[index]));
   }
+  state.sourceFormulaErrors = new WeakMap();
+  const hasFormulaErrors = Array.isArray(formulaErrors) && formulaErrors.length === rows.length;
+  if (hasFormulaErrors) {
+    rows.forEach((row, index) => {
+      if (formulaErrors[index]) state.sourceFormulaErrors.set(row, formulaErrors[index]);
+    });
+  }
   state.placeholderConfirmations = Object.create(null);
   state.manualFieldTypes = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
@@ -262,6 +284,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
+  state.totalLabelRows = findTotalLabelRows(rows, fields);
+  state.suspectedTotals = buildSuspectedTotalSummary(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   // No filter yet: the analysis rows are the original rows, so one calculation serves both.
   // The two share one array; nothing may modify it in place.
@@ -274,13 +299,13 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.sourceName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
-  const headerNote = formatHeaderDetectionNote(state.headerDetection);
+  const headerNote = `${formatHeaderDetectionNote(state.headerDetection)}${formatSuspectedTotalStatus(state.suspectedTotals)}${formatFormulaErrorStatus(state.formulaErrors)}`;
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning");
+    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning", Boolean(headerNote));
   } else {
-    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success");
+    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
 
   renderOverview();
@@ -1065,6 +1090,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
+  state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1111,6 +1137,8 @@ function renderQuality() {
     ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
   renderParseWarningSummary();
+  renderSuspectedTotalDetails();
+  renderFormulaErrorDetails();
   // Before the outlier table, which returns early when there is no numeric field.
   refreshProblemView();
   renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
@@ -1205,6 +1233,36 @@ function renderParseWarningSummary() {
   dom.parseWarningSummary.innerHTML = `${escapeHtml(`CSV 解析警告：${formatInteger(count)} 条${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
 }
 
+// "疑似合计 / 小计行" and "公式错误单元格": lines of ready HTML, then footer, the whole
+// subsection hidden when there is none. They come before the tables they explain and
+// before the early return of renderQuality() (formula errors may be all a table has).
+function renderRowNoteSection(section, details, lines, footer = "") {
+  section.classList.toggle("hidden", !lines.length);
+  details.innerHTML = lines.length
+    ? `<ul class="number-note-list">${lines.map((line) => `<li>${line}</li>`).join("")}</ul>${footer}`
+    : "";
+}
+
+// At most SUSPECTED_TOTAL_LIST_LIMIT lines and one 查看 button: they are one category.
+function renderSuspectedTotalDetails() {
+  const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
+  const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
+  renderRowNoteSection(
+    dom.suspectedTotalSection,
+    dom.suspectedTotalDetails,
+    state.suspectedTotals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => escapeHtml(formatSuspectedTotal(item))),
+    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}</p>`
+  );
+}
+
+// One line and one 查看 button per field: each field is a category.
+function renderFormulaErrorDetails() {
+  renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, state.formulaErrors.map((item) => {
+    const text = formatFormulaError({ ...item, fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" });
+    return `${escapeHtml(text)} ${problemViewButton({ kind: "formulaError", field: item.field }, "查看")}`;
+  }));
+}
+
 // Delegated click handler of #qualitySection for the 查看 buttons, bound in script.js.
 function handleProblemViewClick(event) {
   const button = event.target.closest("button[data-problem-index]");
@@ -1242,7 +1300,7 @@ function goToProblemRowsPage(action) {
 }
 
 // Kinds whose rows have one cell to point at: the field of the category.
-const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate"]);
+const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError"]);
 
 // The open category's current page: category list, summary, table and pager.
 function renderProblemView() {
@@ -1263,7 +1321,7 @@ function renderProblemView() {
     row: item.index === null ? null : state.rows[item.index],
     line: item.line,
     note: item.note,
-    highlightField
+    highlightField: item.highlightField ?? highlightField
   })), { withNote: true });
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], page, pageCount);
 }
@@ -1886,6 +1944,10 @@ function resetAnalysisState() {
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
   state.numericLooking = [];
+  state.totalLabelRows = [];
+  state.suspectedTotals = [];
+  state.sourceFormulaErrors = new WeakMap();
+  state.formulaErrors = [];
   state.manualFieldTypes = Object.create(null);
   state.totalMissing = 0;
   state.parseWarnings = [];
@@ -1945,6 +2007,8 @@ function resetAnalysisState() {
   dom.qualitySummary.innerHTML = "";
   dom.parseWarningSummary.innerHTML = "";
   dom.parseWarningSummary.classList.add("hidden");
+  renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
+  renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
@@ -2005,8 +2069,10 @@ function emptyTable(message) {
   `;
 }
 
-function setStatus(message, tone = "") {
-  dom.statusPanel.className = `status-panel${tone ? ` ${tone}` : ""}`;
+// hasNote keeps a successful status on screen once results show (style.css): its message
+// says something the page does not say at the top.
+function setStatus(message, tone = "", hasNote = false) {
+  dom.statusPanel.className = `status-panel${tone ? ` ${tone}` : ""}${hasNote ? " has-note" : ""}`;
   dom.statusPanel.textContent = message;
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));

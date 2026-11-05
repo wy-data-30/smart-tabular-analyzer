@@ -1,4 +1,4 @@
-// 单元格值的缺失判断与解析：疑似缺失值的写法清单，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
+// 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
 
 const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
@@ -68,6 +68,30 @@ function isMissingOrConfirmed(value, confirmedKeys) {
 // normalizeValue() / displayValue() for analysis: "" also for a confirmed placeholder.
 function analysisValue(value, confirmedKeys) {
   return isMissingOrConfirmed(value, confirmedKeys) ? "" : String(value).trim();
+}
+
+// Whole-cell labels of a total or subtotal row, simplified and traditional. A Chinese
+// keyword may follow a prefix of at most 12 characters ("上海小计"); a Latin label is the
+// whole cell.
+const TOTAL_LABEL_CHINESE_PATTERN = /^(.{0,12})(?:合计|总计|小计|总和|汇总|累计|合計|總計|小計|總和|匯總|彙總|累計)$/su;
+const TOTAL_LABEL_LATIN_PATTERN = /^(?:total|grandtotal|subtotal|sub-total|sum)$/i;
+// A prefix that is exactly one of these makes a status ("已汇总", "尚未匯總"), not a total.
+// Only the whole prefix counts: 南非小计 and 无锡合计 stay labels.
+const TOTAL_LABEL_STATUS_PREFIXES = new Set(["已", "未", "不", "无", "無", "非", "待", "是否", "尚未", "暂未", "暂不", "暫未", "暫不"]);
+// A cheap test before NFKC, true for every cell that can still match: each Chinese keyword
+// holds 计, 总, 計 or 總 (spaces may split the others), the Latin words may be spaced, and
+// anything outside ASCII, CJK punctuation and CJK ideographs may normalize into a keyword
+// (full-width letters, long s, mathematical letters). The tests check every code point.
+const TOTAL_LABEL_PREFILTER = /[计总計總]|t\s*o\s*t\s*a\s*l|s\s*u\s*m|[^\x00-\x7F\u3000-\u303F\u4E00-\u9FFF]/i;
+
+// The normalized total label of a text cell (NFKC, no whitespace, no trailing colon or
+// bracketed note), or "" when the whole cell is not a label.
+function totalRowLabel(value) {
+  if (typeof value !== "string" || !TOTAL_LABEL_PREFILTER.test(value)) return "";
+  const text = value.normalize("NFKC").replace(/\s+/g, "").replace(/:+$/, "").replace(/\([^()]*\)$/, "").replace(/:+$/, "");
+  const chinese = text.match(TOTAL_LABEL_CHINESE_PATTERN);
+  if (chinese) return TOTAL_LABEL_STATUS_PREFIXES.has(chinese[1]) ? "" : text;
+  return TOTAL_LABEL_LATIN_PATTERN.test(text) ? text : "";
 }
 
 function isPlausibleYear(value) {

@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -274,10 +274,177 @@ function buildNumericLookingSummary(profiles) {
   });
 }
 
+// A labelled row's value counts as a total within this share of a sum of detail rows.
+const SUSPECTED_TOTAL_TOLERANCE = 0.005;
+// The quality page and the report list at most this many suspected totals.
+const SUSPECTED_TOTAL_LIST_LIMIT = 20;
+// Ranges a total can cover, in the order they are tried for each column: the detail
+// rows since the previous total, every detail row above it, every detail row.
+const SUSPECTED_TOTAL_SCOPES = Object.freeze(["segment", "above", "all"]);
+
+// Rows with a total label, in row order: { index, field, label } with the first
+// labelled field in field order (any field, ignored ones too) and the cell's text.
+function findTotalLabelRows(rows, fields) {
+  const found = [];
+  rows.forEach((row, index) => {
+    for (const field of fields) {
+      if (totalRowLabel(row[field])) {
+        found.push({ index, field, label: String(row[field]).trim() });
+        return;
+      }
+    }
+  });
+  return found;
+}
+
+function emptyTotalAddends() {
+  return { sum: 0, count: 0, plain: 0, first: -1, last: -1 };
+}
+
+function addTotalAddend(addends, value, index, isPlain) {
+  addends.sum += value;
+  addends.count += 1;
+  if (isPlain) addends.plain += 1;
+  if (addends.first < 0) addends.first = index;
+  addends.last = index;
+}
+
+// Whether value equals a range's sum: a finite, non-zero sum (Infinity would pass the
+// comparison) of at least one row without a label.
+function matchesTotalAddends(value, addends) {
+  return addends.plain > 0 && Number.isFinite(addends.sum) && addends.sum !== 0
+    && Math.abs(value - addends.sum) <= SUSPECTED_TOTAL_TOLERANCE * Math.abs(addends.sum);
+}
+
+// The "all" range of a column without the target row itself.
+function withoutTotalAddend(column, index, value) {
+  const addends = { ...column.all, sum: column.all.sum - value, count: column.all.count - 1 };
+  const step = (from, by) => {
+    let position = from;
+    while (position >= 0 && position < column.numbers.length && (position === index || column.numbers[position] === null)) position += by;
+    return position;
+  };
+  if (addends.first === index) addends.first = step(index, 1);
+  if (addends.last === index) addends.last = step(index, -1);
+  return addends;
+}
+
+// One pass over the rows. boundaries never add to a sum and start a new segment;
+// targets get checked; labelled says which rows carry a label. Running sums instead of
+// differences of prefix sums, so a huge value earlier in a column neither overflows nor
+// absorbs the rows of a later segment. Returns index -> matches, grouped by scope.
+function checkTotalRows(columns, rowCount, labelled, boundaries, targets) {
+  const sums = columns.map((column) => {
+    const all = emptyTotalAddends();
+    column.numbers.forEach((value, index) => {
+      if (value !== null && !boundaries.has(index)) addTotalAddend(all, value, index, !labelled.has(index));
+    });
+    return { field: column.field, numbers: column.numbers, all, segment: emptyTotalAddends(), above: emptyTotalAddends() };
+  });
+  const hits = new Map();
+  for (let index = 0; index < rowCount; index += 1) {
+    const isBoundary = boundaries.has(index);
+    if (targets.has(index)) {
+      const groups = new Map();
+      sums.forEach((column) => {
+        const value = column.numbers[index];
+        if (value === null) return;
+        for (const scope of SUSPECTED_TOTAL_SCOPES) {
+          // A target that is not a boundary is a detail for the others, not for itself.
+          const addends = scope === "all" && !isBoundary ? withoutTotalAddend(column, index, value) : column[scope];
+          if (!matchesTotalAddends(value, addends)) continue;
+          const group = groups.get(scope) || { scope, fields: [], first: addends.first, last: addends.last, count: 0 };
+          group.fields.push(column.field);
+          group.first = Math.min(group.first, addends.first);
+          group.last = Math.max(group.last, addends.last);
+          group.count = Math.max(group.count, addends.count);
+          groups.set(scope, group);
+          return;
+        }
+      });
+      if (groups.size) hits.set(index, [...groups.values()]);
+    }
+    sums.forEach((column) => {
+      if (isBoundary) {
+        column.segment = emptyTotalAddends();
+        return;
+      }
+      const value = column.numbers[index];
+      if (value === null) return;
+      addTotalAddend(column.segment, value, index, !labelled.has(index));
+      addTotalAddend(column.above, value, index, !labelled.has(index));
+    });
+  }
+  return hits;
+}
+
+// Suspected total rows of the original rows, in row order: { index, line, field, label,
+// matches: [{ scope, fields, firstLine, lastLine, rowCount, contiguous }] }. Numeric
+// fields read as their profiles do (number strategy, confirmed placeholders are empty).
+// Rows that fail go back among the details for one more check of the rows that failed:
+// a row that merely says "合计" in a note must not hide the real total below it. The
+// rows that passed stay. getRowNumber(row) gives a row's file row or null. labelRows comes
+// from findTotalLabelRows(): labels depend only on rows and fields, so a rebuild reuses them.
+function buildSuspectedTotalSummary(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
+  if (!labelRows.length) return [];
+  const columns = profiles.filter((profile) => profile.typeKey === "numeric").map((profile) => {
+    const parseNumber = getNumberParser(profile.numberStrategy);
+    const field = profile.field;
+    return { field, numbers: rows.map((row) => (isMissingOrConfirmed(row[field], profile.confirmedKeys) ? null : parseNumber(row[field]))) };
+  });
+  if (!columns.length) return [];
+  const labelled = new Set(labelRows.map((item) => item.index));
+  const first = checkTotalRows(columns, rows.length, labelled, labelled, labelled);
+  const failed = new Set(labelRows.map((item) => item.index).filter((index) => !first.has(index)));
+  const second = failed.size ? checkTotalRows(columns, rows.length, labelled, new Set(first.keys()), failed) : new Map();
+  return labelRows.flatMap(({ index, field, label }) => {
+    const matches = first.get(index) || second.get(index);
+    if (!matches) return [];
+    return [{
+      index,
+      line: getRowNumber(rows[index]),
+      field,
+      label,
+      matches: matches.map((match) => ({
+        scope: match.scope,
+        fields: match.fields,
+        firstLine: getRowNumber(rows[match.first]),
+        lastLine: getRowNumber(rows[match.last]),
+        rowCount: match.count,
+        contiguous: match.last - match.first + 1 === match.count
+      }))
+    }];
+  });
+}
+
+// Formula errors by field, in field order: { field, count, byError, lines }. They are
+// read once on import, so the summary does not follow the field configuration; ignored
+// fields are marked when shown. getErrors(row) gives a row's { field: "#DIV/0!" } or undefined.
+function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
+  const byField = new Map();
+  rows.forEach((row) => {
+    const errors = getErrors(row);
+    if (!errors) return;
+    fields.forEach((field) => {
+      const error = errors[field];
+      if (!error) return;
+      let item = byField.get(field);
+      if (!item) {
+        item = { field, count: 0, byError: Object.create(null), lines: [] };
+        byField.set(field, item);
+      }
+      item.count += 1;
+      item.byError[error] = (item.byError[error] || 0) + 1;
+      if (item.lines.length < ID_DUPLICATE_ROW_NUMBER_LIMIT) item.lines.push(getRowNumber(row));
+    });
+  });
+  return fields.flatMap((field) => (byField.has(field) ? [byField.get(field)] : []));
+}
+
 // ---- Problem rows: the rows behind each quality-page count ----
-// A category is { kind, field, key } with kind one of missing, conversion, outlier,
-// duplicateRows, idDuplicate, placeholder, parseWarnings. Every list comes from the
-// same checks as its quality count and reads the original rows (state.rows), never
+// A category is { kind, field, key } with kind one of missing, formulaError, conversion,
+// outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every
+// list comes from the same checks as its quality count and reads the original rows (state.rows), never
 // the filters. Items are { index (into state.rows, or null), line (file row or
 // null), note, ... }, in file order; the duplicate kinds go group by group.
 
@@ -292,7 +459,9 @@ function listMissingRows(field) {
   if (!profile) return null;
   const items = [];
   state.rows.forEach((row, index) => {
-    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) items.push(problemRowItem(index, isMissing(row[field]) ? "空值" : "已按缺失处理"));
+    if (!isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
+    const error = state.sourceFormulaErrors.get(row)?.[field];
+    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按缺失处理"));
   });
   return { items, count: profile.missingCount };
 }
@@ -397,19 +566,41 @@ function listParseWarningRows() {
   return { items, count: items.length };
 }
 
-// Categories with rows to show, in this order: missing, format problems, outliers
-// (per field), duplicate rows, ID duplicates (per field), placeholders (per field
-// and key), parse warnings. count / unit describe the quality figure for labels:
+// Every suspected total row; the note names the columns that matched and the cell to
+// highlight is the label's.
+function listSuspectedTotalRows() {
+  if (!state.suspectedTotals.length) return null;
+  const items = state.suspectedTotals.map((item) => problemRowItem(item.index, formatSuspectedTotalMatches(item), { highlightField: item.field }));
+  return { items, count: items.length };
+}
+
+// Rows whose cell in this field held a formula error when imported.
+function listFormulaErrorRows(field) {
+  const summary = state.formulaErrors.find((item) => item.field === field);
+  if (!summary) return null;
+  const items = [];
+  state.rows.forEach((row, index) => {
+    const error = state.sourceFormulaErrors.get(row)?.[field];
+    if (error) items.push(problemRowItem(index, `公式错误 ${error}`));
+  });
+  return { items, count: summary.count };
+}
+
+// Categories with rows to show, in this order: missing, formula errors, format problems,
+// outliers (per field), duplicate rows, suspected totals, ID duplicates (per field),
+// placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
 // row, value, duplicateRow (without each group's kept row), duplicateValue, warning.
 function listProblemCategories() {
   return [
     ...state.profiles.filter((profile) => profile.missingCount > 0)
       .map((profile) => ({ kind: "missing", field: profile.field, count: profile.missingCount, unit: "row" })),
+    ...state.formulaErrors.map((item) => ({ kind: "formulaError", field: item.field, count: item.count, unit: "value" })),
     ...state.profiles.filter((profile) => profile.conversionFailureCount > 0)
       .map((profile) => ({ kind: "conversion", field: profile.field, count: profile.conversionFailureCount, unit: "value" })),
     ...getQualityNumericStats().filter((stat) => stat.outlierCount > 0)
       .map((stat) => ({ kind: "outlier", field: stat.field, count: stat.outlierCount, unit: "value" })),
     ...(state.duplicateRows > 0 ? [{ kind: "duplicateRows", count: state.duplicateRows, unit: "duplicateRow" }] : []),
+    ...(state.suspectedTotals.length ? [{ kind: "suspectedTotal", count: state.suspectedTotals.length, unit: "row" }] : []),
     ...state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0)
       .map((item) => ({ kind: "idDuplicate", field: item.field, count: item.duplicateValueCount, unit: "duplicateValue" })),
     ...state.placeholders.map((entry) => ({ kind: "placeholder", field: entry.field, key: entry.key, count: entry.count, unit: "row" })),
@@ -427,6 +618,8 @@ function listProblemRows(category) {
     case "idDuplicate": return listIdDuplicateRows(category.field);
     case "placeholder": return listPlaceholderRows(category.field, category.key);
     case "parseWarnings": return listParseWarningRows();
+    case "suspectedTotal": return listSuspectedTotalRows();
+    case "formulaError": return listFormulaErrorRows(category.field);
     default: return null;
   }
 }

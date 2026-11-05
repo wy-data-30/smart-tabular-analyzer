@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字和疑似数值列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行和公式错误单元格的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -89,6 +89,79 @@ function formatNumericLookingHint(item) {
   return `「${item.field}」：去掉缺失值和疑似缺失值后，${formatInteger(item.valueCount)} 个值里有 ${formatInteger(item.numericCount)} 个能读成数字（${formatPercent(item.ratio)}），其余的如 ${item.samples.join("、")}。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。`;
 }
 
+// How many columns a suspected total's line names before "等 N 列".
+const TOTAL_MATCHED_FIELD_LIMIT = 5;
+// How many row numbers the status bar names before 等.
+const STATUS_ROW_NUMBER_LIMIT = 5;
+
+// The notes of "疑似合计 / 小计行" and "公式错误单元格" in reports; index.html has the same
+// sentences.
+const SUSPECTED_TOTAL_NOTE = "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。";
+const FORMULA_ERROR_NOTE = "这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。";
+
+function formatTotalMatchedFields(fields) {
+  if (fields.length <= TOTAL_MATCHED_FIELD_LIMIT) return fields.join("、");
+  return `${fields.slice(0, TOTAL_MATCHED_FIELD_LIMIT).join("、")} 等 ${fields.length} 列`;
+}
+
+// "第 5–32 行之和（28 行）", "第 2–13 行中的明细之和（9 行）" when other rows lie in between,
+// "第 9 行（只有 1 行）", or the range in words for a table without row numbers.
+function formatTotalAddends({ scope, firstLine, lastLine, rowCount, contiguous }) {
+  const count = formatInteger(rowCount);
+  if (firstLine === null || lastLine === null) return `${scope === "all" ? "全表" : "上方"} ${count} 行明细之和`;
+  if (rowCount === 1) return `第 ${firstLine} 行（只有 1 行）`;
+  const lines = `第 ${firstLine}–${lastLine} 行`;
+  return contiguous ? `${lines}之和（${count} 行）` : `${lines}中的明细之和（${count} 行）`;
+}
+
+// "销售额、成本等于第 5–32 行之和（28 行）": the 说明 of a suspected total's problem row.
+function formatSuspectedTotalMatches(item) {
+  return item.matches.map((match) => `${formatTotalMatchedFields(match.fields)}等于${formatTotalAddends(match)}`).join("；");
+}
+
+// One line of "疑似合计 / 小计行".
+function formatSuspectedTotal(item) {
+  return `${item.line === null ? "有一行" : `第 ${item.line} 行`}「${item.label}」：${formatSuspectedTotalMatches(item)}。`;
+}
+
+// "共 N 行，只列出前 20 行。" when a list of suspected totals is cut short, or "".
+function formatSuspectedTotalOverflow(count) {
+  return count > SUSPECTED_TOTAL_LIST_LIMIT ? `共 ${formatInteger(count)} 行，只列出前 ${SUSPECTED_TOTAL_LIST_LIMIT} 行。` : "";
+}
+
+// The status bar's sentence after an import, or "".
+function formatSuspectedTotalStatus(items) {
+  if (!items.length) return "";
+  const ending = "，目前仍计入统计，详情见“数据质量”。";
+  if (items.length === 1) {
+    const [{ line, label }] = items;
+    return `${line === null ? "有一行" : `第 ${line} 行`}「${formatSkippedRowPreview([label])}」疑似合计行${ending}`;
+  }
+  const lines = items.map((item) => item.line);
+  const shown = lines.some((line) => line === null)
+    ? ""
+    : `（第 ${lines.slice(0, STATUS_ROW_NUMBER_LIMIT).join("、")} 行${lines.length > STATUS_ROW_NUMBER_LIMIT ? "等" : ""}）`;
+  return `发现 ${formatInteger(items.length)} 行疑似合计 / 小计${shown}${ending}`;
+}
+
+function formatFormulaErrorCount(items) {
+  return items.reduce((sum, item) => sum + item.count, 0);
+}
+
+// The status bar's sentence after an import, or "".
+function formatFormulaErrorStatus(items) {
+  return items.length ? `发现 ${formatInteger(formatFormulaErrorCount(items))} 个公式错误单元格，已按缺失值处理，详情见“数据质量”。` : "";
+}
+
+// One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
+function formatFormulaError({ field, count, byError, lines, fieldIgnored = false }) {
+  const errors = Object.entries(byError).map(([error, errorCount]) => `${error} ${formatInteger(errorCount)} 个`).join("、");
+  const rows = !lines.length || lines.some((line) => line === null)
+    ? "行号：—"
+    : `第 ${lines.join("、")} 行${count > lines.length ? "等" : ""}`;
+  return `「${field}」${fieldIgnored ? "（字段已忽略）" : ""}：${formatInteger(count)} 个（${errors}），${rows}。`;
+}
+
 // Longest preview of one skipped title row, counted in characters.
 const SKIPPED_ROW_PREVIEW_LENGTH = 20;
 // How many skipped rows the header note quotes before adding 等.
@@ -145,6 +218,8 @@ function formatProblemViewLabel(category) {
     case "duplicateRows": return "查看重复行";
     case "idDuplicate": return `查看「${category.field}」的重复行`;
     case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
+    case "suspectedTotal": return "查看疑似合计 / 小计行";
+    case "formulaError": return `查看「${category.field}」的公式错误`;
     default: return "查看解析警告";
   }
 }
@@ -159,6 +234,8 @@ function formatProblemCategoryLabel(category) {
     case "duplicateRows": return `整行重复（${count} 行）`;
     case "idDuplicate": return `ID 重复 · ${category.field}（${count} 个重复值）`;
     case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
+    case "suspectedTotal": return `疑似合计 / 小计行（${count} 行）`;
+    case "formulaError": return `公式错误 · ${category.field}（${count} 个值）`;
     default: return `解析警告（${count} 条）`;
   }
 }
@@ -169,7 +246,7 @@ function formatProblemRowsSummary(category, list, page, pageCount) {
   const pages = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页`;
   const listed = formatInteger(list.items.length);
   if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
-  if (category.kind === "conversion") return `共 ${listed} 个值，${pages}`;
+  if (category.kind === "conversion" || category.kind === "formulaError") return `共 ${listed} 个值，${pages}`;
   if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
   return `共 ${listed} 行，${pages}`;
 }

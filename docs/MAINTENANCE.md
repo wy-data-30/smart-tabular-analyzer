@@ -84,6 +84,11 @@
    - `preview` 计的是解析器读到的全部记录（含空记录，表头模式下再多 1 条给表头），在过滤空记录之前截断；截断时 `meta.truncated` 为 `true`（只剩空行时也为 `true`）。空记录占满预览的补救路径依赖这两点。
    - 错误 code 的集合（MissingQuotes、InvalidQuotes、UndetectableDelimiter、TooManyFields、TooFewFields）和 `UndetectableDelimiter` 的出现条件（前 10 行平均列数不超过 1.99）；新增 code 时，`formatCsvWarningMessage()` 没有中文消息，会退回 PapaParse 的原文。
    stage3 夹具、行号和调用次数的测试要全部通过。
+   升级 SheetJS 时，还要对照新版源码确认公式错误单元格依赖的这些行为没变（见 `docs/ARCHITECTURE.md` 的“公式错误单元格”）：
+   - 错误单元格 `t: "e"`，`w` 是错误文字（xlsx 和 xls 都有，只有 `cellText: false` 时没有，我们不用），`v` 是代码，#SPILL! / #CALC! / #FIELD! 的 `v` 是 `undefined`。
+   - `sheet_to_json({ raw: true, defval: "" })` 把错误格读成 `null`（#NULL!）或 `""`（其余）。
+   - 代码表 `ci`：0 #NULL!、7 #DIV/0!、15 #VALUE!、23 #REF!、29 #NAME?、36 #NUM!、42 #N/A、43 #GETTING_DATA，255 #WTF? 是内部占位，`readExcelErrorText()` 排除它。
+   `公式错误.xlsx` 和 v2.8.0 的测试要全部通过。`.ods` 在 `parseDataFile()` 上传时就被拒绝；SheetJS 读 ODS 时错误单元格整个读不出来，所以以后若要支持 ODS，公式错误列不出。
 6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
 
 不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。

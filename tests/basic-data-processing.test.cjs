@@ -1468,7 +1468,7 @@ const GRADE_HEADER_NOTE = "表头在第 2 行，已跳过上方 1 行：「初�
 
 test("the status bar names the header row and the skipped title rows", async () => {
   const store = await importStage3Fixture("门店报表.xlsx");
-  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}`);
+  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}第 33 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。`);
   assert.deepEqual(JSON.parse(store.evaluate("JSON.stringify(state.headerDetection)")), {
     headerRowNumber: 4,
     skippedRows: [
@@ -3192,7 +3192,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 11);
+  assert.equal(scopes.length, 13);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3266,6 +3266,8 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
     if (category.kind === "outlier") expected = getQualityNumericStats().find((stat) => stat.field === category.field).outlierCount;
     if (category.kind === "placeholder") expected = state.placeholders.find((entry) => entry.field === category.field && entry.key === category.key).count;
     if (category.kind === "parseWarnings") expected = state.parseWarnings.length;
+    if (category.kind === "suspectedTotal") expected = state.suspectedTotals.length;
+    if (category.kind === "formulaError") expected = state.formulaErrors.find((item) => item.field === category.field).count;
     if (category.kind === "duplicateRows") {
       // The quality count leaves out the first row of each group, which is kept.
       expected = state.duplicateRows + result.groupCount;
@@ -3302,7 +3304,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 11);
+  assert.equal(scopes.length, 13);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -4351,4 +4353,783 @@ test("v2.7.0 statistics helpers: the five functions only the removed features us
     typesOf(scope, ["groupMetricRowsByField", "frequencyRows", "countNonMissingValues", "aggregateByCategory", "summarizeNumbers"]),
     ["undefined", "undefined", "undefined", "undefined", "undefined"]
   );
+});
+
+// v2.8.0: suspected total rows and Excel formula errors. Hints only: every existing result stays.
+const knownIssues = JSON.parse(fs.readFileSync(path.join(STAGE3_FIXTURES, "known-issues.json"), "utf8"));
+
+// A workbook from an array of rows where { e: code } is an error cell. origin moves the table away from A1.
+function buildErrorWorkbook(aoa, { origin = "A1", bookType = "xlsx" } = {}) {
+  const start = XLSX.utils.decode_cell(origin);
+  const worksheet = XLSX.utils.aoa_to_sheet(aoa.map((row) => row.map((value) => (value && typeof value === "object" ? null : value))), { origin });
+  aoa.forEach((row, r) => row.forEach((value, c) => {
+    if (value && typeof value === "object") worksheet[XLSX.utils.encode_cell({ r: r + start.r, c: c + start.c })] = { t: "e", v: value.e };
+  }));
+  worksheet["!ref"] = XLSX.utils.encode_range({ s: start, e: { r: start.r + aoa.length - 1, c: start.c + Math.max(...aoa.map((row) => row.length)) - 1 } });
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+  return XLSX.write(workbook, { type: "array", bookType });
+}
+
+const formulaErrors = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.formulaErrors)"));
+
+test("v2.8.0 errors: the fixture's cells by field, types and missing counts match known-issues.json", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  const expected = knownIssues["公式错误.xlsx"];
+  assert.deepEqual(formulaErrors(scope), expected.formulaErrors);
+  assert.deepEqual(importedSummary(scope.evaluate).types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(scope.evaluate("state.totalMissing"), expected.expectedTotals.totalMissing);
+  // Rows 7 and 12 hold nothing but errors and column G has no header: known limits, not listed.
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "2,3,4,5,6,8,9,10,11");
+  assert.equal(scope.evaluate('state.fields.join("|")'), "产品|单价|数量|金额|利润率|备注");
+  // The summary does not follow the field configuration.
+  const before = scope.evaluate("JSON.stringify(state.formulaErrors)");
+  scope.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("JSON.stringify(state.formulaErrors)"), before);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(scope.evaluate("JSON.stringify(state.formulaErrors)"), before);
+});
+
+test("v2.8.0 errors: a sheet with error cells imports exactly like the same sheet with blank cells", async () => {
+  const withErrors = [["名", "额", "说明"], ["A", 10, "好"], ["B", { e: 7 }, { e: 42 }], ["C", 30, { e: 0 }], ["D", { e: 15 }, "好"]];
+  const blank = withErrors.map((row) => row.map((value) => (value && typeof value === "object" ? null : value)));
+  const summarize = (scope) => scope.evaluate("JSON.stringify({ rows: state.rows, profiles: state.profiles, stats: state.qualityNumericStats, missing: state.totalMissing, categories: listProblemCategories().filter((item) => item.kind !== \"formulaError\") })");
+  const a = await importWorkbookFile(buildErrorWorkbook(withErrors));
+  const b = await importWorkbookFile(buildErrorWorkbook(blank));
+  assert.equal(summarize(a), summarize(b));
+  assert.deepEqual(formulaErrors(a).map((item) => [item.field, item.count]), [["额", 2], ["说明", 2]]);
+  assert.deepEqual(formulaErrors(b), []);
+});
+
+test("v2.8.0 errors: !ref away from A1, cells outside the table, rows and columns that drop out", async () => {
+  // A8 and B8 sit left of the table: a reader that forgets the column offset reads them for
+  // the first column, and one that forgets the row offset reads other rows' cells.
+  const scope = await importWorkbookFile((() => {
+    const worksheet = XLSX.utils.aoa_to_sheet([["名", "额", "备注"], ["A", 10, "好"], ["B", null, null], ["C", 30, "好"]], { origin: "C5" });
+    worksheet.D7 = { t: "e", v: 7 };
+    worksheet.E7 = { t: "e", v: 42 };
+    worksheet.A8 = { t: "e", v: 15 };
+    worksheet.B8 = { t: "e", v: 15 };
+    worksheet["!ref"] = "C5:E8";
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+    return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  })());
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "6,7,8");
+  assert.deepEqual(formulaErrors(scope), [
+    { field: "额", count: 1, byError: { "#DIV/0!": 1 }, lines: [7] },
+    { field: "备注", count: 1, byError: { "#N/A": 1 }, lines: [7] }
+  ]);
+  // Known limits: whole rows of errors and error-only columns without a header are not listed.
+  const dropped = await importWorkbookFile(buildErrorWorkbook([["名", "额", null], ["A", 1, { e: 7 }], [{ e: 7 }, { e: 42 }], ["B", 2], [{ e: 7 }, { e: 7 }]]));
+  assert.equal(dropped.evaluate('state.fields.join("|")'), "名|额");
+  assert.equal(dropped.evaluate("state.rows.length"), 2);
+  assert.deepEqual(formulaErrors(dropped), []);
+  // At most ten row numbers per field; the count stays whole.
+  const many = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ...Array.from({ length: 12 }, (_, index) => [`N${index}`, { e: 7 }])]));
+  assert.deepEqual(formulaErrors(many), [{ field: "额", count: 12, byError: { "#DIV/0!": 12 }, lines: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12] }]);
+});
+
+test("v2.8.0 errors: the text comes from cell.w of error cells only, then the code table, never #WTF?", async () => {
+  const { evaluate } = createExcelContext();
+  assert.deepEqual(JSON.parse(evaluate(`JSON.stringify([
+    readExcelErrorText({ t: "e", v: 7, w: "#DIV/0!" }),
+    readExcelErrorText({ t: "e", w: "#SPILL!" }),
+    readExcelErrorText({ t: "e", v: 42, w: "2024-01-01" }),
+    readExcelErrorText({ t: "e", v: 0 }),
+    readExcelErrorText({ t: "e", v: 99 }),
+    readExcelErrorText({ t: "e", w: "not-an-error" }),
+    readExcelErrorText({ t: "e", v: 255, w: "#WTF?" }),
+    readExcelErrorText({ t: "e", w: "#WTF?" })
+  ])`)), ["#DIV/0!", "#SPILL!", "#N/A", "#NULL!", "#错误", "#错误", "#错误", "#错误"]);
+  // SheetJS's own placeholder reaches cell.w through a real file too.
+  const placeholder = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ["B", { e: 255 }], ["C", 2]]));
+  assert.deepEqual(formulaErrors(placeholder), [{ field: "额", count: 1, byError: { "#错误": 1 }, lines: [3] }]);
+  // Empty-looking cells of other types are not errors, whatever their w says.
+  const scope = createExcelContext();
+  put(scope.context, "__sheet", { "!ref": "A1:B3", A1: { t: "s", v: "名" }, B1: { t: "s", v: "额" }, A2: { t: "s", v: "x" }, B2: { t: "s", v: "", w: "#DIV/0!" }, A3: { t: "s", v: "y" }, B3: { t: "z", w: "#N/A" } });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify((() => { const read = createExcelCellErrorReader(__sheet); return [read(1, 1), read(2, 1), read(1, 0), read(9, 9)]; })())")), ["", "", "", ""]);
+  // The reader is asked only about cells that read as empty.
+  const asked = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const seen = [];
+    buildExcelTabularData([["名", "额"], ["x", 1], ["y", ""]], [["名", "额"], ["x", 1], ["y", ""]], "S", null, 1, (row, column) => { seen.push([row, column]); return ""; });
+    return seen;
+  })())`));
+  assert.deepEqual(asked, [[2, 1]]);
+});
+
+test("v2.8.0 errors: xls files read the same, CSV text stays text", async () => {
+  const xls = await importWorkbookFile(buildErrorWorkbook([["名", "额"], ["A", 1], ["B", { e: 7 }], ["C", { e: 0 }], ["D", 2]], { bookType: "xls" }), "t.xls");
+  assert.deepEqual(formulaErrors(xls), [{ field: "额", count: 2, byError: { "#DIV/0!": 1, "#NULL!": 1 }, lines: [3, 4] }]);
+  // A format problem and a placeholder, no formula error.
+  const csv = await importCsvFile("名,额,说明\r\nA,1,#N/A\r\nB,2,好\r\nC,3,好\r\nD,4,好\r\nE,#DIV/0!,好\r\n");
+  assert.deepEqual(formulaErrors(csv), []);
+  assert.equal(csv.evaluate('getFieldProfile("额").conversionFailureCount'), 1);
+  assert.equal(csv.evaluate("state.placeholders.map((entry) => entry.key).join()"), "#N/A");
+});
+
+test("v2.8.0 state: a later commit and resetAnalysisState() clear the formula errors", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(state.rows[1])"), true);
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(state.rows[0])"), false);
+  put(scope.context, "__oldRow", scope.evaluate("state.rows[1]"));
+  put(scope.context, "__cityRows", [{ 城市: "上海" }]);
+  // The same import id, so resetAnalysisState() in beginImport() cannot hide a commit that keeps them.
+  scope.evaluate('commitTabularData(["城市"], __cityRows, "later.csv", state.activeImportId)');
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(__oldRow)"), false);
+  assert.equal(scope.evaluate("state.formulaErrors.length"), 0);
+  // A list of another length is not aligned with the rows: no error is kept.
+  put(scope.context, "__twoRows", [{ 城市: "上海" }, { 城市: "北京" }]);
+  scope.evaluate('commitTabularData(["城市"], __twoRows, "short.csv", state.activeImportId, [], "", null, null, null, [{ 城市: "#N/A" }])');
+  assert.equal(scope.evaluate("state.sourceFormulaErrors.has(__twoRows[0])"), false);
+  assert.equal(scope.evaluate("state.formulaErrors.length"), 0);
+
+  const again = await importStage3Fixture("公式错误.xlsx");
+  put(again.context, "__keptRow", again.evaluate("state.rows[1]"));
+  again.evaluate("resetAnalysisState()");
+  assert.equal(again.evaluate("state.sourceFormulaErrors.has(__keptRow)"), false);
+  assert.equal(again.evaluate("state.formulaErrors.length"), 0);
+});
+
+const suspectedTotals = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals)"));
+const totalLines = (scope) => suspectedTotals(scope).map((item) => item.line);
+const totalsCsv = (rows) => `${rows.map((row) => row.join(",")).join("\r\n")}\r\n`;
+
+test("v2.8.0 labels: whole cells only, with a short Chinese prefix, notes and colons removed", () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  const matches = {
+    "合计": "合计", "合\u3000计": "合计", "合计：": "合计", "合计:": "合计", "合计（元）": "合计", "合计(元)": "合计", "合计（元）：": "合计", "合计：（元）": "合计",
+    "上海 小计": "上海小计", "华东区合计": "华东区合计", "总计": "总计", "总和": "总和", "汇总": "汇总", "汇\u3000总": "汇总", "总 和": "总和", "累计": "累计", "本月累计": "本月累计",
+    "TOTAL": "TOTAL", "Grand total:": "Grandtotal", "Total (USD)": "Total", "Sub-total": "Sub-total", "Sub total": "Subtotal", "sum": "sum", "\uFF54\uFF4F\uFF54\uFF41\uFF4C": "total", "\u017Fum": "sum", "T o t a l": "Total",
+    [`${"一".repeat(12)}合计`]: `${"一".repeat(12)}合计`
+  };
+  for (const [value, expected] of Object.entries(matches)) assert.equal(label(value), expected, JSON.stringify(value));
+  const others = [`${"一".repeat(13)}合计`, "合计金额", "小计说明", "Total Sales", "SUMMARY", "统计", "共计", "合共", "", "   ", "\u3000",
+    "（合计）", "合计（元）（含税）", "合计[元]", "合计【元】", "Sub\u2010total", "合\u200B计"];
+  for (const value of others) assert.equal(label(value), "", JSON.stringify(value));
+  for (const expression of ["12", 'new Date("2024-01-01")', "null", "undefined", "true"]) {
+    assert.equal(evaluate(`totalRowLabel(${expression})`), "", expression);
+  }
+});
+
+test("v2.8.0 labels: a prefix that is only a status word is no label, a longer one still is", async () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  for (const value of ["已汇总", "未汇总", "不累计", "无合计", "無合计", "非合计", "待汇总", "是否汇总", "尚未汇总", "暂未汇总", "暂不汇总", "暫未匯總", "暫不匯總", "已匯總", "未合計", "已 汇总", "已\u3000匯總"]) {
+    assert.equal(label(value), "", value);
+  }
+  // The whole prefix must be the status word: these only begin or end with one.
+  for (const value of ["南非小计", "东非合计", "上海小计", "无锡合计", "未名湖小计", "不丹合计", "已汇总合计"]) {
+    assert.equal(label(value), value, value);
+  }
+  // A status column must neither be flagged nor split the details of the real total.
+  const scope = await importCsvFile(totalsCsv([["名", "状态", "数量"], ["A", "已汇总", 2], ["B", "处理中", 1], ["C", "已汇总", 1], ["D", "处理中", 2], ["E", "处理中", 3], ["合计", "", 9]]));
+  assert.deepEqual(suspectedTotals(scope).map((item) => [item.line, item.label, item.matches[0].rowCount]), [[7, "合计", 5]]);
+});
+
+test("v2.8.0 labels: traditional keywords count, with a prefix and full-width spaces", async () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__value", value);
+    return evaluate("totalRowLabel(__value)");
+  };
+  for (const value of ["合計", "總計", "小計", "總和", "匯總", "彙總", "累計", "台北小計"]) assert.equal(label(value), value, value);
+  assert.equal(label("合\u3000計"), "合計");
+  assert.equal(label("匯 總"), "匯總");
+  assert.equal(label("合計金額"), "");
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["甲", 10], ["乙", 20], ["台北小計", 30], ["丙", 5], ["總計", 35]]))), [4, 6]);
+});
+
+test("v2.8.0 labels: the prefilter lets through every keyword and every code point that normalizes into a keyword character", () => {
+  const { evaluate } = createScriptContext();
+  const prefilter = evaluate("TOTAL_LABEL_PREFILTER");
+  for (const keyword of ["合计", "总计", "小计", "总和", "汇总", "累计", "合計", "總計", "小計", "總和", "匯總", "彙總", "累計", "total", "TOTAL", "sum", "SUM"]) {
+    assert.ok(prefilter.test(keyword), keyword);
+  }
+  const keywordCharacters = new Set("合计总小和汇累計總匯彙totalsumgrandbTOTALSUMGRANDB");
+  const missed = [];
+  let checked = 0;
+  for (let code = 0x80; code <= 0x10ffff; code += 1) {
+    if (code >= 0xd800 && code <= 0xdfff) continue;
+    const character = String.fromCodePoint(code);
+    const normalized = character.normalize("NFKC");
+    if (normalized === character || ![...normalized].some((piece) => keywordCharacters.has(piece))) continue;
+    checked += 1;
+    if (!prefilter.test(character)) missed.push(code.toString(16));
+  }
+  assert.ok(checked > 500);
+  assert.deepEqual(missed, []);
+});
+
+test("v2.8.0 performance: a text file without labels never normalizes a plain cell and no numbers are read", async () => {
+  const scope = await importCsvFile(totalsCsv([["名", "额"], ["甲", "1"], ["乙", "2"], ["丙", "3"]]));
+  const calls = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const original = String.prototype.normalize;
+    let normalized = 0;
+    String.prototype.normalize = function (...args) { normalized += 1; return original.apply(this, args); };
+    const rows = Array.from({ length: 200 }, (_, index) => ({ 名: "门店" + index, 额: String(index) }));
+    const result = buildSuspectedTotalSummary(rows, ["名", "额"], [{ field: "额", typeKey: "numeric", get numberStrategy() { throw new Error("read the number strategy"); }, confirmedKeys: [] }], () => null);
+    String.prototype.normalize = original;
+    return { normalized, result };
+  })())`));
+  assert.deepEqual(calls, { normalized: 0, result: [] });
+});
+
+test("v2.8.0 performance: a rebuild reuses the labels found on import, without scanning the cells again", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const labelChecks = JSON.parse(store.evaluate(`JSON.stringify((() => {
+    const original = totalRowLabel;
+    let calls = 0;
+    totalRowLabel = (value) => { calls += 1; return original(value); };
+    stageFieldTypeChange("销售额", "category");
+    applyFieldConfiguration();
+    const rebuild = calls;
+    findTotalLabelRows(state.rows, state.fields);
+    totalRowLabel = original;
+    return { rebuild, scanned: calls > rebuild, kept: state.suspectedTotals.length };
+  })())`));
+  assert.deepEqual(labelChecks, { rebuild: 0, scanned: true, kept: 1 });
+});
+
+test("v2.8.0 fixtures: the store report's row 33 and the region table match known-issues.json", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const region = await importStage3Fixture("分区小计表.csv");
+  const pick = (scope) => suspectedTotals(scope).map((item) => ({ line: item.line, label: item.label, field: item.field, matches: item.matches }));
+  assert.deepEqual(pick(store), knownIssues["门店报表.xlsx"].suspectedTotals);
+  assert.deepEqual(pick(region), knownIssues["分区小计表.csv"].suspectedTotals);
+  assert.deepEqual(importedSummary(region.evaluate).types, knownIssues["分区小计表.csv"].expectedTypes.map((item) => item.expected));
+  assert.equal(region.evaluate("state.headerDetection"), null);
+  assert.equal(region.evaluate("state.totalMissing"), knownIssues["分区小计表.csv"].expectedTotals.totalMissing);
+});
+
+test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["公式错误.xlsx"]);
+});
+
+test("v2.8.0 totals: the three ranges, each tried in order", async () => {
+  const cases = [
+    // No detail above the first row: only the whole table can match.
+    [[["名", "额"], ["合计", 30], ["A", 10], ["B", 20]], [[2, "all", 3, 4, 2]]],
+    [[["名", "额"], ["A", 10], ["合计", 60], ["B", 20], ["C", 30]], [[3, "all", 2, 5, 3]]],
+    // The total below subtotals adds up the details only, not the subtotals.
+    [[["名", "额"], ["A", 10], ["小计", 10], ["B", 20], ["小计", 20], ["总计", 30]], [[3, "segment", 2, 2, 1], [5, "segment", 4, 4, 1], [6, "above", 2, 4, 2]]],
+    // Two totals in a row: the second has no detail since the first, so it matches everything above.
+    [[["名", "额"], ["A", 10], ["B", 20], ["小计", 30], ["合计", 30]], [[4, "segment", 2, 3, 2], [5, "above", 2, 3, 2]]],
+    // Returns count as negative; a total can be negative.
+    [[["名", "额"], ["A", 100], ["退货", -30], ["合计", 70]], [[4, "segment", 2, 3, 2]]],
+    [[["名", "额"], ["A", -10], ["B", -20], ["合计", -30]], [[4, "segment", 2, 3, 2]]]
+  ];
+  for (const [rows, expected] of cases) {
+    const scope = await importCsvFile(totalsCsv(rows));
+    const actual = suspectedTotals(scope).map((item) => [item.line, item.matches[0].scope, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]);
+    assert.deepEqual(actual, expected, JSON.stringify(rows));
+  }
+});
+
+test("v2.8.0 totals: columns that match different ranges are grouped by range", async () => {
+  // 额 adds up since the subtotal, 量 only over every detail above it.
+  const scope = await importCsvFile(totalsCsv([["名", "额", "量"], ["A", 10, 1], ["B", 20, 2], ["小计", 30, 99], ["C", 40, 4], ["D", 50, 5], ["总计", 90, 12]]));
+  const last = suspectedTotals(scope).find((item) => item.line === 7);
+  assert.deepEqual(last.matches.map((match) => [match.scope, match.fields, match.firstLine, match.lastLine, match.rowCount, match.contiguous]), [
+    ["segment", ["额"], 5, 6, 2, true],
+    ["above", ["量"], 2, 6, 4, false]
+  ]);
+});
+
+test("v2.8.0 totals: counterexamples stay silent, the tolerance is 0.5% of the sum", async () => {
+  const silent = [
+    [["名", "额"], ["A", 10], ["B", 20], ["合计", 31]],
+    [["名", "额"], ["合计", 99], ["A", 10], ["B", 20]],
+    // Adds up but says nothing.
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 30]],
+    // A zero sum never matches, not even a zero cell.
+    [["名", "额"], ["A", 5], ["退货", -5], ["合计", 0]],
+    [["名", "额"], ["A", 100], ["B", 100], ["合计", 201.2]],
+    // Only an empty or unreadable cell on the total row.
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 30], ["合计", ""]],
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 5], ["D", 5], ["E", 5], ["合计", "见附表"]],
+    [["名", "额"], ["A", 10], ["B", 20], ["C", 5], ["D", 5], ["E", 5], ["合计", "N/A"]],
+    // No numeric field at all.
+    [["名", "说明"], ["A", "甲"], ["合计", "乙"]]
+  ];
+  for (const rows of silent) assert.deepEqual(totalLines(await importCsvFile(totalsCsv(rows))), [], JSON.stringify(rows));
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", 100], ["B", 100], ["合计", 201]]))), [4]);
+});
+
+test("v2.8.0 totals: one column is enough, ratio columns and cells that are not numbers stay out", async () => {
+  const scope = await importCsvFile(totalsCsv([["名", "额", "量", "比"], ["A", 10, 1, "0.2"], ["B", 20, "", "0.3"], ["C", "待定", 2, "0.4"], ["D", 5, 1, "0.5"], ["E", 5, 1, "0.1"], ["F", 5, 1, "0.2"], ["合计", 45, 6, "0.28"]]));
+  const [item] = suspectedTotals(scope);
+  assert.equal(item.line, 8);
+  assert.deepEqual(item.matches.map((match) => [match.scope, match.fields, match.firstLine, match.lastLine, match.rowCount, match.contiguous]), [["segment", ["额", "量"], 2, 7, 5, false]]);
+});
+
+test("v2.8.0 totals: rows whose label did not add up go back among the details for one more check", async () => {
+  // Row 3 only says 合计 in its note: the real total below must not get lost.
+  const note = await importCsvFile(totalsCsv([["名", "备注", "额"], ["A", "", 10], ["B", "合计", 20], ["C", "", 30], ["总计", "", 60]]));
+  assert.deepEqual(suspectedTotals(note).map((item) => [item.line, item.label, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]), [[5, "总计", 2, 4, 3]]);
+  // A wrong subtotal must not take the rows that passed the first check down with it.
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", 20], ["小计", 35], ["C", 40], ["D", 50], ["小计", 90], ["总计", 120]]))), [7, 8]);
+  // Labels on every row: no plain detail, so equal neighbours are not totals.
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["城市", "类型", "额"], ["上海", "小计", 100], ["杭州", "小计", 100], ["宁波", "小计", 300]]))), []);
+  // Only one more check: the total below the note and two subtotals stays out (known limit).
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "备注", "额"], ["a", "合计", 10], ["b", "", 20], ["上海小计", "", 30], ["c", "", 40], ["d", "", 50], ["杭州小计", "", 90], ["总计", "", 120]]))), [4, 7]);
+  // The row checked again is no addend of its own "whole table" range.
+  const top = await importCsvFile(totalsCsv([["名", "备注", "额"], ["总计", "", 60], ["A", "", 10], ["B", "合计", 20], ["C", "", 30]]));
+  assert.deepEqual(suspectedTotals(top).map((item) => [item.line, item.matches[0].scope, item.matches[0].firstLine, item.matches[0].lastLine, item.matches[0].rowCount]), [[2, "all", 3, 5, 3]]);
+});
+
+test("v2.8.0 totals: huge values neither match by overflow nor hide a later segment", async () => {
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", "1e308"], ["B", "1e308"], ["合计", 5]]))), []);
+  assert.deepEqual(totalLines(await importCsvFile(totalsCsv([["名", "额"], ["A", "1e308"], ["B", "1e308"], ["小计", "1e308"], ["C", 1], ["D", 2], ["小计", 3]]))), [7]);
+  const absorbed = await importCsvFile(totalsCsv([["名", "额"], ["A", "100000000000000000"], ["小计", "100000000000000000"], ["B", 1], ["C", 1], ["小计", 2]]));
+  assert.deepEqual(totalLines(absorbed), [3, 6]);
+});
+
+test("v2.8.0 totals: numbers read with the field's strategy, labels in any field, the first one in field order", async () => {
+  const units = await importCsvFile(totalsCsv([["名", "额"], ["A", "1万"], ["B", "2万"], ["合计", "3万"]]));
+  assert.deepEqual(totalLines(units), [4]);
+  const first = await importCsvFile(totalsCsv([["名", "备注", "额"], ["A", "", 10], ["B", "", 20], ["华东合计", "小计", 30]]));
+  assert.deepEqual(suspectedTotals(first).map((item) => [item.field, item.label]), [["名", "华东合计"]]);
+  const store = await importStage3Fixture("门店报表.xlsx");
+  store.evaluate('stageFieldTypeChange("门店编号", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(totalLines(store), [33]);
+  assert.equal(suspectedTotals(store)[0].field, "门店编号");
+});
+
+test("v2.8.0 refresh: field configuration and confirmations rebuild the totals, filters do not", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const status = store.elements.get("statusPanel").textContent;
+  put(store.context, "__before", store.evaluate("state.suspectedTotals"));
+  applyFilterState(store, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(store.evaluate("state.suspectedTotals === __before"), true);
+  store.evaluate('stageFieldTypeChange("销售额", "category"); applyFieldConfiguration()');
+  assert.deepEqual(suspectedTotals(store)[0].matches[0].fields, ["成本"]);
+  store.evaluate('stageFieldTypeChange("成本", "category"); applyFieldConfiguration()');
+  assert.deepEqual(suspectedTotals(store), []);
+  store.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(totalLines(store), [33]);
+  assert.equal(store.elements.get("statusPanel").textContent, status);
+
+  const placeholder = await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", "N/A"], ["C", "N/A"], ["D", 20], ["合计", 30]]));
+  assert.equal(placeholder.evaluate('getFieldProfile("额").typeKey'), "category");
+  assert.deepEqual(totalLines(placeholder), []);
+  placeholder.evaluate('confirmPlaceholder("额", "N/A")');
+  assert.deepEqual(totalLines(placeholder), [6]);
+  placeholder.evaluate('undoPlaceholderConfirmation("额", "N/A")');
+  assert.deepEqual(totalLines(placeholder), []);
+});
+
+test("v2.8.0 state: a later commit and resetAnalysisState() clear the labels and the totals", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(store.evaluate("state.totalLabelRows.length"), 1);
+  put(store.context, "__plainRows", [{ 城市: "上海" }]);
+  store.evaluate('commitTabularData(["城市"], __plainRows, "later.csv", state.activeImportId)');
+  assert.equal(store.evaluate("state.totalLabelRows.length"), 0);
+  assert.equal(store.evaluate("state.suspectedTotals.length"), 0);
+  const again = await importStage3Fixture("门店报表.xlsx");
+  again.evaluate("resetAnalysisState()");
+  assert.equal(again.evaluate("state.totalLabelRows.length"), 0);
+  assert.equal(again.evaluate("state.suspectedTotals.length"), 0);
+});
+
+test("v2.8.0 totals: the check changes nothing, the rows and every count stay as they were", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  // Row 33 still counts as data: known-issues.json S5.
+  assert.equal(store.evaluate("state.rows.length"), 29);
+  assert.equal(store.evaluate("state.totalMissing"), 4);
+  assert.equal(store.evaluate('getQualityNumericStats().find((stat) => stat.field === "销售额").count'), 29);
+  assert.equal(store.evaluate('getQualityNumericStats().find((stat) => stat.field === "销售额").outlierCount'), 1);
+  assert.equal(store.evaluate('state.rows[28]["门店编号"]'), "合计");
+  assert.equal(store.evaluate('Object.keys(state.rows[28]).join("|")'), "门店编号|门店名称|城市|开业日期|销售额|成本|毛利率|店长");
+});
+
+const sectionItems = (scope, id) => [...scope.elements.get(id).innerHTML.matchAll(/<li>(.*?)<\/li>/gs)].map((match) => match[1]);
+const sectionButtons = (scope, id) => [...scope.elements.get(id).innerHTML.matchAll(/data-problem-index="(\d+)"/g)].map((match) => Number(match[1]));
+const problemCategories = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+// Two rows per group: one detail and its subtotal, the subtotals at lines 3, 5, 7, ...
+const subtotalsCsv = (count) => `名,额\r\n${Array.from({ length: count }, (_, index) => `A${index},10\r\nA${index}小计,10`).join("\r\n")}\r\n`;
+
+test("v2.8.0 page: both subsections are static, after the warnings and before the tables, with their notes", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const positions = ['id="parseWarningSummary"', '<div id="suspectedTotalSection" class="module-subsection row-note-section hidden">', '<div id="formulaErrorSection" class="module-subsection row-note-section hidden">', '<div class="two-column">'].map((text) => html.indexOf(text));
+  assert.equal(positions.every((position) => position >= 0), true);
+  assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
+  assert.match(html, /<p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。<\/p>/);
+  assert.match(html, /<p class="section-note">这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。<\/p>/);
+});
+
+test("v2.8.0 status: the sentences follow the header note, on the warning branch too, one row or many", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  assert.equal(region.elements.get("statusPanel").textContent, "分区小计表.csv 已成功载入，分析结果已生成。发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），目前仍计入统计，详情见“数据质量”。");
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(errors.elements.get("statusPanel").textContent, "公式错误.xlsx · 公式错误 已成功载入，分析结果已生成。发现 7 个公式错误单元格，已按缺失值处理，详情见“数据质量”。");
+  const warned = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n合计,30\r\n");
+  assert.equal(warned.elements.get("statusPanel").textContent, "CSV 已载入，但发现 1 个解析警告，涉及 1 行。请核对数据预览和字段数量。第 5 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+  const many = await importCsvFile(subtotalsCsv(7));
+  assert.match(many.elements.get("statusPanel").textContent, /发现 7 行疑似合计 \/ 小计（第 3、5、7、9、11 行等），目前仍计入统计/);
+  const five = await importCsvFile(subtotalsCsv(5));
+  assert.match(five.elements.get("statusPanel").textContent, /发现 5 行疑似合计 \/ 小计（第 3、5、7、9、11 行），目前仍计入统计/);
+  const { context, evaluate, elements } = createScriptContext();
+  put(context, "__rows", [{ 名: "A", 额: "10" }, { 名: "合计", 额: "10" }]);
+  evaluate('commitTabularData(["名", "额"], __rows, "x.csv", beginImport())');
+  assert.match(elements.get("statusPanel").textContent, /有一行「合计」疑似合计行/);
+  put(context, "__manyRows", [{ 名: "A", 额: "10" }, { 名: "A小计", 额: "10" }, { 名: "B", 额: "20" }, { 名: "B小计", 额: "20" }]);
+  evaluate('commitTabularData(["名", "额"], __manyRows, "x.csv", beginImport())');
+  assert.match(elements.get("statusPanel").textContent, /发现 2 行疑似合计 \/ 小计，目前仍计入统计/);
+  const clean = await importCsvFile("名,额\r\nA,10\r\nB,20\r\n");
+  assert.doesNotMatch(clean.elements.get("statusPanel").textContent, /疑似合计|公式错误/);
+});
+
+test("v2.8.0 page: the store report has one line and one button, the row opens with its label cell highlighted", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(store.elements.get("suspectedTotalSection").classList.contains("hidden"), false);
+  const items = sectionItems(store, "suspectedTotalDetails");
+  assert.deepEqual(items, ["第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。"]);
+  const buttons = sectionButtons(store, "suspectedTotalDetails");
+  assert.equal(buttons.length, 1);
+  assert.deepEqual(problemCategories(store)[buttons[0]], { kind: "suspectedTotal", count: 1, unit: "row" });
+  clickProblemButton(store, buttons[0]);
+  assert.equal(store.elements.get("problemRowsSummary").textContent, "共 1 行，第 1 / 1 页");
+  const table = store.elements.get("problemRowsTable").innerHTML;
+  assert.match(table, /<tr><td>33<\/td><td>销售额、成本等于第 5–32 行之和（28 行）<\/td><td class="cell-problem">合计<\/td>/);
+  assert.equal([...table.matchAll(/cell-problem/g)].length, 1);
+  assert.equal(store.elements.get("formulaErrorSection").classList.contains("hidden"), true);
+});
+
+test("v2.8.0 page: five subtotals, one button; the note names only the columns that matched", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  const items = sectionItems(region, "suspectedTotalDetails");
+  assert.equal(items.length, 5);
+  assert.match(items[0], /^第 5 行「上海 小计」：销售额、成本、占比等于第 2–4 行之和（3 行）。$/);
+  assert.match(items[4], /^第 15 行「/);
+  assert.doesNotMatch(items[4], /占比/);
+  const buttons = sectionButtons(region, "suspectedTotalDetails");
+  assert.equal(buttons.length, 1);
+  assert.doesNotMatch(region.elements.get("suspectedTotalDetails").innerHTML, /data-placeholder-index/);
+  assert.match(region.elements.get("suspectedTotalDetails").innerHTML, /aria-label="查看疑似合计 \/ 小计行"/);
+  assert.doesNotMatch(region.elements.get("suspectedTotalDetails").innerHTML, /只列出/);
+  assert.deepEqual(problemCategories(region).find((item) => item.kind === "suspectedTotal"), { kind: "suspectedTotal", count: 5, unit: "row" });
+  assert.equal(region.evaluate('formatProblemCategoryLabel({ kind: "suspectedTotal", count: 5 })'), "疑似合计 / 小计行（5 行）");
+  clickProblemButton(region, buttons[0]);
+  assert.equal(region.elements.get("problemRowsSummary").textContent, "共 5 行，第 1 / 1 页");
+  assert.match(region.elements.get("problemRowsTable").innerHTML, /<td>5<\/td><td>销售额、成本、占比等于第 2–4 行之和（3 行）<\/td><td class="cell-problem">上海 小计<\/td>/);
+  const csv = region.evaluate("buildProblemRowsCsvContent(state.problemView.list, state.fields)");
+  assert.match(csv, /^文件行号,说明,门店,城市,销售额,成本,占比\r\n5,销售额、成本、占比等于第 2–4 行之和（3 行）,上海 小计,上海,369\.4,255\.9,46%/);
+  assert.equal(region.evaluate('buildProblemRowsFileName({ kind: "suspectedTotal" }, new Date(2026, 10, 2))'), "分区小计表_问题行_疑似合计_20261102.csv");
+  // No new pill: exactly the six of the pills assertion.
+  assert.equal([...region.elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill/g)].length, 6);
+  assert.deepEqual(problemRowCheck(region).mismatches, []);
+});
+
+test("v2.8.0 page: suspected totals list at most 20 lines, the viewer has them all", async () => {
+  const exact = await importCsvFile(subtotalsCsv(20));
+  assert.equal(sectionItems(exact, "suspectedTotalDetails").length, 20);
+  assert.doesNotMatch(exact.elements.get("suspectedTotalDetails").innerHTML, /只列出/);
+
+  const over = await importCsvFile(subtotalsCsv(21));
+  const items = sectionItems(over, "suspectedTotalDetails");
+  assert.equal(items.length, 20);
+  assert.match(items[19], /^第 41 行「A19小计」/);
+  assert.match(over.elements.get("suspectedTotalDetails").innerHTML, /共 21 行，只列出前 20 行。全部行请点「查看」。/);
+  const buttons = sectionButtons(over, "suspectedTotalDetails");
+  assert.equal(buttons.length, 1);
+  clickProblemButton(over, buttons[0]);
+  assert.equal(over.elements.get("problemRowsSummary").textContent, "共 21 行，第 1 / 1 页");
+  assert.equal(over.evaluate("state.problemView.list.items.length"), 21);
+  assert.equal(over.evaluate("SUSPECTED_TOTAL_LIST_LIMIT"), 20);
+
+  const large = await importCsvFile(subtotalsCsv(5000));
+  assert.equal(sectionItems(large, "suspectedTotalDetails").length, 20);
+  assert.match(large.elements.get("suspectedTotalDetails").innerHTML, /共 5,000 行，只列出前 20 行。/);
+});
+
+test("v2.8.0 page: formula errors have one button per field and every note, the empty cell is highlighted", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(scope.elements.get("formulaErrorSection").classList.contains("hidden"), false);
+  const items = sectionItems(scope, "formulaErrorDetails");
+  assert.equal(items.length, 4);
+  assert.match(items.join(), /「利润率」：3 个（#DIV\/0! 2 个、#REF! 1 个），第 3、5、9 行。/);
+  const buttons = sectionButtons(scope, "formulaErrorDetails");
+  assert.equal(buttons.length, 4);
+  const categories = problemCategories(scope);
+  assert.deepEqual(buttons.map((index) => [categories[index].kind, categories[index].field]), knownIssues["公式错误.xlsx"].formulaErrors.map((item) => ["formulaError", item.field]));
+  assert.deepEqual(buttons.map((index) => categories[index].count), knownIssues["公式错误.xlsx"].formulaErrors.map((item) => item.count));
+  assert.equal(scope.evaluate('formatProblemCategoryLabel({ kind: "formulaError", field: "备注", count: 2 })'), "公式错误 · 备注（2 个值）");
+  assert.equal(scope.evaluate('formatProblemViewLabel({ kind: "formulaError", field: "备注" })'), "查看「备注」的公式错误");
+
+  const notes = JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "missing", field: "备注" }).items.map((item) => [item.line, item.note]))'));
+  assert.deepEqual(notes, [[5, "公式错误 #NULL!"], [6, "公式错误 #SPILL!"], [8, "空值"]]);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(listProblemRows({ kind: "formulaError", field: "利润率" }).items.map((item) => [item.line, item.note]))')), [[3, "公式错误 #DIV/0!"], [5, "公式错误 #REF!"], [9, "公式错误 #DIV/0!"]]);
+  assert.deepEqual(problemRowCheck(scope).mismatches, []);
+  clickProblemButton(scope, categories.findIndex((item) => item.kind === "formulaError" && item.field === "备注"));
+  assert.equal(scope.elements.get("problemRowsSummary").textContent, "共 2 个值，第 1 / 1 页");
+  assert.match(scope.elements.get("problemRowsTable").innerHTML, /<tr><td>5<\/td><td>公式错误 #NULL!<\/td><td>P04<\/td><td>8<\/td><td>6<\/td><td>48<\/td><td><\/td><td class="cell-problem"><\/td><\/tr>/);
+  assert.equal(scope.evaluate('buildProblemRowsFileName({ kind: "formulaError", field: "利润率" }, new Date(2026, 10, 2))'), "公式错误_问题行_公式错误_利润率_20261102.csv");
+
+  const before = scope.evaluate("JSON.stringify(state.formulaErrors)");
+  scope.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
+  assert.equal(scope.evaluate("JSON.stringify(state.formulaErrors)"), before);
+  assert.match(scope.elements.get("formulaErrorDetails").innerHTML, /「利润率」（字段已忽略）：3 个（#DIV\/0! 2 个、#REF! 1 个），第 3、5、9 行。/);
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.doesNotMatch(scope.elements.get("formulaErrorDetails").innerHTML, /字段已忽略/);
+});
+
+test("v2.8.0 page: the sentences for row ranges, many columns and missing row numbers", () => {
+  const { evaluate } = createScriptContext();
+  const line = (item) => evaluate(`formatSuspectedTotal(${JSON.stringify(item)})`);
+  const match = { scope: "segment", fields: ["额"], firstLine: 2, lastLine: 13, rowCount: 12, contiguous: true };
+  assert.equal(line({ line: 14, label: "合计", matches: [match] }), "第 14 行「合计」：额等于第 2–13 行之和（12 行）。");
+  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, rowCount: 9, contiguous: false }] }), "第 14 行「合计」：额等于第 2–13 行中的明细之和（9 行）。");
+  assert.equal(line({ line: 3, label: "小计", matches: [{ ...match, firstLine: 2, lastLine: 2, rowCount: 1 }] }), "第 3 行「小计」：额等于第 2 行（只有 1 行）。");
+  assert.equal(line({ line: null, label: "合计", matches: [{ ...match, firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于上方 3 行明细之和。");
+  assert.equal(line({ line: null, label: "合计", matches: [{ ...match, scope: "all", firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于全表 3 行明细之和。");
+  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, rowCount: 1000, firstLine: 2, lastLine: 1001 }] }), "第 14 行「合计」：额等于第 2–1001 行之和（1,000 行）。");
+  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, fields: ["a", "b", "c", "d", "e"] }, { ...match, scope: "all", fields: ["a", "b", "c", "d", "e", "f"] }] }), "第 14 行「合计」：a、b、c、d、e等于第 2–13 行之和（12 行）；a、b、c、d、e 等 6 列等于第 2–13 行之和（12 行）。");
+
+  const error = (item) => evaluate(`formatFormulaError(${JSON.stringify(item)})`);
+  const base = { field: "额", count: 2, byError: { "#N/A": 2 }, lines: [3, 4] };
+  assert.equal(error(base), "「额」：2 个（#N/A 2 个），第 3、4 行。");
+  assert.equal(error({ ...base, lines: [null, null] }), "「额」：2 个（#N/A 2 个），行号：—。");
+  assert.equal(error({ ...base, count: 12, byError: { "#N/A": 12 } }), "「额」：12 个（#N/A 12 个），第 3、4 行等。");
+  assert.equal(evaluate('formatFormulaErrorStatus([{ count: 1000 }, { count: 500 }])'), "发现 1,500 个公式错误单元格，已按缺失值处理，详情见“数据质量”。");
+  assert.equal(evaluate("formatFormulaErrorStatus([])"), "");
+  assert.equal(evaluate("formatSuspectedTotalStatus([])"), "");
+});
+
+test("v2.8.0 problem rows: nine kinds in order, and a confirmed placeholder keeps its own note", () => {
+  const { context, evaluate } = createScriptContext();
+  const amounts = [10, 11, 12, 10, 11, 12, 10, 11, 12, 1000];
+  const rows = amounts.map((amount, index) => ({ 订单ID: `P${index}`, 名: `A${index}`, 额: String(amount), 备注: "好" }));
+  rows.push({ ...rows[0] });
+  rows.push({ 订单ID: "P20", 名: "B", 额: "abc", 备注: "N/A" });
+  rows.push({ 订单ID: "P21", 名: "C", 额: "12", 备注: "" });
+  rows.push({ 订单ID: "P22", 名: "D", 额: "13", 备注: "" });
+  const sum = rows.reduce((total, row) => total + (Number(row.额) || 0), 0);
+  rows.push({ 订单ID: "P23", 名: "合计", 额: String(sum), 备注: "好" });
+  put(context, "__rows", rows);
+  put(context, "__errors", rows.map((row) => (row.订单ID === "P22" ? { 备注: "#REF!" } : null)));
+  put(context, "__warnings", [{ row: 2, code: "TooFewFields", message: "少一列" }]);
+  evaluate('commitTabularData(["订单ID", "名", "额", "备注"], __rows, "x.xlsx", beginImport(), __warnings, "", null, null, null, __errors)');
+  const kinds = JSON.parse(evaluate("JSON.stringify(state.problemCategories.map((item) => item.kind))"));
+  assert.deepEqual(kinds.filter((kind, index) => kind !== kinds[index - 1]), ["missing", "formulaError", "conversion", "outlier", "duplicateRows", "suspectedTotal", "idDuplicate", "placeholder", "parseWarnings"]);
+  evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(listProblemRows({ kind: "missing", field: "备注" }).items.map((item) => item.note))')), ["已按缺失处理", "空值", "公式错误 #REF!"]);
+});
+
+test("v2.8.0 page: labels and field names are escaped", async () => {
+  const scope = await importWorkbookFile(buildErrorWorkbook([["名", "<i>额"], ["A", 1], ["B", { e: 7 }], ["<b>合计", 1]]));
+  assert.match(scope.elements.get("suspectedTotalDetails").innerHTML, /「&lt;b&gt;合计」：&lt;i&gt;额等于/);
+  assert.doesNotMatch(scope.elements.get("suspectedTotalDetails").innerHTML, /<b>|<i>/);
+  assert.match(scope.elements.get("formulaErrorDetails").innerHTML, /「&lt;i&gt;额」：1 个/);
+  assert.doesNotMatch(scope.elements.get("formulaErrorDetails").innerHTML, /<i>/);
+});
+
+test("v2.8.0 page: formula errors show without numeric fields, the totals section hides when the last numeric field goes", async () => {
+  const text = await importWorkbookFile(buildErrorWorkbook([["名", "说明"], ["A", "好"], ["B", { e: 42 }], ["C", "好"]]));
+  assert.equal(text.evaluate("state.qualityNumericStats.length"), 0);
+  assert.equal(text.elements.get("formulaErrorSection").classList.contains("hidden"), false);
+  assert.match(text.elements.get("formulaErrorDetails").innerHTML, /「说明」：1 个（#N\/A 1 个），第 3 行。/);
+
+  const totals = await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", 20], ["合计", 30]]));
+  const buttons = sectionButtons(totals, "suspectedTotalDetails");
+  assert.equal(buttons.length, 1);
+  clickProblemButton(totals, buttons[0]);
+  assert.equal(totals.evaluate("state.problemView.category.kind"), "suspectedTotal");
+  totals.evaluate('stageFieldTypeChange("额", "category"); applyFieldConfiguration()');
+  assert.equal(totals.evaluate("state.qualityNumericStats.length"), 0);
+  assert.equal(totals.elements.get("suspectedTotalSection").classList.contains("hidden"), true);
+  assert.equal(totals.elements.get("suspectedTotalDetails").innerHTML, "");
+  assert.equal(totals.evaluate('listProblemRows({ kind: "suspectedTotal" })'), null);
+  assert.equal(totals.evaluate("state.problemView"), null);
+  assert.equal(totals.elements.get("problemRowsMessage").textContent, "这一类已经没有问题行。");
+  totals.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(totals.elements.get("suspectedTotalSection").classList.contains("hidden"), false);
+  assert.equal(sectionItems(totals, "suspectedTotalDetails").length, 1);
+});
+
+test("v2.8.0 page: the sections follow field configuration and confirmations, filters and the status bar stay", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const status = store.elements.get("statusPanel").textContent;
+  const before = store.elements.get("suspectedTotalDetails").innerHTML;
+  applyFilterState(store, { category: { field: "城市", values: ["上海"] } });
+  assert.equal(store.elements.get("suspectedTotalDetails").innerHTML, before);
+  store.evaluate('stageFieldTypeChange("销售额", "category"); applyFieldConfiguration()');
+  assert.deepEqual(sectionItems(store, "suspectedTotalDetails"), ["第 33 行「合计」：成本等于第 5–32 行之和（28 行）。"]);
+  assert.equal(store.elements.get("statusPanel").textContent, status);
+
+  const placeholder = await importCsvFile(totalsCsv([["名", "额"], ["A", 10], ["B", "N/A"], ["C", "N/A"], ["D", 20], ["合计", 30]]));
+  assert.equal(placeholder.elements.get("suspectedTotalSection").classList.contains("hidden"), true);
+  placeholder.evaluate('confirmPlaceholder("额", "N/A")');
+  assert.equal(placeholder.elements.get("suspectedTotalSection").classList.contains("hidden"), false);
+  placeholder.evaluate('undoPlaceholderConfirmation("额", "N/A")');
+  assert.equal(placeholder.elements.get("suspectedTotalSection").classList.contains("hidden"), true);
+});
+
+test("v2.8.0 state: a later commit and resetAnalysisState() empty both sections", async () => {
+  const scope = await importStage3Fixture("公式错误.xlsx");
+  put(scope.context, "__cityRows", [{ 城市: "上海" }]);
+  // The same import id, so resetAnalysisState() in beginImport() cannot hide a commit that keeps them.
+  scope.evaluate('commitTabularData(["城市"], __cityRows, "later.csv", state.activeImportId)');
+  assert.equal(scope.elements.get("formulaErrorSection").classList.contains("hidden"), true);
+  assert.equal(scope.elements.get("formulaErrorDetails").innerHTML, "");
+  const again = await importStage3Fixture("公式错误.xlsx");
+  again.evaluate("resetAnalysisState()");
+  assert.equal(again.elements.get("formulaErrorSection").classList.contains("hidden"), true);
+  assert.equal(again.elements.get("formulaErrorDetails").innerHTML, "");
+  const store = await importStage3Fixture("门店报表.xlsx");
+  store.evaluate("resetAnalysisState()");
+  assert.equal(store.elements.get("suspectedTotalSection").classList.contains("hidden"), true);
+  assert.equal(store.elements.get("suspectedTotalDetails").innerHTML, "");
+});
+
+test("the import status keeps has-note when it carries a note: header rows, totals, formula errors", async () => {
+  const statusClass = (scope) => scope.elements.get("statusPanel").className;
+  const store = await importStage3Fixture("门店报表.xlsx");
+  assert.equal(statusClass(store), "status-panel success has-note");
+  for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
+    const grades = await importStage3Fixture(fileName);
+    assert.match(grades.elements.get("statusPanel").textContent, /已跳过上方 1 行/);
+    assert.equal(statusClass(grades), "status-panel success has-note");
+  }
+  assert.equal(statusClass(await importStage3Fixture("分区小计表.csv")), "status-panel success has-note");
+  assert.equal(statusClass(await importStage3Fixture("公式错误.xlsx")), "status-panel success has-note");
+  const warned = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n合计,30\r\n");
+  assert.equal(statusClass(warned), "status-panel warning has-note");
+
+  const sample = await importCsvFile(readExampleCsv("sample-data.csv"), "sample-data.csv");
+  assert.equal(sample.elements.get("statusPanel").textContent, "sample-data.csv 已成功载入，分析结果已生成。");
+  assert.equal(statusClass(sample), "status-panel success");
+  const warnedOnly = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n");
+  assert.equal(statusClass(warnedOnly), "status-panel warning");
+
+  // Any later message replaces the import's: a plain import and a report message drop the class.
+  put(store.context, "__plainRows", [{ 城市: "上海" }]);
+  store.evaluate('commitTabularData(["城市"], __plainRows, "later.csv", state.activeImportId)');
+  assert.equal(statusClass(store), "status-panel success");
+  const again = await importStage3Fixture("门店报表.xlsx");
+  again.evaluate('setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(statusClass(again), "status-panel success");
+});
+
+test("only a successful status without a note is hidden once results show", () => {
+  const css = fs.readFileSync(path.join(__dirname, "..", "style.css"), "utf8");
+  assert.match(css, /body\.has-results #statusPanel\.success:not\(\.has-note\)\s*\{\s*display:\s*none;\s*\}/);
+  assert.doesNotMatch(css, /body\.has-results #statusPanel\.success\s*\{/);
+});
+
+test("v2.8.0 report: sections and summary counts only when there is something, old snapshots without them", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const { report, html, markdown } = reportOf(store);
+  assert.equal(report.quality.suspectedTotals.length, 1);
+  assert.ok(html.includes("；疑似合计 / 小计行：<strong>1</strong> 行。"));
+  assert.ok(html.includes("<h3>疑似合计 / 小计行</h3>"));
+  assert.ok(html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
+  assert.ok(html.indexOf("<h3>疑似合计 / 小计行</h3>") < html.indexOf("<h3>各字段缺失情况</h3>"));
+  assert.ok(markdown.includes("- 疑似合计 / 小计行：1 行"));
+  assert.ok(markdown.includes("### 疑似合计 / 小计行"));
+  assert.ok(markdown.includes("- 第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。"));
+  assert.ok(markdown.indexOf("### 疑似合计 / 小计行") < markdown.indexOf("### 各字段缺失情况"));
+  assert.doesNotMatch(html + markdown, /公式错误/);
+
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  const errorReport = reportOf(errors);
+  assert.ok(errorReport.html.includes("；公式错误：<strong>7</strong> 个单元格。"));
+  assert.ok(errorReport.html.includes("<h3>公式错误单元格</h3>"));
+  assert.ok(errorReport.html.includes("<li>「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。</li>"));
+  assert.ok(errorReport.markdown.includes("- 公式错误：7 个单元格"));
+  assert.ok(errorReport.markdown.includes("### 公式错误单元格"));
+  assert.ok(errorReport.markdown.includes("- 「利润率」：3 个（\\#DIV/0! 2 个、\\#REF! 1 个），第 3、5、9 行。"));
+  assert.doesNotMatch(errorReport.html + errorReport.markdown, /疑似合计/);
+  errors.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
+  assert.match(reportOf(errors).html, /「利润率」（字段已忽略）：3 个/);
+
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.deepEqual([clean.report.quality.suspectedTotals, clean.report.quality.formulaErrors], [[], []]);
+  assert.doesNotMatch(clean.html + clean.markdown, /疑似合计|公式错误/);
+
+  delete report.quality.suspectedTotals;
+  delete report.quality.formulaErrors;
+  put(store.context, "__old", report);
+  assert.equal(store.evaluate("JSON.stringify([normalizeReportSnapshot(__old).quality.suspectedTotals, normalizeReportSnapshot(__old).quality.formulaErrors])"), "[null,null]");
+  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])") + store.evaluate("buildMarkdownReport(__old)"), /疑似合计|公式错误/);
+});
+
+test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
+  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const exact = await importCsvFile(subtotalsCsv(20));
+  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE");
+  assert.equal(note, "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。");
+  assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
+  const atLimit = reportOf(exact);
+  assert.equal(atLimit.report.quality.suspectedTotals.length, 20);
+  assert.ok(atLimit.html.includes(`<p>${note}</p>`));
+  assert.ok(atLimit.markdown.includes(note));
+  assert.doesNotMatch(atLimit.html + atLimit.markdown, /只列出/);
+
+  const over = reportOf(await importCsvFile(subtotalsCsv(21)));
+  assert.equal(over.report.quality.suspectedTotals.length, 21);
+  assert.ok(over.html.includes("；疑似合计 / 小计行：<strong>21</strong> 行"));
+  assert.ok(over.markdown.includes("- 疑似合计 / 小计行：21 行"));
+  for (const output of [over.html, over.markdown]) {
+    assert.ok(output.includes("第 41 行「A19小计」"));
+    assert.ok(!output.includes("第 43 行「A20小计」"));
+    assert.ok(output.includes("共 21 行，只列出前 20 行。"));
+    assert.doesNotMatch(output, /全部行请点/);
+  }
+  assert.equal([...over.html.matchAll(/<li>第 \d+ 行「A\d+小计」/g)].length, 20);
+  assert.equal([...over.markdown.matchAll(/^- 第 \d+ 行「A\d+小计」/gm)].length, 20);
+});
+
+test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothing with state", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  applyFilterState(store, { category: { field: "城市", values: ["上海"] } });
+  assert.ok(store.evaluate("getAnalysisRows().length < state.rows.length"));
+  assert.ok(reportOf(store).html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
+  store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0] === state.suspectedTotals[0]"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches === state.suspectedTotals[0].matches"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches[0] === state.suspectedTotals[0].matches[0]"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches[0].fields === state.suspectedTotals[0].matches[0].fields"), false);
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  errors.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0] === state.formulaErrors[0]"), false);
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0].byError === state.formulaErrors[0].byError"), false);
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0].lines === state.formulaErrors[0].lines"), false);
+});
+
+test("v2.8.0 report: labels and fields are escaped for each output", async () => {
+  const scope = await importCsvFile('名,<i>额|x</i>\r\nA,10\r\n"<b>y|\n小计",10\r\n');
+  const { html, markdown } = reportOf(scope);
+  assert.ok(html.includes("<li>第 3 行「&lt;b&gt;y|\n小计」：&lt;i&gt;额|x&lt;/i&gt;等于第 2 行（只有 1 行）。</li>"));
+  assert.ok(!html.includes("<b>y"));
+  const line = markdown.split("\n").find((text) => text.startsWith("- 第 3 行"));
+  assert.ok(line.includes("「&lt;b&gt;y\\|<br>小计」"), line);
+  assert.ok(!markdown.split("\n").some((text) => text.startsWith("小计")));
+  const errors = reportOf(await importWorkbookFile(buildErrorWorkbook([["名", "<i>额"], ["A", 1], ["B", { e: 7 }], ["C", 2]])));
+  assert.ok(errors.html.includes("<li>「&lt;i&gt;额」：1 个（#DIV/0! 1 个），第 3 行。</li>"));
+  assert.ok(errors.markdown.includes("- 「&lt;i&gt;额」：1 个（\\#DIV/0! 1 个），第 3 行。"));
+});
+
+test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
+  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  const note = errors.evaluate("FORMULA_ERROR_NOTE");
+  assert.equal(note, "这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。");
+  assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
+  const { html, markdown } = reportOf(errors);
+  assert.ok(html.includes(`<h3>公式错误单元格</h3>\n    <p>${note}</p>\n    <ul class="summary-list"><li>「数量」`));
+  assert.ok(markdown.includes(`### 公式错误单元格\n\n${note}\n\n- 「数量」`));
+  const totalsOnly = reportOf(await importStage3Fixture("门店报表.xlsx"));
+  assert.ok(!(totalsOnly.html + totalsOnly.markdown).includes(note));
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.ok(!(clean.html + clean.markdown).includes(note));
 });
