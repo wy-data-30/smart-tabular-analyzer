@@ -94,6 +94,11 @@ const TOTAL_MATCHED_FIELD_LIMIT = 5;
 // How many row numbers the status bar names before 等.
 const STATUS_ROW_NUMBER_LIMIT = 5;
 
+// The notes of "疑似合计 / 小计行" and "公式错误单元格" in reports; index.html has the same
+// sentences.
+const SUSPECTED_TOTAL_NOTE = "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。";
+const FORMULA_ERROR_NOTE = "这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。";
+
 function formatTotalMatchedFields(fields) {
   if (fields.length <= TOTAL_MATCHED_FIELD_LIMIT) return fields.join("、");
   return `${fields.slice(0, TOTAL_MATCHED_FIELD_LIMIT).join("、")} 等 ${fields.length} 列`;

@@ -5025,3 +5025,111 @@ test("only a successful status without a note is hidden once results show", () =
   assert.match(css, /body\.has-results #statusPanel\.success:not\(\.has-note\)\s*\{\s*display:\s*none;\s*\}/);
   assert.doesNotMatch(css, /body\.has-results #statusPanel\.success\s*\{/);
 });
+
+test("v2.8.0 report: sections and summary counts only when there is something, old snapshots without them", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  const { report, html, markdown } = reportOf(store);
+  assert.equal(report.quality.suspectedTotals.length, 1);
+  assert.ok(html.includes("；疑似合计 / 小计行：<strong>1</strong> 行。"));
+  assert.ok(html.includes("<h3>疑似合计 / 小计行</h3>"));
+  assert.ok(html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
+  assert.ok(html.indexOf("<h3>疑似合计 / 小计行</h3>") < html.indexOf("<h3>各字段缺失情况</h3>"));
+  assert.ok(markdown.includes("- 疑似合计 / 小计行：1 行"));
+  assert.ok(markdown.includes("### 疑似合计 / 小计行"));
+  assert.ok(markdown.includes("- 第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。"));
+  assert.ok(markdown.indexOf("### 疑似合计 / 小计行") < markdown.indexOf("### 各字段缺失情况"));
+  assert.doesNotMatch(html + markdown, /公式错误/);
+
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  const errorReport = reportOf(errors);
+  assert.ok(errorReport.html.includes("；公式错误：<strong>7</strong> 个单元格。"));
+  assert.ok(errorReport.html.includes("<h3>公式错误单元格</h3>"));
+  assert.ok(errorReport.html.includes("<li>「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。</li>"));
+  assert.ok(errorReport.markdown.includes("- 公式错误：7 个单元格"));
+  assert.ok(errorReport.markdown.includes("### 公式错误单元格"));
+  assert.ok(errorReport.markdown.includes("- 「利润率」：3 个（\\#DIV/0! 2 个、\\#REF! 1 个），第 3、5、9 行。"));
+  assert.doesNotMatch(errorReport.html + errorReport.markdown, /疑似合计/);
+  errors.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
+  assert.match(reportOf(errors).html, /「利润率」（字段已忽略）：3 个/);
+
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.deepEqual([clean.report.quality.suspectedTotals, clean.report.quality.formulaErrors], [[], []]);
+  assert.doesNotMatch(clean.html + clean.markdown, /疑似合计|公式错误/);
+
+  delete report.quality.suspectedTotals;
+  delete report.quality.formulaErrors;
+  put(store.context, "__old", report);
+  assert.equal(store.evaluate("JSON.stringify([normalizeReportSnapshot(__old).quality.suspectedTotals, normalizeReportSnapshot(__old).quality.formulaErrors])"), "[null,null]");
+  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])") + store.evaluate("buildMarkdownReport(__old)"), /疑似合计|公式错误/);
+});
+
+test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
+  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const exact = await importCsvFile(subtotalsCsv(20));
+  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE");
+  assert.equal(note, "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。");
+  assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
+  const atLimit = reportOf(exact);
+  assert.equal(atLimit.report.quality.suspectedTotals.length, 20);
+  assert.ok(atLimit.html.includes(`<p>${note}</p>`));
+  assert.ok(atLimit.markdown.includes(note));
+  assert.doesNotMatch(atLimit.html + atLimit.markdown, /只列出/);
+
+  const over = reportOf(await importCsvFile(subtotalsCsv(21)));
+  assert.equal(over.report.quality.suspectedTotals.length, 21);
+  assert.ok(over.html.includes("；疑似合计 / 小计行：<strong>21</strong> 行"));
+  assert.ok(over.markdown.includes("- 疑似合计 / 小计行：21 行"));
+  for (const output of [over.html, over.markdown]) {
+    assert.ok(output.includes("第 41 行「A19小计」"));
+    assert.ok(!output.includes("第 43 行「A20小计」"));
+    assert.ok(output.includes("共 21 行，只列出前 20 行。"));
+    assert.doesNotMatch(output, /全部行请点/);
+  }
+  assert.equal([...over.html.matchAll(/<li>第 \d+ 行「A\d+小计」/g)].length, 20);
+  assert.equal([...over.markdown.matchAll(/^- 第 \d+ 行「A\d+小计」/gm)].length, 20);
+});
+
+test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothing with state", async () => {
+  const store = await importStage3Fixture("门店报表.xlsx");
+  applyFilterState(store, { category: { field: "城市", values: ["上海"] } });
+  assert.ok(store.evaluate("getAnalysisRows().length < state.rows.length"));
+  assert.ok(reportOf(store).html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
+  store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0] === state.suspectedTotals[0]"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches === state.suspectedTotals[0].matches"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches[0] === state.suspectedTotals[0].matches[0]"), false);
+  assert.equal(store.evaluate("__snapshot.quality.suspectedTotals[0].matches[0].fields === state.suspectedTotals[0].matches[0].fields"), false);
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  errors.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0] === state.formulaErrors[0]"), false);
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0].byError === state.formulaErrors[0].byError"), false);
+  assert.equal(errors.evaluate("__snapshot.quality.formulaErrors[0].lines === state.formulaErrors[0].lines"), false);
+});
+
+test("v2.8.0 report: labels and fields are escaped for each output", async () => {
+  const scope = await importCsvFile('名,<i>额|x</i>\r\nA,10\r\n"<b>y|\n小计",10\r\n');
+  const { html, markdown } = reportOf(scope);
+  assert.ok(html.includes("<li>第 3 行「&lt;b&gt;y|\n小计」：&lt;i&gt;额|x&lt;/i&gt;等于第 2 行（只有 1 行）。</li>"));
+  assert.ok(!html.includes("<b>y"));
+  const line = markdown.split("\n").find((text) => text.startsWith("- 第 3 行"));
+  assert.ok(line.includes("「&lt;b&gt;y\\|<br>小计」"), line);
+  assert.ok(!markdown.split("\n").some((text) => text.startsWith("小计")));
+  const errors = reportOf(await importWorkbookFile(buildErrorWorkbook([["名", "<i>额"], ["A", 1], ["B", { e: 7 }], ["C", 2]])));
+  assert.ok(errors.html.includes("<li>「&lt;i&gt;额」：1 个（#DIV/0! 1 个），第 3 行。</li>"));
+  assert.ok(errors.markdown.includes("- 「&lt;i&gt;额」：1 个（\\#DIV/0! 1 个），第 3 行。"));
+});
+
+test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
+  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  const note = errors.evaluate("FORMULA_ERROR_NOTE");
+  assert.equal(note, "这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。");
+  assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
+  const { html, markdown } = reportOf(errors);
+  assert.ok(html.includes(`<h3>公式错误单元格</h3>\n    <p>${note}</p>\n    <ul class="summary-list"><li>「数量」`));
+  assert.ok(markdown.includes(`### 公式错误单元格\n\n${note}\n\n- 「数量」`));
+  const totalsOnly = reportOf(await importStage3Fixture("门店报表.xlsx"));
+  assert.ok(!(totalsOnly.html + totalsOnly.markdown).includes(note));
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.ok(!(clean.html + clean.markdown).includes(note));
+});

@@ -389,7 +389,9 @@ function buildReportData(now = new Date()) {
       })),
       placeholders: buildReportPlaceholders(),
       numberConversions: buildNumberConversionSummary(state.profiles),
-      numericLooking: state.numericLooking.map((item) => ({ ...item, samples: [...item.samples] }))
+      numericLooking: state.numericLooking.map((item) => ({ ...item, samples: [...item.samples] })),
+      suspectedTotals: state.suspectedTotals.map((item) => ({ ...item, matches: item.matches.map((match) => ({ ...match, fields: [...match.fields] })) })),
+      formulaErrors: state.formulaErrors.map((item) => ({ ...item, byError: { ...item.byError }, lines: [...item.lines], fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" }))
     },
     numericStats,
     categoryStats,
@@ -623,7 +625,10 @@ function normalizeReportSnapshot(reportData = {}) {
         : null,
       // Snapshots from before v2.5.0 have no number sections: null leaves them out.
       numberConversions: Array.isArray(quality.numberConversions) ? quality.numberConversions : null,
-      numericLooking: Array.isArray(quality.numericLooking) ? quality.numericLooking : null
+      numericLooking: Array.isArray(quality.numericLooking) ? quality.numericLooking : null,
+      // Snapshots from before v2.8.0 have neither check: null leaves them out.
+      suspectedTotals: Array.isArray(quality.suspectedTotals) ? quality.suspectedTotals : null,
+      formulaErrors: Array.isArray(quality.formulaErrors) ? quality.formulaErrors : null
     },
     numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
       ...item,
@@ -719,6 +724,27 @@ function buildReportNumberSections(quality) {
   };
 }
 
+// The counts and sections of "疑似合计 / 小计行" and "公式错误单元格", the quality page's
+// texts; no section for a missing (pre-v2.8.0) or empty check. The report has no 查看, so
+// the suspected totals beyond the limit are only counted.
+function buildReportRowNoteSections(quality) {
+  const totals = quality.suspectedTotals || [];
+  const errors = quality.formulaErrors || [];
+  return {
+    suspectedTotalCount: totals.length,
+    formulaErrorCount: formatFormulaErrorCount(errors),
+    sections: [
+      {
+        title: "疑似合计 / 小计行",
+        note: SUSPECTED_TOTAL_NOTE,
+        lines: totals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => formatSuspectedTotal(item)),
+        overflow: formatSuspectedTotalOverflow(totals.length)
+      },
+      { title: "公式错误单元格", note: FORMULA_ERROR_NOTE, lines: errors.map((item) => formatFormulaError(item)), overflow: "" }
+    ].filter((section) => section.lines.length)
+  };
+}
+
 function buildHtmlReport(reportData, chartImages = []) {
   reportData = normalizeReportSnapshot(reportData);
   const fieldLabel = buildReportFieldLabeler(reportData);
@@ -732,6 +758,12 @@ function buildHtmlReport(reportData, chartImages = []) {
     ["疑似数值列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).map(([title, lines]) => `<h3>${title}</h3>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
+  const rowNotes = buildReportRowNoteSections(reportData.quality);
+  const rowNoteSummary = `${rowNotes.suspectedTotalCount ? `；疑似合计 / 小计行：<strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong> 行` : ""}${rowNotes.formulaErrorCount ? `；公式错误：<strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> 个单元格` : ""}`;
+  const rowNoteSectionHtml = rowNotes.sections.map(({ title, note, lines, overflow }) => `<h3>${title}</h3>${note ? `
+    <p>${escapeHtml(note)}</p>` : ""}
+    <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${overflow ? `
+    <p>${escapeHtml(overflow)}</p>` : ""}`).join("\n    ");
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
   const sheetMeta = reportData.sheetName
     ? `<div><dt>工作表名称</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
@@ -893,7 +925,8 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}。</p>
+    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}。</p>
+    ${rowNoteSectionHtml}
     <h3>各字段缺失情况</h3>
     ${buildHtmlReportTable(
       ["字段", "类型", "缺失值", "缺失率"],
@@ -962,6 +995,15 @@ function buildMarkdownReport(reportData) {
     ["按单位读取的数字", numberSections.conversions],
     ["疑似数值列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).flatMap(([title, lines]) => [`### ${title}`, "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
+  const rowNotes = buildReportRowNoteSections(reportData.quality);
+  const rowNoteSectionLines = rowNotes.sections.flatMap(({ title, note, lines, overflow }) => [
+    `### ${title}`,
+    "",
+    ...(note ? [escapeMarkdownText(note), ""] : []),
+    ...lines.map((line) => `- ${escapeMarkdownText(line)}`),
+    "",
+    ...(overflow ? [escapeMarkdownText(overflow), ""] : [])
+  ]);
   const idDuplicates = reportData.quality.idDuplicates;
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const idSectionLines = idSection
@@ -1048,7 +1090,10 @@ function buildMarkdownReport(reportData) {
       ? [`- 疑似缺失值：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
       : []),
     ...(numberSections.numericLooking.length ? [`- 疑似数值列：${numberSections.numericLooking.length} 个字段`] : []),
+    ...(rowNotes.suspectedTotalCount ? [`- 疑似合计 / 小计行：${rowNotes.suspectedTotalCount} 行`] : []),
+    ...(rowNotes.formulaErrorCount ? [`- 公式错误：${rowNotes.formulaErrorCount} 个单元格`] : []),
     "",
+    ...rowNoteSectionLines,
     "### 各字段缺失情况",
     "",
     reportData.quality.missingByField.length
