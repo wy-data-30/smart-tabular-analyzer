@@ -35,9 +35,10 @@ const state = {
   // Row object -> { field: true } for Excel date cells, which read as YYYY-MM-DD text; set
   // only by commitTabularData() from an Excel import.
   sourceDateCells: new WeakMap(),
-  // buildDateStyleSummary(); imports, field configuration and placeholder confirmations
-  // rebuild it, filters do not.
+  // buildDateStyleSummary() and buildConstantFieldSummary(); imports, field configuration and
+  // placeholder confirmations rebuild them, filters do not.
   dateStyles: [],
+  constantFields: [],
   // createFormatScans(): what that summary reads from the rows; only imports replace it.
   formatScans: createFormatScans(),
   // Field -> typeKey applied by the user that differs from the automatic type.
@@ -239,6 +240,7 @@ function showResultsWorkspace() {
 // confirmations, never on a filter.
 function refreshFormatConsistency() {
   state.dateStyles = buildDateStyleSummary(state.rows, state.profiles, (row) => state.sourceDateCells.get(row), getSourceRowNumber, state.formatScans);
+  state.constantFields = buildConstantFieldSummary(state.profiles);
 }
 
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
@@ -1972,6 +1974,7 @@ function resetAnalysisState() {
   state.suspectedTotals = [];
   state.formatScans = createFormatScans();
   state.dateStyles = [];
+  state.constantFields = [];
   state.sourceDateCells = new WeakMap();
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];

@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用、常量列的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -497,6 +497,20 @@ function buildDateStyleSummary(rows, profiles, getDateCells, getRowNumber, scans
     return [{ field: profile.field, styles: sorted, mainKey: sorted[0].key, otherCount: sorted.slice(1).reduce((sum, style) => sum + style.count, 0) }];
   });
 }
+// A column reads as constant from this many non-missing values.
+const CONSTANT_FIELD_MIN_VALUES = 5;
+
+// Constant columns from the profile figures, so no rows are read: not ignored, at least the
+// minimum of non-missing values, one distinct value. Confirmed placeholders are missing there
+// already; a value that is a placeholder spelling is left to the placeholder section.
+function buildConstantFieldSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey === "ignore" || profile.uniqueCount !== 1 || profile.nonMissingCount < CONSTANT_FIELD_MIN_VALUES) return [];
+    const value = profile.sampleValues[0];
+    return placeholderKey(value) ? [] : [{ field: profile.field, value, count: profile.nonMissingCount, missingCount: profile.missingCount }];
+  });
+}
+
 // ---- Problem rows: the rows behind each quality-page count ----
 // A category is { kind, field, key } with kind one of missing, formulaError, conversion,
 // outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every

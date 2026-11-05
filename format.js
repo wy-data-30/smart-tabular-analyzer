@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格和日期写法的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法和常量列的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -356,6 +356,11 @@ function formatDateStyleLine({ field, styles, otherCount }) {
   const [main, ...others] = styles;
   return `「${field}」：主写法是 ${formatDateStylePart(main)}；另有 ${formatInteger(otherCount)} 行是别的写法：${others.map(formatDateStylePart).join("、")}。`;
 }
+// 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。
+function formatConstantField({ field, value, count, missingCount }) {
+  return `「${field}」：只有一种取值「${formatVisibleText(value)}」（${formatInteger(count)} 行）${missingCount ? `，另有 ${formatInteger(missingCount)} 行缺失` : ""}。`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

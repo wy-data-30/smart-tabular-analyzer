@@ -5564,3 +5564,84 @@ test("v2.9.0 texts: the date style line and how whitespace is shown", async () =
   assert.equal(shown("a\tb"), "a[制表符]b");
   assert.equal(shown("\u2003x"), "[空白]x");
 });
+
+const constantsOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.constantFields)"));
+
+test("v2.9.0 constant columns: the fixture and the formula-error sheet, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.deepEqual(constantsOf(scopes.find(([name]) => name === "写法不一致.csv")[1]), knownIssues["写法不一致.csv"].constantFields);
+  const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
+  assert.deepEqual(constantsOf(errors), [{ field: "备注", value: "正常", count: 6, missingCount: 3 }]);
+  assert.equal(errors.evaluate("formatConstantField(state.constantFields[0])"), "「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。");
+  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["公式错误.xlsx", "写法不一致.csv"]);
+  assert.equal(scopes.find(([name]) => name === "写法不一致.csv")[1].evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（24 行）。");
+});
+
+test("v2.9.0 constant columns: at least five values, one distinct value after trimming", async () => {
+  const columns = async (cells) => constantsOf(await importCsvFile(`值,序\r\n${cells.map((cell, index) => `${cell},${index + 1}`).join("\r\n")}\r\n`, "k.csv"));
+  assert.deepEqual(await columns(["a", "a", "a", "a"]), []);
+  assert.deepEqual(await columns(["a", "a", "a", "a", "a"]), [{ field: "值", value: "a", count: 5, missingCount: 0 }]);
+  assert.deepEqual(await columns(["a ", " a", "a", "a", "a", ""]), [{ field: "值", value: "a", count: 5, missingCount: 1 }]);
+  assert.deepEqual(await columns(["1", "1.0", "1", "1", "1"]), []);
+  assert.deepEqual(await columns(["1", "\uFF11", "1", "1", "1"]), []);
+  assert.deepEqual(await columns(["a", "A", "a", "a", "a"]), []);
+  // Every applied type counts; an all-empty column is none.
+  assert.deepEqual(await columns(["", "", "", "", ""]), []);
+  const types = await importCsvFile("编号,金额,日期\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\n", "t.csv");
+  assert.deepEqual(JSON.parse(types.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["id", "numeric", "date"]);
+  assert.deepEqual(constantsOf(types).map((item) => item.field), ["编号", "金额", "日期"]);
+});
+
+test("v2.9.0 constant columns: a column of one placeholder spelling is left to the placeholder section", async () => {
+  const single = async (value) => constantsOf(await importCsvFile(`状态,序\r\n${Array.from({ length: 6 }, (_, index) => `${value},${index + 1}`).join("\r\n")}\r\n`, "p.csv"));
+  assert.deepEqual(await single("N/A"), []);
+  assert.deepEqual(await single("无"), []);
+  assert.deepEqual(await single("Ｎ/\uFF21"), []);
+  assert.equal((await single("正常")).length, 1);
+  // Still listed as a placeholder, confirmed or not, and no constant column either way.
+  const listed = await importCsvFile("状态,序\r\nN/A,1\r\nN/A,2\r\nN/A,3\r\nN/A,4\r\nN/A,5\r\n", "l.csv");
+  assert.equal(listed.evaluate("state.placeholders.length"), 1);
+  assert.deepEqual(constantsOf(listed), []);
+  listed.evaluate('confirmPlaceholder("状态", "N/A")');
+  assert.deepEqual(constantsOf(listed), []);
+});
+
+test("v2.9.0 constant columns follow the field configuration and confirmations, not the filters", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  writing.evaluate('__constants = state.constantFields; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__constants === state.constantFields"), true);
+  setFieldType(writing, "状态", "ignore");
+  assert.deepEqual(constantsOf(writing), []);
+  // Any applied type but ignored.
+  setFieldType(writing, "状态", "numeric");
+  assert.deepEqual(constantsOf(writing).map((item) => item.field), ["状态"]);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(constantsOf(writing).map((item) => item.field), ["状态"]);
+
+  // Confirming the other value leaves one, and the confirmed rows count as missing.
+  const confirmed = await importCsvFile("状态,序\r\n正常,1\r\n正常,2\r\n正常,3\r\n正常,4\r\n无,5\r\n正常,6\r\n", "c.csv");
+  assert.deepEqual(constantsOf(confirmed), []);
+  confirmed.evaluate('confirmPlaceholder("状态", "无")');
+  assert.deepEqual(constantsOf(confirmed), [{ field: "状态", value: "正常", count: 5, missingCount: 1 }]);
+  assert.equal(confirmed.evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（5 行），另有 1 行缺失。");
+  confirmed.evaluate('undoPlaceholderConfirmation("状态", "无")');
+  assert.deepEqual(constantsOf(confirmed), []);
+
+  // Confirming below the minimum ends it.
+  const below = await importCsvFile("状态,序\r\n正常,1\r\n正常,2\r\n正常,3\r\n正常,4\r\n无,5\r\n", "b.csv");
+  below.evaluate('confirmPlaceholder("状态", "无")');
+  assert.deepEqual(constantsOf(below), []);
+});
+
+test("v2.9.0 constant columns read the profiles only, and a commit or reset replaces them", async () => {
+  const { evaluate } = createScriptContext();
+  // No rows at all: the figures come from the profile.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildConstantFieldSummary([{ field: "甲", typeKey: "category", uniqueCount: 1, nonMissingCount: 5, missingCount: 2, sampleValues: ["好"] }]))')), [{ field: "甲", value: "好", count: 5, missingCount: 2 }]);
+  const scope = await importStage3Fixture("写法不一致.csv");
+  assert.equal(constantsOf(scope).length, 1);
+  scope.evaluate('commitTabularData(["城市"], [{ 城市: "上海" }, { 城市: "北京" }], "later.csv", state.activeImportId)');
+  assert.deepEqual(constantsOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(constantsOf(cleared), []);
+});
