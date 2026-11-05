@@ -1,4 +1,4 @@
-// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。
+// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。
 
 const ENCODING_LABELS = {
   auto: "自动识别",
@@ -142,6 +142,7 @@ function readExcelSheetTable(worksheet, sheetName) {
     raw: true,
     blankrows: true
   });
+  restoreNonDateCellsUnderDateFormat(rawRows, worksheet);
   return buildExcelTabularData(
     rawRows,
     rawRows,
@@ -150,6 +151,23 @@ function readExcelSheetTable(worksheet, sheetName) {
     XLSX.utils.decode_range(worksheet["!ref"]).s.r + 1,
     createExcelCellErrorReader(worksheet)
   );
+}
+
+// SheetJS 0.20.3 applies a date number format to text and boolean cells too under
+// sheet_to_json(raw: true): "待定" becomes an Invalid Date, "" and spaces 1899-12-31,
+// TRUE 1900-01-01. A whole column set to a date format does this to its header and
+// to every text typed into it. Only number and date cells are dates; the others get
+// their own value back.
+function restoreNonDateCellsUnderDateFormat(rawRows, worksheet) {
+  const range = XLSX.utils.decode_range(worksheet["!ref"]);
+  rawRows.forEach((row, rowIndex) => {
+    for (let columnIndex = 0; columnIndex < row.length; columnIndex += 1) {
+      const value = row[columnIndex];
+      if (typeof value !== "object" || value === null || !isDateObject(value)) continue;
+      const cell = worksheet[XLSX.utils.encode_cell({ r: range.s.r + rowIndex, c: range.s.c + columnIndex })];
+      if (cell && (cell.t === "s" || cell.t === "b")) row[columnIndex] = cell.v;
+    }
+  });
 }
 
 // Percent hints inspect only the first data rows below the header, so large
