@@ -6064,3 +6064,42 @@ test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot sha
   store.evaluate('state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
   assert.equal(JSON.stringify(reportOf(store).report.quality.lookAlikes), before);
 });
+
+test("v2.9.0 Excel: rows with the same date fields share one frozen record without a prototype", async () => {
+  const cells = {
+    A1: textCell("名"), B1: textCell("入职"), C1: textCell("离职"),
+    A2: textCell("甲"), B2: dateCell(45418), C2: textCell("在职"),
+    A3: textCell("乙"), B3: dateCell(45419), C3: textCell("在职"),
+    A4: textCell("丙"), B4: dateCell(45420), C4: dateCell(45500),
+    A5: textCell("丁"), B5: textCell("待定"), C5: dateCell(45501),
+    A6: textCell("戊"), B6: dateCell(45421), C6: dateCell(45502)
+  };
+  const scope = await importCellSheet(cells, "A1:C6");
+  const read = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const records = state.rows.map((row) => state.sourceDateCells.get(row) || null);
+    return {
+      fields: records.map((record) => record && Object.keys(record)),
+      same: [records[0] === records[1], records[2] === records[4], records[0] === records[2], records[2] === records[3]],
+      frozen: records.filter(Boolean).every((record) => Object.isFrozen(record)),
+      prototypes: records.filter(Boolean).every((record) => Object.getPrototypeOf(record) === null)
+    };
+  })())`));
+  assert.deepEqual(read.fields, [["入职"], ["入职"], ["入职", "离职"], ["离职"], ["入职", "离职"]]);
+  assert.deepEqual(read.same, [true, true, false, false]);
+  assert.equal(read.frozen, true);
+  assert.equal(read.prototypes, true);
+});
+
+test("v2.9.0 guard: text columns named like Object members never count as date cells", async () => {
+  const cells = {
+    A1: textCell("constructor"), B1: textCell("toString"), C1: textCell("hasOwnProperty"), D1: textCell("日期"),
+    A2: textCell("甲"), B2: textCell("乙"), C2: textCell("丙"), D2: dateCell(45418),
+    A3: textCell("丁"), B3: textCell("戊"), C3: textCell("己"), D3: dateCell(45419)
+  };
+  const scope = await importCellSheet(cells, "A1:D3");
+  const read = JSON.parse(scope.evaluate(`JSON.stringify(state.rows.map((row) => {
+    const record = state.sourceDateCells.get(row);
+    return ["constructor", "toString", "hasOwnProperty", "日期"].map((field) => Boolean(record && record[field]));
+  }))`));
+  assert.deepEqual(read, [[false, false, false, true], [false, false, false, true]]);
+});

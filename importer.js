@@ -301,6 +301,17 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])));
   let formulaErrors = null;
   let dateCells = null;
+  // Rows with the same date fields share one frozen record, so a sheet of dates builds a few
+  // records instead of one per row. Object.create(null): a field named constructor or toString
+  // must not look like a date cell.
+  const nextDateCells = new Map();
+  const withDateCell = (current, field) => {
+    let byField = nextDateCells.get(current);
+    if (!byField) nextDateCells.set(current, (byField = new Map()));
+    let next = byField.get(field);
+    if (!next) byField.set(field, (next = Object.freeze(Object.assign(Object.create(null), current, { [field]: true }))));
+    return next;
+  };
   const rows = keptPairs
     .map((pair, position) => fields.reduce((row, field, fieldIndex) => {
       const columnIndex = usedColumnIndexes[fieldIndex];
@@ -311,8 +322,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
       const rawValue = pair.raw[columnIndex];
       if (typeof rawValue === "object" && rawValue !== null && row[field] !== "" && isDateObject(rawValue)) {
         dateCells ??= new Array(keptPairs.length).fill(null);
-        dateCells[position] ??= Object.create(null);
-        dateCells[position][field] = true;
+        dateCells[position] = withDateCell(dateCells[position], field);
       }
       const error = row[field] === "" && readCellError ? readCellError(pair.index, columnIndex) : "";
       if (error) {
