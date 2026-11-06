@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.8.1
+**Current release:** v2.9.0
 
 ## Language
 
