@@ -393,7 +393,10 @@ function buildReportData(now = new Date()) {
       numberConversions: buildNumberConversionSummary(state.profiles),
       numericLooking: state.numericLooking.map((item) => ({ ...item, samples: [...item.samples] })),
       suspectedTotals: state.suspectedTotals.map((item) => ({ ...item, matches: item.matches.map((match) => ({ ...match, fields: [...match.fields] })) })),
-      formulaErrors: state.formulaErrors.map((item) => ({ ...item, byError: { ...item.byError }, lines: [...item.lines], fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" }))
+      formulaErrors: state.formulaErrors.map((item) => ({ ...item, byError: { ...item.byError }, lines: [...item.lines], fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" })),
+      dateStyles: state.dateStyles.map((item) => ({ ...item, styles: item.styles.map((style) => ({ ...style })) })),
+      constantFields: state.constantFields.map((item) => ({ ...item })),
+      lookAlikes: state.lookAlikes.map((item) => ({ ...item, groups: item.groups.map((group) => ({ ...group, reasons: [...group.reasons], variants: group.variants.map((variant) => ({ ...variant })) })) }))
     },
     numericStats,
     categoryStats,
@@ -630,7 +633,11 @@ function normalizeReportSnapshot(reportData = {}) {
       numericLooking: Array.isArray(quality.numericLooking) ? quality.numericLooking : null,
       // Snapshots from before v2.8.0 have neither check: null leaves them out.
       suspectedTotals: Array.isArray(quality.suspectedTotals) ? quality.suspectedTotals : null,
-      formulaErrors: Array.isArray(quality.formulaErrors) ? quality.formulaErrors : null
+      formulaErrors: Array.isArray(quality.formulaErrors) ? quality.formulaErrors : null,
+      // Snapshots from before v2.9.0 have none of the three: null leaves them out.
+      dateStyles: Array.isArray(quality.dateStyles) ? quality.dateStyles : null,
+      constantFields: Array.isArray(quality.constantFields) ? quality.constantFields : null,
+      lookAlikes: Array.isArray(quality.lookAlikes) ? quality.lookAlikes : null
     },
     numericStats: (Array.isArray(reportData.numericStats) ? reportData.numericStats : []).map((item) => ({
       ...item,
@@ -747,6 +754,24 @@ function buildReportRowNoteSections(quality) {
   };
 }
 
+// The sections of "日期写法混用", "常量列" and "写法细节不同的值", the quality page's texts,
+// and the two counts of the summary; no section for a missing (pre-v2.9.0) or empty check.
+// Constant columns are no problem in themselves, so the summary does not count them.
+function buildReportFormatSections(quality) {
+  const dateStyles = quality.dateStyles || [];
+  const constantFields = quality.constantFields || [];
+  const lookAlikes = quality.lookAlikes || [];
+  return {
+    dateStyleCount: dateStyles.length,
+    lookAlikeCount: lookAlikes.length,
+    sections: [
+      { title: "日期写法混用", note: DATE_STYLE_NOTE, lines: dateStyles.map(formatDateStyleLine) },
+      { title: "常量列", note: CONSTANT_FIELD_NOTE, lines: constantFields.map(formatConstantField) },
+      { title: "写法细节不同的值", note: LOOK_ALIKE_NOTE, lines: lookAlikes.map(formatLookAlikeLine) }
+    ].filter((section) => section.lines.length)
+  };
+}
+
 function buildHtmlReport(reportData, chartImages = []) {
   reportData = normalizeReportSnapshot(reportData);
   const fieldLabel = buildReportFieldLabeler(reportData);
@@ -759,6 +784,11 @@ function buildHtmlReport(reportData, chartImages = []) {
     ["按单位读取的数字", numberSections.conversions],
     ["疑似数值列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).map(([title, lines]) => `<h3>${title}</h3>
+    <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
+  const formatSections = buildReportFormatSections(reportData.quality);
+  const formatSummary = `${formatSections.dateStyleCount ? `；日期写法混用：<strong>${escapeHtml(formatSections.dateStyleCount)}</strong> 个字段` : ""}${formatSections.lookAlikeCount ? `；写法不同的值：<strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> 个字段` : ""}`;
+  const formatSectionHtml = formatSections.sections.map(({ title, note, lines }) => `<h3>${title}</h3>
+    <p>${escapeHtml(note)}</p>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const rowNotes = buildReportRowNoteSections(reportData.quality);
   const rowNoteSummary = `${rowNotes.suspectedTotalCount ? `；疑似合计 / 小计行：<strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong> 行` : ""}${rowNotes.formulaErrorCount ? `；公式错误：<strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> 个单元格` : ""}`;
@@ -927,7 +957,7 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}。</p>
+    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}。</p>
     ${rowNoteSectionHtml}
     <h3>各字段缺失情况</h3>
     ${buildHtmlReportTable(
@@ -936,6 +966,7 @@ function buildHtmlReport(reportData, chartImages = []) {
       "无字段质量结果。"
     )}
     ${numberSectionHtml}
+    ${formatSectionHtml}
     ${placeholderSectionHtml}
     <h3>数值异常值</h3>
     ${buildHtmlReportTable(
@@ -997,6 +1028,8 @@ function buildMarkdownReport(reportData) {
     ["按单位读取的数字", numberSections.conversions],
     ["疑似数值列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).flatMap(([title, lines]) => [`### ${title}`, "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
+  const formatSections = buildReportFormatSections(reportData.quality);
+  const formatSectionLines = formatSections.sections.flatMap(({ title, note, lines }) => [`### ${title}`, "", escapeMarkdownText(note), "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
   const rowNotes = buildReportRowNoteSections(reportData.quality);
   const rowNoteSectionLines = rowNotes.sections.flatMap(({ title, note, lines, overflow }) => [
     `### ${title}`,
@@ -1094,6 +1127,8 @@ function buildMarkdownReport(reportData) {
     ...(numberSections.numericLooking.length ? [`- 疑似数值列：${numberSections.numericLooking.length} 个字段`] : []),
     ...(rowNotes.suspectedTotalCount ? [`- 疑似合计 / 小计行：${rowNotes.suspectedTotalCount} 行`] : []),
     ...(rowNotes.formulaErrorCount ? [`- 公式错误：${rowNotes.formulaErrorCount} 个单元格`] : []),
+    ...(formatSections.dateStyleCount ? [`- 日期写法混用：${formatSections.dateStyleCount} 个字段`] : []),
+    ...(formatSections.lookAlikeCount ? [`- 写法不同的值：${formatSections.lookAlikeCount} 个字段`] : []),
     "",
     ...rowNoteSectionLines,
     "### 各字段缺失情况",
@@ -1106,6 +1141,7 @@ function buildMarkdownReport(reportData) {
       : "无字段质量结果。",
     "",
     ...numberSectionLines,
+    ...formatSectionLines,
     ...placeholderSectionLines,
     "### 数值异常值",
     "",

@@ -321,6 +321,11 @@ function formatPlaceholderNotes(keys) {
     : "";
 }
 
+// The notes of "日期写法混用", "常量列" and "写法细节不同的值" in reports; index.html has the same
+// sentences.
+const DATE_STYLE_NOTE = "这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。";
+const CONSTANT_FIELD_NOTE = "这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。";
+const LOOK_ALIKE_NOTE = "首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和 ID 重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按缺失处理，分类统计和筛选里会多出一个看不见的值。";
 // Names of the date styles, as a user would recognise them in Excel.
 const DATE_STYLE_NAMES = Object.freeze({
   excelCell: "Excel 日期单元格",

@@ -2091,7 +2091,7 @@ test("reports add an ID duplicate section after the outliers and count it in the
   const roster = await importStage3Fixture("花名册.xlsx");
   const { report, html, markdown } = reportOf(roster);
   assert.deepEqual(report.quality.idDuplicates, idDuplicates(roster.evaluate));
-  assert.ok(html.includes("；解析警告：<strong>0</strong>；ID 重复字段：<strong>3</strong>。</p>"));
+  assert.ok(html.includes("；解析警告：<strong>0</strong>；ID 重复字段：<strong>3</strong>；日期写法混用：<strong>1</strong> 个字段。</p>"));
   const htmlSection = html.slice(html.indexOf("<h3>ID 字段重复值</h3>"), html.indexOf("数值字段描述性统计"));
   assert.ok(html.indexOf("<h3>数值异常值</h3>") < html.indexOf("<h3>ID 字段重复值</h3>"));
   assert.match(htmlSection, /<th>字段<\/th><th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
@@ -5977,4 +5977,90 @@ test("v2.9.0 the sections are static, in place and change neither the pills nor 
   const writing = await importStage3Fixture("写法不一致.csv");
   assert.equal((writing.elements.get("qualitySummary").innerHTML.match(/class="quality-pill/g) || []).length, 6);
   assert.equal(writing.elements.get("statusPanel").textContent, "写法不一致.csv 已成功载入，分析结果已生成。");
+});
+
+test("v2.9.0 reports: the notes are the page's sentences", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const { evaluate } = createScriptContext();
+  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(name)}</p>`), name);
+  assert.match(evaluate("LOOK_ALIKE_NOTE"), /只有不可见字符：格子看起来是空的/);
+});
+
+test("v2.9.0 reports: three sections with content, two summary counts, constant columns not counted", async () => {
+  const roster = reportOf(await importStage3Fixture("花名册.xlsx"));
+  assert.ok(roster.html.includes("<h3>日期写法混用</h3>\n    <p>这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>"));
+  assert.ok(roster.html.includes("<li>「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。</li>"));
+  assert.ok(roster.markdown.includes("- ID 重复字段：3\n- 日期写法混用：1 个字段\n"));
+  assert.ok(!(roster.html + roster.markdown).includes("常量列"));
+
+  const errors = reportOf(await importStage3Fixture("公式错误.xlsx"));
+  assert.ok(errors.html.includes("<li>「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。</li>"));
+  assert.ok(errors.markdown.includes("### 常量列\n\n这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。\n\n- 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。\n"));
+  assert.ok(!errors.markdown.includes("- 常量列"));
+  assert.ok(!errors.html.includes("常量列：<strong>"));
+
+  const writing = reportOf(await importStage3Fixture("写法不一致.csv"));
+  assert.ok(writing.html.includes("；日期写法混用：<strong>1</strong> 个字段；写法不同的值：<strong>3</strong> 个字段。</p>"));
+  assert.ok(writing.markdown.includes("- 日期写法混用：1 个字段\n- 写法不同的值：3 个字段\n"));
+  // The section shows whitespace and invisible characters by name; Top 10 and the sample values
+  // still print cells as they are.
+  const section = writing.html.slice(writing.html.indexOf("<h3>写法细节不同的值</h3>"), writing.html.indexOf("<h3>疑似缺失值</h3>"));
+  assert.ok(section.includes("「华东[零宽字符]」1 个"));
+  assert.ok(section.includes("（如「SKU-002␣」）"));
+  assert.ok(!section.includes("\u200B"));
+  assert.ok(writing.markdown.includes("「华东\\[零宽字符\\]」1 个"));
+  // Order: after the numeric-looking section's place, before the placeholders, in both outputs.
+  const order = (text, titles) => titles.map((title) => text.indexOf(title));
+  const htmlOrder = order(writing.html, ["<h3>各字段缺失情况</h3>", "<h3>日期写法混用</h3>", "<h3>常量列</h3>", "<h3>写法细节不同的值</h3>", "<h3>疑似缺失值</h3>"]);
+  assert.ok(htmlOrder.every((position, index) => position >= 0 && (index === 0 || position > htmlOrder[index - 1])), htmlOrder.join());
+  const markdownOrder = order(writing.markdown, ["### 各字段缺失情况", "### 日期写法混用", "### 常量列", "### 写法细节不同的值", "### 疑似缺失值"]);
+  assert.ok(markdownOrder.every((position, index) => position >= 0 && (index === 0 || position > markdownOrder[index - 1])), markdownOrder.join());
+
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.deepEqual([clean.report.quality.dateStyles, clean.report.quality.constantFields, clean.report.quality.lookAlikes], [[], [], []]);
+  for (const title of ["日期写法混用", "常量列", "写法细节不同的值", "写法不同的值"]) assert.ok(!(clean.html + clean.markdown).includes(title), title);
+});
+
+test("v2.9.0 reports: cells of nothing but invisible characters, escaped field names and values", async () => {
+  const field = "<b>备注|*</b>";
+  const scope = await importCsvFile(`"${field}",序\r\n\u200B,1\r\n<i>x</i>,2\r\n<I>X</I>,3\r\n`, "r.csv");
+  const { report, html, markdown } = reportOf(scope);
+  assert.equal(report.quality.lookAlikes[0].invisibleOnlyCount, 1);
+  assert.ok(html.includes("只有不可见字符 1 格"));
+  assert.ok(markdown.includes("只有不可见字符 1 格"));
+  assert.ok(html.includes("「&lt;b&gt;备注|*&lt;/b&gt;」共 3 行"));
+  assert.ok(html.includes("「&lt;i&gt;x&lt;/i&gt;」1 个"));
+  assert.doesNotMatch(html.slice(html.indexOf("<h3>写法细节不同的值</h3>")), /<i>x|<b>备注/);
+  assert.ok(markdown.includes("「&lt;b&gt;备注\\|\\*&lt;/b&gt;」共 3 行"));
+});
+
+test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot shares nothing with state", async () => {
+  const store = await importStage3Fixture("写法不一致.csv");
+  const old = reportOf(store).report;
+  delete old.quality.dateStyles;
+  delete old.quality.constantFields;
+  delete old.quality.lookAlikes;
+  put(store.context, "__old", old);
+  // null itself: JSON.stringify would write undefined in an array as null too.
+  assert.equal(store.evaluate("(() => { const quality = normalizeReportSnapshot(__old).quality; return quality.dateStyles === null && quality.constantFields === null && quality.lookAlikes === null; })()"), true);
+  const oldOutput = store.evaluate("buildMarkdownReport(__old)") + store.evaluate("buildHtmlReport(__old, [])");
+  for (const title of ["日期写法混用", "常量列", "写法细节不同的值", "写法不同的值"]) assert.ok(!oldOutput.includes(title), title);
+  store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  const shared = JSON.parse(store.evaluate(`JSON.stringify([
+    __snapshot.quality.dateStyles[0] === state.dateStyles[0],
+    __snapshot.quality.dateStyles[0].styles === state.dateStyles[0].styles,
+    __snapshot.quality.dateStyles[0].styles[0] === state.dateStyles[0].styles[0],
+    __snapshot.quality.constantFields[0] === state.constantFields[0],
+    __snapshot.quality.lookAlikes[0] === state.lookAlikes[0],
+    __snapshot.quality.lookAlikes[0].groups === state.lookAlikes[0].groups,
+    __snapshot.quality.lookAlikes[0].groups[0] === state.lookAlikes[0].groups[0],
+    __snapshot.quality.lookAlikes[0].groups[0].reasons === state.lookAlikes[0].groups[0].reasons,
+    __snapshot.quality.lookAlikes[0].groups[0].variants === state.lookAlikes[0].groups[0].variants,
+    __snapshot.quality.lookAlikes[0].groups[0].variants[0] === state.lookAlikes[0].groups[0].variants[0]
+  ])`));
+  assert.deepEqual(shared, shared.map(() => false));
+  // Filters change nothing in these sections.
+  const before = JSON.stringify(reportOf(store).report.quality.lookAlikes);
+  store.evaluate('state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(JSON.stringify(reportOf(store).report.quality.lookAlikes), before);
 });
