@@ -1,4 +1,4 @@
-// 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
+// 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和写法细节不同的值，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
 
 const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
@@ -345,6 +345,73 @@ function parseEnglishCalendarDate(raw) {
   return calendarDate;
 }
 
+// Characters that show nothing, as the source of a regular expression class: the soft
+// hyphen, the zero-width characters, the direction marks, the word joiner and the byte order
+// mark. Variation selectors stay out: they belong to the character before them.
+const INVISIBLE_CHARACTER_CLASS = "\\u00AD\\u200B-\\u200F\\u2060\\uFEFF";
+
+// How a date cell is written, for the "日期写法混用" check. Year-first texts differ by
+// separator; zero padding and a time part do not make a new style. dateStyleOf() asks
+// toDate() first, so it is null exactly when toDate() is null.
+const DATE_STYLE_BY_SEPARATOR = Object.freeze({ "-": "ymdDash", "/": "ymdSlash", ".": "ymdDot" });
+// An Excel date cell reads as YYYY-MM-DD text, so the importer records it (state.sourceDateCells).
+const DATE_STYLE_EXCEL_CELL = "excelCell";
+
+function dateStyleOf(value, strategy = {}) {
+  if (!toDate(value, strategy)) return null;
+  if (isDateObject(value)) return DATE_STYLE_EXCEL_CELL;
+  const raw = String(value).trim();
+  const yearText = raw.match(/^(\d{4})\s*年$/);
+  if (strategy.allowYearOnly && isPlausibleYear(yearText ? yearText[1] : raw)) return "yearOnly";
+  if (matchChineseDate(raw)) return "chinese";
+  const yearFirst = matchYearFirstDate(raw);
+  if (yearFirst) return DATE_STYLE_BY_SEPARATOR[yearFirst[2]];
+  const dayOrMonthFirst = matchDayOrMonthFirstDate(raw);
+  if (!dayOrMonthFirst) return "english";
+  const first = Number(dayOrMonthFirst[1]);
+  const second = Number(dayOrMonthFirst[3]);
+  if (first > 12) return "dmy";
+  if (second > 12) return "mdy";
+  // Equal day and month: the only ones an order of none or conflict can read.
+  return strategy.order === "dmy" || strategy.order === "mdy" ? strategy.order : "dayMonthSame";
+}
+// Whether trim() would change a text. Most cells end in characters trim() cannot remove
+// (see the fast path of isMissing()), so only the two end characters are looked at first.
+function hasEdgeWhitespace(text) {
+  if (!text) return false;
+  const first = text.charCodeAt(0);
+  const last = text.charCodeAt(text.length - 1);
+  const keeps = (code) => code > 32 && code !== 160 && (code < 0x1680 || (code > 0x3000 && code !== 0xfeff));
+  return !(keeps(first) && keeps(last)) && text.trim() !== text;
+}
+
+const LOOK_ALIKE_NON_ASCII = /[^\x00-\x7F]/;
+const LOOK_ALIKE_INVISIBLE = new RegExp(`[${INVISIBLE_CHARACTER_CLASS}]`, "g");
+
+// Two writings of one value share this key: NFKC, no invisible characters, runs of whitespace
+// as one space, trimmed, lower case. NFKC and the invisible characters cannot touch a pure
+// ASCII text. "" for a text of nothing but invisible characters.
+function lookAlikeKey(text) {
+  const base = LOOK_ALIKE_NON_ASCII.test(text) ? text.normalize("NFKC").replace(LOOK_ALIKE_INVISIBLE, "") : text;
+  return base.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// Why the writings of one key differ: a step is a reason when, with every other step
+// applied and this one left out, the writings still differ. Characters that NFKC and
+// lower-casing can each unify alone (Kelvin sign and K) leave no reason: "compat".
+function lookAlikeReasons(texts) {
+  const distinct = (read) => new Set(texts.map(read)).size > 1;
+  const nfkc = (text) => text.normalize("NFKC");
+  const noInvisible = (text) => text.replace(LOOK_ALIKE_INVISIBLE, "");
+  const oneSpace = (text) => text.replace(/\s+/g, " ").trim();
+  const lower = (text) => text.toLowerCase();
+  const reasons = [];
+  if (distinct((text) => lower(oneSpace(noInvisible(text))))) reasons.push("compat");
+  if (distinct((text) => oneSpace(noInvisible(nfkc(text))))) reasons.push("case");
+  if (distinct((text) => lower(oneSpace(nfkc(text))))) reasons.push("invisible");
+  if (distinct((text) => lower(noInvisible(nfkc(text)).trim()))) reasons.push("innerSpace");
+  return reasons.length ? reasons : ["compat"];
+}
 function buildUtcDate(year, month, day) {
   if (year < 1000 || month < 1 || month > 12 || day < 1 || day > 31) return null;
   const parsed = new Date(Date.UTC(year, month - 1, day));

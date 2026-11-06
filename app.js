@@ -32,6 +32,16 @@ const state = {
   sourceFormulaErrors: new WeakMap(),
   // buildFormulaErrorSummary() of the imported rows; only imports replace it.
   formulaErrors: [],
+  // Row object -> { field: true } for Excel date cells, which read as YYYY-MM-DD text; set
+  // only by commitTabularData() from an Excel import.
+  sourceDateCells: new WeakMap(),
+  // buildDateStyleSummary(), buildConstantFieldSummary() and buildLookAlikeSummary(); imports,
+  // field configuration and placeholder confirmations rebuild them, filters do not.
+  dateStyles: [],
+  constantFields: [],
+  lookAlikes: [],
+  // createFormatScans(): what those summaries read from the rows; only imports replace it.
+  formatScans: createFormatScans(),
   // Field -> typeKey applied by the user that differs from the automatic type.
   // Placeholder confirmations keep these types; "恢复自动识别" clears them.
   manualFieldTypes: Object.create(null),
@@ -156,6 +166,12 @@ const dom = {
   numberConversionDetails: document.getElementById("numberConversionDetails"),
   numericLookingSection: document.getElementById("numericLookingSection"),
   numericLookingDetails: document.getElementById("numericLookingDetails"),
+  dateStyleSection: document.getElementById("dateStyleSection"),
+  dateStyleDetails: document.getElementById("dateStyleDetails"),
+  constantFieldSection: document.getElementById("constantFieldSection"),
+  constantFieldDetails: document.getElementById("constantFieldDetails"),
+  lookAlikeSection: document.getElementById("lookAlikeSection"),
+  lookAlikeDetails: document.getElementById("lookAlikeDetails"),
   placeholderDetails: document.getElementById("placeholderDetails"),
   placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
@@ -227,11 +243,20 @@ function showResultsWorkspace() {
   });
 }
 
+// The format-consistency summaries: on import, field configuration and placeholder
+// confirmations, never on a filter.
+function refreshFormatConsistency() {
+  state.dateStyles = buildDateStyleSummary(state.rows, state.profiles, (row) => state.sourceDateCells.get(row), getSourceRowNumber, state.formatScans);
+  state.constantFields = buildConstantFieldSummary(state.profiles);
+  state.lookAlikes = buildLookAlikeSummary(state.rows, state.profiles, state.formatScans);
+}
+
 // headerDetection is { headerRowNumber, skippedRows: [{ rowNumber, cells }] } from the
 // importer when title rows were skipped above the header, otherwise null.
 // rowNumbers[i] is the file row of rows[i]; null when the import could not tell.
 // formulaErrors[i] is the { field: error text } of rows[i] or null; only Excel imports pass it.
-function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null) {
+// dateCells[i] is the { field: true } of the date cells of rows[i] or null; only Excel imports pass it.
+function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null, dateCells = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
     showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
@@ -274,6 +299,13 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
       if (formulaErrors[index]) state.sourceFormulaErrors.set(row, formulaErrors[index]);
     });
   }
+  state.formatScans = createFormatScans();
+  state.sourceDateCells = new WeakMap();
+  if (Array.isArray(dateCells) && dateCells.length === rows.length) {
+    rows.forEach((row, index) => {
+      if (dateCells[index]) state.sourceDateCells.set(row, dateCells[index]);
+    });
+  }
   state.placeholderConfirmations = Object.create(null);
   state.manualFieldTypes = Object.create(null);
   state.profiles = fields.map((field) => buildColumnProfile(field, rows, state.numberFormatHints[field]));
@@ -287,6 +319,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.totalLabelRows = findTotalLabelRows(rows, fields);
   state.suspectedTotals = buildSuspectedTotalSummary(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
+  refreshFormatConsistency();
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
   // No filter yet: the analysis rows are the original rows, so one calculation serves both.
   // The two share one array; nothing may modify it in place.
@@ -1091,6 +1124,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  refreshFormatConsistency();
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -1143,6 +1177,7 @@ function renderQuality() {
   refreshProblemView();
   renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
   renderNumberNoteSection(dom.numericLookingSection, dom.numericLookingDetails, state.numericLooking.map(formatNumericLookingHint));
+  renderFormatConsistencySections();
   renderIdDuplicateDetails();
   renderPlaceholderDetails();
 
@@ -1300,7 +1335,7 @@ function goToProblemRowsPage(action) {
 }
 
 // Kinds whose rows have one cell to point at: the field of the category.
-const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError"]);
+const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError", "dateStyle", "lookAlike"]);
 
 // The open category's current page: category list, summary, table and pager.
 function renderProblemView() {
@@ -1365,6 +1400,18 @@ function refreshProblemView() {
     hideProblemView();
     dom.problemRowsMessage.textContent = "这一类已经没有问题行。";
   }
+}
+
+// "日期写法混用" and "写法细节不同的值": one line and one 查看 button per field. "常量列" has no
+// button: every row looks the same. They come before the early return of renderQuality().
+function renderFormatConsistencySections() {
+  renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, state.dateStyles.map((item) => (
+    `${escapeHtml(formatDateStyleLine(item))} ${problemViewButton({ kind: "dateStyle", field: item.field }, "查看")}`
+  )));
+  renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, state.constantFields.map(formatConstantField));
+  renderRowNoteSection(dom.lookAlikeSection, dom.lookAlikeDetails, state.lookAlikes.map((item) => (
+    `${escapeHtml(formatLookAlikeLine(item))} ${problemViewButton({ kind: "lookAlike", field: item.field }, "查看")}`
+  )));
 }
 
 // "按单位读取的数字" and "疑似数值列": one line per field, the whole subsection
@@ -1946,6 +1993,11 @@ function resetAnalysisState() {
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
+  state.formatScans = createFormatScans();
+  state.dateStyles = [];
+  state.constantFields = [];
+  state.lookAlikes = [];
+  state.sourceDateCells = new WeakMap();
   state.sourceFormulaErrors = new WeakMap();
   state.formulaErrors = [];
   state.manualFieldTypes = Object.create(null);
@@ -2009,6 +2061,9 @@ function resetAnalysisState() {
   dom.parseWarningSummary.classList.add("hidden");
   renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
+  renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, []);
+  renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, []);
+  renderRowNoteSection(dom.lookAlikeSection, dom.lookAlikeDetails, []);
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";

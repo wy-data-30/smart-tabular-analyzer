@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行和公式错误单元格的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -220,6 +220,8 @@ function formatProblemViewLabel(category) {
     case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
     case "suspectedTotal": return "查看疑似合计 / 小计行";
     case "formulaError": return `查看「${category.field}」的公式错误`;
+    case "dateStyle": return `查看「${category.field}」不是主写法的行`;
+    case "lookAlike": return `查看「${category.field}」写法不同的行`;
     default: return "查看解析警告";
   }
 }
@@ -236,6 +238,8 @@ function formatProblemCategoryLabel(category) {
     case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
     case "suspectedTotal": return `疑似合计 / 小计行（${count} 行）`;
     case "formulaError": return `公式错误 · ${category.field}（${count} 个值）`;
+    case "dateStyle": return `日期写法 · ${category.field}（${count} 个值）`;
+    case "lookAlike": return `写法不同 · ${category.field}（${count} 行）`;
     default: return `解析警告（${count} 条）`;
   }
 }
@@ -246,7 +250,7 @@ function formatProblemRowsSummary(category, list, page, pageCount) {
   const pages = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页`;
   const listed = formatInteger(list.items.length);
   if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
-  if (category.kind === "conversion" || category.kind === "formulaError") return `共 ${listed} 个值，${pages}`;
+  if (category.kind === "conversion" || category.kind === "formulaError" || category.kind === "dateStyle") return `共 ${listed} 个值，${pages}`;
   if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
   return `共 ${listed} 行，${pages}`;
 }
@@ -317,6 +321,92 @@ function formatPlaceholderNotes(keys) {
     : "";
 }
 
+// The notes of "日期写法混用", "常量列" and "写法细节不同的值" in reports; index.html has the same
+// sentences.
+const DATE_STYLE_NOTE = "这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。";
+const CONSTANT_FIELD_NOTE = "这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。";
+const LOOK_ALIKE_NOTE = "首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和 ID 重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按缺失处理，分类统计和筛选里会多出一个看不见的值。";
+// Names of the date styles, as a user would recognise them in Excel.
+const DATE_STYLE_NAMES = Object.freeze({
+  excelCell: "Excel 日期单元格",
+  ymdDash: "文本 年-月-日",
+  ymdSlash: "文本 年/月/日",
+  ymdDot: "文本 年.月.日",
+  chinese: "文本 中文年月日",
+  dmy: "文本 日/月/年",
+  mdy: "文本 月/日/年",
+  dayMonthSame: "文本 日和月相同（看不出先后）",
+  english: "文本 英文月份",
+  yearOnly: "只写年份"
+});
+
+const VISIBLE_TEXT_NAMES = Object.freeze({
+  "\t": "[制表符]", "\n": "[换行]", "\r": "[换行]", "\u00A0": "[不换行空格]", "\u3000": "[全角空格]",
+  "\u00AD": "[软连字符]", "\u200E": "[方向符]", "\u200F": "[方向符]",
+  "\u200B": "[零宽字符]", "\u200C": "[零宽字符]", "\u200D": "[零宽字符]", "\u2060": "[零宽字符]", "\uFEFF": "[零宽字符]"
+});
+const VISIBLE_TEXT_PATTERN = new RegExp(`[\\s${INVISIBLE_CHARACTER_CLASS}]`, "g");
+
+// A text with its whitespace and invisible characters shown: "␣" for a half-width space at
+// an end or in a run (a single space inside stays), a name in brackets for the others.
+// Plain text; callers escape it for their output format.
+function formatVisibleText(text) {
+  return String(text)
+    .replace(/^ +| +$| {2,}/g, (spaces) => "␣".repeat(spaces.length))
+    .replace(VISIBLE_TEXT_PATTERN, (character) => (character === " " ? " " : VISIBLE_TEXT_NAMES[character] || "[空白]"));
+}
+
+function formatDateStylePart({ key, count, sample }) {
+  return `${DATE_STYLE_NAMES[key]} ${formatInteger(count)} 个（如 ${formatVisibleText(sample)}）`;
+}
+
+// 「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、…。
+function formatDateStyleLine({ field, styles, otherCount }) {
+  const [main, ...others] = styles;
+  return `「${field}」：主写法是 ${formatDateStylePart(main)}；另有 ${formatInteger(otherCount)} 行是别的写法：${others.map(formatDateStylePart).join("、")}。`;
+}
+// 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。
+function formatConstantField({ field, value, count, missingCount }) {
+  return `「${field}」：只有一种取值「${formatVisibleText(value)}」（${formatInteger(count)} 行）${missingCount ? `，另有 ${formatInteger(missingCount)} 行缺失` : ""}。`;
+}
+
+const LOOK_ALIKE_REASON_NAMES = Object.freeze({ compat: "全角半角或兼容写法", case: "大小写", invisible: "不可见字符", innerSpace: "中间空格多少" });
+
+function formatLookAlikeReasons(reasons) {
+  return reasons.map((reason) => LOOK_ALIKE_REASON_NAMES[reason]).join("、");
+}
+
+// 「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）
+function formatLookAlikeGroup({ variants, variantCount = variants.length, reasons }) {
+  const texts = variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个`).join(" / ");
+  return `${texts}${variantCount > variants.length ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`;
+}
+
+// 「区域」共 18 行：首尾空格 2 格（如「华东␣」）；只有不可见字符 1 格；3 组写法不同：…；…。
+function formatLookAlikeLine({ field, edgeSpaceCount, edgeSample, invisibleOnlyCount = 0, groups, groupCount, rowCount }) {
+  const parts = [];
+  if (edgeSpaceCount) parts.push(`首尾空格 ${formatInteger(edgeSpaceCount)} 格（如「${formatVisibleText(edgeSample)}」）`);
+  if (invisibleOnlyCount) parts.push(`只有不可见字符 ${formatInteger(invisibleOnlyCount)} 格`);
+  if (groupCount) {
+    const overflow = groupCount > groups.length ? `，只列出前 ${groups.length} 组` : "";
+    parts.push(`${formatInteger(groupCount)} 组写法不同${overflow}：${groups.map(formatLookAlikeGroup).join("；")}`);
+  }
+  return `「${field}」共 ${formatInteger(rowCount)} 行：${parts.join("；")}。`;
+}
+
+function formatDateStyleRowNote(key, mainKey) {
+  return `${DATE_STYLE_NAMES[key]}（主写法是 ${DATE_STYLE_NAMES[mainKey]}）`;
+}
+
+// The 说明 of a problem row: the cell's own text with its whitespace shown, since the table
+// shows the value trimmed.
+function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
+  const parts = [];
+  if (group) parts.push(`第 ${group.position + 1} 组（${formatLookAlikeReasons(group.reasons)}）`);
+  if (invisibleOnly) parts.push("只有不可见字符");
+  if (hasEdge) parts.push("首尾空格");
+  return `${parts.join("，")}：「${formatVisibleText(value)}」`;
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

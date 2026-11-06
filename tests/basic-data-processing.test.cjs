@@ -8,6 +8,7 @@ const { createScriptContext } = require("./test-context.cjs");
 const XLSX = require(path.join(__dirname, "..", "vendor", "xlsx-0.20.3.full.min.js"));
 const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.js"));
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 
 function put(context, name, value) {
   context[name] = value;
@@ -2090,7 +2091,7 @@ test("reports add an ID duplicate section after the outliers and count it in the
   const roster = await importStage3Fixture("花名册.xlsx");
   const { report, html, markdown } = reportOf(roster);
   assert.deepEqual(report.quality.idDuplicates, idDuplicates(roster.evaluate));
-  assert.ok(html.includes("；解析警告：<strong>0</strong>；ID 重复字段：<strong>3</strong>。</p>"));
+  assert.ok(html.includes("；解析警告：<strong>0</strong>；ID 重复字段：<strong>3</strong>；日期写法混用：<strong>1</strong> 个字段。</p>"));
   const htmlSection = html.slice(html.indexOf("<h3>ID 字段重复值</h3>"), html.indexOf("数值字段描述性统计"));
   assert.ok(html.indexOf("<h3>数值异常值</h3>") < html.indexOf("<h3>ID 字段重复值</h3>"));
   assert.match(htmlSection, /<th>字段<\/th><th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
@@ -3192,7 +3193,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 13);
+  assert.equal(scopes.length, 14);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3268,6 +3269,8 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
     if (category.kind === "parseWarnings") expected = state.parseWarnings.length;
     if (category.kind === "suspectedTotal") expected = state.suspectedTotals.length;
     if (category.kind === "formulaError") expected = state.formulaErrors.find((item) => item.field === category.field).count;
+    if (category.kind === "dateStyle") expected = state.dateStyles.find((item) => item.field === category.field).otherCount;
+    if (category.kind === "lookAlike") expected = state.lookAlikes.find((item) => item.field === category.field).rowCount;
     if (category.kind === "duplicateRows") {
       // The quality count leaves out the first row of each group, which is kept.
       expected = state.duplicateRows + result.groupCount;
@@ -3294,6 +3297,10 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
         else if (item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
       });
       if (category.kind === "duplicateRows" && !ascending(firsts)) mismatches.push(name + ": groups not by first appearance");
+    } else if (category.kind === "lookAlike") {
+      items.forEach((item, index) => {
+        if (index > 0 && item.group === items[index - 1].group && item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
+      });
     } else if (category.kind !== "parseWarnings" && !ascending(items.map((item) => item.index))) {
       mismatches.push(name + ": not in file order");
     }
@@ -3304,7 +3311,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 13);
+  assert.equal(scopes.length, 14);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -3320,7 +3327,7 @@ test("every problem-row list matches its quality count on the stage3 fixtures an
     "placeholder / 备注 / N/A = 1", "placeholder / 备注 / — = 1"
   ]);
   assert.deepEqual(names("花名册.xlsx"), [
-    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "outlier / 月薪 = 3", "duplicateRows = 2",
+    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "dateStyle / 入职日期 = 6", "outlier / 月薪 = 3", "duplicateRows = 2",
     "idDuplicate / 工号 = 3", "idDuplicate / 身份证号 = 3", "idDuplicate / 手机号 = 3"
   ]);
   // 用户ID and 会话ID are mostly repeated: no entry for them.
@@ -3529,7 +3536,7 @@ test("the preview heading, pager and its buttons are static in index.html and bo
 });
 
 // v2.6.0: the problem-row viewer on the quality page.
-const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails"];
+const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails", "dateStyleDetails", "lookAlikeDetails"];
 // Every "查看" button: its container, data-problem-index, aria-label and other data attributes.
 const problemButtons = (scope) => PROBLEM_ENTRY_CONTAINERS.flatMap((id) => [...scope.elements.get(id).innerHTML.matchAll(/<button\b[^>]*\bdata-problem-index="(\d+)"[^>]*>/g)]
   .map((match) => ({
@@ -5234,4 +5241,865 @@ test("v2.8.1 cells under a date format are found on a sheet that does not start 
   assert.deepEqual(cellSheetFields(scope), ["名", "入职日期"]);
   assert.deepEqual(cellSheetColumn(scope, "入职日期"), ["2024-05-06", "待定", "true"]);
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.rows.map(getSourceRowNumber))")), [4, 5, 6]);
+});
+
+// v2.9.0: date styles, constant columns and look-alike values, only hints. The guard below
+// keeps everything v2.8.1 computed; the fixture 写法不一致.csv holds what the checks look for.
+test("v2.9.0 fixture: 写法不一致.csv has the bytes, types and totals of known-issues.json", async () => {
+  const bytes = fs.readFileSync(path.join(STAGE3_FIXTURES, "写法不一致.csv"));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = bytes.toString("utf8");
+  assert.equal(text.split("\r\n").length - 1, 25);
+  assert.equal(text.split("\n").length - 1, 25);
+  // The cells that are the point of the fixture, written as escapes here too.
+  assert.ok(text.includes("\u3000华东,"));
+  assert.ok(text.includes("华东\u200B,"));
+  assert.ok(text.includes("\uFF28\uFF24,"));
+
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const expected = knownIssues["写法不一致.csv"];
+  const summary = importedSummary(scope.evaluate);
+  assert.equal(summary.rows, expected.dataRows);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.duplicateRows, expected.expectedTotals.duplicateRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.profiles.reduce((sum, profile) => sum + profile.conversionFailureCount, 0)"), expected.expectedTotals.formatProblems);
+  assert.equal(scope.evaluate("state.headerDetection"), null);
+  // ID duplicates compare as before: SKU-002 with a trailing space repeats, sku-001 does not.
+  assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["商品编号", [["SKU-002", 2, [4, 5]]]]]);
+});
+
+// The state v2.8.1 computed, by file: profiles, statistics, quality figures, existing problem rows.
+// Regenerate tests/fixtures/v2.8.1-guard.json (see docs/TESTING.md) or remove this guard in the
+// version that changes these results on purpose, and say so in its PR.
+const V281_GUARD_KINDS = ["missing", "formulaError", "conversion", "outlier", "duplicateRows", "suspectedTotal", "idDuplicate", "placeholder", "parseWarnings"];
+const v281GuardDigest = (scope) => crypto.createHash("sha256").update(scope.evaluate(`JSON.stringify({
+  rows: state.rows, profiles: state.profiles, numericStats: state.numericStats, qualityNumericStats: state.qualityNumericStats, categoryStats: state.categoryStats,
+  duplicateRows: state.duplicateRows, totalMissing: state.totalMissing, idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking,
+  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: deduplicateRows(state.rows, state.fields).length,
+  problems: listProblemCategories().filter((category) => ${JSON.stringify(V281_GUARD_KINDS)}.includes(category.kind)).map((category) => [category, listProblemRows(category).items])
+})`)).digest("hex").slice(0, 32);
+
+test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixtures and examples", async () => {
+  const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
+  const actual = {};
+  for (const fileName of STAGE3_IMPORT_FILES) {
+    if (fileName === "写法不一致.csv") continue;
+    const scope = await importStage3Fixture(fileName);
+    actual[fileName] = v281GuardDigest(scope);
+    scope.evaluate("confirmAllCommonPlaceholders()");
+    actual[`${fileName}（全部确认后）`] = v281GuardDigest(scope);
+  }
+  for (const fileName of EXAMPLE_CSV_FILES) {
+    const scope = await importCsvFile(readExampleCsv(fileName), fileName);
+    actual[fileName] = v281GuardDigest(scope);
+    scope.evaluate("confirmAllCommonPlaceholders()");
+    actual[`${fileName}（全部确认后）`] = v281GuardDigest(scope);
+  }
+  assert.deepEqual(actual, expected);
+});
+
+test("v2.9.0 Excel: date cells are recorded per row and column, with title rows and a shifted !ref", () => {
+  const scope = createExcelContext();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ["2024 报表"],
+    [],
+    ["名", "日期", "文本日期"],
+    ["甲", 45000, "2024-01-01"],
+    ["", "", ""],
+    ["乙", "2024-01-01", 45001],
+    ["丙", 45002, "x"]
+  ], { origin: "B3" });
+  for (const address of ["C6", "D8", "C9"]) {
+    worksheet[address].t = "n";
+    worksheet[address].z = DATE_FORMAT;
+  }
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "S");
+  put(scope.context, "__buffer", XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
+  scope.evaluate('importExcelSheet(readExcelWorkbook(__buffer), "s.xlsx", "S", beginImport())');
+  const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [getSourceRowNumber(row), state.sourceDateCells.get(row) || null, row.日期, row.文本日期]))"));
+  assert.deepEqual(read.map(([line, cells]) => [line, cells && Object.keys(cells).sort()]), [[6, ["日期"]], [8, ["文本日期"]], [9, ["日期"]]]);
+  // A date cell and a text with the same characters read alike but are told apart.
+  assert.equal(read[1][2], "2024-01-01");
+  assert.equal(read[1][1].日期, undefined);
+});
+
+test("v2.9.0 Excel: only real date cells count, and a file without them adds nothing", async () => {
+  const cells = {
+    A1: textCell("名"), B1: textCell("值", DATE_FORMAT),
+    A2: textCell("真日期"), B2: dateCell(45418),
+    A3: textCell("文本"), B3: textCell("待定", DATE_FORMAT),
+    A4: textCell("空串"), B4: textCell("", DATE_FORMAT),
+    A5: textCell("布尔"), B5: { t: "b", v: true, z: DATE_FORMAT },
+    A6: textCell("文本日期"), B6: textCell("2024-05-06", DATE_FORMAT),
+    A7: textCell("数字"), B7: { t: "n", v: 45418, z: "0.00" },
+    // Known limitation: a time-only cell is a real number cell and reads as this date.
+    A8: textCell("只有时间"), B8: { t: "n", v: 0.4375, z: "hh:mm" }
+  };
+  const scope = await importCellSheet(cells, "A1:B8");
+  const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [row.名, row.值, Boolean(state.sourceDateCells.get(row)?.值)]))"));
+  assert.deepEqual(read, [
+    ["真日期", "2024-05-06", true],
+    ["文本", "待定", false],
+    ["空串", "", false],
+    ["布尔", "true", false],
+    ["文本日期", "2024-05-06", false],
+    ["数字", "45418", false],
+    ["只有时间", "1899-12-31", true]
+  ]);
+  const plain = createExcelContext();
+  const direct = plain.evaluate('buildExcelTabularData([["名", "日"], ["甲", "x"]], [["名", "日"], ["甲", "x"]])');
+  assert.equal(direct.dateCells, undefined);
+  // A Date that reads as empty is no date cell.
+  const invalid = plain.evaluate('buildExcelTabularData([["名", "日"], ["甲", new Date(NaN)]], [["名", "日"], ["甲", new Date(NaN)]])');
+  assert.equal(invalid.rows[0].日, "");
+  assert.equal(invalid.dateCells, undefined);
+});
+
+test("v2.9.0 state: a commit replaces the date cells and resetAnalysisState() clears them", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  put(roster.context, "__keptRow", roster.evaluate("state.rows[0]"));
+  assert.equal(roster.evaluate("state.sourceDateCells.has(__keptRow)"), true);
+  // Without beginImport(): the commit itself replaces them.
+  roster.evaluate('commitTabularData(["城市"], [{ 城市: "上海" }], "later.csv", state.activeImportId)');
+  assert.equal(roster.evaluate("state.sourceDateCells.has(__keptRow)"), false);
+  // A list that does not match the rows is left out, as for row numbers and formula errors.
+  roster.evaluate('commitTabularData(["日期"], [{ 日期: "2024-01-01" }], "short.csv", state.activeImportId, [], "", null, null, null, null, [{ 日期: true }, { 日期: true }])');
+  assert.equal(roster.evaluate("state.sourceDateCells.has(state.rows[0])"), false);
+
+  const cleared = await importStage3Fixture("花名册.xlsx");
+  put(cleared.context, "__keptRow", cleared.evaluate("state.rows[0]"));
+  cleared.evaluate("resetAnalysisState()");
+  assert.equal(cleared.evaluate("state.sourceDateCells.has(__keptRow)"), false);
+});
+
+const dateStylesOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.dateStyles)"));
+const setFieldType = (scope, field, typeKey) => scope.evaluate(`state.fieldTypeDrafts[${JSON.stringify(field)}] = ${JSON.stringify(typeKey)}; applyFieldConfiguration()`);
+
+// [written, order, style].
+const DATE_STYLE_CASES = [
+  ["2024-05-06", "none", "ymdDash"], ["2024-5-6", "none", "ymdDash"], ["2024/05/06", "none", "ymdSlash"], ["2024/5/6", "none", "ymdSlash"],
+  ["2024.5.6", "none", "ymdDot"], ["2024年5月6日", "none", "chinese"], ["2024年5月6", "none", "chinese"], ["2024 年 5 月 6 日", "none", "chinese"],
+  ["2024-05-06 10:30", "none", "ymdDash"], ["2024-05-06T10:30:00Z", "none", "ymdDash"], ["06/05/2024", "dmy", "dmy"], ["06/05/2024", "mdy", "mdy"],
+  ["06-05-2024", "dmy", "dmy"], ["06.05.2024", "mdy", "mdy"],
+  ["06/05/2024", "none", null], ["06/05/2024", "conflict", null], ["05/05/2024", "none", "dayMonthSame"], ["05/05/2024", "conflict", "dayMonthSame"],
+  ["05/05/2024", "dmy", "dmy"], ["13/05/2024", "conflict", "dmy"], ["05/13/2024", "conflict", "mdy"], ["13/05/2024", "mdy", "dmy"],
+  ["May 6, 2024", "none", "english"], ["6 May 2024", "none", "english"], ["Mon, 6 May 2024", "none", "english"], ["2024-May-06", "none", "english"],
+  ["\u00A02024/5/6 ", "none", "ymdSlash"], ["\u30002024年5月6日", "none", "chinese"], ["2024-13-01", "none", null], ["2024/5/6/7", "none", null],
+  ["待定", "none", null], ["20240506", "none", null], ["", "none", null], ["N/A", "none", null]
+];
+
+test("v2.9.0 dateStyleOf: each writing's style, padding and a time part make no new style", () => {
+  const { evaluate, context } = createScriptContext();
+  for (const [text, order, style] of DATE_STYLE_CASES) {
+    put(context, "__text", text);
+    assert.equal(evaluate(`dateStyleOf(__text, { order: ${JSON.stringify(order)} })`), style, `${text} ${order}`);
+  }
+  assert.equal(evaluate('dateStyleOf("2024", { allowYearOnly: true, order: "none" })'), "yearOnly");
+  assert.equal(evaluate('dateStyleOf("2024年", { allowYearOnly: true, order: "none" })'), "yearOnly");
+  assert.equal(evaluate('dateStyleOf("2024", { order: "none" })'), null);
+});
+
+test("v2.9.0 guard: dateStyleOf() is null exactly when toDate() is null", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const days = ["1", "01", "6", "06", "12", "13", "29", "31", "32", "0", "00"];
+    const years = ["2024", "1999", "0999", "24", "20240"];
+    const times = ["", " 10:30", "T10:30:00Z", " 25:00", " 10:30:00.123+08:00", " 10:30 PM"];
+    const months = ["May", "may.", "sept", "Foo", "december"];
+    const texts = [];
+    for (const year of years) for (const month of days) for (const day of days) for (const time of times) {
+      for (const separator of ["-", "/", ".", " ", ""]) {
+        texts.push(year + separator + month + separator + day + time, day + separator + month + separator + year + time);
+      }
+      texts.push(year + "年" + month + "月" + day + "日" + time, year + " 年 " + month + " 月 " + day + time);
+    }
+    for (const month of months) for (const day of days) for (const year of years) for (const time of times) {
+      texts.push(month + " " + day + ", " + year + time, day + " " + month + " " + year + time, "Mon, " + day + " " + month + " " + year + time, year + "-" + month + "-" + day);
+    }
+    const strategies = [{ order: "none" }, { order: "dmy" }, { order: "mdy" }, { order: "conflict" }, { order: "none", allowYearOnly: true }];
+    let checked = 0;
+    let readable = 0;
+    const mismatches = [];
+    const styles = new Set();
+    for (const text of [...texts, "2024", "2024年", " 2024 ", "", " ", "N/A", "—"]) {
+      for (const strategy of strategies) {
+        for (const value of [text, " " + text + "\\u3000"]) {
+          const style = dateStyleOf(value, strategy);
+          const date = toDate(value, strategy);
+          checked += 1;
+          if (date) readable += 1;
+          if (style) styles.add(style);
+          if ((style === null) !== (date === null)) mismatches.push([value, strategy.order, style]);
+        }
+      }
+    }
+    return { checked, readable, mismatches: mismatches.slice(0, 10), styles: [...styles].sort() };
+  })())`));
+  assert.deepEqual(result.mismatches, []);
+  assert.ok(result.checked > 100000, String(result.checked));
+  assert.ok(result.readable > 5000, String(result.readable));
+  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
+});
+
+test("v2.9.0 date styles: the fixture and the roster, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  const expected = knownIssues["写法不一致.csv"].dateStyles;
+  const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
+  assert.deepEqual(dateStylesOf(writing).map(({ field, mainKey, otherCount, styles }) => ({ field, mainKey, otherCount, styles })), expected.map(({ field, mainKey, otherCount, styles }) => ({ field, mainKey, otherCount, styles })));
+  const roster = scopes.find(([name]) => name === "花名册.xlsx")[1];
+  assert.deepEqual(dateStylesOf(roster), [{
+    field: "入职日期", mainKey: "excelCell", otherCount: 6,
+    styles: [
+      { key: "excelCell", count: 24, sample: "2016-04-01", firstLine: 2 },
+      { key: "ymdSlash", count: 2, sample: "2021/3/5", firstLine: 6 },
+      { key: "chinese", count: 2, sample: "2021年3月5日", firstLine: 10 },
+      { key: "ymdDot", count: 2, sample: "2021.03.05", firstLine: 15 }
+    ]
+  }]);
+  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx"]);
+});
+
+test("v2.9.0 date styles: the most frequent style is the main one, ties go to the first seen", async () => {
+  // The first value is not the most frequent one, so the order tells the rule apart.
+  const scope = await importCsvFile("日期,序\r\n2024/1/1,1\r\n2024-01-02,2\r\n2024-01-03,3\r\n2024.1.4,4\r\n2024.1.5,5\r\n", "m.csv");
+  assert.deepEqual(dateStylesOf(scope)[0].styles.map(({ key, count }) => [key, count]), [["ymdDash", 2], ["ymdDot", 2], ["ymdSlash", 1]]);
+  assert.equal(dateStylesOf(scope)[0].mainKey, "ymdDash");
+  assert.equal(dateStylesOf(scope)[0].otherCount, 3);
+  // Padding and a time part alone are one style.
+  const same = await importCsvFile("日期,序\r\n2024-1-1,1\r\n2024-01-02,2\r\n2024-01-03 10:30,3\r\n", "s.csv");
+  assert.deepEqual(dateStylesOf(same), []);
+  // A value that cannot be read is a format problem, not a style.
+  const unread = await importCsvFile("日期,序\r\n2024-01-01,1\r\n2024-01-02,2\r\n2024-01-03,3\r\n2024-01-04,4\r\n待定,5\r\n", "u.csv");
+  assert.equal(unread.evaluate("state.profiles[0].typeKey"), "date");
+  assert.deepEqual(dateStylesOf(unread), []);
+});
+
+test("v2.9.0 a field read by year has no date styles", async () => {
+  const scope = await importCsvFile(`年份\r\n${["2015", "2016", "2017", "2018", "2019", "2020", "2021", "2022", "2023", "2024/1/1"].join("\r\n")}\r\n`, "y.csv");
+  assert.equal(scope.evaluate("state.profiles[0].typeKey"), "date");
+  assert.equal(scope.evaluate("state.profiles[0].dateStrategy.granularity"), "year");
+  assert.deepEqual(dateStylesOf(scope), []);
+});
+
+test("v2.9.0 date styles follow the field configuration and confirmations, not the filters", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  writing.evaluate('__styles = state.dateStyles; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__styles === state.dateStyles"), true);
+  assert.equal(writing.evaluate("getAnalysisRows().length"), 3);
+  setFieldType(writing, "下单日期", "category");
+  assert.deepEqual(dateStylesOf(writing), []);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(dateStylesOf(writing)[0].otherCount, 6);
+  // A confirmation rebuilds them too, with the same result.
+  writing.evaluate('__styles = state.dateStyles; confirmPlaceholder("客户", "N/A")');
+  assert.equal(writing.evaluate("__styles === state.dateStyles"), false);
+  assert.equal(dateStylesOf(writing)[0].otherCount, 6);
+
+  // A text field made a date field is read then, with its own strategy.
+  const later = await importCsvFile("文字,序\r\n2024-01-01,1\r\n2024/1/2,2\r\nx,3\r\ny,4\r\nz,5\r\n", "l.csv");
+  assert.equal(later.evaluate("state.profiles[0].typeKey"), "category");
+  assert.deepEqual(dateStylesOf(later), []);
+  setFieldType(later, "文字", "date");
+  assert.deepEqual(dateStylesOf(later)[0].styles.map(({ key, count }) => [key, count]), [["ymdDash", 1], ["ymdSlash", 1]]);
+
+  const roster = await importStage3Fixture("花名册.xlsx");
+  setFieldType(roster, "入职日期", "category");
+  assert.deepEqual(dateStylesOf(roster), []);
+  setFieldType(roster, "入职日期", "date");
+  assert.equal(dateStylesOf(roster)[0].otherCount, 6);
+});
+
+test("v2.9.0 a rebuild reads the date cells only for a field it has not scanned yet", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const count = (action) => scope.evaluate(`(() => {
+    const each = forEachDateStyle;
+    let calls = 0;
+    forEachDateStyle = (...args) => { calls += 1; return each(...args); };
+    ${action};
+    forEachDateStyle = each;
+    return calls;
+  })()`);
+  assert.equal(count("applyFieldConfiguration()"), 0);
+  assert.equal(count('confirmPlaceholder("客户", "N/A")'), 0);
+  assert.equal(count('state.fieldTypeDrafts["状态"] = "date"; applyFieldConfiguration()'), 1);
+  assert.equal(count('state.fieldTypeDrafts["状态"] = "category"; applyFieldConfiguration()'), 0);
+  // Each distinct text is classified once: 3000 rows, 3 texts.
+  const small = createScriptContext();
+  put(small.context, "__rows", Array.from({ length: 3000 }, (_, index) => ({ 日期: ["2024-01-01", "2024/1/2", "2024.1.3"][index % 3] })));
+  assert.equal(small.evaluate(`(() => {
+    const style = dateStyleOf;
+    let calls = 0;
+    dateStyleOf = (...args) => { calls += 1; return style(...args); };
+    const profile = buildColumnProfile("日期", __rows);
+    buildDateStyleSummary(__rows, [profile], () => undefined, () => null);
+    dateStyleOf = style;
+    return calls;
+  })()`), 3);
+});
+
+test("v2.9.0 state: a later commit and resetAnalysisState() replace the date styles and their scans", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  // The same field name with other cells, without beginImport().
+  scope.evaluate('commitTabularData(["下单日期"], Array.from({ length: 3 }, (_, index) => ({ 下单日期: "2024-01-0" + (index + 1) })), "later.csv", state.activeImportId)');
+  assert.deepEqual(dateStylesOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  assert.equal(dateStylesOf(cleared).length, 1);
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(dateStylesOf(cleared), []);
+  assert.equal(cleared.evaluate("state.formatScans.dateStyles.size"), 0);
+});
+
+test("v2.9.0 texts: the date style line and how whitespace is shown", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.equal(roster.evaluate("formatDateStyleLine(state.dateStyles[0])"), "「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。");
+  const { evaluate, context } = createScriptContext();
+  const shown = (text) => {
+    put(context, "__text", text);
+    return evaluate("formatVisibleText(__text)");
+  };
+  assert.equal(shown("华东 "), "华东␣");
+  assert.equal(shown("  华东"), "␣␣华东");
+  assert.equal(shown("上海  浦东"), "上海␣␣浦东");
+  assert.equal(shown("上海 浦东"), "上海 浦东");
+  assert.equal(shown("\u3000华东\u00A0"), "[全角空格]华东[不换行空格]");
+  assert.equal(shown("华\u200B东\uFEFF"), "华[零宽字符]东[零宽字符]");
+  assert.equal(shown("华\u00AD东\u200E"), "华[软连字符]东[方向符]");
+  assert.equal(shown("a\tb"), "a[制表符]b");
+  assert.equal(shown("\u2003x"), "[空白]x");
+});
+
+const constantsOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.constantFields)"));
+
+test("v2.9.0 constant columns: the fixture and the formula-error sheet, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  assert.deepEqual(constantsOf(scopes.find(([name]) => name === "写法不一致.csv")[1]), knownIssues["写法不一致.csv"].constantFields);
+  const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
+  assert.deepEqual(constantsOf(errors), [{ field: "备注", value: "正常", count: 6, missingCount: 3 }]);
+  assert.equal(errors.evaluate("formatConstantField(state.constantFields[0])"), "「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。");
+  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["公式错误.xlsx", "写法不一致.csv"]);
+  assert.equal(scopes.find(([name]) => name === "写法不一致.csv")[1].evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（24 行）。");
+});
+
+test("v2.9.0 constant columns: at least five values, one distinct value after trimming", async () => {
+  const columns = async (cells) => constantsOf(await importCsvFile(`值,序\r\n${cells.map((cell, index) => `${cell},${index + 1}`).join("\r\n")}\r\n`, "k.csv"));
+  assert.deepEqual(await columns(["a", "a", "a", "a"]), []);
+  assert.deepEqual(await columns(["a", "a", "a", "a", "a"]), [{ field: "值", value: "a", count: 5, missingCount: 0 }]);
+  assert.deepEqual(await columns(["a ", " a", "a", "a", "a", ""]), [{ field: "值", value: "a", count: 5, missingCount: 1 }]);
+  assert.deepEqual(await columns(["1", "1.0", "1", "1", "1"]), []);
+  assert.deepEqual(await columns(["1", "\uFF11", "1", "1", "1"]), []);
+  assert.deepEqual(await columns(["a", "A", "a", "a", "a"]), []);
+  // Every applied type counts; an all-empty column is none.
+  assert.deepEqual(await columns(["", "", "", "", ""]), []);
+  const types = await importCsvFile("编号,金额,日期\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\nA1,5,2024-01-01\r\n", "t.csv");
+  assert.deepEqual(JSON.parse(types.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["id", "numeric", "date"]);
+  assert.deepEqual(constantsOf(types).map((item) => item.field), ["编号", "金额", "日期"]);
+});
+
+test("v2.9.0 constant columns: a column of one placeholder spelling is left to the placeholder section", async () => {
+  const single = async (value) => constantsOf(await importCsvFile(`状态,序\r\n${Array.from({ length: 6 }, (_, index) => `${value},${index + 1}`).join("\r\n")}\r\n`, "p.csv"));
+  assert.deepEqual(await single("N/A"), []);
+  assert.deepEqual(await single("无"), []);
+  assert.deepEqual(await single("Ｎ/\uFF21"), []);
+  assert.equal((await single("正常")).length, 1);
+  // Still listed as a placeholder, confirmed or not, and no constant column either way.
+  const listed = await importCsvFile("状态,序\r\nN/A,1\r\nN/A,2\r\nN/A,3\r\nN/A,4\r\nN/A,5\r\n", "l.csv");
+  assert.equal(listed.evaluate("state.placeholders.length"), 1);
+  assert.deepEqual(constantsOf(listed), []);
+  listed.evaluate('confirmPlaceholder("状态", "N/A")');
+  assert.deepEqual(constantsOf(listed), []);
+});
+
+test("v2.9.0 constant columns follow the field configuration and confirmations, not the filters", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  writing.evaluate('__constants = state.constantFields; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__constants === state.constantFields"), true);
+  setFieldType(writing, "状态", "ignore");
+  assert.deepEqual(constantsOf(writing), []);
+  // Any applied type but ignored.
+  setFieldType(writing, "状态", "numeric");
+  assert.deepEqual(constantsOf(writing).map((item) => item.field), ["状态"]);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(constantsOf(writing).map((item) => item.field), ["状态"]);
+
+  // Confirming the other value leaves one, and the confirmed rows count as missing.
+  const confirmed = await importCsvFile("状态,序\r\n正常,1\r\n正常,2\r\n正常,3\r\n正常,4\r\n无,5\r\n正常,6\r\n", "c.csv");
+  assert.deepEqual(constantsOf(confirmed), []);
+  confirmed.evaluate('confirmPlaceholder("状态", "无")');
+  assert.deepEqual(constantsOf(confirmed), [{ field: "状态", value: "正常", count: 5, missingCount: 1 }]);
+  assert.equal(confirmed.evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（5 行），另有 1 行缺失。");
+  confirmed.evaluate('undoPlaceholderConfirmation("状态", "无")');
+  assert.deepEqual(constantsOf(confirmed), []);
+
+  // Confirming below the minimum ends it.
+  const below = await importCsvFile("状态,序\r\n正常,1\r\n正常,2\r\n正常,3\r\n正常,4\r\n无,5\r\n", "b.csv");
+  below.evaluate('confirmPlaceholder("状态", "无")');
+  assert.deepEqual(constantsOf(below), []);
+});
+
+test("v2.9.0 constant columns read the profiles only, and a commit or reset replaces them", async () => {
+  const { evaluate } = createScriptContext();
+  // No rows at all: the figures come from the profile.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildConstantFieldSummary([{ field: "甲", typeKey: "category", uniqueCount: 1, nonMissingCount: 5, missingCount: 2, sampleValues: ["好"] }]))')), [{ field: "甲", value: "好", count: 5, missingCount: 2 }]);
+  const scope = await importStage3Fixture("写法不一致.csv");
+  assert.equal(constantsOf(scope).length, 1);
+  scope.evaluate('commitTabularData(["城市"], [{ 城市: "上海" }, { 城市: "北京" }], "later.csv", state.activeImportId)');
+  assert.deepEqual(constantsOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(constantsOf(cleared), []);
+});
+
+const lookAlikesOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.lookAlikes)"));
+
+test("v2.9.0 hasEdgeWhitespace() agrees with trim() on every UTF-16 unit at either end", () => {
+  const { evaluate } = createScriptContext();
+  const mismatches = JSON.parse(evaluate(`JSON.stringify((() => {
+    const bad = [];
+    for (let code = 0; code <= 0xffff; code += 1) {
+      const character = String.fromCharCode(code);
+      for (const text of [character + "x", "x" + character, "x" + character + "x"]) {
+        if (hasEdgeWhitespace(text) !== (text.trim() !== text)) bad.push(code);
+      }
+    }
+    return bad.slice(0, 10);
+  })())`));
+  assert.deepEqual(mismatches, []);
+  assert.equal(evaluate('hasEdgeWhitespace("\\u200b华东")'), false);
+  assert.equal(evaluate('hasEdgeWhitespace("\\ufeff华东")'), true);
+  assert.equal(evaluate('hasEdgeWhitespace("")'), false);
+});
+
+test("v2.9.0 lookAlikeKey: what merges and what stays apart", () => {
+  const { evaluate, context } = createScriptContext();
+  const same = (a, b) => {
+    put(context, "__a", a);
+    put(context, "__b", b);
+    return evaluate("lookAlikeKey(__a) === lookAlikeKey(__b)");
+  };
+  for (const [a, b] of [
+    ["ABC公司", "\uFF21\uFF22\uFF23公司"], ["ABC公司", "abc公司"], ["华东（一）", "华东(一)"], ["华东", "华东\u200B"], ["华东", "\u200B华东"], ["华东", "华\u200B东"],
+    ["华东", "华\u200C东"], ["华东", "华\u200D东"], ["华东", "华\u2060东"], ["华东", "华\uFEFF东"], ["华东", "华东\u00AD"], ["华东", "华\u00AD东"], ["华东", "华东\u200E"], ["华东", "华东\u200F"],
+    ["上海  浦东", "上海 浦东"], ["上海\u3000浦东", "上海 浦东"], ["上海\t浦东", "上海 浦东"],
+    ["Ⅱ", "II"], ["①", "1"], ["ﾃｽﾄ", "テスト"], ["İ", "i̇"], ["K", "k"], ["㎡", "m2"], ["华东 \u200B", "华东"]
+  ]) assert.equal(same(a, b), true, `${a} / ${b}`);
+  for (const [a, b] of [["上海 浦东", "上海浦东"], ["华东", "华东区"], ["華东", "华东"], ["张 三", "张三"], ["ı", "i"], ["华东", "华东\uFE0F"]]) assert.equal(same(a, b), false, `${a} / ${b}`);
+  for (const text of ["\u200B\u200C", "\u00AD", "\u200E", "\u200F", "\u2060"]) {
+    put(context, "__text", text);
+    assert.equal(evaluate("lookAlikeKey(__text)"), "", text);
+  }
+});
+
+test("v2.9.0 lookAlikeKey leaves pure ASCII texts out of NFKC", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__rows", Array.from({ length: 200 }, (_, index) => ({ 编号: `ORDER-LONG-${index}` })));
+  const calls = scope.evaluate(`(() => {
+    const original = String.prototype.normalize;
+    let count = 0;
+    String.prototype.normalize = function (...args) { count += 1; return original.apply(this, args); };
+    buildLookAlikeSummary(__rows, [{ field: "编号", typeKey: "id" }]);
+    String.prototype.normalize = original;
+    return count;
+  })()`);
+  assert.equal(calls, 0);
+});
+
+test("v2.9.0 lookAlikeReasons: one writing's difference names only its own reason", () => {
+  const { evaluate, context } = createScriptContext();
+  const reasons = (texts) => {
+    put(context, "__texts", texts);
+    return JSON.parse(evaluate("JSON.stringify(lookAlikeReasons(__texts))"));
+  };
+  assert.deepEqual(reasons(["ABC", "abc"]), ["case"]);
+  assert.deepEqual(reasons(["ABC", "\uFF21\uFF22\uFF23"]), ["compat"]);
+  assert.deepEqual(reasons(["HD", "\uFF28\uFF24", "hd"]), ["compat", "case"]);
+  // Both full-width, one with a zero-width character: not a width difference.
+  assert.deepEqual(reasons(["\uFF21\uFF22", "\uFF21\uFF22\u200B"]), ["invisible"]);
+  assert.deepEqual(reasons(["华东", "华东\u00AD", "华东\u200E"]), ["invisible"]);
+  assert.deepEqual(reasons(["上海 浦东", "上海  浦东"]), ["innerSpace"]);
+  assert.deepEqual(reasons(["上海 浦东", "上海\u3000浦东"]), ["compat"]);
+  assert.deepEqual(reasons(["华东 \u200B", "华东"]), ["invisible"]);
+  // Either step alone unifies the Kelvin sign and K: still some reason.
+  assert.deepEqual(reasons(["K", "K"]), ["compat"]);
+});
+
+test("v2.9.0 look-alike values: the fixture, and no other file", async () => {
+  const scopes = await importEveryQualityFile();
+  const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
+  const summary = lookAlikesOf(writing);
+  assert.deepEqual(summary.map(({ field, edgeSpaceCount, groupCount, rowCount, groups }) => ({
+    field, edgeSpaceCount, groupCount, rowCount,
+    groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
+  })), knownIssues["写法不一致.csv"].lookAlikes);
+  assert.ok(summary.every((item) => item.invisibleOnlyCount === 0));
+  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv"]);
+  // ID duplicates and look-alikes count apart: SKU-002 with a space is a duplicate value and
+  // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
+  assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
+  assert.equal(summary[0].edgeSpaceCount, 1);
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 18 行：首尾空格 2 格（如「华东␣」）；3 组写法不同：「华东」10 个 / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个 / 「上海␣␣浦东」1 个（中间空格多少）。");
+});
+
+test("v2.9.0 look-alike values skip placeholders, numbers and dates", async () => {
+  const scope = await importCsvFile("分类,数值,日期\r\n N/A,1,2024-01-01\r\nn/a,1.0,2024-01-02\r\nx , 1,2024-01-03 \r\nx,1,2024-01-04\r\ny,2,2024-01-05\r\n", "l.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "numeric", "date"]);
+  assert.deepEqual(lookAlikesOf(scope).map((item) => [item.field, item.edgeSpaceCount, item.groupCount, item.rowCount]), [["分类", 1, 0, 1]]);
+});
+
+test("v2.9.0 cells of nothing but invisible characters are counted per field", async () => {
+  const scope = await importCsvFile("备注,序\r\n\u200B,1\r\n\u00AD,2\r\n\u200E,3\r\n甲,4\r\n乙,5\r\n丙,6\r\n", "z.csv");
+  // They are not missing values: trim() cannot remove them.
+  assert.equal(scope.evaluate('getFieldProfile("备注").missingCount'), 0);
+  const [item] = lookAlikesOf(scope);
+  assert.deepEqual([item.field, item.invisibleOnlyCount, item.edgeSpaceCount, item.groupCount, item.rowCount], ["备注", 3, 0, 0, 3]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「备注」共 3 行：只有不可见字符 3 格。");
+  // With other findings, and a cell with both counts in both but once in the rows.
+  const mixed = await importCsvFile("备注,序\r\n\u200B ,1\r\n甲 ,2\r\nAB,3\r\nab,4\r\n丙,5\r\n", "m.csv");
+  const [both] = lookAlikesOf(mixed);
+  assert.deepEqual([both.invisibleOnlyCount, both.edgeSpaceCount, both.groupCount, both.rowCount], [1, 2, 1, 4]);
+  assert.match(mixed.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /共 4 行：首尾空格 2 格.*只有不可见字符 1 格；1 组写法不同/);
+  // Zero stays out of the line.
+  const none = await importCsvFile("备注,序\r\nAB,1\r\nab,2\r\n", "n.csv");
+  assert.doesNotMatch(none.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /不可见字符/);
+  // Fields that are not category or ID are not read.
+  const numeric = await importCsvFile("金额,序\r\n1,1\r\n2,2\r\n3,3\r\n4,4\r\n5,5\r\n6,6\r\n7,7\r\n8,8\r\n9,9\r\n\u200B,10\r\n", "o.csv");
+  assert.equal(numeric.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  assert.deepEqual(lookAlikesOf(numeric), []);
+});
+
+test("v2.9.0 look-alike lists stop at the limits but count everything", async () => {
+  const many = Array.from({ length: 12 }, (_, index) => [`K${index}`, `k${index}`]).flat();
+  const overflow = await importCsvFile(`分类\r\n${many.join("\r\n")}\r\n`, "o.csv");
+  const [item] = lookAlikesOf(overflow);
+  assert.deepEqual([item.groups.length, item.groupCount, item.rowCount], [10, 12, 24]);
+  assert.match(overflow.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), /12 组写法不同，只列出前 10 组：/);
+  // Twelve writings of one value: ten shown and how many there are.
+  const spellings = ["abcd", "Abcd", "aBcd", "abCd", "abcD", "ABcd", "AbCd", "AbcD", "aBCd", "aBcD", "abCD", "ABCd"];
+  const variants = await importCsvFile(`分类,序\r\n${spellings.map((text, index) => `${text},${index}`).join("\r\n")}\r\n`, "v.csv");
+  // 12 distinct values of 12 make it an ID field by uniqueness: still read.
+  const [group] = lookAlikesOf(variants)[0].groups;
+  assert.deepEqual([group.variants.length, group.variantCount, group.rowCount], [10, 12, 12]);
+  assert.match(variants.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), / 等 12 种（大小写）/);
+  // Groups by rows, most first; writings by count, most first, not by first appearance.
+  const sorted = await importCsvFile("分类,序\r\nx,1\r\nA,2\r\nb,3\r\nB,4\r\nB,5\r\nB,6\r\nX,7\r\n", "s.csv");
+  assert.deepEqual(lookAlikesOf(sorted)[0].groups.map((entry) => entry.variants.map(({ text, count }) => [text, count])), [[["B", 3], ["b", 1]], [["x", 1], ["X", 1]]]);
+});
+
+test("v2.9.0 look-alike work runs once per distinct text, and a rebuild reuses it", async () => {
+  const small = createScriptContext();
+  put(small.context, "__rows", Array.from({ length: 3000 }, (_, index) => ({ 城市: ["上海", "北京", "abc"][index % 3] })));
+  assert.equal(small.evaluate(`(() => {
+    const original = lookAlikeKey;
+    let count = 0;
+    lookAlikeKey = (text) => { count += 1; return original(text); };
+    const profile = buildColumnProfile("城市", __rows);
+    buildLookAlikeSummary(__rows, [profile]);
+    lookAlikeKey = original;
+    return count;
+  })()`), 3);
+  const scope = await importStage3Fixture("写法不一致.csv");
+  const count = (action) => scope.evaluate(`(() => {
+    const collect = collectFieldWritings;
+    let calls = 0;
+    collectFieldWritings = (...args) => { calls += 1; return collect(...args); };
+    ${action};
+    collectFieldWritings = collect;
+    return calls;
+  })()`);
+  assert.equal(count("applyFieldConfiguration()"), 0);
+  assert.equal(count('confirmPlaceholder("客户", "N/A")'), 0);
+  // 金额 was numeric on import, so this is its first scan.
+  assert.equal(count('state.fieldTypeDrafts["金额"] = "category"; applyFieldConfiguration()'), 1);
+  assert.equal(count('state.fieldTypeDrafts["金额"] = "numeric"; applyFieldConfiguration()'), 0);
+});
+
+test("v2.9.0 look-alike values follow the field configuration, not the filters or confirmations", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  const fields = () => lookAlikesOf(writing).map((item) => item.field);
+  writing.evaluate('__looks = state.lookAlikes; state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(writing.evaluate("__looks === state.lookAlikes"), true);
+  setFieldType(writing, "区域", "ignore");
+  assert.deepEqual(fields(), ["商品编号", "客户"]);
+  setFieldType(writing, "区域", "numeric");
+  assert.deepEqual(fields(), ["商品编号", "客户"]);
+  writing.evaluate("restoreAutomaticFieldTypes()");
+  assert.deepEqual(fields(), ["商品编号", "区域", "客户"]);
+  // Placeholder spellings are left out, confirmed or not: confirming moves nothing.
+  const before = JSON.stringify(lookAlikesOf(writing));
+  writing.evaluate('confirmPlaceholder("客户", "N/A"); confirmPlaceholder("客户", "n/a")');
+  assert.equal(JSON.stringify(lookAlikesOf(writing)), before);
+  writing.evaluate('undoPlaceholderConfirmation("客户", "N/A")');
+  assert.equal(JSON.stringify(lookAlikesOf(writing)), before);
+  // The roster's date column as a category holds nothing to report.
+  const roster = await importStage3Fixture("花名册.xlsx");
+  setFieldType(roster, "入职日期", "category");
+  assert.deepEqual(lookAlikesOf(roster), []);
+});
+
+test("v2.9.0 state: a later commit and resetAnalysisState() replace the look-alike values and scans", async () => {
+  const scope = await importStage3Fixture("写法不一致.csv");
+  assert.equal(lookAlikesOf(scope).length, 3);
+  // The same field name with other cells, without beginImport().
+  scope.evaluate('commitTabularData(["区域"], [{ 区域: "甲" }, { 区域: "乙" }], "later.csv", state.activeImportId)');
+  assert.deepEqual(lookAlikesOf(scope), []);
+  const cleared = await importStage3Fixture("写法不一致.csv");
+  cleared.evaluate("resetAnalysisState()");
+  assert.deepEqual(lookAlikesOf(cleared), []);
+  assert.equal(cleared.evaluate("state.formatScans.writings.size"), 0);
+});
+
+const problemNotes = (scope, kind, field) => JSON.parse(scope.evaluate(`JSON.stringify(listProblemRows({ kind: ${JSON.stringify(kind)}, field: ${JSON.stringify(field)} }).items.map((item) => [item.line, item.note]))`));
+const problemLinesOf = (scope, kind, field) => problemNotes(scope, kind, field).map(([line]) => line);
+
+test("v2.9.0 problem rows: the rows of the date styles", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(problemNotes(roster, "dateStyle", "入职日期"), [
+    [6, "文本 年/月/日（主写法是 Excel 日期单元格）"],
+    [10, "文本 中文年月日（主写法是 Excel 日期单元格）"],
+    [15, "文本 年.月.日（主写法是 Excel 日期单元格）"],
+    [19, "文本 年/月/日（主写法是 Excel 日期单元格）"],
+    [22, "文本 中文年月日（主写法是 Excel 日期单元格）"],
+    [28, "文本 年.月.日（主写法是 Excel 日期单元格）"]
+  ]);
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.deepEqual(problemLinesOf(writing, "dateStyle", "下单日期"), knownIssues["写法不一致.csv"].dateStyles[0].otherLines);
+});
+
+test("v2.9.0 problem rows: look-alike rows go group by group, then the others", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "商品编号"), [2, 3, 5]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 20, 21, 22, 23, 24]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [2, 4, 6, 8, 9, 15, 17, 19, 21, 23]);
+  assert.deepEqual(problemNotes(writing, "lookAlike", "区域").filter(([line]) => [5, 6, 7, 18, 24].includes(line)), [
+    [5, "第 1 组（不可见字符），首尾空格：「华东␣」"],
+    [6, "第 1 组（不可见字符），首尾空格：「[全角空格]华东」"],
+    [7, "第 1 组（不可见字符）：「华东[零宽字符]」"],
+    [18, "第 2 组（全角半角或兼容写法、大小写）：「HD」"],
+    [24, "第 3 组（中间空格多少）：「上海␣␣浦东」"]
+  ]);
+  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号")[2], [5, "首尾空格：「SKU-002␣」"]);
+  // Cells of nothing but invisible characters, alone or with edge whitespace.
+  const invisible = await importCsvFile("备注,序\r\n甲,1\r\nAB,2\r\n\u200B,3\r\nab,4\r\n\u00AD ,5\r\n乙 ,6\r\n丙,7\r\n", "z.csv");
+  assert.deepEqual(problemNotes(invisible, "lookAlike", "备注"), [
+    [3, "第 1 组（大小写）：「AB」"],
+    [5, "第 1 组（大小写）：「ab」"],
+    [4, "只有不可见字符：「[零宽字符]」"],
+    [6, "只有不可见字符，首尾空格：「[软连字符]␣」"],
+    [7, "首尾空格：「乙␣」"]
+  ]);
+  assert.equal(invisible.evaluate("state.lookAlikes[0].rowCount"), 5);
+  // A field with only such cells has a category of its own.
+  const alone = await importCsvFile("备注,序\r\n\u200B,1\r\n甲,2\r\n", "a.csv");
+  assert.deepEqual(problemNotes(alone, "lookAlike", "备注"), [[2, "只有不可见字符：「[零宽字符]」"]]);
+  assert.deepEqual(JSON.parse(alone.evaluate('JSON.stringify(state.problemCategories.filter((item) => item.kind === "lookAlike"))')), [{ kind: "lookAlike", field: "备注", count: 1, unit: "row" }]);
+});
+
+test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted cells and file names", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  const kinds = JSON.parse(writing.evaluate("JSON.stringify(state.problemCategories.map((item) => item.kind))"));
+  assert.deepEqual(kinds.filter((kind, index) => kind !== kinds[index - 1]), ["missing", "conversion", "dateStyle", "idDuplicate", "lookAlike", "placeholder"]);
+  const buttons = problemButtons(writing).filter((button) => ["dateStyleDetails", "lookAlikeDetails"].includes(button.container));
+  assert.deepEqual(buttons.map((button) => button.label), ["查看「下单日期」不是主写法的行", "查看「商品编号」写法不同的行", "查看「区域」写法不同的行", "查看「客户」写法不同的行"]);
+  assert.ok(buttons.every((button) => button.dataAttributes.join() === "data-problem-index"));
+  clickProblemButton(writing, buttons[2].index);
+  assert.deepEqual(sameCategory(openCategory(writing)), sameCategory(categoryAt(writing, buttons[2].index)));
+  assert.equal(openCategory(writing).field, "区域");
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 18 行，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 18);
+  assert.match(writing.elements.get("problemRowsTable").innerHTML, /<td class="cell-problem">华东<\/td>/);
+  clickProblemButton(writing, buttons[0].index);
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 个值，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "dateStyle"))'), "日期写法 · 下单日期（6 个值）");
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不同 · 区域（18 行）");
+  assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "dateStyle", field: "下单日期" }, new Date(2026, 10, 5))'), "写法不一致_问题行_日期写法_下单日期_20261105.csv");
+  assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "lookAlike", field: "区域" }, new Date(2026, 10, 5))'), "写法不一致_问题行_写法不同_区域_20261105.csv");
+  // Exported cells keep the original value, whitespace included.
+  const content = writing.evaluate('buildProblemRowsCsvContent(listProblemRows({ kind: "lookAlike", field: "区域" }), state.fields)');
+  assert.ok(content.includes(',"华东 ",'));
+  assert.ok(content.includes(",\u3000华东,"));
+  assert.ok(content.includes(",华东\u200B,"));
+});
+
+test("v2.9.0 the viewer follows the field configuration, and constant columns have no category", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  const [button] = problemButtons(roster).filter((item) => item.container === "dateStyleDetails");
+  clickProblemButton(roster, button.index);
+  assert.equal(viewerState(roster).hidden, false);
+  setFieldType(roster, "入职日期", "category");
+  assert.equal(viewerState(roster).hidden, true);
+  assert.equal(viewerState(roster).message, "这一类已经没有问题行。");
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(errors.evaluate('state.problemCategories.some((item) => item.kind === "constantField")'), false);
+  assert.doesNotMatch(errors.elements.get("constantFieldDetails").innerHTML, /<button/);
+  assert.match(errors.elements.get("constantFieldDetails").innerHTML, /另有 3 行缺失/);
+});
+
+test("v2.9.0 the three sections render without a numeric field, escape data and hide when empty", () => {
+  const scope = createScriptContext();
+  const name = "<i>名</i>";
+  const dates = "<s>日期</s>";
+  commitRows(scope, [name, dates, "固定"], [
+    { [name]: "<b>x</b>", [dates]: "2024-01-01", 固定: "<u>同</u>" },
+    { [name]: "<B>X</B>", [dates]: "2024/1/2", 固定: "<u>同</u>" },
+    { [name]: "y ", [dates]: "2024-01-03", 固定: "<u>同</u>" },
+    { [name]: "z", [dates]: "2024-01-04", 固定: "<u>同</u>" },
+    { [name]: "z", [dates]: "2024-01-05", 固定: "<u>同</u>" }
+  ], "text-only.csv");
+  assert.match(scope.elements.get("dateStyleDetails").innerHTML, /「&lt;s&gt;日期&lt;\/s&gt;」/);
+  assert.match(scope.elements.get("outlierTable").innerHTML, /未识别到数值字段/);
+  for (const [section, details] of [["dateStyleSection", "dateStyleDetails"], ["constantFieldSection", "constantFieldDetails"], ["lookAlikeSection", "lookAlikeDetails"]]) {
+    assert.equal(scope.elements.get(section).classList.contains("hidden"), false, section);
+    assert.doesNotMatch(scope.elements.get(details).innerHTML, /<b>|<i>|<u>|<B>|<s>/, details);
+  }
+  assert.match(scope.elements.get("lookAlikeDetails").innerHTML, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.match(scope.elements.get("lookAlikeDetails").innerHTML, /data-problem-index="\d+"/);
+  assert.doesNotMatch(scope.elements.get("lookAlikeDetails").innerHTML + scope.elements.get("dateStyleDetails").innerHTML, /data-placeholder-index/);
+  const clean = createScriptContext();
+  commitRows(clean, ["城市"], [{ 城市: "上海" }, { 城市: "北京" }], "clean.csv");
+  for (const section of ["dateStyleSection", "constantFieldSection", "lookAlikeSection"]) assert.equal(clean.elements.get(section).classList.contains("hidden"), true, section);
+  // Rendered again from the current state, and emptied by a reset.
+  const scopeHtml = scope.elements.get("dateStyleDetails").innerHTML;
+  assert.notEqual(scopeHtml, "");
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.elements.get("dateStyleDetails").innerHTML, "");
+  assert.equal(scope.elements.get("dateStyleSection").classList.contains("hidden"), true);
+  assert.equal(scope.elements.get("lookAlikeDetails").innerHTML, "");
+  assert.equal(scope.elements.get("constantFieldDetails").innerHTML, "");
+});
+
+test("v2.9.0 the sections are static, in place and change neither the pills nor the status", async () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const positions = ['id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderDetails"'].map((id) => html.indexOf(id));
+  assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), positions.join());
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.equal((writing.elements.get("qualitySummary").innerHTML.match(/class="quality-pill/g) || []).length, 6);
+  assert.equal(writing.elements.get("statusPanel").textContent, "写法不一致.csv 已成功载入，分析结果已生成。");
+});
+
+test("v2.9.0 reports: the notes are the page's sentences", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const { evaluate } = createScriptContext();
+  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(name)}</p>`), name);
+  assert.match(evaluate("LOOK_ALIKE_NOTE"), /只有不可见字符：格子看起来是空的/);
+});
+
+test("v2.9.0 reports: three sections with content, two summary counts, constant columns not counted", async () => {
+  const roster = reportOf(await importStage3Fixture("花名册.xlsx"));
+  assert.ok(roster.html.includes("<h3>日期写法混用</h3>\n    <p>这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>"));
+  assert.ok(roster.html.includes("<li>「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。</li>"));
+  assert.ok(roster.markdown.includes("- ID 重复字段：3\n- 日期写法混用：1 个字段\n"));
+  assert.ok(!(roster.html + roster.markdown).includes("常量列"));
+
+  const errors = reportOf(await importStage3Fixture("公式错误.xlsx"));
+  assert.ok(errors.html.includes("<li>「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。</li>"));
+  assert.ok(errors.markdown.includes("### 常量列\n\n这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。\n\n- 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。\n"));
+  assert.ok(!errors.markdown.includes("- 常量列"));
+  assert.ok(!errors.html.includes("常量列：<strong>"));
+
+  const writing = reportOf(await importStage3Fixture("写法不一致.csv"));
+  assert.ok(writing.html.includes("；日期写法混用：<strong>1</strong> 个字段；写法不同的值：<strong>3</strong> 个字段。</p>"));
+  assert.ok(writing.markdown.includes("- 日期写法混用：1 个字段\n- 写法不同的值：3 个字段\n"));
+  // The section shows whitespace and invisible characters by name; Top 10 and the sample values
+  // still print cells as they are.
+  const section = writing.html.slice(writing.html.indexOf("<h3>写法细节不同的值</h3>"), writing.html.indexOf("<h3>疑似缺失值</h3>"));
+  assert.ok(section.includes("「华东[零宽字符]」1 个"));
+  assert.ok(section.includes("（如「SKU-002␣」）"));
+  assert.ok(!section.includes("\u200B"));
+  assert.ok(writing.markdown.includes("「华东\\[零宽字符\\]」1 个"));
+  // Order: after the numeric-looking section's place, before the placeholders, in both outputs.
+  const order = (text, titles) => titles.map((title) => text.indexOf(title));
+  const htmlOrder = order(writing.html, ["<h3>各字段缺失情况</h3>", "<h3>日期写法混用</h3>", "<h3>常量列</h3>", "<h3>写法细节不同的值</h3>", "<h3>疑似缺失值</h3>"]);
+  assert.ok(htmlOrder.every((position, index) => position >= 0 && (index === 0 || position > htmlOrder[index - 1])), htmlOrder.join());
+  const markdownOrder = order(writing.markdown, ["### 各字段缺失情况", "### 日期写法混用", "### 常量列", "### 写法细节不同的值", "### 疑似缺失值"]);
+  assert.ok(markdownOrder.every((position, index) => position >= 0 && (index === 0 || position > markdownOrder[index - 1])), markdownOrder.join());
+
+  const clean = reportOf(await importStage3Fixture("订单表.csv"));
+  assert.deepEqual([clean.report.quality.dateStyles, clean.report.quality.constantFields, clean.report.quality.lookAlikes], [[], [], []]);
+  for (const title of ["日期写法混用", "常量列", "写法细节不同的值", "写法不同的值"]) assert.ok(!(clean.html + clean.markdown).includes(title), title);
+});
+
+test("v2.9.0 reports: cells of nothing but invisible characters, escaped field names and values", async () => {
+  const field = "<b>备注|*</b>";
+  const scope = await importCsvFile(`"${field}",序\r\n\u200B,1\r\n<i>x</i>,2\r\n<I>X</I>,3\r\n`, "r.csv");
+  const { report, html, markdown } = reportOf(scope);
+  assert.equal(report.quality.lookAlikes[0].invisibleOnlyCount, 1);
+  assert.ok(html.includes("只有不可见字符 1 格"));
+  assert.ok(markdown.includes("只有不可见字符 1 格"));
+  assert.ok(html.includes("「&lt;b&gt;备注|*&lt;/b&gt;」共 3 行"));
+  assert.ok(html.includes("「&lt;i&gt;x&lt;/i&gt;」1 个"));
+  assert.doesNotMatch(html.slice(html.indexOf("<h3>写法细节不同的值</h3>")), /<i>x|<b>备注/);
+  assert.ok(markdown.includes("「&lt;b&gt;备注\\|\\*&lt;/b&gt;」共 3 行"));
+});
+
+test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot shares nothing with state", async () => {
+  const store = await importStage3Fixture("写法不一致.csv");
+  const old = reportOf(store).report;
+  delete old.quality.dateStyles;
+  delete old.quality.constantFields;
+  delete old.quality.lookAlikes;
+  put(store.context, "__old", old);
+  // null itself: JSON.stringify would write undefined in an array as null too.
+  assert.equal(store.evaluate("(() => { const quality = normalizeReportSnapshot(__old).quality; return quality.dateStyles === null && quality.constantFields === null && quality.lookAlikes === null; })()"), true);
+  const oldOutput = store.evaluate("buildMarkdownReport(__old)") + store.evaluate("buildHtmlReport(__old, [])");
+  for (const title of ["日期写法混用", "常量列", "写法细节不同的值", "写法不同的值"]) assert.ok(!oldOutput.includes(title), title);
+  store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
+  const shared = JSON.parse(store.evaluate(`JSON.stringify([
+    __snapshot.quality.dateStyles[0] === state.dateStyles[0],
+    __snapshot.quality.dateStyles[0].styles === state.dateStyles[0].styles,
+    __snapshot.quality.dateStyles[0].styles[0] === state.dateStyles[0].styles[0],
+    __snapshot.quality.constantFields[0] === state.constantFields[0],
+    __snapshot.quality.lookAlikes[0] === state.lookAlikes[0],
+    __snapshot.quality.lookAlikes[0].groups === state.lookAlikes[0].groups,
+    __snapshot.quality.lookAlikes[0].groups[0] === state.lookAlikes[0].groups[0],
+    __snapshot.quality.lookAlikes[0].groups[0].reasons === state.lookAlikes[0].groups[0].reasons,
+    __snapshot.quality.lookAlikes[0].groups[0].variants === state.lookAlikes[0].groups[0].variants,
+    __snapshot.quality.lookAlikes[0].groups[0].variants[0] === state.lookAlikes[0].groups[0].variants[0]
+  ])`));
+  assert.deepEqual(shared, shared.map(() => false));
+  // Filters change nothing in these sections.
+  const before = JSON.stringify(reportOf(store).report.quality.lookAlikes);
+  store.evaluate('state.filters.category = { field: "状态", values: ["正常"] }; state.filteredRows = state.rows.slice(0, 3); refreshFilteredAnalysis()');
+  assert.equal(JSON.stringify(reportOf(store).report.quality.lookAlikes), before);
+});
+
+test("v2.9.0 Excel: rows with the same date fields share one frozen record without a prototype", async () => {
+  const cells = {
+    A1: textCell("名"), B1: textCell("入职"), C1: textCell("离职"),
+    A2: textCell("甲"), B2: dateCell(45418), C2: textCell("在职"),
+    A3: textCell("乙"), B3: dateCell(45419), C3: textCell("在职"),
+    A4: textCell("丙"), B4: dateCell(45420), C4: dateCell(45500),
+    A5: textCell("丁"), B5: textCell("待定"), C5: dateCell(45501),
+    A6: textCell("戊"), B6: dateCell(45421), C6: dateCell(45502)
+  };
+  const scope = await importCellSheet(cells, "A1:C6");
+  const read = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const records = state.rows.map((row) => state.sourceDateCells.get(row) || null);
+    return {
+      fields: records.map((record) => record && Object.keys(record)),
+      same: [records[0] === records[1], records[2] === records[4], records[0] === records[2], records[2] === records[3]],
+      frozen: records.filter(Boolean).every((record) => Object.isFrozen(record)),
+      prototypes: records.filter(Boolean).every((record) => Object.getPrototypeOf(record) === null)
+    };
+  })())`));
+  assert.deepEqual(read.fields, [["入职"], ["入职"], ["入职", "离职"], ["离职"], ["入职", "离职"]]);
+  assert.deepEqual(read.same, [true, true, false, false]);
+  assert.equal(read.frozen, true);
+  assert.equal(read.prototypes, true);
+});
+
+test("v2.9.0 guard: text columns named like Object members never count as date cells", async () => {
+  const cells = {
+    A1: textCell("constructor"), B1: textCell("toString"), C1: textCell("hasOwnProperty"), D1: textCell("日期"),
+    A2: textCell("甲"), B2: textCell("乙"), C2: textCell("丙"), D2: dateCell(45418),
+    A3: textCell("丁"), B3: textCell("戊"), C3: textCell("己"), D3: dateCell(45419)
+  };
+  const scope = await importCellSheet(cells, "A1:D3");
+  const read = JSON.parse(scope.evaluate(`JSON.stringify(state.rows.map((row) => {
+    const record = state.sourceDateCells.get(row);
+    return ["constructor", "toString", "hasOwnProperty", "日期"].map((field) => Boolean(record && record[field]));
+  }))`));
+  assert.deepEqual(read, [[false, false, false, true], [false, false, false, true]]);
 });

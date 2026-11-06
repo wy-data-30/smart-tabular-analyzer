@@ -39,8 +39,8 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | `tests/core.test.cjs` | 启动自检、应用脚本顺序和顶层名字唯一性、DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
 | `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；`stage3/` 见下文；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
 | `tests/fixtures/examples/` | `sample-sales.csv`、`sample-students.csv`、`sample-survey.csv`、`sample-used-products.csv`、`sample-user-behavior.csv`：只给测试用的 5 个示例（v2.7.0 从 `examples/` 移来，字节不变）；`examples/` 里只剩“使用示例数据”按钮加载的 `sample-data.csv`。`basic-data-processing.test.cjs` 经 `listExampleCsvFiles()` / `readExampleCsv()` 读两个目录，覆盖的仍是同样 6 个文件。内容按 utf8 文本读取，LF 和 CRLF 都通过，所以不需要 `.gitattributes` 规则。 |
-| `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`分区小计表.csv`（5 行小计 / 总计，带空格、冒号和括号注释的标签）和 `公式错误.xlsx`（4 个字段 7 个错误格，含 #SPILL! 和整行错误的行）是 v2.8.0 加的。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，手工加条目，保持一行一条的格式，不要用 `JSON.stringify` 重写；v2.8.0 的测试读取其中合计行和公式错误的预期，其余条目仍供人工核对；v2.5.0 起订单表金额按“元”读取 2200元、3500元，金额那条预期改为数值率 29/30，`expectedTotals.formatProblems` 从 5 改为 3。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 7 个夹具；它用真实 PapaParse 包一层计数，并记下每次调用的 `header` 选项，表头在第 1 行的 CSV 正好调用两次（主解析一次，`header: false` 的行号扫描一次）。 |
-| `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 7 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关。不在 CI 中运行。 |
+| `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`分区小计表.csv`（5 行小计 / 总计，带空格、冒号和括号注释的标签）和 `公式错误.xlsx`（4 个字段 7 个错误格，含 #SPILL! 和整行错误的行）是 v2.8.0 加的。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，手工加条目，保持一行一条的格式，不要用 `JSON.stringify` 重写；v2.8.0 的测试读取其中合计行和公式错误的预期，其余条目仍供人工核对；v2.5.0 起订单表金额按“元”读取 2200元、3500元，金额那条预期改为数值率 29/30，`expectedTotals.formatProblems` 从 5 改为 3。`写法不一致.csv`（UTF-8 BOM、CRLF，表头在第 1 行，24 行：日期写法混用、常量列和写法细节不同的值，不可见字符在生成脚本里写 `\u` 转义）是 v2.9.0 加的，它的预期（`dateStyles`、`constantFields`、`lookAlikes`）由测试读取。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 8 个夹具；它用真实 PapaParse 包一层计数，并记下每次调用的 `header` 选项，表头在第 1 行的 CSV 正好调用两次（主解析一次，`header: false` 的行号扫描一次）。 |
+| `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 8 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关。不在 CI 中运行。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
 测试环境不是完整浏览器：Chart.js、PapaParse、SheetJS、FileReader 或下载 API 会按测试需要注入替身。真实浏览器布局、触控交互、canvas 像素和 Excel/WPS 打开效果仍需手工回归。
@@ -224,3 +224,30 @@ v2.8.1 修了 Excel 日期格式下的文本和布尔单元格被读错（见 `d
 另外把 `tests/basic-data-processing.test.cjs` 换行测试里字面的 U+FEFF 改成了转义，行为不变。
 
 假 DOM 不计算样式，质量页是否看得见要靠浏览器验证。这些文件都由 SheetJS 生成，用 Excel 亲手做的文件要人工验证（见 `docs/RELEASE_CHECKLIST.md`）。
+
+## 9. v2.9.0 新增测试固定了什么
+
+v2.9.0 加了日期写法混用、常量列和写法细节不同的值三类提示。新增 42 条测试（383 → 425），都在 `basic-data-processing.test.cjs`。另外按批准改了 6 处现有断言：`scopes.length` 13 → 14（两处，新夹具）；花名册类别清单加 `dateStyle / 入职日期 = 6`；`PROBLEM_ENTRY_CONTAINERS` 加 `dateStyleDetails`、`lookAlikeDetails`；`problemRowCheck()` 加 `dateStyle`、`lookAlike` 的 `expected` 和 `lookAlike` 组内顺序；花名册报告摘要加“日期写法混用：1 个字段”。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `v2.9.0 fixture: 写法不一致.csv has the bytes, types and totals…` | 夹具的 BOM、CRLF 和关键格；类型、缺失、格式问题、ID 重复值等于 `known-issues.json` |
+| `v2.9.0 guard: everything v2.8.1 computed stays the same…`（护栏，改前就通过） | 13 个文件 × 导入 / 全部确认后，profile、统计、质量数字和现有问题行的摘要等于 `tests/fixtures/v2.8.1-guard.json` |
+| `v2.9.0 Excel: date cells are recorded…` / `only real date cells count…` / `state: a commit replaces the date cells…` | 日期单元格按行列记下（标题行、`!ref` 从 B3 开始）；文本、空串、布尔、`0.00` 数字不算；只有时间的格算（已知限制）；提交替换、长度不对不写、重置清空 |
+| `v2.9.0 Excel: rows with the same date fields share one frozen record…` / `guard: text columns named like Object members never count as date cells`（护栏，改前就通过） | 日期字段相同的行共用同一个冻结、没有原型的记录（性能：每行新建记录时 10 万行 xlsx 导入 +5.0%，共用后 +3.1%），两个日期字段的行记录正确；名为 constructor、toString、hasOwnProperty 的文本列不算日期单元格（换成 `{}` 时会算） |
+| `v2.9.0 dateStyleOf: …` / `guard: dateStyleOf() is null exactly when toDate() is null` | 每种写法的分类（含日或月在前不分分隔符）；超过 10 万个组合穷举“写法 ⇔ `toDate()`” |
+| `v2.9.0 date styles: …`（4 条）、`a field read by year has no date styles` | 夹具和花名册、其他文件 0 命中；主写法规则（最多的不最先出现）；补零、时间、读不出的值；跟随字段配置和确认，筛选不重算；按年份读的字段不查 |
+| `v2.9.0 a rebuild reads the date cells only…`、`look-alike work runs once per distinct text…`（性能护栏，计数） | 每个不同文本只分类一次；重建复用扫描缓存，新改类型的字段才扫一次 |
+| `v2.9.0 state: a later commit and resetAnalysisState() replace …`（两条） | 同字段名再提交不用旧缓存；重置清空 |
+| `v2.9.0 texts: the date style line and how whitespace is shown` | “主写法是 Excel”的空格；`formatVisibleText()` 的每种写法 |
+| `v2.9.0 constant columns: …`（5 条） | 两个命中文件；5 个的门槛、去首尾空格、1 / 1.0、全角、大小写、全空列、三种类型；疑似缺失值写法不报（确认前后）；确认后新出现 / 消失；只读 profile；重置 |
+| `v2.9.0 hasEdgeWhitespace() agrees with trim()…` | 全部 65536 个码元在开头、结尾、中间 |
+| `v2.9.0 lookAlikeKey: …`（2 条）、`lookAlikeReasons: …` | 合并 / 不合并的边界（含 U+00AD、U+200E、U+200F，变体选择符不去）；纯 ASCII 不做 NFKC（计数）；原因判断 |
+| `v2.9.0 look-alike values: …`（3 条）、`cells of nothing but invisible characters…`、`look-alike lists stop at the limits…` | 夹具等于 `known-issues.json`、其他文件 0 命中；排除疑似缺失值、数值和日期字段；只有不可见字符的格单独计数、进并集一次；10 组 / 10 种上限和排序 |
+| `v2.9.0 problem rows: …`（3 条）、`the viewer follows the field configuration…` | 日期写法的行和说明；写法不同按组、说明的可见形式、只有不可见字符的行；类别顺序、标签、按钮、高亮、文件名、导出保留原值；改类型后查看区关闭；常量列没有类别 |
+| `v2.9.0 the three sections render without a numeric field…`、`the sections are static, in place…` | 提前 return 之前渲染、转义（字段名也是）、为空隐藏、重置清空页面；位置；pill 仍是 6 项、状态栏不变 |
+| `v2.9.0 reports: …`（4 条） | 说明句和 `index.html` 相同；三节内容、顺序、摘要两个计数（常量列不计）；只有不可见字符的计数和转义；旧快照为 `null`、快照每一层都不和 state 共用、筛选不影响 |
+
+**重新生成摘要基准**：`tests/fixtures/v2.8.1-guard.json` 是 v2.8.1（`196d8a9`）上 13 个文件各两种状态的摘要（profile、统计、质量数字、现有问题行，sha256 截取 32 位），在 Linux + Node 22 和 Windows + Node 24 上生成的结果逐字节相同。以后哪一版**有意**改变了这些结果，就在那一版用改动前的代码重新生成，或者删掉这条护栏，并在 PR 里说明。生成方法：在改动前的提交上，对每个夹具和示例 CSV 经 `parseDataFile()` 导入，按测试里 `v281GuardDigest()` 的同一个表达式算摘要，再 `confirmAllCommonPlaceholders()` 后算一次。
+
+假 DOM 不计算样式，三个小节是否看得见、`␣` 和 `[零宽字符]` 是否显示得出来要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。

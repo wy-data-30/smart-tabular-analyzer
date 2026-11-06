@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用、常量列、写法细节不同的值的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -441,9 +441,176 @@ function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
   return fields.flatMap((field) => (byField.has(field) ? [byField.get(field)] : []));
 }
 
+// ---- Format consistency: date styles, constant columns, look-alike values ----
+
+// Scans of the imported rows that a rebuild can reuse, like state.totalLabelRows: a field's
+// writings depend only on its cells (placeholder spellings are left out, confirmed or not), and
+// its date styles only on its cells, its date cells and its date strategy, which stays the same
+// for a field not read by year (placeholders give no order evidence, contract 17).
+function createFormatScans() {
+  return { dateStyles: new Map(), writings: new Map() };
+}
+
+// Calls visit(index, style, value) for every row of a field with a date style, the Excel
+// date cell first. Each distinct text is classified once.
+function forEachDateStyle(rows, profile, getDateCells, visit) {
+  const field = profile.field;
+  const styleByText = new Map();
+  rows.forEach((row, index) => {
+    const value = row[field];
+    let style;
+    if (getDateCells(row)?.[field]) {
+      style = DATE_STYLE_EXCEL_CELL;
+    } else {
+      style = styleByText.get(value);
+      if (style === undefined) {
+        style = dateStyleOf(value, profile.dateStrategy);
+        styleByText.set(value, style);
+      }
+    }
+    if (style) visit(index, style, value);
+  });
+}
+
+function scanDateStyles(rows, profile, getDateCells, getRowNumber, scans) {
+  const cached = scans.dateStyles.get(profile.field);
+  if (cached) return cached;
+  const styles = new Map();
+  forEachDateStyle(rows, profile, getDateCells, (index, key, value) => {
+    const style = styles.get(key);
+    if (style) style.count += 1;
+    else styles.set(key, { key, count: 1, sample: displayValue(value), firstLine: getRowNumber(rows[index]) });
+  });
+  const sorted = [...styles.values()].sort((a, b) => b.count - a.count);
+  scans.dateStyles.set(profile.field, sorted);
+  return sorted;
+}
+
+// Fields whose readable dates are written in two or more styles, in field order: applied
+// date fields that are not read by year. { field, styles: [{ key, count, sample, firstLine }],
+// mainKey, otherCount }: styles run from most to fewest values, ties by first appearance,
+// and the first is the main one.
+function buildDateStyleSummary(rows, profiles, getDateCells, getRowNumber, scans = createFormatScans()) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey !== "date" || profile.dateStrategy?.granularity === "year") return [];
+    const sorted = scanDateStyles(rows, profile, getDateCells, getRowNumber, scans);
+    if (sorted.length < 2) return [];
+    return [{ field: profile.field, styles: sorted, mainKey: sorted[0].key, otherCount: sorted.slice(1).reduce((sum, style) => sum + style.count, 0) }];
+  });
+}
+// A column reads as constant from this many non-missing values.
+const CONSTANT_FIELD_MIN_VALUES = 5;
+
+// Constant columns from the profile figures, so no rows are read: not ignored, at least the
+// minimum of non-missing values, one distinct value. Confirmed placeholders are missing there
+// already; a value that is a placeholder spelling is left to the placeholder section.
+function buildConstantFieldSummary(profiles) {
+  return profiles.flatMap((profile) => {
+    if (profile.typeKey === "ignore" || profile.uniqueCount !== 1 || profile.nonMissingCount < CONSTANT_FIELD_MIN_VALUES) return [];
+    const value = profile.sampleValues[0];
+    return placeholderKey(value) ? [] : [{ field: profile.field, value, count: profile.nonMissingCount, missingCount: profile.missingCount }];
+  });
+}
+
+// The quality page and the report list at most this many groups per field, and this
+// many writings per group.
+const LOOK_ALIKE_GROUP_LIMIT = 10;
+const LOOK_ALIKE_VARIANT_LIMIT = 10;
+
+// Writings of a field. Works on distinct raw texts, so the per-cell cost is one Map update;
+// placeholder spellings, missing values and everything heavier run once per text. edgeTexts
+// holds the raw texts with removable whitespace, invisibleOnlyTexts the trimmed texts of nothing
+// but invisible characters, groupOf maps a trimmed writing to its group, and groups run from
+// most to fewest rows, ties by first appearance. rowCount counts each row once.
+function collectFieldWritings(rows, field) {
+  const rawCounts = new Map();
+  for (let index = 0; index < rows.length; index += 1) {
+    const value = rows[index][field];
+    if (typeof value !== "string") continue;
+    const count = rawCounts.get(value);
+    rawCounts.set(value, count === undefined ? 1 : count + 1);
+  }
+  const trimmedCounts = new Map();
+  const kept = [];
+  rawCounts.forEach((count, raw) => {
+    if (isMissing(raw) || placeholderKey(raw)) return;
+    const trimmed = raw.trim();
+    kept.push([raw, count, trimmed]);
+    trimmedCounts.set(trimmed, (trimmedCounts.get(trimmed) || 0) + count);
+  });
+  const invisibleOnlyTexts = new Set();
+  const textsByKey = new Map();
+  trimmedCounts.forEach((count, text) => {
+    const key = lookAlikeKey(text);
+    if (!key) {
+      invisibleOnlyTexts.add(text);
+      return;
+    }
+    const texts = textsByKey.get(key);
+    if (texts) texts.push(text);
+    else textsByKey.set(key, [text]);
+  });
+  const groups = [];
+  textsByKey.forEach((texts) => {
+    if (texts.length < 2) return;
+    const variants = texts.map((text) => ({ text, count: trimmedCounts.get(text) })).sort((a, b) => b.count - a.count);
+    groups.push({ variants, reasons: lookAlikeReasons(texts), rowCount: variants.reduce((sum, variant) => sum + variant.count, 0) });
+  });
+  groups.sort((a, b) => b.rowCount - a.rowCount);
+  const groupOf = new Map();
+  groups.forEach((group, position) => group.variants.forEach((variant) => groupOf.set(variant.text, position)));
+  const edgeTexts = new Map();
+  let edgeSpaceCount = 0;
+  let invisibleOnlyCount = 0;
+  let rowCount = 0;
+  kept.forEach(([raw, count, trimmed]) => {
+    const hasEdge = hasEdgeWhitespace(raw);
+    const invisibleOnly = invisibleOnlyTexts.has(trimmed);
+    if (hasEdge) {
+      edgeTexts.set(raw, count);
+      edgeSpaceCount += count;
+    }
+    if (invisibleOnly) invisibleOnlyCount += count;
+    if (hasEdge || invisibleOnly || groupOf.has(trimmed)) rowCount += count;
+  });
+  return { edgeTexts, invisibleOnlyTexts, groupOf, groups, edgeSpaceCount, invisibleOnlyCount, rowCount };
+}
+
+function readFieldWritings(rows, field, scans) {
+  let writings = scans.writings.get(field);
+  if (!writings) {
+    writings = collectFieldWritings(rows, field);
+    scans.writings.set(field, writings);
+  }
+  return writings;
+}
+
+function isLookAlikeField(profile) {
+  return profile.typeKey === "category" || profile.typeKey === "id";
+}
+
+// Applied category and ID fields with edge whitespace, cells of nothing but invisible characters
+// or look-alike groups, in field order: { field, edgeSpaceCount, edgeSample, invisibleOnlyCount,
+// groups, groupCount, rowCount }. rowCount is what the problem rows list, each row once.
+function buildLookAlikeSummary(rows, profiles, scans = createFormatScans()) {
+  return profiles.flatMap((profile) => {
+    if (!isLookAlikeField(profile)) return [];
+    const { edgeTexts, groups, edgeSpaceCount, invisibleOnlyCount, rowCount } = readFieldWritings(rows, profile.field, scans);
+    if (!rowCount) return [];
+    return [{
+      field: profile.field,
+      edgeSpaceCount,
+      edgeSample: edgeTexts.size ? edgeTexts.keys().next().value : "",
+      invisibleOnlyCount,
+      groups: groups.slice(0, LOOK_ALIKE_GROUP_LIMIT).map((group) => ({ ...group, variantCount: group.variants.length, variants: group.variants.slice(0, LOOK_ALIKE_VARIANT_LIMIT) })),
+      groupCount: groups.length,
+      rowCount
+    }];
+  });
+}
 // ---- Problem rows: the rows behind each quality-page count ----
 // A category is { kind, field, key } with kind one of missing, formulaError, conversion,
-// outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every
+// dateStyle, outlier, duplicateRows, suspectedTotal, idDuplicate, lookAlike, placeholder, parseWarnings. Every
 // list comes from the same checks as its quality count and reads the original rows (state.rows), never
 // the filters. Items are { index (into state.rows, or null), line (file row or
 // null), note, ... }, in file order; the duplicate kinds go group by group.
@@ -586,9 +753,45 @@ function listFormulaErrorRows(field) {
   return { items, count: summary.count };
 }
 
+// Rows whose readable date is not in the main style of a mixed field, in file order: the
+// same classification as the summary (forEachDateStyle()).
+function listDateStyleRows(field) {
+  const summary = state.dateStyles.find((item) => item.field === field);
+  const profile = getFieldProfile(field);
+  if (!summary || !profile) return null;
+  const items = [];
+  forEachDateStyle(state.rows, profile, (row) => state.sourceDateCells.get(row), (index, key) => {
+    if (key !== summary.mainKey) items.push(problemRowItem(index, formatDateStyleRowNote(key, summary.mainKey), { style: key }));
+  });
+  return { items, count: summary.otherCount };
+}
+
+// Rows with edge whitespace, of nothing but invisible characters or in a look-alike group:
+// group by group (every writing, to compare them), then the others, each in file order. The
+// same collection as the summary (readFieldWritings()).
+function listLookAlikeRows(field) {
+  const summary = state.lookAlikes.find((item) => item.field === field);
+  if (!summary) return null;
+  const { edgeTexts, invisibleOnlyTexts, groupOf, groups } = readFieldWritings(state.rows, field, state.formatScans);
+  const byGroup = groups.map(() => []);
+  const others = [];
+  state.rows.forEach((row, index) => {
+    const value = row[field];
+    // The collection left out missing values and placeholder spellings, so they match nothing here.
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    const position = groupOf.get(trimmed);
+    const hasEdge = edgeTexts.has(value);
+    const invisibleOnly = invisibleOnlyTexts.has(trimmed);
+    if (position === undefined && !hasEdge && !invisibleOnly) return;
+    const note = formatLookAlikeRowNote(value, position === undefined ? null : { position, reasons: groups[position].reasons }, hasEdge, invisibleOnly);
+    (position === undefined ? others : byGroup[position]).push(problemRowItem(index, note, { group: position === undefined ? 0 : position + 1 }));
+  });
+  return { items: [...byGroup.flat(), ...others], count: summary.rowCount };
+}
 // Categories with rows to show, in this order: missing, formula errors, format problems,
-// outliers (per field), duplicate rows, suspected totals, ID duplicates (per field),
-// placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
+// date styles (per field), outliers (per field), duplicate rows, suspected totals, ID duplicates
+// (per field), look-alike values (per field), placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
 // row, value, duplicateRow (without each group's kept row), duplicateValue, warning.
 function listProblemCategories() {
   return [
@@ -597,12 +800,14 @@ function listProblemCategories() {
     ...state.formulaErrors.map((item) => ({ kind: "formulaError", field: item.field, count: item.count, unit: "value" })),
     ...state.profiles.filter((profile) => profile.conversionFailureCount > 0)
       .map((profile) => ({ kind: "conversion", field: profile.field, count: profile.conversionFailureCount, unit: "value" })),
+    ...state.dateStyles.map((item) => ({ kind: "dateStyle", field: item.field, count: item.otherCount, unit: "value" })),
     ...getQualityNumericStats().filter((stat) => stat.outlierCount > 0)
       .map((stat) => ({ kind: "outlier", field: stat.field, count: stat.outlierCount, unit: "value" })),
     ...(state.duplicateRows > 0 ? [{ kind: "duplicateRows", count: state.duplicateRows, unit: "duplicateRow" }] : []),
     ...(state.suspectedTotals.length ? [{ kind: "suspectedTotal", count: state.suspectedTotals.length, unit: "row" }] : []),
     ...state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0)
       .map((item) => ({ kind: "idDuplicate", field: item.field, count: item.duplicateValueCount, unit: "duplicateValue" })),
+    ...state.lookAlikes.map((item) => ({ kind: "lookAlike", field: item.field, count: item.rowCount, unit: "row" })),
     ...state.placeholders.map((entry) => ({ kind: "placeholder", field: entry.field, key: entry.key, count: entry.count, unit: "row" })),
     ...(state.parseWarnings.length ? [{ kind: "parseWarnings", count: state.parseWarnings.length, unit: "warning" }] : [])
   ];
@@ -620,6 +825,8 @@ function listProblemRows(category) {
     case "parseWarnings": return listParseWarningRows();
     case "suspectedTotal": return listSuspectedTotalRows();
     case "formulaError": return listFormulaErrorRows(category.field);
+    case "dateStyle": return listDateStyleRows(category.field);
+    case "lookAlike": return listLookAlikeRows(category.field);
     default: return null;
   }
 }

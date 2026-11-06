@@ -1,4 +1,4 @@
-// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，最后交给 commitTabularData() 提交。
+// 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，记下日期单元格，最后交给 commitTabularData() 提交。
 
 const ENCODING_LABELS = {
   auto: "自动识别",
@@ -122,17 +122,18 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
     throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
   }
 
-  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null } = readExcelSheetTable(worksheet, sheetName);
+  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null, dateCells = null } = readExcelSheetTable(worksheet, sheetName);
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
-  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers, formulaErrors);
+  commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers, formulaErrors, dateCells);
 }
 
 // Reads one worksheet into { fields, rows, rowNumbers, numberFormatHints } plus
-// headerDetection when title rows above the header were skipped and formulaErrors
-// when cells hold formula errors. Row numbers follow the !ref start.
+// headerDetection when title rows above the header were skipped, formulaErrors when
+// cells hold formula errors and dateCells when cells hold dates. Row numbers follow the
+// !ref start.
 function readExcelSheetTable(worksheet, sheetName) {
   validateExcelWorksheetLimits(worksheet, sheetName);
 
@@ -246,7 +247,8 @@ function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readN
 
 // firstRowNumber is the worksheet row number of formattedRows[0] (the !ref start row);
 // rowNumbers[i] is the worksheet row of rows[i]; formulaErrors[i] the { field: error text }
-// of rows[i] or null (formulaErrors itself is left out without any error). readCellError(rowIndex,
+// of rows[i] or null (formulaErrors itself is left out without any error); dateCells[i] the
+// { field: true } of the date cells of rows[i] or null, left out alike. readCellError(rowIndex,
 // columnIndex) is asked only about cells that read as empty.
 function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1, readCellError = null) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
@@ -298,6 +300,18 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   const keptPairs = dataPairs
     .filter((pair) => usedColumnIndexes.some((columnIndex) => !isMissing(pair.formatted[columnIndex]) || !isMissing(pair.raw[columnIndex])));
   let formulaErrors = null;
+  let dateCells = null;
+  // Rows with the same date fields share one frozen record, so a sheet of dates builds a few
+  // records instead of one per row. Object.create(null): a field named constructor or toString
+  // must not look like a date cell.
+  const nextDateCells = new Map();
+  const withDateCell = (current, field) => {
+    let byField = nextDateCells.get(current);
+    if (!byField) nextDateCells.set(current, (byField = new Map()));
+    let next = byField.get(field);
+    if (!next) byField.set(field, (next = Object.freeze(Object.assign(Object.create(null), current, { [field]: true }))));
+    return next;
+  };
   const rows = keptPairs
     .map((pair, position) => fields.reduce((row, field, fieldIndex) => {
       const columnIndex = usedColumnIndexes[fieldIndex];
@@ -305,6 +319,11 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
         pair.formatted[columnIndex],
         pair.raw[columnIndex]
       );
+      const rawValue = pair.raw[columnIndex];
+      if (typeof rawValue === "object" && rawValue !== null && row[field] !== "" && isDateObject(rawValue)) {
+        dateCells ??= new Array(keptPairs.length).fill(null);
+        dateCells[position] = withDateCell(dateCells[position], field);
+      }
       const error = row[field] === "" && readCellError ? readCellError(pair.index, columnIndex) : "";
       if (error) {
         formulaErrors ??= new Array(keptPairs.length).fill(null);
@@ -320,6 +339,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
 
   const result = { fields, rows, rowNumbers: keptPairs.map((pair) => firstRowNumber + pair.index) };
   if (formulaErrors) result.formulaErrors = formulaErrors;
+  if (dateCells) result.dateCells = dateCells;
   if (headerPosition) {
     // Rows above the header count as headerRowNumber - 1; only non-empty ones are kept.
     result.headerDetection = {
