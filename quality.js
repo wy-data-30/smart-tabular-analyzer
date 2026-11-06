@@ -610,7 +610,7 @@ function buildLookAlikeSummary(rows, profiles, scans = createFormatScans()) {
 }
 // ---- Problem rows: the rows behind each quality-page count ----
 // A category is { kind, field, key } with kind one of missing, formulaError, conversion,
-// outlier, duplicateRows, suspectedTotal, idDuplicate, placeholder, parseWarnings. Every
+// dateStyle, outlier, duplicateRows, suspectedTotal, idDuplicate, lookAlike, placeholder, parseWarnings. Every
 // list comes from the same checks as its quality count and reads the original rows (state.rows), never
 // the filters. Items are { index (into state.rows, or null), line (file row or
 // null), note, ... }, in file order; the duplicate kinds go group by group.
@@ -753,9 +753,45 @@ function listFormulaErrorRows(field) {
   return { items, count: summary.count };
 }
 
+// Rows whose readable date is not in the main style of a mixed field, in file order: the
+// same classification as the summary (forEachDateStyle()).
+function listDateStyleRows(field) {
+  const summary = state.dateStyles.find((item) => item.field === field);
+  const profile = getFieldProfile(field);
+  if (!summary || !profile) return null;
+  const items = [];
+  forEachDateStyle(state.rows, profile, (row) => state.sourceDateCells.get(row), (index, key) => {
+    if (key !== summary.mainKey) items.push(problemRowItem(index, formatDateStyleRowNote(key, summary.mainKey), { style: key }));
+  });
+  return { items, count: summary.otherCount };
+}
+
+// Rows with edge whitespace, of nothing but invisible characters or in a look-alike group:
+// group by group (every writing, to compare them), then the others, each in file order. The
+// same collection as the summary (readFieldWritings()).
+function listLookAlikeRows(field) {
+  const summary = state.lookAlikes.find((item) => item.field === field);
+  if (!summary) return null;
+  const { edgeTexts, invisibleOnlyTexts, groupOf, groups } = readFieldWritings(state.rows, field, state.formatScans);
+  const byGroup = groups.map(() => []);
+  const others = [];
+  state.rows.forEach((row, index) => {
+    const value = row[field];
+    // The collection left out missing values and placeholder spellings, so they match nothing here.
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    const position = groupOf.get(trimmed);
+    const hasEdge = edgeTexts.has(value);
+    const invisibleOnly = invisibleOnlyTexts.has(trimmed);
+    if (position === undefined && !hasEdge && !invisibleOnly) return;
+    const note = formatLookAlikeRowNote(value, position === undefined ? null : { position, reasons: groups[position].reasons }, hasEdge, invisibleOnly);
+    (position === undefined ? others : byGroup[position]).push(problemRowItem(index, note, { group: position === undefined ? 0 : position + 1 }));
+  });
+  return { items: [...byGroup.flat(), ...others], count: summary.rowCount };
+}
 // Categories with rows to show, in this order: missing, formula errors, format problems,
-// outliers (per field), duplicate rows, suspected totals, ID duplicates (per field),
-// placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
+// date styles (per field), outliers (per field), duplicate rows, suspected totals, ID duplicates
+// (per field), look-alike values (per field), placeholders (per field and key), parse warnings. count / unit describe the quality figure for labels:
 // row, value, duplicateRow (without each group's kept row), duplicateValue, warning.
 function listProblemCategories() {
   return [
@@ -764,12 +800,14 @@ function listProblemCategories() {
     ...state.formulaErrors.map((item) => ({ kind: "formulaError", field: item.field, count: item.count, unit: "value" })),
     ...state.profiles.filter((profile) => profile.conversionFailureCount > 0)
       .map((profile) => ({ kind: "conversion", field: profile.field, count: profile.conversionFailureCount, unit: "value" })),
+    ...state.dateStyles.map((item) => ({ kind: "dateStyle", field: item.field, count: item.otherCount, unit: "value" })),
     ...getQualityNumericStats().filter((stat) => stat.outlierCount > 0)
       .map((stat) => ({ kind: "outlier", field: stat.field, count: stat.outlierCount, unit: "value" })),
     ...(state.duplicateRows > 0 ? [{ kind: "duplicateRows", count: state.duplicateRows, unit: "duplicateRow" }] : []),
     ...(state.suspectedTotals.length ? [{ kind: "suspectedTotal", count: state.suspectedTotals.length, unit: "row" }] : []),
     ...state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0)
       .map((item) => ({ kind: "idDuplicate", field: item.field, count: item.duplicateValueCount, unit: "duplicateValue" })),
+    ...state.lookAlikes.map((item) => ({ kind: "lookAlike", field: item.field, count: item.rowCount, unit: "row" })),
     ...state.placeholders.map((entry) => ({ kind: "placeholder", field: entry.field, key: entry.key, count: entry.count, unit: "row" })),
     ...(state.parseWarnings.length ? [{ kind: "parseWarnings", count: state.parseWarnings.length, unit: "warning" }] : [])
   ];
@@ -787,6 +825,8 @@ function listProblemRows(category) {
     case "parseWarnings": return listParseWarningRows();
     case "suspectedTotal": return listSuspectedTotalRows();
     case "formulaError": return listFormulaErrorRows(category.field);
+    case "dateStyle": return listDateStyleRows(category.field);
+    case "lookAlike": return listLookAlikeRows(category.field);
     default: return null;
   }
 }

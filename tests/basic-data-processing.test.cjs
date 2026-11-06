@@ -3269,6 +3269,8 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
     if (category.kind === "parseWarnings") expected = state.parseWarnings.length;
     if (category.kind === "suspectedTotal") expected = state.suspectedTotals.length;
     if (category.kind === "formulaError") expected = state.formulaErrors.find((item) => item.field === category.field).count;
+    if (category.kind === "dateStyle") expected = state.dateStyles.find((item) => item.field === category.field).otherCount;
+    if (category.kind === "lookAlike") expected = state.lookAlikes.find((item) => item.field === category.field).rowCount;
     if (category.kind === "duplicateRows") {
       // The quality count leaves out the first row of each group, which is kept.
       expected = state.duplicateRows + result.groupCount;
@@ -3295,6 +3297,10 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
         else if (item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
       });
       if (category.kind === "duplicateRows" && !ascending(firsts)) mismatches.push(name + ": groups not by first appearance");
+    } else if (category.kind === "lookAlike") {
+      items.forEach((item, index) => {
+        if (index > 0 && item.group === items[index - 1].group && item.index <= items[index - 1].index) mismatches.push(name + ": order inside group " + item.group);
+      });
     } else if (category.kind !== "parseWarnings" && !ascending(items.map((item) => item.index))) {
       mismatches.push(name + ": not in file order");
     }
@@ -3321,7 +3327,7 @@ test("every problem-row list matches its quality count on the stage3 fixtures an
     "placeholder / 备注 / N/A = 1", "placeholder / 备注 / — = 1"
   ]);
   assert.deepEqual(names("花名册.xlsx"), [
-    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "outlier / 月薪 = 3", "duplicateRows = 2",
+    "missing / 身份证号 = 2", "conversion / 月薪 = 2", "dateStyle / 入职日期 = 6", "outlier / 月薪 = 3", "duplicateRows = 2",
     "idDuplicate / 工号 = 3", "idDuplicate / 身份证号 = 3", "idDuplicate / 手机号 = 3"
   ]);
   // 用户ID and 会话ID are mostly repeated: no entry for them.
@@ -3530,7 +3536,7 @@ test("the preview heading, pager and its buttons are static in index.html and bo
 });
 
 // v2.6.0: the problem-row viewer on the quality page.
-const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails"];
+const PROBLEM_ENTRY_CONTAINERS = ["qualitySummary", "parseWarningSummary", "qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails", "dateStyleDetails", "lookAlikeDetails"];
 // Every "查看" button: its container, data-problem-index, aria-label and other data attributes.
 const problemButtons = (scope) => PROBLEM_ENTRY_CONTAINERS.flatMap((id) => [...scope.elements.get(id).innerHTML.matchAll(/<button\b[^>]*\bdata-problem-index="(\d+)"[^>]*>/g)]
   .map((match) => ({
@@ -5842,4 +5848,133 @@ test("v2.9.0 state: a later commit and resetAnalysisState() replace the look-ali
   cleared.evaluate("resetAnalysisState()");
   assert.deepEqual(lookAlikesOf(cleared), []);
   assert.equal(cleared.evaluate("state.formatScans.writings.size"), 0);
+});
+
+const problemNotes = (scope, kind, field) => JSON.parse(scope.evaluate(`JSON.stringify(listProblemRows({ kind: ${JSON.stringify(kind)}, field: ${JSON.stringify(field)} }).items.map((item) => [item.line, item.note]))`));
+const problemLinesOf = (scope, kind, field) => problemNotes(scope, kind, field).map(([line]) => line);
+
+test("v2.9.0 problem rows: the rows of the date styles", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(problemNotes(roster, "dateStyle", "入职日期"), [
+    [6, "文本 年/月/日（主写法是 Excel 日期单元格）"],
+    [10, "文本 中文年月日（主写法是 Excel 日期单元格）"],
+    [15, "文本 年.月.日（主写法是 Excel 日期单元格）"],
+    [19, "文本 年/月/日（主写法是 Excel 日期单元格）"],
+    [22, "文本 中文年月日（主写法是 Excel 日期单元格）"],
+    [28, "文本 年.月.日（主写法是 Excel 日期单元格）"]
+  ]);
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.deepEqual(problemLinesOf(writing, "dateStyle", "下单日期"), knownIssues["写法不一致.csv"].dateStyles[0].otherLines);
+});
+
+test("v2.9.0 problem rows: look-alike rows go group by group, then the others", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "商品编号"), [2, 3, 5]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 20, 21, 22, 23, 24]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [2, 4, 6, 8, 9, 15, 17, 19, 21, 23]);
+  assert.deepEqual(problemNotes(writing, "lookAlike", "区域").filter(([line]) => [5, 6, 7, 18, 24].includes(line)), [
+    [5, "第 1 组（不可见字符），首尾空格：「华东␣」"],
+    [6, "第 1 组（不可见字符），首尾空格：「[全角空格]华东」"],
+    [7, "第 1 组（不可见字符）：「华东[零宽字符]」"],
+    [18, "第 2 组（全角半角或兼容写法、大小写）：「HD」"],
+    [24, "第 3 组（中间空格多少）：「上海␣␣浦东」"]
+  ]);
+  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号")[2], [5, "首尾空格：「SKU-002␣」"]);
+  // Cells of nothing but invisible characters, alone or with edge whitespace.
+  const invisible = await importCsvFile("备注,序\r\n甲,1\r\nAB,2\r\n\u200B,3\r\nab,4\r\n\u00AD ,5\r\n乙 ,6\r\n丙,7\r\n", "z.csv");
+  assert.deepEqual(problemNotes(invisible, "lookAlike", "备注"), [
+    [3, "第 1 组（大小写）：「AB」"],
+    [5, "第 1 组（大小写）：「ab」"],
+    [4, "只有不可见字符：「[零宽字符]」"],
+    [6, "只有不可见字符，首尾空格：「[软连字符]␣」"],
+    [7, "首尾空格：「乙␣」"]
+  ]);
+  assert.equal(invisible.evaluate("state.lookAlikes[0].rowCount"), 5);
+  // A field with only such cells has a category of its own.
+  const alone = await importCsvFile("备注,序\r\n\u200B,1\r\n甲,2\r\n", "a.csv");
+  assert.deepEqual(problemNotes(alone, "lookAlike", "备注"), [[2, "只有不可见字符：「[零宽字符]」"]]);
+  assert.deepEqual(JSON.parse(alone.evaluate('JSON.stringify(state.problemCategories.filter((item) => item.kind === "lookAlike"))')), [{ kind: "lookAlike", field: "备注", count: 1, unit: "row" }]);
+});
+
+test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted cells and file names", async () => {
+  const writing = await importStage3Fixture("写法不一致.csv");
+  const kinds = JSON.parse(writing.evaluate("JSON.stringify(state.problemCategories.map((item) => item.kind))"));
+  assert.deepEqual(kinds.filter((kind, index) => kind !== kinds[index - 1]), ["missing", "conversion", "dateStyle", "idDuplicate", "lookAlike", "placeholder"]);
+  const buttons = problemButtons(writing).filter((button) => ["dateStyleDetails", "lookAlikeDetails"].includes(button.container));
+  assert.deepEqual(buttons.map((button) => button.label), ["查看「下单日期」不是主写法的行", "查看「商品编号」写法不同的行", "查看「区域」写法不同的行", "查看「客户」写法不同的行"]);
+  assert.ok(buttons.every((button) => button.dataAttributes.join() === "data-problem-index"));
+  clickProblemButton(writing, buttons[2].index);
+  assert.deepEqual(sameCategory(openCategory(writing)), sameCategory(categoryAt(writing, buttons[2].index)));
+  assert.equal(openCategory(writing).field, "区域");
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 18 行，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 18);
+  assert.match(writing.elements.get("problemRowsTable").innerHTML, /<td class="cell-problem">华东<\/td>/);
+  clickProblemButton(writing, buttons[0].index);
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 个值，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "dateStyle"))'), "日期写法 · 下单日期（6 个值）");
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不同 · 区域（18 行）");
+  assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "dateStyle", field: "下单日期" }, new Date(2026, 10, 5))'), "写法不一致_问题行_日期写法_下单日期_20261105.csv");
+  assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "lookAlike", field: "区域" }, new Date(2026, 10, 5))'), "写法不一致_问题行_写法不同_区域_20261105.csv");
+  // Exported cells keep the original value, whitespace included.
+  const content = writing.evaluate('buildProblemRowsCsvContent(listProblemRows({ kind: "lookAlike", field: "区域" }), state.fields)');
+  assert.ok(content.includes(',"华东 ",'));
+  assert.ok(content.includes(",\u3000华东,"));
+  assert.ok(content.includes(",华东\u200B,"));
+});
+
+test("v2.9.0 the viewer follows the field configuration, and constant columns have no category", async () => {
+  const roster = await importStage3Fixture("花名册.xlsx");
+  const [button] = problemButtons(roster).filter((item) => item.container === "dateStyleDetails");
+  clickProblemButton(roster, button.index);
+  assert.equal(viewerState(roster).hidden, false);
+  setFieldType(roster, "入职日期", "category");
+  assert.equal(viewerState(roster).hidden, true);
+  assert.equal(viewerState(roster).message, "这一类已经没有问题行。");
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(errors.evaluate('state.problemCategories.some((item) => item.kind === "constantField")'), false);
+  assert.doesNotMatch(errors.elements.get("constantFieldDetails").innerHTML, /<button/);
+  assert.match(errors.elements.get("constantFieldDetails").innerHTML, /另有 3 行缺失/);
+});
+
+test("v2.9.0 the three sections render without a numeric field, escape data and hide when empty", () => {
+  const scope = createScriptContext();
+  const name = "<i>名</i>";
+  const dates = "<s>日期</s>";
+  commitRows(scope, [name, dates, "固定"], [
+    { [name]: "<b>x</b>", [dates]: "2024-01-01", 固定: "<u>同</u>" },
+    { [name]: "<B>X</B>", [dates]: "2024/1/2", 固定: "<u>同</u>" },
+    { [name]: "y ", [dates]: "2024-01-03", 固定: "<u>同</u>" },
+    { [name]: "z", [dates]: "2024-01-04", 固定: "<u>同</u>" },
+    { [name]: "z", [dates]: "2024-01-05", 固定: "<u>同</u>" }
+  ], "text-only.csv");
+  assert.match(scope.elements.get("dateStyleDetails").innerHTML, /「&lt;s&gt;日期&lt;\/s&gt;」/);
+  assert.match(scope.elements.get("outlierTable").innerHTML, /未识别到数值字段/);
+  for (const [section, details] of [["dateStyleSection", "dateStyleDetails"], ["constantFieldSection", "constantFieldDetails"], ["lookAlikeSection", "lookAlikeDetails"]]) {
+    assert.equal(scope.elements.get(section).classList.contains("hidden"), false, section);
+    assert.doesNotMatch(scope.elements.get(details).innerHTML, /<b>|<i>|<u>|<B>|<s>/, details);
+  }
+  assert.match(scope.elements.get("lookAlikeDetails").innerHTML, /&lt;b&gt;x&lt;\/b&gt;/);
+  assert.match(scope.elements.get("lookAlikeDetails").innerHTML, /data-problem-index="\d+"/);
+  assert.doesNotMatch(scope.elements.get("lookAlikeDetails").innerHTML + scope.elements.get("dateStyleDetails").innerHTML, /data-placeholder-index/);
+  const clean = createScriptContext();
+  commitRows(clean, ["城市"], [{ 城市: "上海" }, { 城市: "北京" }], "clean.csv");
+  for (const section of ["dateStyleSection", "constantFieldSection", "lookAlikeSection"]) assert.equal(clean.elements.get(section).classList.contains("hidden"), true, section);
+  // Rendered again from the current state, and emptied by a reset.
+  const scopeHtml = scope.elements.get("dateStyleDetails").innerHTML;
+  assert.notEqual(scopeHtml, "");
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.elements.get("dateStyleDetails").innerHTML, "");
+  assert.equal(scope.elements.get("dateStyleSection").classList.contains("hidden"), true);
+  assert.equal(scope.elements.get("lookAlikeDetails").innerHTML, "");
+  assert.equal(scope.elements.get("constantFieldDetails").innerHTML, "");
+});
+
+test("v2.9.0 the sections are static, in place and change neither the pills nor the status", async () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const positions = ['id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderDetails"'].map((id) => html.indexOf(id));
+  assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), positions.join());
+  const writing = await importStage3Fixture("写法不一致.csv");
+  assert.equal((writing.elements.get("qualitySummary").innerHTML.match(/class="quality-pill/g) || []).length, 6);
+  assert.equal(writing.elements.get("statusPanel").textContent, "写法不一致.csv 已成功载入，分析结果已生成。");
 });

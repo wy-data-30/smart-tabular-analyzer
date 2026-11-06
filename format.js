@@ -220,6 +220,8 @@ function formatProblemViewLabel(category) {
     case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
     case "suspectedTotal": return "查看疑似合计 / 小计行";
     case "formulaError": return `查看「${category.field}」的公式错误`;
+    case "dateStyle": return `查看「${category.field}」不是主写法的行`;
+    case "lookAlike": return `查看「${category.field}」写法不同的行`;
     default: return "查看解析警告";
   }
 }
@@ -236,6 +238,8 @@ function formatProblemCategoryLabel(category) {
     case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
     case "suspectedTotal": return `疑似合计 / 小计行（${count} 行）`;
     case "formulaError": return `公式错误 · ${category.field}（${count} 个值）`;
+    case "dateStyle": return `日期写法 · ${category.field}（${count} 个值）`;
+    case "lookAlike": return `写法不同 · ${category.field}（${count} 行）`;
     default: return `解析警告（${count} 条）`;
   }
 }
@@ -246,7 +250,7 @@ function formatProblemRowsSummary(category, list, page, pageCount) {
   const pages = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页`;
   const listed = formatInteger(list.items.length);
   if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
-  if (category.kind === "conversion" || category.kind === "formulaError") return `共 ${listed} 个值，${pages}`;
+  if (category.kind === "conversion" || category.kind === "formulaError" || category.kind === "dateStyle") return `共 ${listed} 个值，${pages}`;
   if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
   return `共 ${listed} 行，${pages}`;
 }
@@ -385,6 +389,19 @@ function formatLookAlikeLine({ field, edgeSpaceCount, edgeSample, invisibleOnlyC
   return `「${field}」共 ${formatInteger(rowCount)} 行：${parts.join("；")}。`;
 }
 
+function formatDateStyleRowNote(key, mainKey) {
+  return `${DATE_STYLE_NAMES[key]}（主写法是 ${DATE_STYLE_NAMES[mainKey]}）`;
+}
+
+// The 说明 of a problem row: the cell's own text with its whitespace shown, since the table
+// shows the value trimmed.
+function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
+  const parts = [];
+  if (group) parts.push(`第 ${group.position + 1} 组（${formatLookAlikeReasons(group.reasons)}）`);
+  if (invisibleOnly) parts.push("只有不可见字符");
+  if (hasEdge) parts.push("首尾空格");
+  return `${parts.join("，")}：「${formatVisibleText(value)}」`;
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

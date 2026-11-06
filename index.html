@@ -275,6 +275,21 @@
           <h3 class="subsection-title">疑似数值列</h3>
           <div id="numericLookingDetails" class="number-note-details"></div>
         </div>
+        <div id="dateStyleSection" class="module-subsection row-note-section hidden">
+          <h3 class="subsection-title">日期写法混用</h3>
+          <p class="section-note">这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>
+          <div id="dateStyleDetails" class="number-note-details"></div>
+        </div>
+        <div id="constantFieldSection" class="module-subsection hidden">
+          <h3 class="subsection-title">常量列</h3>
+          <p class="section-note">这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。</p>
+          <div id="constantFieldDetails" class="number-note-details"></div>
+        </div>
+        <div id="lookAlikeSection" class="module-subsection row-note-section hidden">
+          <h3 class="subsection-title">写法细节不同的值</h3>
+          <p class="section-note">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和 ID 重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按缺失处理，分类统计和筛选里会多出一个看不见的值。</p>
+          <div id="lookAlikeDetails" class="number-note-details"></div>
+        </div>
         <div class="module-subsection">
           <h3 class="subsection-title">疑似缺失值</h3>
           <p class="section-note">这些写法常被用来表示“没有数据”。确认后按缺失值处理：不再算作转换失败，也不参与统计、Top 10、分组、筛选选项和 ID 重复检查。原始数据、数据预览和导出的 CSV 不变。</p>

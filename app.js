@@ -166,6 +166,12 @@ const dom = {
   numberConversionDetails: document.getElementById("numberConversionDetails"),
   numericLookingSection: document.getElementById("numericLookingSection"),
   numericLookingDetails: document.getElementById("numericLookingDetails"),
+  dateStyleSection: document.getElementById("dateStyleSection"),
+  dateStyleDetails: document.getElementById("dateStyleDetails"),
+  constantFieldSection: document.getElementById("constantFieldSection"),
+  constantFieldDetails: document.getElementById("constantFieldDetails"),
+  lookAlikeSection: document.getElementById("lookAlikeSection"),
+  lookAlikeDetails: document.getElementById("lookAlikeDetails"),
   placeholderDetails: document.getElementById("placeholderDetails"),
   placeholderMessage: document.getElementById("placeholderMessage"),
   idDuplicateDetails: document.getElementById("idDuplicateDetails"),
@@ -1171,6 +1177,7 @@ function renderQuality() {
   refreshProblemView();
   renderNumberNoteSection(dom.numberConversionSection, dom.numberConversionDetails, buildNumberConversionSummary(state.profiles).map(formatNumberConversion));
   renderNumberNoteSection(dom.numericLookingSection, dom.numericLookingDetails, state.numericLooking.map(formatNumericLookingHint));
+  renderFormatConsistencySections();
   renderIdDuplicateDetails();
   renderPlaceholderDetails();
 
@@ -1328,7 +1335,7 @@ function goToProblemRowsPage(action) {
 }
 
 // Kinds whose rows have one cell to point at: the field of the category.
-const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError"]);
+const HIGHLIGHTED_PROBLEM_KINDS = new Set(["missing", "conversion", "outlier", "placeholder", "idDuplicate", "formulaError", "dateStyle", "lookAlike"]);
 
 // The open category's current page: category list, summary, table and pager.
 function renderProblemView() {
@@ -1393,6 +1400,18 @@ function refreshProblemView() {
     hideProblemView();
     dom.problemRowsMessage.textContent = "这一类已经没有问题行。";
   }
+}
+
+// "日期写法混用" and "写法细节不同的值": one line and one 查看 button per field. "常量列" has no
+// button: every row looks the same. They come before the early return of renderQuality().
+function renderFormatConsistencySections() {
+  renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, state.dateStyles.map((item) => (
+    `${escapeHtml(formatDateStyleLine(item))} ${problemViewButton({ kind: "dateStyle", field: item.field }, "查看")}`
+  )));
+  renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, state.constantFields.map(formatConstantField));
+  renderRowNoteSection(dom.lookAlikeSection, dom.lookAlikeDetails, state.lookAlikes.map((item) => (
+    `${escapeHtml(formatLookAlikeLine(item))} ${problemViewButton({ kind: "lookAlike", field: item.field }, "查看")}`
+  )));
 }
 
 // "按单位读取的数字" and "疑似数值列": one line per field, the whole subsection
@@ -2042,6 +2061,9 @@ function resetAnalysisState() {
   dom.parseWarningSummary.classList.add("hidden");
   renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
+  renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, []);
+  renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, []);
+  renderRowNoteSection(dom.lookAlikeSection, dom.lookAlikeDetails, []);
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";

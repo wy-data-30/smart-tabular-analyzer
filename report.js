@@ -141,7 +141,9 @@ const PROBLEM_KIND_FILE_NAMES = Object.freeze({
   placeholder: "疑似缺失值",
   parseWarnings: "解析警告",
   suspectedTotal: "疑似合计",
-  formulaError: "公式错误"
+  formulaError: "公式错误",
+  dateStyle: "日期写法",
+  lookAlike: "写法不同"
 });
 
 // <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv; only the part before the
