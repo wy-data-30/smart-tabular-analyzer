@@ -105,16 +105,18 @@ function isDateObject(value) {
     && typeof value.getTime === "function";
 }
 
+// The three date matchers capture the time suffix as their last group ("" without one);
+// the groups before it are unchanged.
 function matchYearFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function matchDayOrMonthFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function matchChineseDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function hasPercentToken(value) {
@@ -303,6 +305,13 @@ function toDate(value, strategy = {}) {
 }
 
 function parseEnglishCalendarDate(raw) {
+  const reading = readEnglishCalendarDate(raw);
+  return reading ? reading.date : null;
+}
+
+// { date, hasTime } of an English calendar date, or null: hasTime when a clock or a
+// zone was written (both are syntax only and never move the day).
+function readEnglishCalendarDate(raw) {
   let text = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
   let timeBeforeYear = false;
 
@@ -342,7 +351,12 @@ function parseEnglishCalendarDate(raw) {
   // A zone is syntax only: applying its offset would change the written day.
   const timezone = (parts[4] || "").trim();
   if (timezone && !/^(?:(?:GMT|UTC)(?:[+-](?:[01]\d|2[0-3]):?[0-5]\d)?|Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d|[ECMP][SD]T)(?:\s+\([a-z][a-z .+-]*\))?$/i.test(timezone)) return null;
-  return calendarDate;
+  return { date: calendarDate, hasTime: timeIndex >= 0 || timezone !== "" };
+}
+
+// YYYY-MM-DD of a calendar date from toDate() (a UTC midnight).
+function formatIsoDate(date) {
+  return date.toISOString().slice(0, 10);
 }
 
 // Characters that show nothing, as the source of a regular expression class: the soft
