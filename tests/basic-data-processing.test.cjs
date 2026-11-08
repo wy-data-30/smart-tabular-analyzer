@@ -6494,3 +6494,173 @@ test("v2.10.0 the page: a third export option, a static hidden panel, print hide
   const script = repoFile("script.js");
   assert.equal((script.match(/dom\.checkStandardizedExport\.addEventListener\("click", checkStandardizedExport\)/g) || []).length, 1);
 });
+
+// v2.10.0: the two standardized downloads, their names and the change-list limit.
+const STANDARDIZE_CHANGE_LINES = [
+  "文件行号,字段,原值,导出值,处理",
+  "2,日期,2024/5/6,2024-05-06,日期改写为 YYYY-MM-DD",
+  "2,金额,100元,100,数字改写为纯数字",
+  "2,备注,\" a \",a,去首尾空格",
+  "3,金额,\"2,200元\",2200,数字改写为纯数字",
+  "3,区域,\" 华南\",华南,去首尾空格",
+  "4,日期,2024-05-08 10:30,2024-05-08 10:30,带时间，保持原值",
+  "4,金额,'-50元,-50,数字改写为纯数字",
+  "4,区域,\"华北 \",华北,去首尾空格",
+  "5,日期,待定,待定,读不成日期，保持原值",
+  "5,金额,N/A,N/A,疑似缺失值，未确认",
+  "5,年份,\" 2022\",2022,去首尾空格",
+  "6,日期,2024年5月9日,2024-05-09,日期改写为 YYYY-MM-DD",
+  "6,金额,\" 300 \",300,去首尾空格",
+  "8,日期,06/06/2024,2024-06-06,日期改写为 YYYY-MM-DD",
+  "8,金额,500元,500,数字改写为纯数字",
+  "9,日期,2024/5/11,2024-05-11,日期改写为 YYYY-MM-DD",
+  "9,金额,$12,12,数字改写为纯数字",
+  "10,日期,2024/5/12,2024-05-12,日期改写为 YYYY-MM-DD",
+  "11,日期,2024/5/13,2024-05-13,日期改写为 YYYY-MM-DD",
+  "12,日期,2024/5/14,2024-05-14,日期改写为 YYYY-MM-DD",
+  "13,日期,2024/5/15,2024-05-15,日期改写为 YYYY-MM-DD"
+];
+
+test("v2.10.0 the two downloads: every row standardized, every changed or kept cell listed, values neutralized", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate("checkStandardizedExport()");
+  scope.evaluate("var __standardizeCalls = 0; const __buildStandardizedExport = buildStandardizedExport; buildStandardizedExport = (...args) => { __standardizeCalls += 1; return __buildStandardizedExport(...args); }");
+  scope.evaluate('exportStandardizedData("data")');
+  const dataStatus = scope.elements.get("standardizedExportStatus").textContent;
+  scope.evaluate('exportStandardizedData("changes")');
+  const changesStatus = scope.elements.get("standardizedExportStatus").textContent;
+  // The exports use the result of the check; nothing is computed again.
+  assert.equal(scope.evaluate("__standardizeCalls"), 0);
+  const [data, changes] = await downloads();
+  assert.match(data.fileName, /^标准化_标准化_\d{8}\.csv$/);
+  assert.match(changes.fileName, /^标准化_标准化改动清单_\d{8}\.csv$/);
+  assert.deepEqual([data.bom, changes.bom], [[0xef, 0xbb, 0xbf], [0xef, 0xbb, 0xbf]]);
+  assert.deepEqual([data.type, changes.type], ["text/csv;charset=utf-8", "text/csv;charset=utf-8"]);
+  assert.equal(changes.text, STANDARDIZE_CHANGE_LINES.join("\r\n"));
+  assert.deepEqual(data.text.split("\r\n"), [
+    "编号,日期,金额,区域,年份,备注",
+    "E01,2024-05-06,100,华东,2019,a",
+    "E02,2024-05-07,2200,华南,2020,b",
+    "E03,2024-05-08 10:30,-50,华北,2021年,c",
+    "E04,待定,N/A,华东,2022,N/A",
+    "E05,2024-05-09,300,华南,2023,e",
+    "E06,2024-05-10,400,N/A,—,f",
+    "E07,2024-06-06,500,华东,2019,g",
+    "E08,2024-05-11,12,华南,2020,'=1+1",
+    "E09,2024-05-12,600,华北,2021,i",
+    "E10,2024-05-13,700,华东,2022,j",
+    "E11,2024-05-14,800,华南,2023,k",
+    "E12,2024-05-15,900,华北,2024,l"
+  ]);
+  assert.equal(dataStatus, `已导出标准化数据 12 行：${data.fileName}`);
+  assert.equal(changesStatus, `已导出改动清单 21 条：${changes.fileName}`);
+  // State and rows stay as they were.
+  assert.equal(scope.evaluate('state.rows[0]["备注"]'), " a ");
+  assert.equal(scope.evaluate("state.standardizedExport.cellCount"), 21);
+});
+
+test("v2.10.0 D13: the change list stops at the limit, says so in its name and status, and counts everything", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  scope.evaluate("checkStandardizedExport()");
+  assert.equal(scope.evaluate("STANDARDIZED_CHANGE_LIMIT"), 1048575);
+  const exportWith = async (limit) => {
+    const downloads = captureDownloads(scope);
+    scope.evaluate(`exportStandardizedData("changes", ${limit})`);
+    const [file] = await downloads();
+    return { ...file, status: scope.elements.get("standardizedExportStatus").textContent };
+  };
+  const over = await exportWith(3);
+  assert.match(over.fileName, /^标准化_标准化改动清单_前3条_\d{8}\.csv$/);
+  assert.equal(over.text, STANDARDIZE_CHANGE_LINES.slice(0, 4).join("\r\n"));
+  assert.equal(over.status, `只导出了前 3 条，共 21 条：${over.fileName}`);
+  const equal = await exportWith(21);
+  assert.match(equal.fileName, /^标准化_标准化改动清单_\d{8}\.csv$/);
+  assert.equal(equal.text, STANDARDIZE_CHANGE_LINES.join("\r\n"));
+  assert.equal(equal.status, `已导出改动清单 21 条：${equal.fileName}`);
+  const under = await exportWith(22);
+  assert.equal(under.fileName, equal.fileName);
+  assert.equal(under.text, equal.text);
+  // The check table still counts every cell.
+  assert.equal(scope.elements.get("standardizedExportSummary").textContent, "共改写 18 格，保持原值 3 格。其余 1 个字段没有改动。");
+  // A large count reads with thousands separators.
+  assert.equal(scope.evaluate('formatStandardizedChangesStatus(1048575, 2000000, "x.csv")'), "只导出了前 1,048,575 条，共 2,000,000 条：x.csv");
+  assert.equal(scope.evaluate('formatStandardizedChangesStatus(21, 21, "x.csv")'), "已导出改动清单 21 条：x.csv");
+});
+
+test("v2.10.0 file names: the stem is sanitized, the date and the limit stay", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "a:b|c.csv");
+  assert.equal(scope.evaluate('buildStandardizedFileName("data", new Date(2026, 10, 7))'), "a-b-c_标准化_20261107.csv");
+  assert.equal(scope.evaluate('buildStandardizedFileName("changes", new Date(2026, 10, 7))'), "a-b-c_标准化改动清单_20261107.csv");
+  assert.equal(scope.evaluate('buildStandardizedFileName("changes", new Date(2026, 10, 7), 1048575)'), "a-b-c_标准化改动清单_前1048575条_20261107.csv");
+  const long = await importCsvFile(STANDARDIZE_CSV, `${"长".repeat(120)}.xlsx`);
+  const name = long.evaluate('buildStandardizedFileName("changes", new Date(2026, 10, 7), 3)');
+  assert.ok(name.endsWith("_20261107.csv"), name);
+});
+
+test("v2.10.0 the exports need a check: before one, after it is dropped, and with no listed cell", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('exportStandardizedData("data")');
+  assert.equal(scope.elements.get("standardizedExportStatus").textContent, "请先检查标准化改动。");
+  scope.evaluate('checkStandardizedExport(); state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration()');
+  scope.evaluate('exportStandardizedData("changes")');
+  assert.equal(scope.elements.get("standardizedExportStatus").textContent, "请先检查标准化改动。");
+  const clean = await importCsvFile("名称,数量\r\nA,1\r\nB,2\r\nC,3\r\n", "clean.csv");
+  const cleanDownloads = captureDownloads(clean);
+  clean.evaluate('checkStandardizedExport(); exportStandardizedData("changes")');
+  assert.equal(clean.elements.get("standardizedExportStatus").textContent, "没有需要列出的单元格。");
+  clean.evaluate('exportStandardizedData("data")');
+  const [cleanData] = await cleanDownloads();
+  assert.equal(cleanData.text, "名称,数量\r\nA,1\r\nB,2\r\nC,3");
+  assert.deepEqual(await downloads(), []);
+});
+
+test("v2.10.0 the export buttons are bound once each", () => {
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.exportStandardizedCsv\.addEventListener\("click", \(\) => exportStandardizedData\("data"\)\)/g) || []).length, 1);
+  assert.equal((script.match(/dom\.exportStandardizedChanges\.addEventListener\("click", \(\) => exportStandardizedData\("changes"\)\)/g) || []).length, 1);
+});
+
+test("v2.10.0 all fixtures and examples: the downloads match the check and import back with the same types", async () => {
+  const files = [...STAGE3_IMPORT_FILES.map((name) => ["stage3", name]), ...EXAMPLE_CSV_FILES.map((name) => ["example", name])];
+  for (const [kind, name] of files) {
+    const scope = kind === "stage3" ? await importStage3Fixture(name) : await importCsvFile(readExampleCsv(name), name);
+    const downloads = captureDownloads(scope);
+    scope.evaluate('checkStandardizedExport(); exportStandardizedData("data")');
+    const cellCount = scope.evaluate("state.standardizedExport.cellCount");
+    if (cellCount) scope.evaluate('exportStandardizedData("changes")');
+    const [data, changes] = await downloads();
+    assert.equal(data.text, scope.evaluate("buildCsvTableContent([...state.fields], buildStandardizedCellRows(state.standardizedExport, state.rows, state.fields))"), name);
+    if (cellCount) {
+      assert.equal(Papa.parse(changes.text, { header: true, skipEmptyLines: true }).data.length, cellCount, name);
+      assert.ok(!/[^\r]\n/.test(changes.text), `${name} CRLF`);
+    }
+    assert.ok(!/[^\r]\n/.test(data.text), `${name} CRLF`);
+    const again = await importCsvFile(data.text, `${name}.csv`);
+    const types = (target) => target.evaluate("JSON.stringify(state.profiles.map((p) => [p.field, p.typeKey]))");
+    assert.equal(types(again), types(scope), name);
+  }
+});
+
+test("v2.10.0 the downloads ignore the filter and never guess a file row", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  scope.evaluate("checkStandardizedExport()");
+  applyFilterState(scope, { category: { field: "区域", values: ["华东"] } });
+  assert.equal(scope.evaluate("getAnalysisRows().length"), 4);
+  let downloads = captureDownloads(scope);
+  scope.evaluate('exportStandardizedData("data"); exportStandardizedData("changes")');
+  let [data, changes] = await downloads();
+  assert.equal(data.text.split("\r\n").length, 13);
+  assert.equal(changes.text, STANDARDIZE_CHANGE_LINES.join("\r\n"));
+  // Rows committed without file rows: the first column stays empty.
+  scope.evaluate('commitTabularData(state.fields, state.rows.map((row) => ({ ...row })), "无行号.csv", state.activeImportId)');
+  assert.equal(scope.evaluate("getSourceRowNumber(state.rows[0])"), null);
+  downloads = captureDownloads(scope);
+  scope.evaluate('checkStandardizedExport(); exportStandardizedData("changes")');
+  [changes] = await downloads();
+  const lines = changes.text.split("\r\n");
+  assert.equal(lines.length, 22);
+  assert.ok(lines.slice(1).every((line) => line.startsWith(",")), lines[1]);
+  assert.equal(lines[1], ",日期,2024/5/6,2024-05-06,日期改写为 YYYY-MM-DD");
+});

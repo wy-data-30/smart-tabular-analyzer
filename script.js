@@ -116,6 +116,8 @@ dom.exportFilteredCsv.addEventListener("click", () => exportProcessedCsv("filter
 
 dom.exportDeduplicatedCsv.addEventListener("click", () => exportProcessedCsv("deduplicated"));
 dom.checkStandardizedExport.addEventListener("click", checkStandardizedExport);
+dom.exportStandardizedCsv.addEventListener("click", () => exportStandardizedData("data"));
+dom.exportStandardizedChanges.addEventListener("click", () => exportStandardizedData("changes"));
 
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 

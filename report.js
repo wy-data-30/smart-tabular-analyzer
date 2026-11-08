@@ -320,6 +320,72 @@ function buildStandardizedCellRows(result, rows, fields) {
   return cellRows;
 }
 
+// At most this many cells go into one change list: an Excel sheet holds 1,048,576 rows,
+// one of them the header.
+const STANDARDIZED_CHANGE_LIMIT = 1048575;
+const STANDARDIZED_CHANGE_HEADERS = Object.freeze(["文件行号", "字段", "原值", "导出值", "处理"]);
+
+// The standardized CSV: every original row and field, in order, original headers.
+function buildStandardizedCsvContent(result, rows, fields) {
+  return buildCsvTableContent([...fields], buildStandardizedCellRows(result, rows, fields));
+}
+
+// The change list: the first `limit` listed cells, by row then field. The original value and
+// the file row are read now from the rows (a row without a file row gets ""); a kept cell
+// exports its original value.
+function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, limit = STANDARDIZED_CHANGE_LIMIT) {
+  const { cells } = result;
+  const count = Math.min(result.cellCount, limit);
+  const data = new Array(count);
+  for (let index = 0; index < count; index += 1) {
+    const row = rows[cells.rows[index]];
+    const field = fields[cells.fields[index]];
+    const original = readCsvExportCell(row, field);
+    const exported = cells.values[index] === undefined ? original : cells.values[index];
+    data[index] = [getRowNumber(row) ?? "", field, original, exported, formatStandardizeAction(STANDARDIZE_ACTIONS[cells.actions[index]])];
+  }
+  return buildCsvTableContent([...STANDARDIZED_CHANGE_HEADERS], data);
+}
+
+// <原文件名>_标准化_<yyyymmdd>.csv, <原文件名>_标准化改动清单[_前N条]_<yyyymmdd>.csv; only the part
+// before the date is sanitized and shortened, so the date always stays.
+function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
+  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
+  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
+  const label = kind === "changes" ? `标准化改动清单${truncatedTo ? `_前${truncatedTo}条` : ""}` : "标准化";
+  return `${sanitizeFileName(`${stem}_${label}`)}_${formatReportFileDate(now)}.csv`;
+}
+
+// 导出标准化 CSV / 导出改动清单: from the result of the last check, never computed again.
+function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
+  const result = state.standardizedExport;
+  if (!result || !canCheckStandardizedExport()) {
+    setStandardizedExportStatus("请先检查标准化改动。", "warning");
+    return;
+  }
+  if (kind === "changes" && !result.cellCount) {
+    setStandardizedExportStatus("没有需要列出的单元格。", "warning");
+    return;
+  }
+  try {
+    const now = new Date();
+    if (kind === "changes") {
+      const truncatedTo = result.cellCount > limit ? limit : 0;
+      const content = buildStandardizedChangesCsvContent(result, state.rows, state.fields, getSourceRowNumber, limit);
+      const fileName = buildStandardizedFileName("changes", now, truncatedTo);
+      downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
+      setStandardizedExportStatus(formatStandardizedChangesStatus(Math.min(result.cellCount, limit), result.cellCount, fileName), truncatedTo ? "warning" : "success");
+      return;
+    }
+    const content = buildStandardizedCsvContent(result, state.rows, state.fields);
+    const fileName = buildStandardizedFileName("data", now);
+    downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
+    setStandardizedExportStatus(`已导出标准化数据 ${formatInteger(state.rows.length)} 行：${fileName}`, "success");
+  } catch (error) {
+    setStandardizedExportStatus(`导出失败：${error.message}`, "error");
+  }
+}
+
 // 检查标准化改动: computed here only, never on a refresh path.
 function checkStandardizedExport() {
   if (!canCheckStandardizedExport()) {

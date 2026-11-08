@@ -454,6 +454,13 @@ function formatStandardizeKept(count) {
   return count.kept ? `${formatInteger(count.kept)}（如${count.keptSamples.map((sample) => `「${formatVisibleText(sample)}」`).join("、")}）` : "—";
 }
 
+// The status after 导出改动清单: all of it, or the first `exported` of `total` (D13).
+function formatStandardizedChangesStatus(exported, total, fileName) {
+  return exported < total
+    ? `只导出了前 ${formatInteger(exported)} 条，共 ${formatInteger(total)} 条：${fileName}`
+    : `已导出改动清单 ${formatInteger(total)} 条：${fileName}`;
+}
+
 // The sentence above the check table.
 function formatStandardizedSummary({ changed, kept, quietCount, ignoredCount }) {
   const ignored = ignoredCount ? `已忽略的 ${formatInteger(ignoredCount)} 个字段原样导出。` : "";
