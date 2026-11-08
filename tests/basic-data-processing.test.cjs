@@ -6103,3 +6103,39 @@ test("v2.9.0 guard: text columns named like Object members never count as date c
   }))`));
   assert.deepEqual(read, [[false, false, false, true], [false, false, false, true]]);
 });
+
+// v2.10.0: the one-cell rules on every imported cell of the fixtures and examples.
+test("v2.10.0 guard: the one-cell rules never need the safety net on the fixtures and examples", async () => {
+  const files = [...STAGE3_IMPORT_FILES.map((name) => ["stage3", name]), ...EXAMPLE_CSV_FILES.map((name) => ["example", name])];
+  let total = 0;
+  for (const [kind, name] of files) {
+    const scope = kind === "stage3" ? await importStage3Fixture(name) : await importCsvFile(readExampleCsv(name), name);
+    for (const step of ["import", "confirmed"]) {
+      if (step === "confirmed") scope.evaluate("confirmAllCommonPlaceholders()");
+      const result = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+        let checked = 0;
+        const bad = [];
+        state.profiles.forEach((profile) => {
+          if (profile.typeKey !== "numeric" && profile.typeKey !== "date") return;
+          state.rows.forEach((row) => {
+            const value = row[profile.field];
+            const cell = profile.typeKey === "numeric"
+              ? standardizeNumberCell(value, profile.numberStrategy, profile.confirmedKeys, "")
+              : standardizeDateCell(value, profile.dateStrategy, profile.confirmedKeys);
+            checked += 1;
+            if (cell.action === "keptUnsafe") bad.push([profile.field, value]);
+            if (cell.action === "number") {
+              const after = toPlainNumber(cell.value);
+              const before = toNumber(value, profile.numberStrategy);
+              if (!(Object.is(after, before) || (after === 0 && before === 0))) bad.push([profile.field, value, cell.value]);
+            }
+          });
+        });
+        return { checked, bad };
+      })())`));
+      assert.deepEqual(result.bad, [], `${name} ${step}`);
+      total += result.checked;
+    }
+  }
+  assert.ok(total > 5000, `cells checked: ${total}`);
+});

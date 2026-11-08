@@ -407,6 +407,27 @@ function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
   if (hasEdge) parts.push("首尾空格");
   return `${parts.join("，")}：「${formatVisibleText(value)}」`;
 }
+
+// The 处理 of a standardized cell (v2.10.0), for the check table's samples and the change list.
+const STANDARDIZE_ACTION_LABELS = Object.freeze({
+  date: "日期改写为 YYYY-MM-DD",
+  number: "数字改写为纯数字",
+  placeholder: "已确认的疑似缺失值，清空",
+  trim: "去首尾空格",
+  keptTime: "带时间，保持原值",
+  keptPercent: "百分比，不改写",
+  keptScientific: "科学计数法，不改写",
+  keptCurrencyMix: "货币符号不一致，保持原值",
+  keptPendingPlaceholder: "疑似缺失值，未确认",
+  keptDateUnreadable: "读不成日期，保持原值",
+  keptDateOrder: "日月顺序无法确定，保持原值",
+  keptNumberUnreadable: "读不成数字，保持原值",
+  keptUnsafe: "无法安全改写，保持原值"
+});
+
+function formatStandardizeAction(action) {
+  return STANDARDIZE_ACTION_LABELS[action] || "";
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

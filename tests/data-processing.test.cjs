@@ -1459,3 +1459,183 @@ test("median() and the statistics table agree for odd, even, unsorted and overfl
   const stats = JSON.parse(evaluate("JSON.stringify(buildNumericStats(state.rows))"));
   assert.deepEqual(stats.map((item) => [item.field, item.median]), [["乱序", 35], ["巨大", 1.7e308]]);
 });
+
+// v2.10.0: one-cell rules of the standardized export (parsing.js). Invisible characters are
+// written as escapes only.
+function standardizeCases(expression, cases) {
+  const { context, evaluate } = createScriptContext();
+  context.__cases = cases;
+  return JSON.parse(evaluate(`JSON.stringify(__cases.map((args) => ${expression}))`));
+}
+
+const STANDARDIZE_NONE = { order: "none", allowYearOnly: false, granularity: "day" };
+
+test("v2.10.0 standardizeDateCell: the boundary table", () => {
+  const dmy = { ...STANDARDIZE_NONE, order: "dmy" };
+  const mdy = { ...STANDARDIZE_NONE, order: "mdy" };
+  const cases = [
+    ["2024-05-06", STANDARDIZE_NONE, [], "2024-05-06", ""],
+    ["2024-5-6", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024/05/06", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024.5.6", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024年5月6日", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024年5月6", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024 年 5 月 6 日", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["2024-05-06 10:30", STANDARDIZE_NONE, [], "2024-05-06 10:30", "keptTime"],
+    ["2024-05-06T10:30:00Z", STANDARDIZE_NONE, [], "2024-05-06T10:30:00Z", "keptTime"],
+    ["2024年5月6日 10:30", STANDARDIZE_NONE, [], "2024年5月6日 10:30", "keptTime"],
+    ["06/05/2024", dmy, [], "2024-05-06", "date"],
+    ["06/05/2024", mdy, [], "2024-06-05", "date"],
+    ["06/05/2024", STANDARDIZE_NONE, [], "06/05/2024", "keptDateOrder"],
+    ["06/05/2024", { ...STANDARDIZE_NONE, order: "conflict" }, [], "06/05/2024", "keptDateOrder"],
+    ["06/06/2024", STANDARDIZE_NONE, [], "2024-06-06", "date"],
+    ["13/05/2024", STANDARDIZE_NONE, [], "2024-05-13", "date"],
+    ["Mon, 6 May 2024", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["Tue, 6 May 2024", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    ["May 6, 2024 10:30 AM", STANDARDIZE_NONE, [], "May 6, 2024 10:30 AM", "keptTime"],
+    ["May 6, 2024 GMT", STANDARDIZE_NONE, [], "May 6, 2024 GMT", "keptTime"],
+    // D3: already YYYY-MM-DD, only the edge whitespace goes.
+    [" 2024-05-06 ", STANDARDIZE_NONE, [], "2024-05-06", "trim"],
+    ["\u30002024/5/6\u00A0", STANDARDIZE_NONE, [], "2024-05-06", "date"],
+    // D4: every kept cell stays exactly as written, edge whitespace included.
+    [" 2024-05-06 10:30 ", STANDARDIZE_NONE, [], " 2024-05-06 10:30 ", "keptTime"],
+    [" 06/05/2024 ", STANDARDIZE_NONE, [], " 06/05/2024 ", "keptDateOrder"],
+    [" 2024-02-30 ", STANDARDIZE_NONE, [], " 2024-02-30 ", "keptDateUnreadable"],
+    ["31/02/2024", STANDARDIZE_NONE, [], "31/02/2024", "keptDateUnreadable"],
+    ["待定", STANDARDIZE_NONE, [], "待定", "keptDateUnreadable"],
+    ["N/A", STANDARDIZE_NONE, [], "N/A", "keptPendingPlaceholder"],
+    [" N/A ", STANDARDIZE_NONE, [], " N/A ", "keptPendingPlaceholder"],
+    [" N/A ", STANDARDIZE_NONE, ["N/A"], "", "placeholder"],
+    // D2: a blank cell becomes empty.
+    ["   ", STANDARDIZE_NONE, [], "", "trim"],
+    ["", STANDARDIZE_NONE, [], "", ""]
+  ];
+  const results = standardizeCases("standardizeDateCell(args[0], args[1], args[2])", cases);
+  results.forEach((result, index) => {
+    const [value, , , exported, action] = cases[index];
+    assert.deepEqual(result, { value: exported, action }, JSON.stringify(value));
+  });
+});
+
+test("v2.10.0 standardizeNumberCell: the boundary table, as text and never through a float", () => {
+  const plain = { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: false };
+  const yuan = { ...plain, unit: "元" };
+  const wan = { ...plain, allowMagnitude: true };
+  const full = { ...plain, fullwidth: true };
+  const cases = [
+    ["2200", plain, "2200", ""], ["007", plain, "007", ""], ["1.50", plain, "1.50", ""], ["-0", plain, "-0", ""],
+    ["12345678901234567890", plain, "12345678901234567890", ""],
+    // D3: a plain number with edge whitespace is only trimmed.
+    [" 2200 ", plain, "2200", "trim"], ["\u3000007\u00A0", plain, "007", "trim"],
+    ["2200元", yuan, "2200", "number"], ["2,200元", yuan, "2200", "number"], ["-2200元", yuan, "-2200", "number"],
+    ["+2200", plain, "2200", "number"], [".5", plain, "0.5", "number"], ["-.5", plain, "-0.5", "number"], ["5.", plain, "5", "number"],
+    ["1,234.50", plain, "1234.50", "number"], ["1 234", plain, "1234", "number"], ["1\u00A0234", plain, "1234", "number"],
+    ["１２３４", full, "1234", "number"], ["１，２３４．５", full, "1234.5", "number"], ["－１２", full, "-12", "number"],
+    ["0.07万", wan, "700", "number"], ["1.2万", wan, "12000", "number"], ["3亿", wan, "300000000", "number"],
+    ["12万元", { ...yuan, allowMagnitude: true }, "120000", "number"], ["-0.5万", wan, "-5000", "number"], ["1.50万", wan, "15000", "number"],
+    ["1.234560万", wan, "12345.60", "number"], ["123456789012万", wan, "1234567890120000", "number"],
+    ["￥2200", plain, "2200", "number"], ["¥2,200", plain, "2200", "number"], ["$12", plain, "12", "number"], ["-$12", plain, "-12", "number"], ["12$", plain, "12", "number"],
+    ["(200)", plain, "-200", "number"], ["(1,200.5)", plain, "-1200.5", "number"], ["(-200)", plain, "-200", "number"],
+    // D7: a rewrite that reads as zero drops its "-".
+    ["(0)", plain, "0", "number"], ["(0.00)", plain, "0.00", "number"], ["-0,000", plain, "0000", "number"], ["+0", plain, "0", "number"], ["-0万", wan, "0", "number"],
+    ["50%", plain, "50%", "keptPercent"], ["(5%)", plain, "(5%)", "keptPercent"], ["１２％", full, "１２％", "keptPercent"],
+    ["1e3", plain, "1e3", "keptScientific"], ["1E-3", plain, "1E-3", "keptScientific"],
+    ["缺考", plain, "缺考", "keptNumberUnreadable"], ["2200元", plain, "2200元", "keptNumberUnreadable"], ["1.2万", plain, "1.2万", "keptNumberUnreadable"],
+    ["N/A", plain, "N/A", "keptPendingPlaceholder"], ["—", plain, "—", "keptPendingPlaceholder"],
+    // D4: kept cells keep their edge whitespace.
+    [" 缺考 ", plain, " 缺考 ", "keptNumberUnreadable"], [" 50% ", plain, " 50% ", "keptPercent"], [" 1e3 ", plain, " 1e3 ", "keptScientific"], [" N/A ", plain, " N/A ", "keptPendingPlaceholder"],
+    // D2: a blank cell becomes empty.
+    ["\u3000", plain, "", "trim"], ["", plain, "", ""]
+  ];
+  const results = standardizeCases("(() => { const r = standardizeNumberCell(args[0], args[1], [], ''); const a = toPlainNumber(r.value); const b = toNumber(args[0], args[1]); return { ...r, same: Object.is(a, b) || (a === 0 && b === 0) }; })()", cases);
+  results.forEach((result, index) => {
+    const [value, , exported, action] = cases[index];
+    assert.equal(result.value, exported, JSON.stringify(value));
+    assert.equal(result.action, action, JSON.stringify(value));
+    if (action === "number" || action === "trim") assert.equal(result.same, true, JSON.stringify(value));
+  });
+  const mixed = standardizeCases("standardizeNumberCell(args[0], {}, [], 'mixed')", [["$12"], ["￥12"], [" $12 "], ["12"], ["1,200"]]);
+  assert.deepEqual(mixed, [
+    { value: "$12", action: "keptCurrencyMix" }, { value: "￥12", action: "keptCurrencyMix" }, { value: " $12 ", action: "keptCurrencyMix" },
+    { value: "12", action: "" }, { value: "1200", action: "number" }
+  ]);
+  assert.deepEqual(standardizeCases("standardizeNumberCell(args[0], {}, ['N/A'], '')", [["N/A"], [" N/A "]]), [{ value: "", action: "placeholder" }, { value: "", action: "placeholder" }]);
+});
+
+test("v2.10.0 standardizeNumberCell: the safety net keeps a rewrite that would read as another number", () => {
+  const { evaluate } = createScriptContext();
+  assert.equal(evaluate('JSON.stringify(standardizeNumberCell("2,200", {}, [], ""))'), JSON.stringify({ value: "2200", action: "number" }));
+  // The parser now reads 2,200 as 2201: the plain text 2200 would not read back the same.
+  evaluate('var __realToNumber = toNumber; toNumber = (value, strategy) => (value === "2,200" ? 2201 : __realToNumber(value, strategy))');
+  assert.equal(evaluate('JSON.stringify(standardizeNumberCell("2,200", {}, [], ""))'), JSON.stringify({ value: "2,200", action: "keptUnsafe" }));
+  assert.equal(evaluate('JSON.stringify(standardizeNumberCell("1,500", {}, [], ""))'), JSON.stringify({ value: "1500", action: "number" }));
+  assert.equal(evaluate('formatStandardizeAction("keptUnsafe")'), "无法安全改写，保持原值");
+});
+
+test("v2.10.0 standardizeTextCell: edge whitespace goes, invisible characters and look-alikes stay", () => {
+  const cases = [
+    [" 华东 ", [], "华东", "trim"], ["\u3000华东", [], "华东", "trim"], ["华东\u00A0", [], "华东", "trim"], ["\uFEFF华东", [], "华东", "trim"],
+    ["   ", [], "", "trim"], ["\u3000", [], "", "trim"], ["\u200B华东", [], "\u200B华东", ""], ["\u200B", [], "\u200B", ""],
+    ["ＨＤ", [], "ＨＤ", ""], ["N/A", [], "N/A", ""], [" N/A ", [], "N/A", "trim"], [" N/A ", ["N/A"], "", "placeholder"], ["", [], "", ""]
+  ];
+  const results = standardizeCases("standardizeTextCell(args[0], args[1])", cases);
+  results.forEach((result, index) => {
+    const [value, , exported, action] = cases[index];
+    assert.deepEqual(result, { value: exported, action }, JSON.stringify(value));
+  });
+});
+
+test("v2.10.0 the action texts", () => {
+  const { context, evaluate } = createScriptContext();
+  context.__actions = ["date", "number", "placeholder", "trim", "keptTime", "keptPercent", "keptScientific", "keptCurrencyMix", "keptPendingPlaceholder", "keptDateUnreadable", "keptDateOrder", "keptNumberUnreadable", "keptUnsafe"];
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__actions.map(formatStandardizeAction))")), [
+    "日期改写为 YYYY-MM-DD", "数字改写为纯数字", "已确认的疑似缺失值，清空", "去首尾空格", "带时间，保持原值", "百分比，不改写", "科学计数法，不改写",
+    "货币符号不一致，保持原值", "疑似缺失值，未确认", "读不成日期，保持原值", "日月顺序无法确定，保持原值", "读不成数字，保持原值", "无法安全改写，保持原值"
+  ]);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(STANDARDIZE_KEPT_ACTIONS)")), context.__actions.filter((action) => action.startsWith("kept")));
+});
+
+test("v2.10.0 guard: a rewritten date reads as the same day, an unread one stays, a time is never rewritten", () => {
+  const values = [];
+  for (const body of ["2024-5-6", "2024/05/06", "2024.12.31", "2024年5月6日", "2024 年 5 月 6", "06/05/2024", "13/05/2024", "06/06/2024", "2024-02-30", "May 6, 2024", "6 May 2024", "Mon, 6 May 2024"]) {
+    for (const suffix of ["", " 10:30", "T10:30:00Z", " 10:30 PM", " GMT", " 24:00"]) values.push(body + suffix, ` ${body + suffix} `);
+  }
+  const { context, evaluate } = createScriptContext();
+  context.__values = values;
+  const bad = JSON.parse(evaluate(`JSON.stringify(["none", "dmy", "mdy", "conflict"].flatMap((order) => __values.flatMap((value) => {
+    const strategy = { order, allowYearOnly: false, granularity: "day" };
+    const before = toDate(value, strategy);
+    const result = standardizeDateCell(value, strategy, []);
+    if (!before) return result.value === value ? [] : [["unread changed", value, order]];
+    const clock = /\\d:\\d\\d|\\dT\\d|GMT$/.test(value.trim());
+    if (clock !== (result.action === "keptTime")) return [["time", value, order, result.action]];
+    if (result.action === "keptTime") return result.value === value ? [] : [["time changed", value]];
+    const after = toDate(result.value, strategy);
+    return after && after.getTime() === before.getTime() && /^\\d{4}-\\d{2}-\\d{2}$/.test(result.value) ? [] : [["day", value, order, result.value]];
+  })))`));
+  assert.deepEqual(bad, []);
+});
+
+test("v2.10.0 guard: every rewritten number reads back as the field parser's number, zero without a sign", () => {
+  const values = [];
+  for (const sign of ["", "-", "+"]) for (const currency of ["", "$", "￥"]) for (const tail of ["", "元", "万", "%"]) {
+    for (const number of ["0", "0.00", "0,000", "007", "0.07", ".5", "5.", "1,234.50", "1 234", "12345678901234567890", "1e3"]) {
+      values.push(`${sign}${currency}${number}${tail}`, `(${currency}${number}${tail})`, ` ${sign}${number}${tail} `);
+    }
+  }
+  const { context, evaluate } = createScriptContext();
+  context.__values = values;
+  const bad = JSON.parse(evaluate(`JSON.stringify([{}, { unit: "元" }, { allowMagnitude: true }, { fullwidth: true }].flatMap((strategy) => __values.flatMap((value) => {
+    const result = standardizeNumberCell(value, strategy, [], "");
+    if (result.action === "keptUnsafe") return [["safety net", value]];
+    if (result.action === "number") {
+      const after = toPlainNumber(result.value);
+      const before = toNumber(value, strategy);
+      const same = Object.is(after, before) || (after === 0 && before === 0);
+      return same && /^-?\\d+(?:\\.\\d+)?$/.test(result.value) && !(after === 0 && result.value.startsWith("-")) ? [] : [[value, result.value]];
+    }
+    if (result.action === "trim" || result.action === "") return [];
+    return result.value === value ? [] : [["kept changed", value, result.value]];
+  })))`));
+  assert.deepEqual(bad, []);
+});
