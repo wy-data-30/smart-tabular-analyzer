@@ -6139,3 +6139,232 @@ test("v2.10.0 guard: the one-cell rules never need the safety net on the fixture
   }
   assert.ok(total > 5000, `cells checked: ${total}`);
 });
+
+// v2.10.0: the standardized check. Only computed by 检查标准化改动; nothing else changes.
+const STANDARDIZE_CSV = [
+  "编号,日期,金额,区域,年份,备注",
+  "E01,2024/5/6,100元,华东,2019, a ",
+  "E02,2024-05-07,\"2,200元\", 华南,2020,b",
+  "E03,2024-05-08 10:30,-50元,华北 ,2021年,c",
+  "E04,待定,N/A,华东, 2022,N/A",
+  "E05,2024年5月9日, 300 ,华南,2023,e",
+  "E06,2024-05-10,400,N/A,—,f",
+  "E07,06/06/2024,500元,华东,2019,g",
+  "E08,2024/5/11,$12,华南,2020,=1+1",
+  "E09,2024/5/12,600,华北,2021,i",
+  "E10,2024/5/13,700,华东,2022,j",
+  "E11,2024/5/14,800,华南,2023,k",
+  "E12,2024/5/15,900,华北,2024,l"
+].join("\r\n");
+
+function standardizedCounts(scope) {
+  const result = JSON.parse(scope.evaluate("JSON.stringify(state.standardizedExport)"));
+  return result && Object.fromEntries(result.counts.map((count) => [count.field, [count.kind, count.date, count.number, count.placeholder, count.trim, count.kept]]));
+}
+
+function standardizedActions(scope) {
+  return JSON.parse(scope.evaluate("JSON.stringify(state.standardizedExport.cells.actions.map((code) => STANDARDIZE_ACTIONS[code]))"));
+}
+
+function standardizedCellRows(scope) {
+  return JSON.parse(scope.evaluate("JSON.stringify(buildStandardizedCellRows(state.standardizedExport, state.rows, state.fields))"));
+}
+
+function csvFileFor(text, name) {
+  const bytes = Buffer.from(text, "utf8");
+  return { name, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) };
+}
+
+test("v2.10.0 the constructed table: types, counts per field and kinds, a year field as text", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((p) => [p.field, p.typeKey, p.dateStrategy.granularity, p.numberStrategy.unit]))")), [
+    ["编号", "id", "day", ""], ["日期", "date", "day", ""], ["金额", "numeric", "day", "元"], ["区域", "category", "day", ""], ["年份", "date", "year", ""], ["备注", "id", "day", ""]
+  ]);
+  assert.equal(scope.evaluate("state.standardizedExport"), null);
+  scope.evaluate("checkStandardizedExport()");
+  assert.deepEqual(standardizedCounts(scope), {
+    编号: ["text", 0, 0, 0, 0, 0],
+    日期: ["date", 8, 0, 0, 0, 2],
+    金额: ["number", 0, 5, 0, 1, 1],
+    区域: ["text", 0, 0, 0, 2, 0],
+    年份: ["year", 0, 0, 0, 1, 0],
+    备注: ["text", 0, 0, 0, 1, 0]
+  });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.standardizedExport.totals)")), { date: 8, number: 5, placeholder: 0, trim: 5, kept: 3 });
+  // A year field: the year texts are not rewritten as dates, only trimmed.
+  const rows = standardizedCellRows(scope);
+  assert.deepEqual(rows.map((row) => row[4]), ["2019", "2020", "2021年", "2022", "2023", "—", "2019", "2020", "2021", "2022", "2023", "2024"]);
+  assert.deepEqual(rows[2], ["E03", "2024-05-08 10:30", "-50", "华北", "2021年", "c"]);
+  assert.deepEqual(standardizedActions(scope).slice(0, 4), ["date", "number", "trim", "number"]);
+});
+
+test("v2.10.0 confirmed placeholders become empty in every field but an ignored one", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  scope.evaluate('updatePlaceholderConfirmations({ 金额: ["N/A"], 区域: ["N/A"], 年份: ["—"], 备注: ["N/A"] }, "x")');
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration()');
+  scope.evaluate("checkStandardizedExport()");
+  assert.deepEqual(standardizedCounts(scope), {
+    编号: ["text", 0, 0, 0, 0, 0],
+    日期: ["date", 8, 0, 0, 0, 2],
+    金额: ["number", 0, 5, 1, 1, 0],
+    区域: ["text", 0, 0, 1, 2, 0],
+    年份: ["year", 0, 0, 1, 1, 0],
+    备注: ["ignored", 0, 0, 0, 0, 0]
+  });
+  const rows = standardizedCellRows(scope);
+  assert.deepEqual(rows[0], ["E01", "2024-05-06", "100", "华东", "2019", " a "]);
+  assert.deepEqual(rows[3], ["E04", "待定", "", "华东", "2022", "N/A"]);
+  assert.deepEqual(rows[5], ["E06", "2024-05-10", "400", "", "", "f"]);
+  assert.deepEqual(rows[7], ["E08", "2024-05-11", "12", "华南", "2020", "=1+1"]);
+});
+
+test("v2.10.0 currency: one sign is dropped, two or more keep every cell with a sign", async () => {
+  const column = (values) => ["价格,门店", ...values.map((value, index) => `"${value}",S${index}`)].join("\r\n");
+  const single = await importCsvFile(column(["$12", "13", "$1,400", "15", "16"]), "single.csv");
+  const yen = await importCsvFile(column(["¥12", "￥13", "14", "15", "16"]), "yen.csv");
+  const mixed = await importCsvFile(column(["$12", "￥13", "1,400", "15", "16"]), "mixed.csv");
+  // D15: a percent cell's sign counts too, though the cell itself is never rewritten.
+  const percent = await importCsvFile(column(["$50%", "￥12", "13", "14", "15"]), "percent.csv");
+  [single, yen, mixed, percent].forEach((scope) => {
+    assert.equal(scope.evaluate('getFieldProfile("价格").typeKey'), "numeric");
+    scope.evaluate("checkStandardizedExport()");
+  });
+  assert.deepEqual(standardizedActions(single), ["number", "number"]);
+  assert.deepEqual(standardizedActions(yen), ["number", "number"]);
+  assert.deepEqual(standardizedActions(mixed), ["keptCurrencyMix", "keptCurrencyMix", "number"]);
+  assert.deepEqual(standardizedActions(percent), ["keptPercent", "keptCurrencyMix"]);
+  assert.deepEqual(JSON.parse(single.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => c.currencyMode))")), ["single", ""]);
+  assert.deepEqual(JSON.parse(mixed.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => c.currencyMode))")), ["mixed", ""]);
+});
+
+test("v2.10.0 guard: the check never runs on import, filter, field configuration or confirmations", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  scope.evaluate("var __standardizeCalls = 0; const __buildStandardizedExport = buildStandardizedExport; buildStandardizedExport = (...args) => { __standardizeCalls += 1; return __buildStandardizedExport(...args); }");
+  const calls = () => scope.evaluate("__standardizeCalls");
+  put(scope.context, "__csvAgain", csvFileFor(STANDARDIZE_CSV, "again.csv"));
+  await scope.evaluate("parseDataFile(__csvAgain)");
+  applyFilterState(scope, { category: { field: "区域", values: ["华东"] } });
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration()');
+  scope.evaluate('updatePlaceholderConfirmations({ 金额: ["N/A"] }, "x")');
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(calls(), 0);
+  scope.evaluate("checkStandardizedExport()");
+  assert.equal(calls(), 1);
+});
+
+test("v2.10.0 a filter keeps the check; import, commit, field configuration, confirmations and reset drop it", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  const check = () => {
+    scope.evaluate("checkStandardizedExport()");
+    assert.notEqual(scope.evaluate("state.standardizedExport"), null);
+  };
+  const dropped = (label) => assert.equal(scope.evaluate("state.standardizedExport"), null, label);
+  check();
+  scope.evaluate("var __kept = state.standardizedExport");
+  applyFilterState(scope, { category: { field: "区域", values: ["华东"] } });
+  assert.equal(scope.evaluate("state.standardizedExport === __kept"), true);
+  scope.evaluate("clearAllFilters()");
+  assert.equal(scope.evaluate("state.standardizedExport === __kept"), true);
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration()');
+  dropped("field configuration");
+  check();
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  dropped("restore");
+  check();
+  scope.evaluate('confirmPlaceholder("金额", "N/A")');
+  dropped("confirm");
+  check();
+  scope.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  dropped("undo");
+  check();
+  put(scope.context, "__csvAgain", csvFileFor(STANDARDIZE_CSV, "again.csv"));
+  await scope.evaluate("parseDataFile(__csvAgain)");
+  dropped("import");
+  check();
+  // A commit without beginImport() (which resets everything first): the commit itself drops it.
+  scope.evaluate('commitTabularData(state.fields, state.rows.map((row) => ({ ...row })), "again.csv", state.activeImportId)');
+  dropped("commit");
+  check();
+  scope.evaluate("resetAnalysisState()");
+  dropped("reset");
+});
+
+const DMY_EVIDENCE_REWRITTEN = "日期,门店\r\n13/05/2024,S1\r\n06/05/2024 10:30,S2\r\n07/05/2024 10:30,S3\r\n08/05/2024 10:30,S4\r\n09/05/2024 10:30,S5\r\n";
+
+test("v2.10.0 D8: a field whose day-month order rests on rewritten cells gets a hint, and the hint is right", async () => {
+  const scope = await importCsvFile(DMY_EVIDENCE_REWRITTEN, "dmy.csv");
+  assert.equal(scope.evaluate('getFieldProfile("日期").dateStrategy.order'), "dmy");
+  scope.evaluate("checkStandardizedExport()");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => [c.field, c.orderHint]))")), [["日期", true], ["门店", false]]);
+  // The hint is true: the exported file imported again has lost its order and its date type.
+  const text = scope.evaluate("buildCsvTableContent([...state.fields], buildStandardizedCellRows(state.standardizedExport, state.rows, state.fields))");
+  const again = await importCsvFile(text, "dmy_标准化.csv");
+  assert.equal(again.evaluate('getFieldProfile("日期").dateStrategy.order'), "none");
+  assert.equal(again.evaluate('getFieldProfile("日期").typeKey'), "category");
+  // The evidence cell written with a time is kept, so the order survives: no hint.
+  const kept = await importCsvFile(DMY_EVIDENCE_REWRITTEN.replace("13/05/2024,S1", "13/05/2024 09:00,S1"), "dmy-kept.csv");
+  assert.equal(kept.evaluate('getFieldProfile("日期").dateStrategy.order'), "dmy");
+  kept.evaluate("checkStandardizedExport()");
+  assert.deepEqual(JSON.parse(kept.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => c.orderHint))")), [false, false]);
+  // A plain dmy or mdy column rewritten in full loses its order evidence but every exported cell
+  // still reads: no hint, and a second import keeps the date type.
+  for (const [label, text] of [
+    ["dmy", "日期,门店\r\n13/05/2024,S1\r\n06/05/2024,S2\r\n07/05/2024,S3\r\n08/05/2024,S4\r\n09/05/2024,S5\r\n"],
+    ["mdy", "日期,门店\r\n05/13/2024,S1\r\n05/06/2024,S2\r\n05/07/2024,S3\r\n05/08/2024,S4\r\n05/09/2024,S5\r\n"]
+  ]) {
+    const plain = await importCsvFile(text, `${label}.csv`);
+    assert.equal(plain.evaluate('getFieldProfile("日期").dateStrategy.order'), label);
+    plain.evaluate("checkStandardizedExport()");
+    assert.deepEqual(JSON.parse(plain.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => c.orderHint))")), [false, false], label);
+    const exported = plain.evaluate("buildCsvTableContent([...state.fields], buildStandardizedCellRows(state.standardizedExport, state.rows, state.fields))");
+    const again = await importCsvFile(exported, `${label}_标准化.csv`);
+    assert.equal(again.evaluate('getFieldProfile("日期").typeKey'), "date", label);
+  }
+  // A field without a read order is not looked at.
+  const none = await importCsvFile("日期,门店\r\n2024/5/6,S1\r\n2024/5/7,S2\r\n2024/5/8,S3\r\n", "none.csv");
+  none.evaluate("checkStandardizedExport()");
+  assert.deepEqual(JSON.parse(none.evaluate("JSON.stringify(state.standardizedExport.counts.map((c) => c.orderHint))")), [false, false]);
+});
+
+test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = list, round trip keeps every type", async () => {
+  const files = [...STAGE3_IMPORT_FILES.map((name) => ["stage3", name]), ...EXAMPLE_CSV_FILES.map((name) => ["example", name])];
+  const totals = {};
+  for (const [kind, name] of files) {
+    const scope = kind === "stage3" ? await importStage3Fixture(name) : await importCsvFile(readExampleCsv(name), name);
+    const before = scope.evaluate("JSON.stringify(state.rows)");
+    const exports = () => scope.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields) + "|" + buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)');
+    const existing = exports();
+    scope.evaluate("checkStandardizedExport()");
+    assert.equal(scope.evaluate("JSON.stringify(state.rows)"), before, name);
+    assert.equal(exports(), existing, name);
+    assert.equal(scope.evaluate("state.standardizedExport.counts.every((c, f) => c.date + c.number + c.placeholder + c.trim + c.kept === state.standardizedExport.cells.fields.filter((x) => x === f).length)"), true, name);
+    assert.equal(scope.evaluate("state.standardizedExport.counts.some((c) => c.orderHint)"), false, name);
+    totals[name] = scope.evaluate("state.standardizedExport.cellCount");
+    const text = scope.evaluate("buildCsvTableContent([...state.fields], buildStandardizedCellRows(state.standardizedExport, state.rows, state.fields))");
+    const again = await importCsvFile(text, `${name}.csv`);
+    const types = (target) => target.evaluate("JSON.stringify(state.profiles.map((p) => [p.field, p.typeKey]))");
+    assert.equal(types(again), types(scope), name);
+  }
+  assert.deepEqual(totals, {
+    "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
+    "sample-data.csv": 0, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
+  });
+});
+
+test("v2.10.0 the check needs data, a finished analysis and no unapplied field draft", async () => {
+  const empty = createScriptContext();
+  empty.evaluate("checkStandardizedExport()");
+  assert.equal(empty.evaluate("state.standardizedExport"), null);
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"');
+  scope.evaluate("checkStandardizedExport()");
+  assert.equal(scope.evaluate("state.standardizedExport"), null);
+  // An earlier check stays while a draft waits (D11) and is still there once the draft is undone.
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "id"; checkStandardizedExport(); var __kept = state.standardizedExport');
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; checkStandardizedExport()');
+  assert.equal(scope.evaluate("state.standardizedExport === __kept"), true);
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "id"');
+  assert.equal(scope.evaluate("state.standardizedExport === __kept"), true);
+  scope.evaluate("state.analysisCompletedAt = null; state.standardizedExport = null; checkStandardizedExport()");
+  assert.equal(scope.evaluate("state.standardizedExport"), null);
+});

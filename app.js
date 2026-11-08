@@ -77,6 +77,9 @@ const state = {
   analysisCompletedAt: null,
   chartInsights: { category: "", trend: "" },
   customAnalysis: null,
+  // buildStandardizedExport() as of the last 检查标准化改动, or null. Imports, field
+  // configuration and placeholder confirmations clear it; filters never.
+  standardizedExport: null,
   filters: {
     category: null,
     numeric: null,
@@ -352,6 +355,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   renderCharts();
   renderChartInsights();
   resetV2AnalysisState();
+  clearStandardizedExport();
   updateExportButtons();
   showResultsWorkspace();
 }
@@ -374,6 +378,12 @@ function buildHeaderDetectionState(headerDetection) {
 // come through commitTabularData() or an import without row numbers.
 function getSourceRowNumber(row) {
   return state.sourceRowNumbers.get(row) ?? null;
+}
+
+// Drops the last 检查标准化改动 (v2.10.0): imports, field configuration, placeholder
+// confirmations and resets call it; filters never do.
+function clearStandardizedExport() {
+  state.standardizedExport = null;
 }
 
 function renderOverview() {
@@ -1125,6 +1135,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   refreshFormatConsistency();
+  clearStandardizedExport();
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -2019,6 +2030,7 @@ function resetAnalysisState() {
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
+  clearStandardizedExport();
 
   document.body.classList.remove("has-results");
   setDataExportStatus("");
