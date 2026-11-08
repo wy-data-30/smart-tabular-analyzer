@@ -562,6 +562,23 @@
               </div>
               <button id="exportDeduplicatedCsv" class="secondary-button" type="button" disabled>导出去重后 CSV</button>
             </div>
+            <div class="data-export-option">
+              <div>
+                <h3>标准化数据</h3>
+                <p>全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已确认的疑似缺失值，去掉文本首尾空格。先检查会改哪些单元格。</p>
+                <p id="standardizedExportGate" class="standardize-gate"></p>
+              </div>
+              <button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查标准化改动</button>
+            </div>
+          </div>
+          <div id="standardizedExportPanel" class="standardized-export hidden">
+            <p id="standardizedExportSummary"></p>
+            <div class="table-wrap compact" tabindex="0" aria-label="标准化改动表，可横向滚动"><table id="standardizedExportTable"></table></div>
+            <div class="standardized-export-actions">
+              <button id="exportStandardizedCsv" type="button" disabled>导出标准化 CSV</button>
+              <button id="exportStandardizedChanges" class="secondary-button" type="button" disabled>导出改动清单</button>
+            </div>
+            <p id="standardizedExportStatus" class="inline-status" aria-live="polite"></p>
           </div>
           <p id="dataExportStatus" class="inline-status" aria-live="polite"></p>
         </section>

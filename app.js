@@ -210,6 +210,14 @@ const dom = {
   exportFilteredCsv: document.getElementById("exportFilteredCsv"),
   exportDeduplicatedCsv: document.getElementById("exportDeduplicatedCsv"),
   dataExportStatus: document.getElementById("dataExportStatus"),
+  checkStandardizedExport: document.getElementById("checkStandardizedExport"),
+  standardizedExportGate: document.getElementById("standardizedExportGate"),
+  standardizedExportPanel: document.getElementById("standardizedExportPanel"),
+  standardizedExportSummary: document.getElementById("standardizedExportSummary"),
+  standardizedExportTable: document.getElementById("standardizedExportTable"),
+  exportStandardizedCsv: document.getElementById("exportStandardizedCsv"),
+  exportStandardizedChanges: document.getElementById("exportStandardizedChanges"),
+  standardizedExportStatus: document.getElementById("standardizedExportStatus"),
   exportHtmlReport: document.getElementById("exportHtmlReport"),
   exportMarkdownReport: document.getElementById("exportMarkdownReport"),
   reportExportStatus: document.getElementById("reportExportStatus")
@@ -380,10 +388,44 @@ function getSourceRowNumber(row) {
   return state.sourceRowNumbers.get(row) ?? null;
 }
 
-// Drops the last 检查标准化改动 (v2.10.0): imports, field configuration, placeholder
-// confirmations and resets call it; filters never do.
+// Drops the last 检查标准化改动 (v2.10.0) and its panel: imports, field configuration,
+// placeholder confirmations and resets call it; filters never do. The buttons follow
+// updateExportButtons().
 function clearStandardizedExport() {
   state.standardizedExport = null;
+  dom.standardizedExportPanel.classList.add("hidden");
+  dom.standardizedExportSummary.textContent = "";
+  dom.standardizedExportTable.innerHTML = "";
+  setStandardizedExportStatus("");
+}
+
+const STANDARDIZE_COUNT_KEYS = Object.freeze(["date", "number", "placeholder", "trim", "kept"]);
+
+// The check table: one row per field with a change, a kept cell, a note or a year reading;
+// ignored fields only in the sentence above it; then the total.
+function renderStandardizedExport() {
+  const result = state.standardizedExport;
+  dom.standardizedExportPanel.classList.toggle("hidden", !result);
+  if (!result) return;
+  const listed = result.counts.filter((count) => count.kind !== "ignored"
+    && (count.kind === "year" || count.orderHint || STANDARDIZE_COUNT_KEYS.some((key) => count[key])));
+  const ignoredCount = result.counts.filter((count) => count.kind === "ignored").length;
+  const { totals } = result;
+  dom.standardizedExportSummary.textContent = formatStandardizedSummary({
+    changed: totals.date + totals.number + totals.placeholder + totals.trim,
+    kept: totals.kept,
+    quietCount: result.counts.length - listed.length - ignoredCount,
+    ignoredCount
+  });
+  const cell = (value) => `<td>${value ? formatInteger(value) : "—"}</td>`;
+  const rows = listed.map((count) => {
+    const notes = formatStandardizeFieldNotes(count).map((note) => `<span class="standardize-note">${escapeHtml(note)}</span>`).join("");
+    return `<tr><td>${escapeHtml(count.field)}${notes}</td><td>${escapeHtml(FIELD_TYPE_LABELS[count.typeKey] || "")}</td>${cell(count.date)}${cell(count.number)}${cell(count.placeholder)}${cell(count.trim)}<td>${escapeHtml(formatStandardizeKept(count))}</td></tr>`;
+  }).join("");
+  const total = `<tr class="standardize-total"><td>合计</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
+  dom.standardizedExportTable.innerHTML = listed.length
+    ? `<thead><tr><th>字段</th><th>类型</th><th>日期改写</th><th>数字改写</th><th>清空疑似缺失值</th><th>去首尾空格</th><th>保持原值</th></tr></thead><tbody>${rows}${total}</tbody>`
+    : "";
 }
 
 function renderOverview() {

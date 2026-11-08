@@ -6368,3 +6368,129 @@ test("v2.10.0 the check needs data, a finished analysis and no unapplied field d
   scope.evaluate("state.analysisCompletedAt = null; state.standardizedExport = null; checkStandardizedExport()");
   assert.equal(scope.evaluate("state.standardizedExport"), null);
 });
+
+// v2.10.0: the check table on the page, the gates of its three buttons and the static structure.
+function standardizedButtons(scope) {
+  return ["checkStandardizedExport", "exportStandardizedCsv", "exportStandardizedChanges"].map((id) => scope.elements.get(id).disabled);
+}
+
+// The check table as rows of cell texts (tags removed, entities kept).
+function standardizedTableRows(scope) {
+  return [...scope.elements.get("standardizedExportTable").innerHTML.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)]
+    .map((row) => [...row[1].matchAll(/<t[hd][^>]*>(.*?)<\/t[hd]>/g)].map((cell) => cell[1].replace(/<[^>]+>/g, "|").replace(/\|+/g, "|").replace(/^\||\|$/g, "")));
+}
+
+const standardizedPanelHidden = (scope) => scope.elements.get("standardizedExportPanel").classList.contains("hidden");
+
+test("v2.10.0 the check table: changed fields, kept samples, notes and the total", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  assert.equal(standardizedPanelHidden(scope), true);
+  scope.evaluate("checkStandardizedExport()");
+  assert.equal(standardizedPanelHidden(scope), false);
+  assert.equal(scope.elements.get("standardizedExportSummary").textContent, "共改写 18 格，保持原值 3 格。其余 1 个字段没有改动。");
+  assert.deepEqual(standardizedTableRows(scope), [
+    ["字段", "类型", "日期改写", "数字改写", "清空疑似缺失值", "去首尾空格", "保持原值"],
+    ["日期", "日期", "8", "—", "—", "—", "2（如「2024-05-08 10:30」、「待定」）"],
+    ["金额|单位「元」不写进导出文件，表头仍是「金额」", "数值", "—", "5", "—", "1", "1（如「N/A」）"],
+    ["区域", "分类", "—", "—", "—", "2", "—"],
+    ["年份|按年份读取，不改写日期", "日期", "—", "—", "—", "1", "—"],
+    ["备注", "ID", "—", "—", "—", "1", "—"],
+    ["合计", "", "8", "5", "—", "5", "3"]
+  ]);
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration(); checkStandardizedExport()');
+  assert.equal(scope.elements.get("standardizedExportSummary").textContent, "共改写 17 格，保持原值 3 格。其余 1 个字段没有改动。已忽略的 1 个字段原样导出。");
+  assert.deepEqual(standardizedTableRows(scope).map((row) => row[0].split("|")[0]), ["字段", "日期", "金额", "区域", "年份", "合计"]);
+});
+
+test("v2.10.0 the check table: the D8 hint, whitespace shown, data escaped, nothing to change", async () => {
+  const dmy = await importCsvFile(DMY_EVIDENCE_REWRITTEN, "dmy.csv");
+  dmy.evaluate("checkStandardizedExport()");
+  assert.deepEqual(standardizedTableRows(dmy)[1], ["日期|导出后这一列剩下的日或月在前的写法没有了确定顺序的依据，再次导入本工具时可能读不成日期。", "日期", "1", "—", "—", "—", "4（如「06/05/2024 10:30」、「07/05/2024 10:30」、「08/05/2024 10:30」）"]);
+  const escaped = await importCsvFile("<b>名</b>,数量\r\n\" <i>x</i>\",1\r\ny,2\r\nz,3\r\n", "escape.csv");
+  escaped.evaluate("checkStandardizedExport()");
+  const html = escaped.elements.get("standardizedExportTable").innerHTML;
+  assert.ok(html.includes("&lt;b&gt;名&lt;/b&gt;"));
+  assert.ok(!html.includes("<b>") && !html.includes("<i>"));
+  const kept = await importCsvFile("金额,门店\r\n\" 缺考 \",S1\r\n1,S2\r\n2,S3\r\n3,S4\r\n4,S5\r\n", "kept.csv");
+  kept.evaluate("checkStandardizedExport()");
+  assert.equal(standardizedTableRows(kept)[1][6], "1（如「␣缺考␣」）");
+  const clean = await importCsvFile("名称,数量\r\nA,1\r\nB,2\r\nC,3\r\n", "clean.csv");
+  clean.evaluate("checkStandardizedExport()");
+  assert.equal(clean.elements.get("standardizedExportSummary").textContent, "没有需要标准化的单元格，导出的数据与原始数据相同。");
+  assert.equal(clean.elements.get("standardizedExportTable").innerHTML, "");
+  assert.equal(standardizedPanelHidden(clean), false);
+  // D9: no listed cell, so the change list cannot be exported; the data still can.
+  assert.deepEqual(standardizedButtons(clean), [false, false, true]);
+});
+
+test("v2.10.0 the panel follows the check: a filter keeps it, everything else hides and empties it", async () => {
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  const shown = (label) => {
+    scope.evaluate("checkStandardizedExport()");
+    assert.equal(standardizedPanelHidden(scope), false, label);
+    assert.notEqual(scope.elements.get("standardizedExportTable").innerHTML, "", label);
+    assert.deepEqual(standardizedButtons(scope), [false, false, false], label);
+  };
+  const hidden = (label) => {
+    assert.equal(standardizedPanelHidden(scope), true, label);
+    assert.equal(scope.elements.get("standardizedExportTable").innerHTML, "", label);
+    assert.equal(scope.elements.get("standardizedExportSummary").textContent, "", label);
+    assert.equal(scope.elements.get("standardizedExportStatus").textContent, "", label);
+    assert.deepEqual(standardizedButtons(scope).slice(1), [true, true], label);
+  };
+  shown("first");
+  const table = scope.elements.get("standardizedExportTable").innerHTML;
+  scope.evaluate('setStandardizedExportStatus("x", "success")');
+  applyFilterState(scope, { category: { field: "区域", values: ["华东"] } });
+  assert.equal(standardizedPanelHidden(scope), false);
+  assert.equal(scope.elements.get("standardizedExportTable").innerHTML, table);
+  assert.equal(scope.elements.get("standardizedExportStatus").textContent, "x");
+  assert.deepEqual(standardizedButtons(scope), [false, false, false]);
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; applyFieldConfiguration()');
+  hidden("field configuration");
+  shown("again");
+  scope.evaluate('confirmPlaceholder("金额", "N/A")');
+  hidden("confirm");
+  shown("again");
+  scope.evaluate('commitTabularData(state.fields, state.rows.map((row) => ({ ...row })), "again.csv", state.activeImportId)');
+  hidden("commit");
+  shown("again");
+  scope.evaluate("resetAnalysisState()");
+  hidden("reset");
+});
+
+test("v2.10.0 gate: no data or an unapplied field draft disables the buttons and says why", async () => {
+  const empty = createScriptContext();
+  empty.evaluate("updateExportButtons()");
+  assert.deepEqual(standardizedButtons(empty), [true, true, true]);
+  assert.equal(empty.elements.get("standardizedExportGate").textContent, "请先上传并解析有效的数据文件。");
+  const scope = await importCsvFile(STANDARDIZE_CSV, "标准化.csv");
+  assert.deepEqual(standardizedButtons(scope), [false, true, true]);
+  assert.equal(scope.elements.get("standardizedExportGate").textContent, "");
+  scope.evaluate("checkStandardizedExport()");
+  assert.deepEqual(standardizedButtons(scope), [false, false, false]);
+  // D11: a draft disables all three and says why; the check stays and comes back with the draft undone.
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "ignore"; updateFieldConfigActions()');
+  assert.deepEqual(standardizedButtons(scope), [true, true, true]);
+  assert.equal(scope.elements.get("standardizedExportGate").textContent, "字段配置有未应用的修改，请先应用或撤销后再检查。");
+  assert.equal(standardizedPanelHidden(scope), false);
+  scope.evaluate('state.fieldTypeDrafts["备注"] = "id"; updateFieldConfigActions()');
+  assert.deepEqual(standardizedButtons(scope), [false, false, false]);
+  assert.equal(scope.elements.get("standardizedExportGate").textContent, "");
+});
+
+test("v2.10.0 the page: a third export option, a static hidden panel, print hides its buttons, one binding", () => {
+  const html = repoFile("index.html");
+  const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
+  assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 3);
+  assert.match(options, /<h3>标准化数据<\/h3>[\s\S]*<p id="standardizedExportGate" class="standardize-gate"><\/p>[\s\S]*<button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查标准化改动<\/button>/);
+  const panel = html.slice(html.indexOf('<div id="standardizedExportPanel"'), html.indexOf('<p id="dataExportStatus"'));
+  assert.match(panel, /^<div id="standardizedExportPanel" class="standardized-export hidden">/);
+  ["standardizedExportSummary", "standardizedExportTable", "standardizedExportStatus"].forEach((id) => assert.ok(panel.includes(`id="${id}"`), id));
+  assert.match(panel, /<button id="exportStandardizedCsv" type="button" disabled>导出标准化 CSV<\/button>/);
+  assert.match(panel, /<button id="exportStandardizedChanges" class="secondary-button" type="button" disabled>导出改动清单<\/button>/);
+  const print = repoFile("style.css").match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.match(print, /\.standardized-export-actions,[\s\S]*display: none !important;/);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.checkStandardizedExport\.addEventListener\("click", checkStandardizedExport\)/g) || []).length, 1);
+});

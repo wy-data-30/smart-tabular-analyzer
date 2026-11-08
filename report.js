@@ -47,6 +47,23 @@ function updateExportButtons() {
     button.disabled = dataExportDisabled;
     button.setAttribute("aria-disabled", String(dataExportDisabled));
   });
+  // 检查标准化改动 has the report gate; its exports also need a check, and the change list a cell.
+  const checkDisabled = !canCheckStandardizedExport();
+  const result = state.standardizedExport;
+  [
+    [dom.checkStandardizedExport, checkDisabled],
+    [dom.exportStandardizedCsv, checkDisabled || !result],
+    [dom.exportStandardizedChanges, checkDisabled || !result || !result.cellCount]
+  ].forEach(([button, isDisabled]) => {
+    if (!button) return;
+    button.disabled = isDisabled;
+    button.setAttribute("aria-disabled", String(isDisabled));
+  });
+  if (dom.standardizedExportGate) {
+    dom.standardizedExportGate.textContent = checkDisabled
+      ? formatStandardizedExportGate(state.rows.length > 0, hasFieldConfigDraftChanges(), Boolean(state.analysisCompletedAt))
+      : "";
+  }
   renderDataExportSummary();
 }
 
@@ -305,8 +322,20 @@ function buildStandardizedCellRows(result, rows, fields) {
 
 // 检查标准化改动: computed here only, never on a refresh path.
 function checkStandardizedExport() {
-  if (!canCheckStandardizedExport()) return;
+  if (!canCheckStandardizedExport()) {
+    updateExportButtons();
+    return;
+  }
   state.standardizedExport = buildStandardizedExport(state.rows, state.fields, state.profiles, state.placeholderConfirmations);
+  setStandardizedExportStatus("");
+  renderStandardizedExport();
+  updateExportButtons();
+}
+
+function setStandardizedExportStatus(message, tone = "") {
+  if (!dom.standardizedExportStatus) return;
+  dom.standardizedExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
+  dom.standardizedExportStatus.textContent = message;
 }
 
 function sanitizeCsvExportValue(value) {

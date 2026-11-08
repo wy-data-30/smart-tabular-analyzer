@@ -428,6 +428,39 @@ const STANDARDIZE_ACTION_LABELS = Object.freeze({
 function formatStandardizeAction(action) {
   return STANDARDIZE_ACTION_LABELS[action] || "";
 }
+
+const STANDARDIZE_ORDER_HINT = "导出后这一列剩下的日或月在前的写法没有了确定顺序的依据，再次导入本工具时可能读不成日期。";
+
+// Why 检查标准化改动 is unavailable, or "" when it is.
+function formatStandardizedExportGate(hasRows, hasDrafts, analysisDone) {
+  if (!hasRows) return "请先上传并解析有效的数据文件。";
+  if (hasDrafts) return "字段配置有未应用的修改，请先应用或撤销后再检查。";
+  if (!analysisDone) return "分析尚未完成。";
+  return "";
+}
+
+// The notes under a field name in the check table: read by year, a unit left out of the
+// export, the day-month order a second import may not find (D8).
+function formatStandardizeFieldNotes(count) {
+  const notes = [];
+  if (count.kind === "year") notes.push("按年份读取，不改写日期");
+  if (count.unit && count.number) notes.push(`单位「${count.unit}」不写进导出文件，表头仍是「${count.field}」`);
+  if (count.orderHint) notes.push(STANDARDIZE_ORDER_HINT);
+  return notes;
+}
+
+// 2（如「2024-05-08 10:30」、「待定」）
+function formatStandardizeKept(count) {
+  return count.kept ? `${formatInteger(count.kept)}（如${count.keptSamples.map((sample) => `「${formatVisibleText(sample)}」`).join("、")}）` : "—";
+}
+
+// The sentence above the check table.
+function formatStandardizedSummary({ changed, kept, quietCount, ignoredCount }) {
+  const ignored = ignoredCount ? `已忽略的 ${formatInteger(ignoredCount)} 个字段原样导出。` : "";
+  if (!changed && !kept) return `没有需要标准化的单元格，导出的数据与原始数据相同。${ignored}`;
+  const quiet = quietCount ? `其余 ${formatInteger(quietCount)} 个字段没有改动。` : "";
+  return `共改写 ${formatInteger(changed)} 格，保持原值 ${formatInteger(kept)} 格。${quiet}${ignored}`;
+}
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
