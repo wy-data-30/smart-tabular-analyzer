@@ -173,4 +173,4 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 ### GitHub Pages 上示例数据加载失败
 
-确认 `fetch("examples/sample-data.csv")` 和所有静态资源仍为相对路径，并直接访问部署后的文件 URL。通过本地静态服务器测试，不要只双击 `index.html`。
+确认 `fetch("examples/sample-orders.csv")` 和所有静态资源仍为相对路径，并直接访问部署后的文件 URL。通过本地静态服务器测试，不要只双击 `index.html`。

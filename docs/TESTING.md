@@ -34,11 +34,11 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | --- | --- |
 | `tests/test-context.cjs` | 创建 VM 上下文和轻量 `FakeElement`，按 `index.html` 中的顺序逐个加载全部应用脚本（每个文件单独执行，共享同一个全局作用域）。返回的 `source` 是所有应用脚本按顺序拼接的文本，并导出文件列表 `APP_SCRIPT_FILES`。 |
 | `tests/data-processing.test.cjs` | 纯数据逻辑：数值/日期解析、字段与 ID 识别、缺失、重复、统计、IQR、筛选、去重、`detectHeaderRow()` 的正例 / 反例 / 已知残留、Excel 行数上限、表头位置说明的摘要截断、`lineNumbersAtOffsets()` 与原来逐个偏移用正则计数的一致性（含随机文本），以及 `buildIdDuplicateSummary()` 的归一、字段顺序、排序、疑似非唯一阈值的边界、整行相同的分组、截断和 ID 重复值的说明文字。疑似缺失值：清单和两档的内容、`placeholderKey()` 的去空格 + NFKC + 整格匹配（全角写法能匹配，“Nan”“缺考”和部分匹配不算）、`buildPlaceholderSummary()` 的原文、行号截断和被忽略字段只列已确认的写法；护栏测试“placeholders never change the date strategy of a field without a year name”固定预估捷径的前提：清单里全部写法，以及 Ｎ／Ａ、－、／、－－、ＮａＮ、⽆、﹘、﹣ 这些经 NFKC 变成清单写法的字符，加进含 dmy、mdy 证据的日期值后，非年份名字段的 `buildDateStrategy()` 结果不变，`allowYearOnly` 为 false。改动清单或日期策略时，这条测试失败说明预估不能再走捷径。数字策略（v2.5.0）：应该转和不应该转的写法（不带策略、带本列策略、带“每个白名单单位都打开万/亿和全角”的最宽策略），单位冲突和货币符号与单位同列。四条护栏：“without a strategy, or with one that has no switch, toNumber() is the plain parser”固定单参数 `toNumber()` 和没有开关的策略都与 `toPlainNumber()` 逐值相同；“placeholder spellings never convert or give number strategy evidence (contract 17 premise)”固定契约 17 的前提：清单的全部写法、全角形式和带空格的全角形式，在上述最宽策略下都不能转换，`matchNumberWithUnit()` 也不匹配，只含这些写法的列算出的策略没有任何开关；“万 and 亿 shift the decimal point and give exact integers”用 `strictEqual` 和 `Number.isInteger` 固定 `0.07万` = 700 等结果，改回浮点乘法会失败；“getFieldNumberParser() is the plain parser unless the field's strategy has a switch”固定没有开关时取到的就是 `toPlainNumber` 本身。 |
-| `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试；包括跳过表头上方标题行的端到端导入、文件行号换算、状态栏与报告的“表头位置”、`state.headerDetection` 的清空与保持，以及回退提示。数据行的文件行号：Excel 的 `!ref` 偏移和中间空行、stage3 夹具、同一份 CSV 内容的 LF / 单独 CR / CRLF+BOM 三种写法、表头单元格里的引号内换行、第二遍扫描条数对不上时全部为 `null`、没经过导入的行查不到行号。护栏：只有表头、空文件、少一列、多一列这几种 CSV 的报错和解析警告与改前逐字相同；超过行数上限的 CSV 只调用一次 `Papa.parse`。ID 重复值：stage3 夹具和 `sample-user-behavior.csv` 的结果、Excel 数字与文本合并、截断写法、字段配置和筛选下的变化、新导入清空；质量页的 pill 与详情（含没有数值字段的表和转义）；HTML / Markdown 报告的“ID 字段重复值”一节、摘要、转义和旧快照兼容。疑似缺失值（文件末尾）：订单表的 5 条检出和行号、成绩表和全部示例（`examples/` 与 `tests/fixtures/examples/`）无检出、忽略字段、新导入清空；确认 / 撤销 / 全部确认后的 profile、`totalMissing`、Top 10、筛选选项与匹配、分组、ID 重复值和年份列的日期策略；手动类型记录（含“确认后再对别的字段应用配置，撤销后手动类型仍在”）、有草稿时拒绝、恢复自动识别不撤销确认；`comparePlaceholderPreviews()` 逐条和整字段比较预估与完整重跑的 `buildColumnProfile()`；护栏：确认前后 `state.rows`、数据预览、CSV 导出和 `duplicateRows` 不变；兜底测试“after confirming every order placeholder, no analysis output shows N/A or a placeholder dash”在全部确认后检查分析区所有元素和图表标签（用替身 Chart 记录），只剥掉应用自己写的“当前类型无需转换”那个“—”，漏改后会让 N/A 或占位符「—」出现在分析区或图表里的，它都会失败；只影响计数的地方由各自的测试覆盖；质量页的静态小节、pill、详情文字、委托的点击处理，以及报告的“疑似缺失值”一节、摘要、转义和旧快照兼容。数字策略（文件末尾，v2.5.0）：订单表金额按“元”读取、格式问题 3 个值、金额统计值，其余 stage3 夹具不变；15 个“xx元”从 ID 变成数值，4G / 5G 和 8G 类写法不变；万/亿列的直方图按值计数；带单位的列上 `comparePlaceholderPreviews()` 和确认 / 撤销前后 `numberStrategy` 不变；数值筛选的范围和判定同口径；手动改类型；表头检测把 5kg 当文本；CSV 导出的 `-2200元` 仍加 `'`；主分析按大区、按日的元金额合计。疑似数值列：排除疑似缺失值后的口径、样例不含疑似写法、跟随已应用类型和确认、筛选不重算、重置清空。显示单位：字段标签的“已含单位”规则，统计表、图表标题和 y 轴带“（元）”而下拉框仍是原字段名，质量页两个小节的文字和隐藏，报告快照的三个新字段、两节内容、摘要只有“疑似数值列”的计数、旧快照兼容和转义。v2.6.0：空记录占满行数预览（6 万行每行后跟空行导入全部 60,000 行、首末行号正确；表头下 5 个空行 + 100,001 行报超限；正好 10 万行 + 结尾空行为护栏；带标题行的重试路径同样成立；第一次主解析仍带 `preview: 100001`，调用顺序固定为主解析、计数、整份重解析、行号）。精确行号：表头下空行、引号内换行、CRLF / 单独 CR、只有空白被丢掉的行、InvalidQuotes（`row` 计入表头和空记录）、带标题行的重试，警告和“第 N 行”报错（多一列、引号没有闭合）都按记事本的行号断言；重试里才发现的多一列显示重试自己的第 253 行和表头说明；25 行列数不足计 25 条、状态栏千分位、条数对不上时行号为 `null`。调用次数护栏：订单表 2 次、两个成绩表各 4 次（`成绩表-标题无逗号.csv` 第一次解析就报多一列，行号惰性求值才保持不变），第一行是表头又多一列时为主解析、表头检测、行号 3 次。中文警告：每个 code 有 / 无行号的消息（纯函数在 `data-processing`），分号 / 制表符 / 竖线两列文件各一条 `UndetectableDelimiter` 中文提示，单列“字段”文件 0 条（护栏），逗号多列文件不再列出分隔符警告。共用判断（护栏）：stage3 全部夹具和全部示例 CSV（`examples/` 加 `tests/fixtures/examples/`，加订单表全部确认后）上每个字段的数值、日期两种类型，`getProfileConversionCheck()` 数出的失败数都等于 `conversionFailuresByType[类型]`；profile 的 `confirmedKeys` 跟随确认 / 撤销且是副本；`groupIdValueIndexes()` / `sortIdDuplicates()` 的分组和排序，用“次数最多的值不最先出现”的数据（A/B/A/B/C/B/C）区分排序规则，`buildIdDuplicateSummary()` 同序。问题行：`problemRowCheck()` 在 13 个文件上逐类核对“列出的数量 = 质量页计数”（整行重复为列出行数 − 组数，ID 重复核对值的个数、前 10 个值的顺序、行数和行号）和顺序，订单表“全部确认 → 改类型 → 撤销”每一步都核对；ID 重复按表格顺序且超过 10 个值时完整列出；整行重复的“保留”；各类说明文字；解析警告含被丢掉的空白行和没有行号的条目。数据预览分页：每页 50 行、翻页和按钮禁用、筛选从末页回第 1 页（用筛选后仍有 2 页的条件，夹取碰不巧）、字段配置回第 1 页、页码夹取和没有分页 state、静态结构和绑定。查看区：每个“查看”按钮只带 `data-problem-index` 并打开自己的类别，“查看”列每行都有元素，分页、四种计数单位的摘要、下拉框文字、焦点、字段配置 / 确认 / 撤销后的找回和关闭（含没有数值字段、`renderQuality()` 提前 return 的数据）、导入关闭、筛选不影响、转义、关闭后焦点回到“查看”按钮。问题行导出：经真实下载路径捕获 Blob，核对 BOM、列顺序、“说明”列、公式中和（含额外列和表头）、`-2200元` 仍加 `'`、列名冲突、整类而不是当前页、没有对应行的解析警告、文件名（N/A、长字段名不截掉日期）、门禁和状态行；两种数据导出经新的共用函数逐字节不变（护栏）。v2.8.0 的测试见第 7 节。v2.8.1 的测试见第 8 节。 |
+| `tests/basic-data-processing.test.cjs` | CSV/Excel 行转换、中文数据、统计联动、原始质量视角和 CSV 导出的集成测试；包括跳过表头上方标题行的端到端导入、文件行号换算、状态栏与报告的“表头位置”、`state.headerDetection` 的清空与保持，以及回退提示。数据行的文件行号：Excel 的 `!ref` 偏移和中间空行、stage3 夹具、同一份 CSV 内容的 LF / 单独 CR / CRLF+BOM 三种写法、表头单元格里的引号内换行、第二遍扫描条数对不上时全部为 `null`、没经过导入的行查不到行号。护栏：只有表头、空文件、少一列、多一列这几种 CSV 的报错和解析警告与改前逐字相同；超过行数上限的 CSV 只调用一次 `Papa.parse`。ID 重复值：stage3 夹具和 `sample-user-behavior.csv` 的结果、Excel 数字与文本合并、截断写法、字段配置和筛选下的变化、新导入清空；质量页的 pill 与详情（含没有数值字段的表和转义）；HTML / Markdown 报告的“ID 字段重复值”一节、摘要、转义和旧快照兼容。疑似缺失值（文件末尾）：订单表的 5 条检出和行号、成绩表和全部示例（`examples/` 与 `tests/fixtures/examples/`）无检出（v2.11.0 起按钮示例 `sample-orders.csv` 恰好检出金额「N/A」和销售代表「—」两条）、忽略字段、新导入清空；确认 / 撤销 / 全部确认后的 profile、`totalMissing`、Top 10、筛选选项与匹配、分组、ID 重复值和年份列的日期策略；手动类型记录（含“确认后再对别的字段应用配置，撤销后手动类型仍在”）、有草稿时拒绝、恢复自动识别不撤销确认；`comparePlaceholderPreviews()` 逐条和整字段比较预估与完整重跑的 `buildColumnProfile()`；护栏：确认前后 `state.rows`、数据预览、CSV 导出和 `duplicateRows` 不变；兜底测试“after confirming every order placeholder, no analysis output shows N/A or a placeholder dash”在全部确认后检查分析区所有元素和图表标签（用替身 Chart 记录），只剥掉应用自己写的“当前类型无需转换”那个“—”，漏改后会让 N/A 或占位符「—」出现在分析区或图表里的，它都会失败；只影响计数的地方由各自的测试覆盖；质量页的静态小节、pill、详情文字、委托的点击处理，以及报告的“疑似缺失值”一节、摘要、转义和旧快照兼容。数字策略（文件末尾，v2.5.0）：订单表金额按“元”读取、格式问题 3 个值、金额统计值，其余 stage3 夹具不变；15 个“xx元”从 ID 变成数值，4G / 5G 和 8G 类写法不变；万/亿列的直方图按值计数；带单位的列上 `comparePlaceholderPreviews()` 和确认 / 撤销前后 `numberStrategy` 不变；数值筛选的范围和判定同口径；手动改类型；表头检测把 5kg 当文本；CSV 导出的 `-2200元` 仍加 `'`；主分析按大区、按日的元金额合计。疑似数值列：排除疑似缺失值后的口径、样例不含疑似写法、跟随已应用类型和确认、筛选不重算、重置清空。显示单位：字段标签的“已含单位”规则，统计表、图表标题和 y 轴带“（元）”而下拉框仍是原字段名，质量页两个小节的文字和隐藏，报告快照的三个新字段、两节内容、摘要只有“疑似数值列”的计数、旧快照兼容和转义。v2.6.0：空记录占满行数预览（6 万行每行后跟空行导入全部 60,000 行、首末行号正确；表头下 5 个空行 + 100,001 行报超限；正好 10 万行 + 结尾空行为护栏；带标题行的重试路径同样成立；第一次主解析仍带 `preview: 100001`，调用顺序固定为主解析、计数、整份重解析、行号）。精确行号：表头下空行、引号内换行、CRLF / 单独 CR、只有空白被丢掉的行、InvalidQuotes（`row` 计入表头和空记录）、带标题行的重试，警告和“第 N 行”报错（多一列、引号没有闭合）都按记事本的行号断言；重试里才发现的多一列显示重试自己的第 253 行和表头说明；25 行列数不足计 25 条、状态栏千分位、条数对不上时行号为 `null`。调用次数护栏：订单表 2 次、两个成绩表各 4 次（`成绩表-标题无逗号.csv` 第一次解析就报多一列，行号惰性求值才保持不变），第一行是表头又多一列时为主解析、表头检测、行号 3 次。中文警告：每个 code 有 / 无行号的消息（纯函数在 `data-processing`），分号 / 制表符 / 竖线两列文件各一条 `UndetectableDelimiter` 中文提示，单列“字段”文件 0 条（护栏），逗号多列文件不再列出分隔符警告。共用判断（护栏）：stage3 全部夹具和全部示例 CSV（`examples/` 加 `tests/fixtures/examples/`，加订单表全部确认后）上每个字段的数值、日期两种类型，`getProfileConversionCheck()` 数出的失败数都等于 `conversionFailuresByType[类型]`；profile 的 `confirmedKeys` 跟随确认 / 撤销且是副本；`groupIdValueIndexes()` / `sortIdDuplicates()` 的分组和排序，用“次数最多的值不最先出现”的数据（A/B/A/B/C/B/C）区分排序规则，`buildIdDuplicateSummary()` 同序。问题行：`problemRowCheck()` 在 15 个文件上逐类核对“列出的数量 = 质量页计数”（整行重复为列出行数 − 组数，ID 重复核对值的个数、前 10 个值的顺序、行数和行号）和顺序，订单表“全部确认 → 改类型 → 撤销”每一步都核对；ID 重复按表格顺序且超过 10 个值时完整列出；整行重复的“保留”；各类说明文字；解析警告含被丢掉的空白行和没有行号的条目。数据预览分页：每页 50 行、翻页和按钮禁用、筛选从末页回第 1 页（用筛选后仍有 2 页的条件，夹取碰不巧）、字段配置回第 1 页、页码夹取和没有分页 state、静态结构和绑定。查看区：每个“查看”按钮只带 `data-problem-index` 并打开自己的类别，“查看”列每行都有元素，分页、四种计数单位的摘要、下拉框文字、焦点、字段配置 / 确认 / 撤销后的找回和关闭（含没有数值字段、`renderQuality()` 提前 return 的数据）、导入关闭、筛选不影响、转义、关闭后焦点回到“查看”按钮。问题行导出：经真实下载路径捕获 Blob，核对 BOM、列顺序、“说明”列、公式中和（含额外列和表头）、`-2200元` 仍加 `'`、列名冲突、整类而不是当前页、没有对应行的解析警告、文件名（N/A、长字段名不截掉日期）、门禁和状态行；两种数据导出经新的共用函数逐字节不变（护栏）。v2.8.0 的测试见第 7 节。v2.8.1 的测试见第 8 节。 |
 | `tests/destructive-qa.test.cjs` | 空数据、异常表头、编码、极端数值、连续上传、反复筛选、报告后继续分析和 100,000 行压力测试。 |
 | `tests/core.test.cjs` | 启动自检、应用脚本顺序和顶层名字唯一性、DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
 | `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；`stage3/` 见下文；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
-| `tests/fixtures/examples/` | `sample-sales.csv`、`sample-students.csv`、`sample-survey.csv`、`sample-used-products.csv`、`sample-user-behavior.csv`：只给测试用的 5 个示例（v2.7.0 从 `examples/` 移来，字节不变）；`examples/` 里只剩“使用示例数据”按钮加载的 `sample-data.csv`。`basic-data-processing.test.cjs` 经 `listExampleCsvFiles()` / `readExampleCsv()` 读两个目录，覆盖的仍是同样 6 个文件。内容按 utf8 文本读取，LF 和 CRLF 都通过，所以不需要 `.gitattributes` 规则。 |
+| `tests/fixtures/examples/` | `sample-data.csv`、`sample-sales.csv`、`sample-students.csv`、`sample-survey.csv`、`sample-used-products.csv`、`sample-user-behavior.csv`：只给测试用的 6 个示例（后 5 个 v2.7.0 从 `examples/` 移来，`sample-data.csv` v2.11.0 移来，字节不变）；`examples/` 里只剩“使用示例数据”按钮加载的 `sample-orders.csv`。`basic-data-processing.test.cjs` 经 `listExampleCsvFiles()` / `readExampleCsv()` 读两个目录，覆盖 7 个文件。内容按 utf8 文本读取，LF 和 CRLF 都通过（v2.11.0 的内容测试去掉 CR 后再比较），所以不需要 `.gitattributes` 规则。 |
 | `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`分区小计表.csv`（5 行小计 / 总计，带空格、冒号和括号注释的标签）和 `公式错误.xlsx`（4 个字段 7 个错误格，含 #SPILL! 和整行错误的行）是 v2.8.0 加的。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，手工加条目，保持一行一条的格式，不要用 `JSON.stringify` 重写；v2.8.0 的测试读取其中合计行和公式错误的预期，其余条目仍供人工核对；v2.5.0 起订单表金额按“元”读取 2200元、3500元，金额那条预期改为数值率 29/30，`expectedTotals.formatProblems` 从 5 改为 3。`写法不一致.csv`（UTF-8 BOM、CRLF，表头在第 1 行，24 行：日期写法混用、常量列和写法细节不同的值，不可见字符在生成脚本里写 `\u` 转义）是 v2.9.0 加的，它的预期（`dateStyles`、`constantFields`、`lookAlikes`）由测试读取。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 8 个夹具；它用真实 PapaParse 包一层计数，并记下每次调用的 `header` 选项，表头在第 1 行的 CSV 正好调用两次（主解析一次，`header: false` 的行号扫描一次）。 |
 | `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 8 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关。不在 CI 中运行。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
@@ -139,7 +139,7 @@ v2.7.0 只做删减和把“主要发现”降级为图表下的两句结论。�
 
 | 测试 | 固定的内容 |
 | --- | --- |
-| `v2.7.0 examples: …` | `examples/` 恰好只有 `sample-data.csv`；`tests/fixtures/examples/` 恰好是另外 5 个；两个目录的并集是 6 个名字（比只数个数的 `examples.length === 6` 更能发现文件静默丢失） |
+| `v2.7.0 examples: …` | `examples/` 恰好只有 `sample-orders.csv`（v2.11.0 起；之前是 `sample-data.csv`）；`tests/fixtures/examples/` 恰好是另外 6 个；两个目录的并集是 7 个名字（比只数个数的 `examples.length === 7` 更能发现文件静默丢失） |
 | `v2.7.0 workflow: …` | `index.html` 没有 `workflow-status` / `workflowStep`，`style.css` 没有 `workflow-` / `.step-*`，`updateWorkflowSteps` 未定义，`dom` 没有 `workflowStep*` |
 | `v2.7.0 quick grouping: the advanced settings block…` | 页面没有快速分组的 id 和“高级设置 / 快速分组”字样，`renderCustomAnalysisChart` 未定义，`dom` 和 `REPORT_CHART_TITLES` / `REPORT_CHART_HEADING_IDS` 里没有对应项，`script.js` 没有 `dom.metricField` 等 |
 | `v2.7.0 quick grouping: the report has a custom-analysis section only after…` | 没点“生成自定义分析”时 `buildReportData().customAnalysis.completed` 为 `false`，点过之后为 `true`。它在 v2.7.0 之前的版本上会失败，是因为当时的报告用快速分组的下拉框回推这一节；假 DOM 不会像浏览器那样默认选第一项，所以测试里有一行“如果还有这些下拉框就给它们赋值”，在删除之后只是空操作 |
@@ -175,7 +175,7 @@ v2.8.0 加了疑似合计 / 小计行和 Excel 公式错误单元格，并让带
 | `v2.8.0 performance: a text file without labels…`（性能护栏） | 没有标签的表不做 NFKC、不读数字（计数） |
 | `v2.8.0 performance: a rebuild reuses the labels…`（性能护栏） | 重建复用导入时的标签，不重扫（计数） |
 | `v2.8.0 fixtures: the store report's row 33 and the region table…` | 门店报表第 33 行、分区小计表 5 行的范围和对上的列都等于 `known-issues.json` |
-| `v2.8.0 fixtures: no other fixture or example…` | 其他夹具和全部示例 CSV 没有合计行、没有公式错误（误报护栏） |
+| `v2.8.0 fixtures: no other fixture or example…` | 其他夹具和全部示例 CSV 没有合计行（v2.11.0 起 `sample-orders.csv` 有一行，是设计好的）、没有公式错误（误报护栏） |
 | `v2.8.0 totals: the three ranges, each tried in order` | `segment`、`above`、`all` 的边界和顺序 |
 | `v2.8.0 totals: columns that match different ranges are grouped by range` | 同一行的不同列对上不同范围时分组 |
 | `v2.8.0 totals: counterexamples stay silent, the tolerance is 0.5% of the sum` | 反例；误差的两个边界 |
@@ -198,7 +198,7 @@ v2.8.0 加了疑似合计 / 小计行和 Excel 公式错误单元格，并让带
 | `v2.8.0 page: formula errors show without numeric fields…` | 提前 return 之前渲染：没有数值字段的表显示公式错误；最后一个数值字段被改走时合计小节隐藏，查看区关闭并写“这一类已经没有问题行。” |
 | `v2.8.0 page: the sections follow field configuration and confirmations…` | 小节跟随字段配置和确认 / 撤销，筛选和状态栏不变 |
 | `v2.8.0 state: a later commit and resetAnalysisState() empty both sections` | 再提交和 reset 都清空小节 |
-| `the import status keeps has-note…` | 门店报表、两个成绩表、分区小计表、公式错误、带说明的警告导入有 `has-note`；示例数据、不带说明的警告导入、之后的普通导入和报告消息没有 |
+| `the import status keeps has-note…` | 门店报表、两个成绩表、分区小计表、公式错误、带说明的警告导入有 `has-note`；旧示例 `sample-data.csv`、不带说明的警告导入、之后的普通导入和报告消息没有（按钮现在加载的 `sample-orders.csv` 有，见第 11 节） |
 | `only a successful status without a note…` | `style.css` 有新选择器 `:not(.has-note)`，没有旧选择器。假 DOM 看不出元素是否显示，真实可见性要在浏览器里看 |
 | `v2.8.0 report: sections and summary counts only when there is something…` | D5：没有命中时节和计数都不输出；旧快照为 `null`；节在“各字段缺失情况”之前；字段已忽略 |
 | `v2.8.0 report: the note matches the page, at most 20 totals…` | `SUSPECTED_TOTAL_NOTE` 和 `index.html` 同文；20 / 21 条的边界；摘要计数写全部行数（21），不是列出的 20；没有“全部行请点”那半句 |
@@ -232,7 +232,7 @@ v2.9.0 加了日期写法混用、常量列和写法细节不同的值三类提�
 | 测试 | 固定的内容 |
 | --- | --- |
 | `v2.9.0 fixture: 写法不一致.csv has the bytes, types and totals…` | 夹具的 BOM、CRLF 和关键格；类型、缺失、格式问题、ID 重复值等于 `known-issues.json` |
-| `v2.9.0 guard: everything v2.8.1 computed stays the same…`（护栏，改前就通过） | 13 个文件 × 导入 / 全部确认后，profile、统计、质量数字和现有问题行的摘要等于 `tests/fixtures/v2.8.1-guard.json` |
+| `v2.9.0 guard: everything v2.8.1 computed stays the same…`（护栏，改前就通过） | 13 个文件 × 导入 / 全部确认后，profile、统计、质量数字和现有问题行的摘要等于 `tests/fixtures/v2.8.1-guard.json`；`写法不一致.csv`（v2.9.0）和 `sample-orders.csv`（v2.11.0）比基准新，循环里跳过 |
 | `v2.9.0 Excel: date cells are recorded…` / `only real date cells count…` / `state: a commit replaces the date cells…` | 日期单元格按行列记下（标题行、`!ref` 从 B3 开始）；文本、空串、布尔、`0.00` 数字不算；只有时间的格算（已知限制）；提交替换、长度不对不写、重置清空 |
 | `v2.9.0 Excel: rows with the same date fields share one frozen record…` / `guard: text columns named like Object members never count as date cells`（护栏，改前就通过） | 日期字段相同的行共用同一个冻结、没有原型的记录（性能：每行新建记录时 10 万行 xlsx 导入 +5.0%，共用后 +3.1%），两个日期字段的行记录正确；名为 constructor、toString、hasOwnProperty 的文本列不算日期单元格（换成 `{}` 时会算） |
 | `v2.9.0 dateStyleOf: …` / `guard: dateStyleOf() is null exactly when toDate() is null` | 每种写法的分类（含日或月在前不分分隔符）；超过 10 万个组合穷举“写法 ⇔ `toDate()`” |
@@ -248,7 +248,7 @@ v2.9.0 加了日期写法混用、常量列和写法细节不同的值三类提�
 | `v2.9.0 the three sections render without a numeric field…`、`the sections are static, in place…` | 提前 return 之前渲染、转义（字段名也是）、为空隐藏、重置清空页面；位置；pill 仍是 6 项、状态栏不变 |
 | `v2.9.0 reports: …`（4 条） | 说明句和 `index.html` 相同；三节内容、顺序、摘要两个计数（常量列不计）；只有不可见字符的计数和转义；旧快照为 `null`、快照每一层都不和 state 共用、筛选不影响 |
 
-**重新生成摘要基准**：`tests/fixtures/v2.8.1-guard.json` 是 v2.8.1（`196d8a9`）上 13 个文件各两种状态的摘要（profile、统计、质量数字、现有问题行，sha256 截取 32 位），在 Linux + Node 22 和 Windows + Node 24 上生成的结果逐字节相同。以后哪一版**有意**改变了这些结果，就在那一版用改动前的代码重新生成，或者删掉这条护栏，并在 PR 里说明。生成方法：在改动前的提交上，对每个夹具和示例 CSV 经 `parseDataFile()` 导入，按测试里 `v281GuardDigest()` 的同一个表达式算摘要，再 `confirmAllCommonPlaceholders()` 后算一次。
+**重新生成摘要基准**：`tests/fixtures/v2.8.1-guard.json` 是 v2.8.1（`196d8a9`）上 13 个文件各两种状态的摘要（profile、统计、质量数字、现有问题行，sha256 截取 32 位；不含比它新的 `写法不一致.csv` 和 v2.11.0 的 `sample-orders.csv`），在 Linux + Node 22 和 Windows + Node 24 上生成的结果逐字节相同。以后哪一版**有意**改变了这些结果，就在那一版用改动前的代码重新生成，或者删掉这条护栏，并在 PR 里说明。生成方法：在改动前的提交上，对每个夹具和示例 CSV 经 `parseDataFile()` 导入，按测试里 `v281GuardDigest()` 的同一个表达式算摘要，再 `confirmAllCommonPlaceholders()` 后算一次。
 
 假 DOM 不计算样式，三个小节是否看得见、`␣` 和 `[零宽字符]` 是否显示得出来要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。
 
@@ -270,7 +270,7 @@ v2.10.0 加了“标准化数据”导出（检查表、标准化 CSV、改动�
 | `v2.10.0 guard: the check never runs on import, filter, field configuration or confirmations` | 给 `buildStandardizedExport` 计数：再次导入、筛选、应用配置、确认、恢复自动识别都是 0 次，点检查 1 次 |
 | `v2.10.0 a filter keeps the check; import, commit, …` | 筛选、清除筛选不作废；应用配置、恢复、确认、撤销、导入、重置都作废。“直接 `commitTabularData()`”这一步是必要的：页面导入都先经 `beginImport()` → `resetAnalysisState()`，只测导入抓不到“提交时不作废” |
 | `v2.10.0 D8: …` | 顺序证据格被改写、带时间的格保持原值时提示，并且再导入确实变成分类；证据格带时间（证据还在）不提示；普通 dmy、mdy 列全部改写不提示且再导入仍是日期；没有确定顺序的字段不看。故意改坏时，去掉“顺序变了”这个条件测不出来，属于等价改坏：两种策略下 `toDate()` 只有日月顺序不同才会一边读得出、一边读不出（`allowYearOnly` 只会让重算后的策略读得更多），所以“有格读不出了”本身就意味着顺序变了；条件保留是为了读起来清楚 |
-| `v2.10.0 all fixtures and examples: rows and exports unchanged, counts = list, round trip…`（护栏 + 数字） | 14 个文件：检查前后 `state.rows` 和两种现有导出逐字相同；每列计数 = 清单里这一列的条数；都不出顺序提示；标准化 CSV 再导入每个字段的类型相同；各文件清单条数（订单表 36、写法不一致 13、分区小计表 14、两个成绩表各 3、花名册 8、sample-user-behavior 119，其余 0） |
+| `v2.10.0 all fixtures and examples: rows and exports unchanged, counts = list, round trip…`（护栏 + 数字） | 15 个文件（v2.11.0 起）：检查前后 `state.rows` 和两种现有导出逐字相同；每列计数 = 清单里这一列的条数；都不出顺序提示；标准化 CSV 再导入每个字段的类型相同；各文件清单条数（订单表 36、写法不一致 13、分区小计表 14、两个成绩表各 3、花名册 8、sample-orders 11、sample-user-behavior 119，其余 0） |
 | `v2.10.0 the check needs data, a finished analysis and no unapplied field draft` | 无数据、有草稿、分析未完成时不计算；有草稿时旧结果保留，撤销草稿后仍在 |
 | `v2.10.0 the check table: …`（2 条） | 摘要句、表头、每行的数字和保持原值样例（`␣` 显示空白）、年份 / 单位 / 顺序三种说明、合计、被忽略字段只在摘要句计数、转义；没有改动时只有摘要句、“导出改动清单”禁用 |
 | `v2.10.0 the panel follows the check: …` | 筛选后面板、表格、状态行都不变；应用配置、确认、直接提交、重置后面板收起，表格、摘要、状态行清空，两个导出按钮禁用 |
@@ -286,3 +286,37 @@ v2.10.0 加了“标准化数据”导出（检查表、标准化 CSV、改动�
 **性能**：新代码不在刷新路径里。10 万行 × 20 列（固定种子生成的 CSV，含日期、数值、分类、ID 列），与 v2.9.0 交替各 5 次取中位数：导入 +0.4%、筛选 +1.1%、重建 −0.2%。检查约 1.6 s（干净数据）/ 3.9 s（每格都要处理的 200 万格）；最坏情况导出改动清单到上限约 2.55 s、峰值 RSS 约 1.22 GB。
 
 假 DOM 不算样式：检查表是否可见、1280 / 390 宽度有没有横向滚动、打印时按钮是否隐藏，要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。
+
+## 11. v2.11.0 新增测试固定了什么
+
+v2.11.0 换了“使用示例数据”加载的文件：新的 `examples/sample-orders.csv` 是虚构的 2025 年上半年订单明细（40 笔订单 + 1 行整行重复 + 1 行合计 = 42 行数据，9 列，UTF-8 BOM + LF），故意放了七类问题：第 1 行标题行（带尾随逗号）、第 44 行合计、SO-1018 第 20、21 行整行重复、金额「N/A」（第 29 行）和销售代表「—」（第 16 行）、金额「5400元」等 3 个、5 个非主写法的日期、地区「华南 」「华东 」两个结尾空格。旧的 `sample-data.csv` 字节不变地移到 `tests/fixtures/examples/`，原来引用它的测试照常通过。应用代码的判断规则一条没改；新增 6 条测试（453 → 459），都在 `basic-data-processing.test.cjs` 末尾；`v2.8.1-guard.json` 不变。下表按顺序称为测试 ①–⑥。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `v2.11.0 sample: the file holds the planned rows, title and total line` | BOM 三字节；**去掉 CRLF 里的 CR 后**的 sha256 等于 `SAMPLE_ORDERS_LF_SHA256`；结尾换行、44 行、第 1 行标题原文（含尾随逗号）、表头、第 44 行合计原文、第 20、21 行相同 |
+| `v2.11.0 sample: the button fetches the new file and names the import after it, like an upload` | `script.js` 有新的 `fetch`、不再出现 `sample-data.csv`（也管住“正在加载 …”文字）；`index.html` 的下载链接；真正点一次按钮：请求的地址、传给 `parseCsvText()` 的名字（处理函数一次、标题行重试一次），以及点击和上传两个入口的状态栏、pill、各小节显隐和全部详情 HTML、数据预览、问题行和行号、类型逐项相同 |
+| `v2.11.0 sample: the status line, the six pills and every hint with its rows` | 状态栏全文和 `has-note`；9 列类型；6 个 pill 全文；显示的 4 个提示小节和顺序；**两句图表结论**（分类句“「华东」出现 10 次，占比 24.4%”、趋势句）；疑似合计、按单位读取、日期写法、写法不同四段文字；疑似缺失值两条（档位、行号）；ID 重复；16 类问题行的名字和每类的文件行号 |
+| `v2.11.0 sample: confirming every common placeholder moves the two values to missing and keeps the total` | 全部确认后 6 个 pill（缺失 8、格式问题 0、疑似缺失值 0 个字段）、合计仍检出、金额和销售代表的缺失数 |
+| `v2.11.0 sample: the standardized check counts 11 cells, 12 after confirming` | 每列计数（日期改写 5、去首尾空格 2、数字改写 3、保持原值 1），无顺序提示；全部确认后 12 格 |
+| `v2.11.0 sample: without its problems nothing is flagged, and each problem alone flags only itself` | 在测试里用代码去掉问题（不另存干净文件）：干净版 6 个 pill 全 0、没有提示小节、没有 `has-note`、标准化 0 格；只放回一类（标题、合计、重复、N/A、—、元、日期、空格）时只出这一类的提示；每个“去掉”函数单独作用于原文件都确实改了东西（防止正则失配后变体悄悄不含问题） |
+
+**改动的 10 条现有断言**（新文件放进 `examples/` 后被按目录枚举的测试自动用上）：`core.test.cjs` 的 `fetch` 路径；`scopes.length` 14 → 15（两处）；`v2.7.0 examples` 的目录清单；疑似合计、日期写法、写法不同三条“no other file”加 `sample-orders.csv`；`v2.9.0 guard` 的示例循环跳过它（和 `写法不一致.csv` 一样比基准新）；`v2.10.0 all fixtures…` 加 `"sample-orders.csv": 11`；疑似缺失值候选那条从“每个示例都没有”改成“**新示例恰好是金额 N/A、销售代表 —，其余示例都没有**”——不写成“跳过新示例”，因为跳过以后新示例多一个或少一个疑似缺失值都测不出来。另有 4 个测试名在末尾注明 v2.11.0 的变化。
+
+**按钮点击怎么测**：假 DOM 的 `addEventListener` 是空函数，`script.js` 的处理函数拿不到。`clickSampleButton()` 不改 `test-context.cjs`，而是利用“所有上下文的假 DOM 元素共用同一个 `FakeElement` 原型”：先建一个探测上下文拿到原型，临时把 `addEventListener` 换成记录函数，再建真正的上下文（`script.js` 的绑定被记下），`finally` 里恢复；再放一个 `fetch` 替身，返回 UTF-8 解码、去掉 BOM 的文本（和 `fetch().text()` 一样）。以后 `test-context.cjs` 改成每个上下文一个元素类时，这个助手要跟着改。包装 `parseCsvText()` 记录名字时**必须转发全部参数**：标题行重试会再调一次 `parseCsvText()` 并带第 4 个参数（含 `lineOffset`），只转发 3 个会让行号全部少 1、状态栏没有表头说明。
+
+**为什么去掉 CR 再算 sha256**：`examples/` 没有 `-text` 规则。仓库和 GitHub Pages 上是 LF（3206 字节）；Windows + `core.autocrlf=true` 重新检出后工作区是 CRLF（3250 字节，sha256 不同），分析结果完全相同（CRLF 算一次换行）。所以测试读成文本、把 `\r\n` 换成 `\n` 后再比较，Windows 工作区和 CI 都能过（实测把文件换成 CRLF 后完整回归照样通过）。**以后有意修改示例文件时，要同步改 `SAMPLE_ORDERS_LF_SHA256`**（以及测试 ③–⑥ 里受影响的数字），并在 PR 里说明。
+
+**故意改坏的结果**（v2.11.0 提交后，本机时区完整回归，改一处跑一次）：
+
+| 改坏 | 失败的测试 |
+| --- | --- |
+| 按钮 `fetch` 回 `examples/sample-data.csv` | `core.test.cjs`、测试 ② |
+| `parseCsvText()` 的显示名不改 | 测试 ② |
+| “正在加载 …”文字不改 | 测试 ② |
+| 下载链接回旧文件 | `core.test.cjs`（本地资源不存在）、测试 ② |
+| 示例删掉 N/A | 疑似缺失值候选那条、`v2.10.0 all fixtures…`、测试 ①③④⑤⑥ |
+| 标题行去掉尾随逗号 | 只有测试 ①（去掉逗号后走“多一列”的检测路径，结果完全相同） |
+| 合计 800 → 801 | 测试 ①⑥（仍在 0.5% 的容差内，照样判为疑似合计，状态栏和 pill 不变） |
+| 某个产品名后多一个空格 | `v2.10.0 all fixtures…`、测试 ①③⑤⑥ |
+| 数据换回地区并列第一的第一版（华东、华南各 9） | 只有测试 ①（内容）和测试 ③（分类句） |
+| 对照：示例换成 CRLF | 全部通过 |
