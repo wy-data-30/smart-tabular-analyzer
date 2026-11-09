@@ -312,9 +312,9 @@ function createChartContext() {
   return scope;
 }
 
-// The bundled examples: sample-data.csv stays in examples/ (the "use sample data" button
-// loads it), the other five live in tests/fixtures/examples/. Every reader goes through
-// these two helpers, so a file in either directory is found and listed once.
+// The bundled examples: sample-orders.csv stays in examples/ (the "use sample data" button
+// loads it, v2.11.0), the other six, sample-data.csv among them, live in tests/fixtures/examples/.
+// Every reader goes through these two helpers, so a file in either directory is found and listed once.
 const EXAMPLE_DIRS = [path.join(__dirname, "..", "examples"), path.join(__dirname, "fixtures", "examples")];
 
 function listExampleCsvFiles() {
@@ -2180,18 +2180,19 @@ test("the order fixture lists its five placeholder cells with tiers and file row
   assert.equal(orders.evaluate("JSON.stringify(state.placeholderConfirmations)"), "{}");
 });
 
-test("the grade fixtures and the bundled examples have no placeholder candidates", async () => {
+test("the grade fixtures and the bundled examples have no placeholder candidates, except the two the sample button's file holds", async () => {
   for (const fileName of ["成绩表.csv", "成绩表-标题无逗号.csv"]) {
     const scope = await importStage3Fixture(fileName);
     assert.equal(scope.evaluate("state.rows.length"), 30, fileName);
     assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
   }
   const examples = listExampleCsvFiles();
-  assert.equal(examples.length, 6);
+  assert.equal(examples.length, 7);
   for (const fileName of examples) {
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     assert.ok(scope.evaluate("state.rows.length") > 0, fileName);
-    assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
+    const fieldsAndKeys = placeholderEntries(scope.evaluate).map(([field, key]) => [field, key]);
+    assert.deepEqual(fieldsAndKeys, fileName === "sample-orders.csv" ? [["金额", "N/A"], ["销售代表", "\u2014"]] : [], fileName);
   }
 });
 
@@ -3193,7 +3194,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 14);
+  assert.equal(scopes.length, 15);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3311,7 +3312,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 14);
+  assert.equal(scopes.length, 15);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -4163,13 +4164,13 @@ test("a field-configuration rebuild keeps a chosen category field that is still 
 // ---------------------------------------------------------------------------------------
 const REPO_ROOT = path.join(__dirname, "..");
 
-test("v2.7.0 examples: examples/ keeps only the file the sample button loads, the other five are test fixtures", () => {
-  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")), ["sample-data.csv"]);
+test("v2.7.0 examples: examples/ keeps only the file the sample button loads, the other six are test fixtures (v2.11.0)", () => {
+  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")), ["sample-orders.csv"]);
   assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "tests", "fixtures", "examples")).sort(), [
-    "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+    "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
   assert.deepEqual(["examples", path.join("tests", "fixtures", "examples")].flatMap((dir) => fs.readdirSync(path.join(REPO_ROOT, dir))).sort(), [
-    "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+    "sample-data.csv", "sample-orders.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
 });
 
@@ -4616,9 +4617,9 @@ test("v2.8.0 fixtures: the store report's row 33 and the region table match know
   assert.equal(region.evaluate("state.totalMissing"), knownIssues["分区小计表.csv"].expectedTotals.totalMissing);
 });
 
-test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error", async () => {
+test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error (v2.11.0: the sample button's file has one total)", async () => {
   const scopes = await importEveryQualityFile();
-  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx", "sample-orders.csv"]);
   assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["公式错误.xlsx"]);
 });
 
@@ -5292,6 +5293,8 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
     actual[`${fileName}（全部确认后）`] = v281GuardDigest(scope);
   }
   for (const fileName of EXAMPLE_CSV_FILES) {
+    // v2.11.0: the new sample is newer than the guard, like 写法不一致.csv above.
+    if (fileName === "sample-orders.csv") continue;
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5444,7 +5447,7 @@ test("v2.9.0 guard: dateStyleOf() is null exactly when toDate() is null", () => 
   assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
 });
 
-test("v2.9.0 date styles: the fixture and the roster, and no other file", async () => {
+test("v2.9.0 date styles: the fixture, the roster and the sample button's file (v2.11.0), and no other file", async () => {
   const scopes = await importEveryQualityFile();
   const expected = knownIssues["写法不一致.csv"].dateStyles;
   const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
@@ -5459,7 +5462,7 @@ test("v2.9.0 date styles: the fixture and the roster, and no other file", async 
       { key: "ymdDot", count: 2, sample: "2021.03.05", firstLine: 15 }
     ]
   }]);
-  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx", "sample-orders.csv"]);
 });
 
 test("v2.9.0 date styles: the most frequent style is the main one, ties go to the first seen", async () => {
@@ -5725,7 +5728,7 @@ test("v2.9.0 lookAlikeReasons: one writing's difference names only its own reaso
   assert.deepEqual(reasons(["K", "K"]), ["compat"]);
 });
 
-test("v2.9.0 look-alike values: the fixture, and no other file", async () => {
+test("v2.9.0 look-alike values: the fixture and the sample button's file (v2.11.0), and no other file", async () => {
   const scopes = await importEveryQualityFile();
   const writing = scopes.find(([name]) => name === "写法不一致.csv")[1];
   const summary = lookAlikesOf(writing);
@@ -5734,7 +5737,7 @@ test("v2.9.0 look-alike values: the fixture, and no other file", async () => {
     groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
   })), knownIssues["写法不一致.csv"].lookAlikes);
   assert.ok(summary.every((item) => item.invisibleOnlyCount === 0));
-  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "sample-orders.csv"]);
   // ID duplicates and look-alikes count apart: SKU-002 with a space is a duplicate value and
   // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
   assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
@@ -6347,7 +6350,7 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
   }
   assert.deepEqual(totals, {
     "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
-    "sample-data.csv": 0, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
+    "sample-data.csv": 0, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
   });
 });
 
@@ -6663,4 +6666,211 @@ test("v2.10.0 the downloads ignore the filter and never guess a file row", async
   assert.equal(lines.length, 22);
   assert.ok(lines.slice(1).every((line) => line.startsWith(",")), lines[1]);
   assert.equal(lines[1], ",日期,2024/5/6,2024-05-06,日期改写为 YYYY-MM-DD");
+});
+
+// ---------------------------------------------------------------------------------------
+// v2.11.0: the file the sample button loads (examples/sample-orders.csv).
+// ---------------------------------------------------------------------------------------
+const SAMPLE_ORDERS = "sample-orders.csv";
+// Compared after dropping the CR of every CRLF: examples/ has no -text rule, so a Windows
+// checkout with core.autocrlf=true has CRLF while the repository and GitHub Pages have LF.
+const SAMPLE_ORDERS_LF_SHA256 = "39eec2fe25c23d5ede7411b699c2aef6f1d723f877c29f40d43faa0f60d9b947";
+const sampleOrdersLfText = () => fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS), "utf8").replace(/\r\n/g, "\n");
+
+// Strips tags so a test can compare what a section says.
+const sampleOrdersText = (scope, id) => scope.elements.get(id).innerHTML.replace(/<[^>]+>/g, " ").replace(/&quot;/g, "\"").replace(/\s+/g, " ").trim();
+const sampleOrdersHidden = (scope, id) => scope.elements.get(id).classList.contains("hidden");
+const sampleOrdersPills = (scope) => [...scope.elements.get("qualitySummary").innerHTML.matchAll(/<span class="quality-pill[^"]*">([^<]*)<\/span>/g)].map((match) => match[1]);
+const SAMPLE_ORDERS_HINT_SECTIONS = ["suspectedTotalSection", "formulaErrorSection", "numberConversionSection", "numericLookingSection", "dateStyleSection", "constantFieldSection", "lookAlikeSection"];
+const sampleOrdersShownSections = (scope) => SAMPLE_ORDERS_HINT_SECTIONS.filter((id) => !sampleOrdersHidden(scope, id));
+
+// Clicks the real "使用示例数据" handler of script.js. The fake DOM ignores addEventListener, so
+// the shared element prototype records the listeners while one context loads, then is restored.
+async function clickSampleButton(fetchedText) {
+  const probe = createScriptContext();
+  const proto = Object.getPrototypeOf(probe.context.document.getElementById("loadSample"));
+  const original = proto.addEventListener;
+  const listeners = new Map();
+  proto.addEventListener = function (type, listener) {
+    if (!listeners.has(this)) listeners.set(this, []);
+    listeners.get(this).push([type, listener]);
+  };
+  let scope;
+  try {
+    scope = createExcelContext();
+  } finally {
+    proto.addEventListener = original;
+  }
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  const fetched = [];
+  const parsedNames = [];
+  put(scope.context, "fetch", async (url) => {
+    fetched.push(url);
+    return { ok: true, text: async () => fetchedText };
+  });
+  const realParse = scope.evaluate("parseCsvText");
+  // Forwards every argument: the title-row retry passes a fourth one (its line offset).
+  put(scope.context, "parseCsvText", (...args) => {
+    parsedNames.push(args[1]);
+    return realParse(...args);
+  });
+  const clicks = (listeners.get(scope.elements.get("loadSample")) || []).filter(([type]) => type === "click");
+  assert.equal(clicks.length, 1);
+  await clicks[0][1]();
+  return { ...scope, fetched, parsedNames };
+}
+
+// What fetch().text() gives: UTF-8 decoded, BOM removed.
+const sampleOrdersFetchedText = () => new TextDecoder("utf-8").decode(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS)));
+
+// Everything a quality check shows for one import, for comparing two entries.
+const sampleOrdersSnapshot = (scope) => JSON.stringify({
+  status: [scope.elements.get("statusPanel").textContent, scope.elements.get("statusPanel").className],
+  pills: sampleOrdersPills(scope),
+  sections: SAMPLE_ORDERS_HINT_SECTIONS.map((id) => [id, sampleOrdersHidden(scope, id)]),
+  details: ["suspectedTotalDetails", "formulaErrorDetails", "numberConversionDetails", "numericLookingDetails", "dateStyleDetails", "constantFieldDetails", "lookAlikeDetails",
+    "placeholderDetails", "idDuplicateDetails", "parseWarningSummary", "previewTable"].map((id) => [id, scope.elements.get(id).innerHTML]),
+  problems: problemRowCheck(scope),
+  lines: JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")),
+  types: JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))"))
+});
+
+test("v2.11.0 sample: the file holds the planned rows, title and total line", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS));
+  assert.deepEqual([...raw.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = sampleOrdersLfText();
+  assert.equal(crypto.createHash("sha256").update(text, "utf8").digest("hex"), SAMPLE_ORDERS_LF_SHA256);
+  assert.ok(text.endsWith("\n"));
+  const lines = text.slice(1, -1).split("\n");
+  assert.equal(lines.length, 44);
+  assert.equal(lines[0], "2025年上半年销售订单明细,,,,,,,,");
+  assert.equal(lines[1], "订单编号,下单日期,地区,品类,产品,客户类型,数量,金额,销售代表");
+  assert.equal(lines[43], "合计,,,,,,800,123440,");
+  assert.equal(lines[19], lines[20]);
+});
+
+test("v2.11.0 sample: the button fetches the new file and names the import after it, like an upload", async () => {
+  const script = repoFile("script.js");
+  assert.match(script, /fetch\("examples\/sample-orders\.csv"\)/);
+  assert.doesNotMatch(script, /sample-data\.csv/);
+  assert.match(repoFile("index.html"), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
+  const clicked = await clickSampleButton(sampleOrdersFetchedText());
+  assert.deepEqual(clicked.fetched, ["examples/sample-orders.csv"]);
+  // The handler calls parseCsvText() once; the title-row retry calls it again with the same name.
+  assert.deepEqual(clicked.parsedNames, [SAMPLE_ORDERS, SAMPLE_ORDERS]);
+  const uploaded = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
+  assert.equal(sampleOrdersSnapshot(clicked), sampleOrdersSnapshot(uploaded));
+});
+
+test("v2.11.0 sample: the status line, the six pills and every hint with its rows", async () => {
+  const scope = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success has-note");
+  assert.equal(scope.elements.get("statusPanel").textContent,
+    "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))")), [
+    ["订单编号", "id"], ["下单日期", "date"], ["地区", "category"], ["品类", "category"], ["产品", "category"],
+    ["客户类型", "category"], ["数量", "numeric"], ["金额", "numeric"], ["销售代表", "category"]
+  ]);
+  assert.deepEqual(sampleOrdersPills(scope), ["缺失值总数：6", "重复行：1", "格式问题：1 个值", "异常值字段：2", "ID 重复字段：1", "疑似缺失值：2 个字段"]);
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "numberConversionSection", "dateStyleSection", "lookAlikeSection"]);
+  for (const id of ["categoryChartInsight", "dateChartInsight"]) assert.equal(sampleOrdersHidden(scope, id), false, id);
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, "分类字段「地区」中占比最高的类别是「华东」，出现 10 次，占比 24.4%。");
+  assert.equal(scope.elements.get("dateChartInsight").textContent, "基于日期字段「下单日期」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 66.7%。");
+  assert.equal(sampleOrdersHidden(scope, "parseWarningSummary"), true);
+  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "第 44 行「合计」：数量、金额等于第 3\u201343 行之和（41 行）。 查看");
+  assert.equal(sampleOrdersText(scope, "numberConversionDetails"), "「金额」：按\"元\"读取了 3 个值（5400元、900元、1050元）");
+  assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
+    "「下单日期」：主写法是 文本 年-月-日 36 个（如 2025-01-03）；另有 5 行是别的写法：文本 年/月/日 3 个（如 2025/2/18）、文本 中文年月日 2 个（如 2025年4月16日）。 查看");
+  assert.equal(sampleOrdersText(scope, "lookAlikeDetails"), "「地区」共 2 行：首尾空格 2 格（如「华南\u2423」）。 查看");
+  assert.deepEqual(placeholderEntries(scope.evaluate), [["金额", "N/A", "common", 1, [29]], ["销售代表", "\u2014", "common", 1, [16]]]);
+  assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["订单编号", [["SO-1018", 2, [20, 21]]]]]);
+  const { names, mismatches } = problemRowCheck(scope);
+  assert.deepEqual(mismatches, []);
+  assert.deepEqual(names, [
+    "missing / 下单日期 = 1", "missing / 地区 = 1", "missing / 品类 = 1", "missing / 产品 = 1", "missing / 客户类型 = 1", "missing / 销售代表 = 1",
+    "conversion / 金额 = 1", "dateStyle / 下单日期 = 5", "outlier / 数量 = 1", "outlier / 金额 = 1", "duplicateRows = 2", "suspectedTotal = 1",
+    "idDuplicate / 订单编号 = 2", "lookAlike / 地区 = 2", "placeholder / 金额 / N/A = 1", "placeholder / 销售代表 / \u2014 = 1"
+  ]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")), [
+    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [10, 32], [29], [16]
+  ]);
+});
+
+test("v2.11.0 sample: confirming every common placeholder moves the two values to missing and keeps the total", async () => {
+  const scope = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(sampleOrdersPills(scope), ["缺失值总数：8", "重复行：1", "格式问题：0 个值", "异常值字段：2", "ID 重复字段：1", "疑似缺失值：0 个字段"]);
+  assert.equal(scope.evaluate("state.suspectedTotals.length"), 1);
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(["金额", "销售代表"].map((field) => getFieldProfile(field).missingCount))')), [1, 2]);
+});
+
+test("v2.11.0 sample: the standardized check counts 11 cells, 12 after confirming", async () => {
+  const scope = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
+  scope.evaluate("checkStandardizedExport()");
+  const changed = (counts) => Object.fromEntries(Object.entries(counts).filter(([, [, ...numbers]]) => numbers.some(Boolean)));
+  assert.deepEqual(changed(standardizedCounts(scope)), {
+    下单日期: ["date", 5, 0, 0, 0, 0], 地区: ["text", 0, 0, 0, 2, 0], 金额: ["number", 0, 3, 0, 0, 1]
+  });
+  assert.equal(scope.evaluate("state.standardizedExport.cellCount"), 11);
+  assert.equal(scope.evaluate("state.standardizedExport.counts.some((count) => count.orderHint)"), false);
+  scope.evaluate("confirmAllCommonPlaceholders(); checkStandardizedExport()");
+  assert.deepEqual(changed(standardizedCounts(scope)), {
+    下单日期: ["date", 5, 0, 0, 0, 0], 地区: ["text", 0, 0, 0, 2, 0], 金额: ["number", 0, 3, 1, 0, 0], 销售代表: ["text", 0, 0, 1, 0, 0]
+  });
+  assert.equal(scope.evaluate("state.standardizedExport.cellCount"), 12);
+});
+
+// The sample without its problems, built here (no clean file is committed): the hints only show
+// what was put into the file. Fix values: SO-1026 is 6 earphones at 260 each (SO-1010, SO-1038);
+// every other 华东 order is 张敏's.
+const SAMPLE_ORDERS_FIXES = {
+  title: (lines) => lines.slice(1),
+  total: (lines) => lines.filter((line) => !line.startsWith("合计,")),
+  duplicate: (lines) => lines.filter((line, index) => !(line.startsWith("SO-1018,") && line === lines[index - 1])),
+  na: (lines) => lines.map((line) => (line.startsWith("SO-1026,") ? line.replace(",N/A,", ",1560,") : line)),
+  dash: (lines) => lines.map((line) => (line.startsWith("SO-1014,") ? line.replace(/,\u2014$/, ",张敏") : line)),
+  unit: (lines) => lines.map((line) => line.replace(/,(\d+)元,/, ",$1,")),
+  date: (lines) => lines.map((line) => line.replace(/^(SO-\d+),(\d{4})(?:\/|年)(\d{1,2})(?:\/|月)(\d{1,2})日?,/, (match, id, year, month, day) => `${id},${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")},`)),
+  space: (lines) => lines.map((line) => line.replace(/ +,/g, ","))
+};
+
+const sampleOrdersLines = () => sampleOrdersLfText().slice(1, -1).split("\n");
+
+function sampleOrdersVariant(keep) {
+  let lines = sampleOrdersLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_FIXES)) if (name !== keep) lines = fix(lines);
+  return "\uFEFF" + lines.join("\n") + "\n";
+}
+
+test("v2.11.0 sample: without its problems nothing is flagged, and each problem alone flags only itself", async () => {
+  const PILLS_ZERO = ["缺失值总数：0", "重复行：0", "格式问题：0 个值", "异常值字段：0", "ID 重复字段：0", "疑似缺失值：0 个字段"];
+  const cases = {
+    clean: { pills: PILLS_ZERO, sections: [], note: false, cells: 0 },
+    title: { pills: PILLS_ZERO, sections: [], note: true, cells: 0 },
+    total: { pills: ["缺失值总数：6", "重复行：0", "格式问题：0 个值", "异常值字段：2", "ID 重复字段：0", "疑似缺失值：0 个字段"], sections: ["suspectedTotalSection"], note: true, cells: 0 },
+    duplicate: { pills: ["缺失值总数：0", "重复行：1", "格式问题：0 个值", "异常值字段：0", "ID 重复字段：1", "疑似缺失值：0 个字段"], sections: [], note: false, cells: 0 },
+    na: { pills: ["缺失值总数：0", "重复行：0", "格式问题：1 个值", "异常值字段：0", "ID 重复字段：0", "疑似缺失值：1 个字段"], sections: [], note: false, cells: 1 },
+    dash: { pills: ["缺失值总数：0", "重复行：0", "格式问题：0 个值", "异常值字段：0", "ID 重复字段：0", "疑似缺失值：1 个字段"], sections: [], note: false, cells: 0 },
+    unit: { pills: PILLS_ZERO, sections: ["numberConversionSection"], note: false, cells: 3 },
+    date: { pills: PILLS_ZERO, sections: ["dateStyleSection"], note: false, cells: 5 },
+    space: { pills: PILLS_ZERO, sections: ["lookAlikeSection"], note: false, cells: 2 }
+  };
+  for (const [name, expected] of Object.entries(cases)) {
+    const scope = await importCsvFile(sampleOrdersVariant(name === "clean" ? null : name), SAMPLE_ORDERS);
+    assert.deepEqual(sampleOrdersPills(scope), expected.pills, name);
+    assert.deepEqual(sampleOrdersShownSections(scope), expected.sections, name);
+    assert.equal(scope.elements.get("statusPanel").className.includes("has-note"), expected.note, name);
+    assert.equal(scope.evaluate("state.placeholders.length"), ["na", "dash"].includes(name) ? 1 : 0, name);
+    assert.equal(scope.evaluate("state.parseWarnings.length"), 0, name);
+    scope.evaluate("checkStandardizedExport()");
+    assert.equal(scope.evaluate("state.standardizedExport.cellCount"), expected.cells, name);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")),
+      ["id", "date", "category", "category", "category", "category", "numeric", "numeric", "category"], name);
+  }
+  // The builder itself: each fix changes the file on its own (a fix that stops matching would
+  // leave its problem in every case above), and the clean version has 40 orders and no title.
+  const full = sampleOrdersLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_FIXES)) assert.notDeepEqual(fix(full), full, name);
+  assert.equal(sampleOrdersVariant(null).split("\n").length, 1 + 40 + 1);
 });
