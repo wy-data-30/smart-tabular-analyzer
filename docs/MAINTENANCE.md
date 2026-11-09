@@ -38,6 +38,7 @@
 - 当前阈值是日期或数值转换成功率达到 80%；ID 识别优先于日期和数值。
 - 手动类型修正不改写原值，只记录转换失败并跳过无效值。
 - 调整规则前应增加中文字段、混合类型、百分比、货币、年份和歧义日期测试。
+- 标准化导出（v2.10.0）的单格规则（`standardizeDateCell()`、`standardizeNumberCell()`、`standardizeTextCell()`）跟着 `toDate()`、`toPlainNumber()`、`toNumberWithStrategy()` 和三个日期匹配器走。改这些函数的任何路径时，同步看单格规则：两条语料护栏（改写后同一天、改写后读回同一个数）和数字的兜底会抓到不一致，兜底触发时那一格保持原值、记“无法安全改写”。
 
 ### 质量与统计
 
@@ -165,6 +166,10 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 ### 报告导出按钮不可用
 
 `canExportReport()` 要求存在数据、字段画像、`analysisCompletedAt`，且没有未应用的字段类型草稿。先应用或恢复字段配置，再确认筛选刷新已经完成。
+
+### 标准化导出按钮不可用
+
+“检查标准化改动”与报告导出同一个门禁（`canCheckStandardizedExport()` 返回 `canExportReport()`），不可用时 `#standardizedExportGate` 写明原因。两个导出按钮还要求有检查结果：导入、应用或恢复字段配置、确认或撤销疑似缺失值后结果作废，要重新检查（筛选不作废）。改动清单为 0 条时“导出改动清单”保持禁用。
 
 ### GitHub Pages 上示例数据加载失败
 

@@ -1,4 +1,4 @@
-// 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和写法细节不同的值，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。
+// 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和写法细节不同的值，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响），以及标准化导出时单个单元格的标准写法。
 
 const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
@@ -105,16 +105,18 @@ function isDateObject(value) {
     && typeof value.getTime === "function";
 }
 
+// The three date matchers capture the time suffix as their last group ("" without one);
+// the groups before it are unchanged.
 function matchYearFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function matchDayOrMonthFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function matchChineseDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?${DATE_TIME_SUFFIX_PATTERN}$`));
+  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`));
 }
 
 function hasPercentToken(value) {
@@ -303,6 +305,13 @@ function toDate(value, strategy = {}) {
 }
 
 function parseEnglishCalendarDate(raw) {
+  const reading = readEnglishCalendarDate(raw);
+  return reading ? reading.date : null;
+}
+
+// { date, hasTime } of an English calendar date, or null: hasTime when a clock or a
+// zone was written (both are syntax only and never move the day).
+function readEnglishCalendarDate(raw) {
   let text = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
   let timeBeforeYear = false;
 
@@ -342,7 +351,12 @@ function parseEnglishCalendarDate(raw) {
   // A zone is syntax only: applying its offset would change the written day.
   const timezone = (parts[4] || "").trim();
   if (timezone && !/^(?:(?:GMT|UTC)(?:[+-](?:[01]\d|2[0-3]):?[0-5]\d)?|Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d|[ECMP][SD]T)(?:\s+\([a-z][a-z .+-]*\))?$/i.test(timezone)) return null;
-  return calendarDate;
+  return { date: calendarDate, hasTime: timeIndex >= 0 || timezone !== "" };
+}
+
+// YYYY-MM-DD of a calendar date from toDate() (a UTC midnight).
+function formatIsoDate(date) {
+  return date.toISOString().slice(0, 10);
 }
 
 // Characters that show nothing, as the source of a regular expression class: the soft
@@ -419,4 +433,133 @@ function buildUtcDate(year, month, day) {
     return null;
   }
   return parsed;
+}
+
+// The standardized export (v2.10.0): one cell at a time, { value, action }. action "" means
+// the cell is exported as it is and is not listed; a kept action exports the cell exactly as
+// written, edge whitespace included.
+const STANDARDIZE_KEPT_ACTIONS = Object.freeze(["keptTime", "keptPercent", "keptScientific", "keptCurrencyMix", "keptPendingPlaceholder", "keptDateUnreadable", "keptDateOrder", "keptNumberUnreadable", "keptUnsafe"]);
+const PLAIN_NUMBER_TEXT_PATTERN = /^-?\d+(?:\.\d+)?$/;
+const CURRENCY_SYMBOL_PATTERN = /[$￥¥€£]/;
+
+// Whether a text toDate() reads was written with a time (or a zone): the matcher toDate()
+// takes, in its order, decides. Only meaningful when toDate(raw, strategy) is not null.
+function dateTextHasTime(raw) {
+  const match = matchChineseDate(raw) || matchYearFirstDate(raw) || matchDayOrMonthFirstDate(raw);
+  if (match) return match[match.length - 1] !== "";
+  const english = readEnglishCalendarDate(raw);
+  return Boolean(english && english.hasTime);
+}
+
+function unchangedCell(value) {
+  return { value, action: "" };
+}
+
+// What every non-ignored field does first: a blank cell becomes "" (trim), a confirmed
+// placeholder becomes "" (placeholder). null leaves the cell to the field's own rule.
+function standardizeCommonCell(value, confirmedKeys) {
+  if (value === null || value === undefined || value === "") return unchangedCell(value);
+  if (isMissing(value)) return { value: "", action: "trim" };
+  if (confirmedKeys.length && confirmedKeys.includes(placeholderKey(value))) return { value: "", action: "placeholder" };
+  return null;
+}
+
+// A day-or-month-first date toDate() cannot read only because the order is unknown: both
+// parts at most 12, not equal, and the field has no dmy / mdy order (none or conflict).
+function isUnorderedDayMonthDate(raw, strategy) {
+  const match = matchDayOrMonthFirstDate(raw);
+  if (!match || strategy.order === "dmy" || strategy.order === "mdy") return false;
+  const first = Number(match[1]);
+  const second = Number(match[3]);
+  return first <= 12 && second <= 12 && first !== second;
+}
+
+// A date cell as YYYY-MM-DD when toDate() reads it without a time.
+function standardizeDateCell(value, strategy = {}, confirmedKeys = []) {
+  const common = standardizeCommonCell(value, confirmedKeys);
+  if (common) return common;
+  if (typeof value !== "string") {
+    const date = toDate(value, strategy);
+    return date ? { value: formatIsoDate(date), action: "date" } : unchangedCell(value);
+  }
+  if (placeholderKey(value)) return { value, action: "keptPendingPlaceholder" };
+  const date = toDate(value, strategy);
+  const raw = value.trim();
+  if (!date) return { value, action: isUnorderedDayMonthDate(raw, strategy) ? "keptDateOrder" : "keptDateUnreadable" };
+  if (dateTextHasTime(raw)) return { value, action: "keptTime" };
+  const text = formatIsoDate(date);
+  if (raw === text) return raw === value ? unchangedCell(value) : { value: text, action: "trim" };
+  return { value: text, action: "date" };
+}
+
+// The currency of a number text: ￥ (U+FFE5) and ¥ (U+00A5) are one sign (NFKC maps one to the other).
+function currencyOfNumberText(text) {
+  const match = text.match(CURRENCY_SYMBOL_PATTERN);
+  if (!match) return "";
+  return match[0] === "￥" ? "¥" : match[0];
+}
+
+// The plain text of a number toPlainNumber() reads (no percent, no exponent): accounting
+// brackets, a currency sign, a leading "+" and grouping go, cut as toPlainNumber() cuts them;
+// the digits stay as written.
+function plainNumberTextOf(text) {
+  let numericText = text;
+  const isAccountingNegative = /^\(.*\)$/.test(numericText);
+  if (isAccountingNegative) numericText = numericText.slice(1, -1);
+  numericText = numericText.trim();
+  const currencyIndex = numericText.search(CURRENCY_SYMBOL_PATTERN);
+  if (currencyIndex >= 0) numericText = `${numericText.slice(0, currencyIndex).trim()}${numericText.slice(currencyIndex + 1).trim()}`;
+  const [, sign, body] = numericText.match(/^([-+]?)(.*)$/);
+  let digits = body.replace(/[, \u00A0]/g, "");
+  if (digits.startsWith(".")) digits = `0${digits}`;
+  if (digits.endsWith(".")) digits = digits.slice(0, -1);
+  return `${isAccountingNegative || sign === "-" ? "-" : ""}${digits}`;
+}
+
+// shiftDecimalNumber() as text: the point moves, no digit of the source is dropped, only the
+// leading zeros the move leaves in front ("0.07万" -> "0700" -> "700").
+function shiftDecimalText(numberText, places) {
+  const [, sign, integerPart, fractionPart = ""] = numberText.replaceAll(",", "").match(/^([+-]?)(\d*)(?:\.(\d+))?$/);
+  const fraction = fractionPart.padEnd(places, "0");
+  const integer = `${integerPart}${fraction.slice(0, places)}`.replace(/^0+(?=\d)/, "");
+  const rest = fraction.length > places ? `.${fraction.slice(places)}` : "";
+  return `${sign === "-" ? "-" : ""}${integer}${rest}`;
+}
+
+// A number cell as a plain number, by text only. currencyMode "mixed": the field holds two or
+// more currency signs, so a cell with one is kept. A rewrite that reads as zero drops its "-".
+function standardizeNumberCell(value, strategy, confirmedKeys = [], currencyMode = "") {
+  const common = standardizeCommonCell(value, confirmedKeys);
+  if (common) return common;
+  if (typeof value !== "string") return unchangedCell(value);
+  if (placeholderKey(value)) return { value, action: "keptPendingPlaceholder" };
+  const number = toNumber(value, strategy);
+  if (number === null) return { value, action: "keptNumberUnreadable" };
+  const raw = value.trim();
+  if (PLAIN_NUMBER_TEXT_PATTERN.test(raw)) return raw === value ? unchangedCell(value) : { value: raw, action: "trim" };
+  const text = strategy && strategy.fullwidth ? toHalfwidthNumberText(raw) : raw;
+  if (/%/.test(text)) return { value, action: "keptPercent" };
+  if (/[eE]/.test(text)) return { value, action: "keptScientific" };
+  if (currencyMode === "mixed" && CURRENCY_SYMBOL_PATTERN.test(text)) return { value, action: "keptCurrencyMix" };
+  let standardized;
+  if (toPlainNumber(text) !== null) standardized = plainNumberTextOf(text);
+  else {
+    const match = matchNumberWithUnit(text);
+    standardized = match.magnitude
+      ? shiftDecimalText(match.numberText, match.magnitude === "万" ? 4 : 8)
+      : plainNumberTextOf(match.numberText);
+  }
+  if (standardized.startsWith("-") && toPlainNumber(standardized) === 0) standardized = standardized.slice(1);
+  // Safety net: the text must read back as the same number (a zero as a zero, any sign).
+  const reread = toPlainNumber(standardized);
+  if (!(Object.is(reread, number) || (reread === 0 && number === 0))) return { value, action: "keptUnsafe" };
+  return { value: standardized, action: "number" };
+}
+
+// A category or ID cell (and a year field's cell): edge whitespace goes.
+function standardizeTextCell(value, confirmedKeys = []) {
+  const common = standardizeCommonCell(value, confirmedKeys);
+  if (common) return common;
+  if (typeof value !== "string" || !hasEdgeWhitespace(value)) return unchangedCell(value);
+  return { value: value.trim(), action: "trim" };
 }

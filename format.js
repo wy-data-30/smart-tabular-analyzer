@@ -1,4 +1,4 @@
-// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。
+// 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，标准化导出的处理文字、检查表说明和状态行，以及 HTML 转义。
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;
@@ -406,6 +406,67 @@ function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
   if (invisibleOnly) parts.push("只有不可见字符");
   if (hasEdge) parts.push("首尾空格");
   return `${parts.join("，")}：「${formatVisibleText(value)}」`;
+}
+
+// The 处理 of a standardized cell (v2.10.0), for the check table's samples and the change list.
+const STANDARDIZE_ACTION_LABELS = Object.freeze({
+  date: "日期改写为 YYYY-MM-DD",
+  number: "数字改写为纯数字",
+  placeholder: "已确认的疑似缺失值，清空",
+  trim: "去首尾空格",
+  keptTime: "带时间，保持原值",
+  keptPercent: "百分比，不改写",
+  keptScientific: "科学计数法，不改写",
+  keptCurrencyMix: "货币符号不一致，保持原值",
+  keptPendingPlaceholder: "疑似缺失值，未确认",
+  keptDateUnreadable: "读不成日期，保持原值",
+  keptDateOrder: "日月顺序无法确定，保持原值",
+  keptNumberUnreadable: "读不成数字，保持原值",
+  keptUnsafe: "无法安全改写，保持原值"
+});
+
+function formatStandardizeAction(action) {
+  return STANDARDIZE_ACTION_LABELS[action] || "";
+}
+
+const STANDARDIZE_ORDER_HINT = "导出后这一列剩下的日或月在前的写法没有了确定顺序的依据，再次导入本工具时可能读不成日期。";
+
+// Why 检查标准化改动 is unavailable, or "" when it is.
+function formatStandardizedExportGate(hasRows, hasDrafts, analysisDone) {
+  if (!hasRows) return "请先上传并解析有效的数据文件。";
+  if (hasDrafts) return "字段配置有未应用的修改，请先应用或撤销后再检查。";
+  if (!analysisDone) return "分析尚未完成。";
+  return "";
+}
+
+// The notes under a field name in the check table: read by year, a unit left out of the
+// export, the day-month order a second import may not find (D8).
+function formatStandardizeFieldNotes(count) {
+  const notes = [];
+  if (count.kind === "year") notes.push("按年份读取，不改写日期");
+  if (count.unit && count.number) notes.push(`单位「${count.unit}」不写进导出文件，表头仍是「${count.field}」`);
+  if (count.orderHint) notes.push(STANDARDIZE_ORDER_HINT);
+  return notes;
+}
+
+// 2（如「2024-05-08 10:30」、「待定」）
+function formatStandardizeKept(count) {
+  return count.kept ? `${formatInteger(count.kept)}（如${count.keptSamples.map((sample) => `「${formatVisibleText(sample)}」`).join("、")}）` : "—";
+}
+
+// The status after 导出改动清单: all of it, or the first `exported` of `total` (D13).
+function formatStandardizedChangesStatus(exported, total, fileName) {
+  return exported < total
+    ? `只导出了前 ${formatInteger(exported)} 条，共 ${formatInteger(total)} 条：${fileName}`
+    : `已导出改动清单 ${formatInteger(total)} 条：${fileName}`;
+}
+
+// The sentence above the check table.
+function formatStandardizedSummary({ changed, kept, quietCount, ignoredCount }) {
+  const ignored = ignoredCount ? `已忽略的 ${formatInteger(ignoredCount)} 个字段原样导出。` : "";
+  if (!changed && !kept) return `没有需要标准化的单元格，导出的数据与原始数据相同。${ignored}`;
+  const quiet = quietCount ? `其余 ${formatInteger(quietCount)} 个字段没有改动。` : "";
+  return `共改写 ${formatInteger(changed)} 格，保持原值 ${formatInteger(kept)} 格。${quiet}${ignored}`;
 }
 function escapeHtml(value) {
   return String(value ?? "")

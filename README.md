@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.9.0
+**Current release:** v2.10.0
 
 ## Language
 
@@ -40,6 +40,7 @@ The project is a static website with no backend service, database, account syste
 - Apply categorical, numeric, and date filters, and run grouped analysis (one metric, one grouping field, optionally a date field).
 - Show one data-grounded conclusion under the category chart and one under the date trend chart, each following the field selected in that chart and without inferring external business context; the trend conclusion compares record counts and flags a possibly incomplete last month or year, and the category conclusion says so instead of summarizing a field whose values are too scattered. Reports carry the same sentences.
 - Export filtered or deduplicated rows to CSV in the browser while preserving field order and neutralizing spreadsheet-formula prefixes.
+- Export standardized data: first click “检查标准化改动” (check the standardized changes) to see, field by field, how many cells would be rewritten and which stay as written; then export every original row with dates written as YYYY-MM-DD, numbers without units, 万/亿, full-width characters, thousands separators, or currency signs, confirmed placeholders emptied, and edge whitespace removed from text. A change list can be exported too, naming every cell rewritten or kept as written (file row, field, original value, exported value, action).
 - Export the analysis as HTML or Markdown; reports also record the applied filters, and HTML reports embed the currently rendered charts for offline viewing.
 
 Detailed processing rules and data flows are documented in [Architecture](./docs/ARCHITECTURE.md).
@@ -177,6 +178,13 @@ npm run test:regression
 - Excel cells are read by their stored value: an ID shown as 001012 through a number format is checked and shown as 1012, and the number 1012 and the text 1012 count as the same ID.
 - Format inconsistencies are only hints. Writings that differ in more than width, case, invisible characters, or spacing are not grouped: 华东 and 华东区, simplified and traditional characters (華东 and 华东), and 张 三 and 张三 (a space removed altogether) count as different values. Zero padding and a time part do not make a new date style (2024-5-6 and 2024-05-06 10:30 are both year-month-day). A numeric column with 1 and 1.0 is not a constant column. Case-sensitive IDs such as AbC and aBc are reported as written in more than one way.
 - An Excel cell that holds only a time (formatted hh:mm) is a number cell and reads as the date 1899-12-31.
+- An Excel date cell with a time (formatted yyyy-mm-dd hh:mm, for example) imports as its date only; the time is in neither the analysis nor any CSV export.
+- The standardized export does not rewrite percentages (50%) or scientific notation (1e3), and keeps dates written with a time (2024-05-06 10:30, for example) as they are; zero-width characters, full-width letters, and letter case are not unified.
+- After the standardized export, numbers read with a unit are plain numbers and the unit is not added to the header (“金额” stays “金额”, not “金额（元）”).
+- The weekday of an English date is not checked: Tue, 6 May 2024 reads as 2024-05-06 (a Monday), and the standardized export writes only the date, 2024-05-06.
+- When a date column’s day-month order rests only on cells that the standardized export rewrites, the day-or-month-first cells written with a time lose what decided their order, and importing the exported file into this tool again may not read them as dates; the check table notes this under the column.
+- The change list holds at most 1,048,575 cells (the rows of an Excel sheet minus the header). Beyond that only the first 1,048,575 are exported, and the file name and the status line say so; the check table still counts every cell.
+- When Excel opens an exported CSV directly, it drops leading zeros such as in 007 and loses the precision of numbers longer than 15 digits; the tool writes the original text.
 - CSV row numbers count text lines, as a plain-text editor shows them; data rows, parse warnings, and errors all name the line where the record starts. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
 - Problem rows can be viewed and exported on the quality page only; HTML and Markdown reports do not include the problem-row tables, and there is no view of all problem rows together.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.

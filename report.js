@@ -1,4 +1,4 @@
-// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。
+// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和标准化导出（整表检查、标准化 CSV 和改动清单）、导出门禁、文件名和下载。
 
 const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",
@@ -47,6 +47,23 @@ function updateExportButtons() {
     button.disabled = dataExportDisabled;
     button.setAttribute("aria-disabled", String(dataExportDisabled));
   });
+  // 检查标准化改动 has the report gate; its exports also need a check, and the change list a cell.
+  const checkDisabled = !canCheckStandardizedExport();
+  const result = state.standardizedExport;
+  [
+    [dom.checkStandardizedExport, checkDisabled],
+    [dom.exportStandardizedCsv, checkDisabled || !result],
+    [dom.exportStandardizedChanges, checkDisabled || !result || !result.cellCount]
+  ].forEach(([button, isDisabled]) => {
+    if (!button) return;
+    button.disabled = isDisabled;
+    button.setAttribute("aria-disabled", String(isDisabled));
+  });
+  if (dom.standardizedExportGate) {
+    dom.standardizedExportGate.textContent = checkDisabled
+      ? formatStandardizedExportGate(state.rows.length > 0, hasFieldConfigDraftChanges(), Boolean(state.analysisCompletedAt))
+      : "";
+  }
   renderDataExportSummary();
 }
 
@@ -171,6 +188,220 @@ function exportProblemRows() {
   } catch (error) {
     setProblemRowsExportStatus(`导出失败：${error.message}`, "error");
   }
+}
+
+// ---- Standardized export (v2.10.0) ----
+// Action codes stored per listed cell: 1–4 change the cell, the kept ones export it as written.
+const STANDARDIZE_ACTIONS = Object.freeze(["", "date", "number", "placeholder", "trim", ...STANDARDIZE_KEPT_ACTIONS]);
+const STANDARDIZE_ACTION_CODES = new Map(STANDARDIZE_ACTIONS.map((action, code) => [action, code]));
+const STANDARDIZE_LAST_CHANGE_CODE = 4;
+const STANDARDIZE_SAMPLE_LIMIT = 3;
+
+// The same gate as the reports: data, a finished analysis and no unapplied field drafts.
+function canCheckStandardizedExport() {
+  return canExportReport();
+}
+
+// "mixed" when the cells the field reads as numbers (percent and scientific ones too) carry
+// two or more currency signs, "single" for one, "" for none. Each distinct text is read once.
+function findCurrencyMode(rows, profile, confirmedKeys) {
+  const parse = getNumberParser(profile.numberStrategy);
+  const fullwidth = Boolean(profile.numberStrategy && profile.numberStrategy.fullwidth);
+  const currencies = new Set();
+  const seen = new Set();
+  for (let index = 0; index < rows.length; index += 1) {
+    const value = rows[index][profile.field];
+    if (typeof value !== "string" || seen.has(value)) continue;
+    seen.add(value);
+    if (!CURRENCY_SYMBOL_PATTERN.test(value) || isMissingOrConfirmed(value, confirmedKeys) || parse(value) === null) continue;
+    const text = value.trim();
+    currencies.add(currencyOfNumberText(fullwidth ? toHalfwidthNumberText(text) : text));
+    if (currencies.size > 1) return "mixed";
+  }
+  return currencies.size ? "single" : "";
+}
+
+// The one-cell rule of a field, taken once outside the row loop: { kind, currencyMode, standardize }.
+// A field read by year is not rewritten as dates; its cells follow the text rule.
+function buildStandardizeRule(profile, rows, confirmedKeys) {
+  const typeKey = profile ? profile.typeKey : "ignore";
+  if (typeKey === "ignore") return { kind: "ignored", currencyMode: "", standardize: null };
+  if (typeKey === "date") {
+    if (profile.dateStrategy.granularity === "year") {
+      return { kind: "year", currencyMode: "", standardize: (value) => standardizeTextCell(value, confirmedKeys) };
+    }
+    return { kind: "date", currencyMode: "", standardize: (value) => standardizeDateCell(value, profile.dateStrategy, confirmedKeys) };
+  }
+  if (typeKey === "numeric") {
+    const currencyMode = findCurrencyMode(rows, profile, confirmedKeys);
+    return { kind: "number", currencyMode, standardize: (value) => standardizeNumberCell(value, profile.numberStrategy, confirmedKeys, currencyMode) };
+  }
+  return { kind: "text", currencyMode: "", standardize: (value) => standardizeTextCell(value, confirmedKeys) };
+}
+
+// Every cell of the original rows by the applied configuration. counts: one entry per field,
+// in field order; cells: the listed cells as four parallel arrays, by row then field (row index,
+// field index, action code, exported value; the value is undefined for a kept cell). orderHint:
+// a date field read in dmy / mdy order whose exported cells no longer give that order to
+// buildDateStrategy(), and some of which a second import would then not read.
+function buildStandardizedExport(rows, fields, profiles, confirmations) {
+  const fieldProfiles = fields.map((field) => profiles.find((item) => item.field === field));
+  const rules = fields.map((field, index) => buildStandardizeRule(fieldProfiles[index], rows, getConfirmedPlaceholderKeys(field, confirmations)));
+  const counts = fields.map((field, index) => ({
+    field,
+    typeKey: fieldProfiles[index] ? fieldProfiles[index].typeKey : "ignore",
+    kind: rules[index].kind,
+    currencyMode: rules[index].currencyMode,
+    unit: rules[index].kind === "number" ? fieldProfiles[index].numberStrategy.unit || "" : "",
+    date: 0, number: 0, placeholder: 0, trim: 0, kept: 0,
+    keptByAction: {},
+    keptSamples: [],
+    orderHint: false
+  }));
+  // Exported non-missing values of the date fields read in an order, for orderHint.
+  const orderValues = fields.map((field, index) => (
+    rules[index].kind === "date" && ["dmy", "mdy"].includes(fieldProfiles[index].dateStrategy.order) ? [] : null
+  ));
+  const memos = fields.map(() => new Map());
+  const cells = { rows: [], fields: [], actions: [], values: [] };
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    for (let fieldIndex = 0; fieldIndex < fields.length; fieldIndex += 1) {
+      const rule = rules[fieldIndex];
+      if (!rule.standardize) continue;
+      const value = row[fields[fieldIndex]];
+      let result;
+      if (typeof value === "string") {
+        result = memos[fieldIndex].get(value);
+        if (!result) {
+          result = rule.standardize(value);
+          memos[fieldIndex].set(value, result);
+        }
+      } else result = rule.standardize(value);
+      if (orderValues[fieldIndex] && !isMissing(result.value)) orderValues[fieldIndex].push(result.value);
+      if (!result.action) continue;
+      const count = counts[fieldIndex];
+      const code = STANDARDIZE_ACTION_CODES.get(result.action);
+      cells.rows.push(rowIndex);
+      cells.fields.push(fieldIndex);
+      cells.actions.push(code);
+      if (code <= STANDARDIZE_LAST_CHANGE_CODE) {
+        cells.values.push(result.value);
+        count[result.action] += 1;
+      } else {
+        cells.values.push(undefined);
+        count.kept += 1;
+        count.keptByAction[result.action] = (count.keptByAction[result.action] || 0) + 1;
+        if (count.keptSamples.length < STANDARDIZE_SAMPLE_LIMIT && !count.keptSamples.includes(value)) count.keptSamples.push(value);
+      }
+    }
+  }
+  // A hint only when the order changes and some exported cell that reads now would not read
+  // with the order a second import finds.
+  orderValues.forEach((values, index) => {
+    if (!values) return;
+    const strategy = fieldProfiles[index].dateStrategy;
+    const exported = buildDateStrategy(fields[index], values);
+    counts[index].orderHint = exported.order !== strategy.order
+      && values.some((value) => toDate(value, strategy) !== null && toDate(value, exported) === null);
+  });
+  const totals = { date: 0, number: 0, placeholder: 0, trim: 0, kept: 0 };
+  counts.forEach((count) => Object.keys(totals).forEach((key) => { totals[key] += count[key]; }));
+  return { counts, cells, totals, cellCount: cells.rows.length };
+}
+
+// Every row's cells for export, the standardized values laid over the original ones.
+function buildStandardizedCellRows(result, rows, fields) {
+  const cellRows = rows.map((row) => fields.map((field) => readCsvExportCell(row, field)));
+  const { cells } = result;
+  for (let index = 0; index < cells.rows.length; index += 1) {
+    if (cells.values[index] !== undefined) cellRows[cells.rows[index]][cells.fields[index]] = cells.values[index];
+  }
+  return cellRows;
+}
+
+// At most this many cells go into one change list: an Excel sheet holds 1,048,576 rows,
+// one of them the header.
+const STANDARDIZED_CHANGE_LIMIT = 1048575;
+const STANDARDIZED_CHANGE_HEADERS = Object.freeze(["文件行号", "字段", "原值", "导出值", "处理"]);
+
+// The standardized CSV: every original row and field, in order, original headers.
+function buildStandardizedCsvContent(result, rows, fields) {
+  return buildCsvTableContent([...fields], buildStandardizedCellRows(result, rows, fields));
+}
+
+// The change list: the first `limit` listed cells, by row then field. The original value and
+// the file row are read now from the rows (a row without a file row gets ""); a kept cell
+// exports its original value.
+function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, limit = STANDARDIZED_CHANGE_LIMIT) {
+  const { cells } = result;
+  const count = Math.min(result.cellCount, limit);
+  const data = new Array(count);
+  for (let index = 0; index < count; index += 1) {
+    const row = rows[cells.rows[index]];
+    const field = fields[cells.fields[index]];
+    const original = readCsvExportCell(row, field);
+    const exported = cells.values[index] === undefined ? original : cells.values[index];
+    data[index] = [getRowNumber(row) ?? "", field, original, exported, formatStandardizeAction(STANDARDIZE_ACTIONS[cells.actions[index]])];
+  }
+  return buildCsvTableContent([...STANDARDIZED_CHANGE_HEADERS], data);
+}
+
+// <原文件名>_标准化_<yyyymmdd>.csv, <原文件名>_标准化改动清单[_前N条]_<yyyymmdd>.csv; only the part
+// before the date is sanitized and shortened, so the date always stays.
+function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
+  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
+  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
+  const label = kind === "changes" ? `标准化改动清单${truncatedTo ? `_前${truncatedTo}条` : ""}` : "标准化";
+  return `${sanitizeFileName(`${stem}_${label}`)}_${formatReportFileDate(now)}.csv`;
+}
+
+// 导出标准化 CSV / 导出改动清单: from the result of the last check, never computed again.
+function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
+  const result = state.standardizedExport;
+  if (!result || !canCheckStandardizedExport()) {
+    setStandardizedExportStatus("请先检查标准化改动。", "warning");
+    return;
+  }
+  if (kind === "changes" && !result.cellCount) {
+    setStandardizedExportStatus("没有需要列出的单元格。", "warning");
+    return;
+  }
+  try {
+    const now = new Date();
+    if (kind === "changes") {
+      const truncatedTo = result.cellCount > limit ? limit : 0;
+      const content = buildStandardizedChangesCsvContent(result, state.rows, state.fields, getSourceRowNumber, limit);
+      const fileName = buildStandardizedFileName("changes", now, truncatedTo);
+      downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
+      setStandardizedExportStatus(formatStandardizedChangesStatus(Math.min(result.cellCount, limit), result.cellCount, fileName), truncatedTo ? "warning" : "success");
+      return;
+    }
+    const content = buildStandardizedCsvContent(result, state.rows, state.fields);
+    const fileName = buildStandardizedFileName("data", now);
+    downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
+    setStandardizedExportStatus(`已导出标准化数据 ${formatInteger(state.rows.length)} 行：${fileName}`, "success");
+  } catch (error) {
+    setStandardizedExportStatus(`导出失败：${error.message}`, "error");
+  }
+}
+
+// 检查标准化改动: computed here only, never on a refresh path.
+function checkStandardizedExport() {
+  if (!canCheckStandardizedExport()) {
+    updateExportButtons();
+    return;
+  }
+  state.standardizedExport = buildStandardizedExport(state.rows, state.fields, state.profiles, state.placeholderConfirmations);
+  setStandardizedExportStatus("");
+  renderStandardizedExport();
+  updateExportButtons();
+}
+
+function setStandardizedExportStatus(message, tone = "") {
+  if (!dom.standardizedExportStatus) return;
+  dom.standardizedExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
+  dom.standardizedExportStatus.textContent = message;
 }
 
 function sanitizeCsvExportValue(value) {
@@ -338,7 +569,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.9.0",
+    version: "v2.10.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -578,7 +809,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.9.0",
+    version: reportData.version || "v2.10.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.

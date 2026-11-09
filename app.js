@@ -1,4 +1,4 @@
-// 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染。
+// 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染，还有标准化导出检查表的显示和作废。
 
 const state = {
   rows: [],
@@ -77,6 +77,9 @@ const state = {
   analysisCompletedAt: null,
   chartInsights: { category: "", trend: "" },
   customAnalysis: null,
+  // buildStandardizedExport() as of the last 检查标准化改动, or null. Imports, field
+  // configuration and placeholder confirmations clear it; filters never.
+  standardizedExport: null,
   filters: {
     category: null,
     numeric: null,
@@ -207,6 +210,14 @@ const dom = {
   exportFilteredCsv: document.getElementById("exportFilteredCsv"),
   exportDeduplicatedCsv: document.getElementById("exportDeduplicatedCsv"),
   dataExportStatus: document.getElementById("dataExportStatus"),
+  checkStandardizedExport: document.getElementById("checkStandardizedExport"),
+  standardizedExportGate: document.getElementById("standardizedExportGate"),
+  standardizedExportPanel: document.getElementById("standardizedExportPanel"),
+  standardizedExportSummary: document.getElementById("standardizedExportSummary"),
+  standardizedExportTable: document.getElementById("standardizedExportTable"),
+  exportStandardizedCsv: document.getElementById("exportStandardizedCsv"),
+  exportStandardizedChanges: document.getElementById("exportStandardizedChanges"),
+  standardizedExportStatus: document.getElementById("standardizedExportStatus"),
   exportHtmlReport: document.getElementById("exportHtmlReport"),
   exportMarkdownReport: document.getElementById("exportMarkdownReport"),
   reportExportStatus: document.getElementById("reportExportStatus")
@@ -352,6 +363,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   renderCharts();
   renderChartInsights();
   resetV2AnalysisState();
+  clearStandardizedExport();
   updateExportButtons();
   showResultsWorkspace();
 }
@@ -374,6 +386,46 @@ function buildHeaderDetectionState(headerDetection) {
 // come through commitTabularData() or an import without row numbers.
 function getSourceRowNumber(row) {
   return state.sourceRowNumbers.get(row) ?? null;
+}
+
+// Drops the last 检查标准化改动 (v2.10.0) and its panel: imports, field configuration,
+// placeholder confirmations and resets call it; filters never do. The buttons follow
+// updateExportButtons().
+function clearStandardizedExport() {
+  state.standardizedExport = null;
+  dom.standardizedExportPanel.classList.add("hidden");
+  dom.standardizedExportSummary.textContent = "";
+  dom.standardizedExportTable.innerHTML = "";
+  setStandardizedExportStatus("");
+}
+
+const STANDARDIZE_COUNT_KEYS = Object.freeze(["date", "number", "placeholder", "trim", "kept"]);
+
+// The check table: one row per field with a change, a kept cell, a note or a year reading;
+// ignored fields only in the sentence above it; then the total.
+function renderStandardizedExport() {
+  const result = state.standardizedExport;
+  dom.standardizedExportPanel.classList.toggle("hidden", !result);
+  if (!result) return;
+  const listed = result.counts.filter((count) => count.kind !== "ignored"
+    && (count.kind === "year" || count.orderHint || STANDARDIZE_COUNT_KEYS.some((key) => count[key])));
+  const ignoredCount = result.counts.filter((count) => count.kind === "ignored").length;
+  const { totals } = result;
+  dom.standardizedExportSummary.textContent = formatStandardizedSummary({
+    changed: totals.date + totals.number + totals.placeholder + totals.trim,
+    kept: totals.kept,
+    quietCount: result.counts.length - listed.length - ignoredCount,
+    ignoredCount
+  });
+  const cell = (value) => `<td>${value ? formatInteger(value) : "—"}</td>`;
+  const rows = listed.map((count) => {
+    const notes = formatStandardizeFieldNotes(count).map((note) => `<span class="standardize-note">${escapeHtml(note)}</span>`).join("");
+    return `<tr><td>${escapeHtml(count.field)}${notes}</td><td>${escapeHtml(FIELD_TYPE_LABELS[count.typeKey] || "")}</td>${cell(count.date)}${cell(count.number)}${cell(count.placeholder)}${cell(count.trim)}<td>${escapeHtml(formatStandardizeKept(count))}</td></tr>`;
+  }).join("");
+  const total = `<tr class="standardize-total"><td>合计</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
+  dom.standardizedExportTable.innerHTML = listed.length
+    ? `<thead><tr><th>字段</th><th>类型</th><th>日期改写</th><th>数字改写</th><th>清空疑似缺失值</th><th>去首尾空格</th><th>保持原值</th></tr></thead><tbody>${rows}${total}</tbody>`
+    : "";
 }
 
 function renderOverview() {
@@ -1125,6 +1177,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   refreshFormatConsistency();
+  clearStandardizedExport();
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
@@ -2019,6 +2072,7 @@ function resetAnalysisState() {
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
+  clearStandardizedExport();
 
   document.body.classList.remove("has-results");
   setDataExportStatus("");

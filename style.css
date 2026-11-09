@@ -1932,6 +1932,47 @@ select:hover {
   min-width: 164px;
 }
 
+.standardize-gate {
+  margin-top: 6px;
+  color: var(--warning);
+}
+
+.standardize-gate:empty {
+  display: none;
+}
+
+.standardized-export {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.standardized-export > p:first-child {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.standardized-export .table-wrap:has(> table:empty) {
+  display: none;
+}
+
+.standardize-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.standardize-total td {
+  font-weight: 650;
+}
+
+.standardized-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .report-export-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2406,6 +2447,7 @@ select:focus-visible,
   .field-config-actions,
   .filter-toolbar-actions,
   .data-export-option button,
+  .standardized-export-actions,
   .report-actions,
   .app-footer {
     display: none !important;

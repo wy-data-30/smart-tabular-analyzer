@@ -424,7 +424,7 @@ function excelRowHasValue(row) {
 
 function normalizeExcelDateValue(value) {
   const date = toDate(value);
-  return date ? date.toISOString().slice(0, 10) : null;
+  return date ? formatIsoDate(date) : null;
 }
 
 function normalizeExcelCellValue(formattedValue, rawValue) {
