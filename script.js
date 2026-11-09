@@ -65,12 +65,12 @@ dom.fileInput.addEventListener("change", (event) => {
 dom.loadSample.addEventListener("click", async () => {
   const importId = beginImport();
   try {
-    setStatus("正在加载 sample-data.csv ...");
-    const response = await fetch("examples/sample-data.csv");
+    setStatus("正在加载 sample-orders.csv ...");
+    const response = await fetch("examples/sample-orders.csv");
     if (!response.ok) throw new Error("示例数据加载失败");
     const text = await response.text();
     if (!isCurrentImport(importId)) return;
-    parseCsvText(text, "sample-data.csv", importId);
+    parseCsvText(text, "sample-orders.csv", importId);
   } catch (error) {
     showError(error.message, importId);
   }

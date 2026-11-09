@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.10.0 架构说明
+# Smart Tabular Analyzer v2.11.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -60,7 +60,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 ├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
 │   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
-│   └── sample-data.csv         # “使用示例数据”加载的虚构数据
+│   └── sample-orders.csv       # “使用示例数据”加载的虚构订单表（故意放了几类问题，v2.11.0）
 ├── assets/                     # README 截图
 ├── tests/
 │   ├── test-context.cjs        # VM + 轻量假 DOM 测试环境
@@ -68,7 +68,7 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 │   ├── basic-data-processing.test.cjs
 │   ├── destructive-qa.test.cjs
 │   ├── core.test.cjs
-│   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具，examples/ 放其余 5 个示例 CSV（只给测试用）
+│   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具，examples/ 放其余 6 个示例 CSV（只给测试用，含 v2.11.0 前的按钮示例 sample-data.csv）
 ├── docs/                       # 开发者维护文档
 └── .github/workflows/ci.yml    # push / PR 自动回归测试
 ```
@@ -251,7 +251,7 @@ flowchart LR
 
 **输入 / 输出**
 
-- 文件入口输入浏览器 `File`；示例入口输入 `fetch("examples/sample-data.csv")` 返回的文本。
+- 文件入口输入浏览器 `File`；示例入口输入 `fetch("examples/sample-orders.csv")` 返回的文本（这份文件带标题行，走表头检测的重试，`Papa.parse` 共 4 次）。
 - CSV 解析的标准输出是 `fields: string[]`、无原型 `rows: object[]` 和可选 `parseWarnings`。
 - 成功路径没有直接返回值，而是调用 `commitTabularData()`；失败路径通过 `showError()` 清空结果并显示错误。
 

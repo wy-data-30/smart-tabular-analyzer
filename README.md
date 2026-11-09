@@ -2,7 +2,7 @@
 
 > A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
 
-**Current release:** v2.10.0
+**Current release:** v2.11.0
 
 ## Language
 
@@ -14,6 +14,8 @@ English | [中文](./README.zh-CN.md)
 - **Repository:** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
 
 Open the demo and choose **使用示例数据** ("Use Sample Data") to complete an analysis without preparing a file.
+
+The sample is a fictional order list for the first half of 2025 with a few common problems put in on purpose — a title row above the header, a total row, a duplicated order, "N/A" and "—" placeholders, amounts written like "5400元", mixed date formats and trailing spaces — so the Data Quality page has something to show. The total row is still counted, which inflates the averages and the distribution chart.
 
 ## About
 
@@ -148,10 +150,10 @@ npm run test:regression
 ├── script.js                    # Startup: self-check and event bindings (loads last)
 ├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
-│   └── sample-data.csv          # Loaded by "Use Sample Data"
+│   └── sample-orders.csv        # Loaded by "Use Sample Data"
 ├── assets/
 ├── docs/
-├── tests/                       # Tests and fixtures (tests/fixtures/examples/ holds the other sample CSVs)
+├── tests/                       # Tests and fixtures (tests/fixtures/examples/ holds the other sample CSVs, including the former sample-data.csv)
 └── package.json
 ```
 

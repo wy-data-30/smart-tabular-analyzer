@@ -2,7 +2,7 @@
 
 > 一款在浏览器中完成 CSV 和 Excel 快速探索分析的隐私友好型工具。
 
-**当前版本：** v2.10.0
+**当前版本：** v2.11.0
 
 ## 语言
 
@@ -14,6 +14,8 @@
 - **GitHub 仓库：** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
 
 打开在线演示并点击 **使用示例数据**，无需准备文件即可完成一次分析。
+
+示例是一份虚构的 2025 年上半年订单明细，故意放了几处常见问题——表头上方的标题行、合计行、一笔重复的订单、「N/A」和「—」、写成“5400元”的金额、几种日期写法和单元格结尾的空格——打开后可以直接在“数据质量”里看到它们。合计行目前仍计入统计，所以数值分布和平均值会偏大。
 
 ## 项目简介
 
@@ -148,10 +150,10 @@ npm run test:regression
 ├── script.js                    # 启动入口：自检和事件绑定（最后加载）
 ├── vendor/                      # 自行托管的依赖库及许可证
 ├── examples/
-│   └── sample-data.csv          # “使用示例数据”加载的文件
+│   └── sample-orders.csv        # “使用示例数据”加载的文件
 ├── assets/
 ├── docs/
-├── tests/                       # 测试与夹具（tests/fixtures/examples/ 放其余示例 CSV）
+├── tests/                       # 测试与夹具（tests/fixtures/examples/ 放其余示例 CSV，含原来的 sample-data.csv）
 └── package.json
 ```
 
