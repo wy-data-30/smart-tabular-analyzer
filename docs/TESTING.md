@@ -251,3 +251,38 @@ v2.9.0 加了日期写法混用、常量列和写法细节不同的值三类提�
 **重新生成摘要基准**：`tests/fixtures/v2.8.1-guard.json` 是 v2.8.1（`196d8a9`）上 13 个文件各两种状态的摘要（profile、统计、质量数字、现有问题行，sha256 截取 32 位），在 Linux + Node 22 和 Windows + Node 24 上生成的结果逐字节相同。以后哪一版**有意**改变了这些结果，就在那一版用改动前的代码重新生成，或者删掉这条护栏，并在 PR 里说明。生成方法：在改动前的提交上，对每个夹具和示例 CSV 经 `parseDataFile()` 导入，按测试里 `v281GuardDigest()` 的同一个表达式算摘要，再 `confirmAllCommonPlaceholders()` 后算一次。
 
 假 DOM 不计算样式，三个小节是否看得见、`␣` 和 `[零宽字符]` 是否显示得出来要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。
+
+## 10. v2.10.0 新增测试固定了什么
+
+v2.10.0 加了“标准化数据”导出（检查表、标准化 CSV、改动清单）。新增 28 条测试（425 → 453）：7 条纯函数在 `data-processing.test.cjs`，21 条集成在 `basic-data-processing.test.cjs`。没有改任何现有断言，没有新增夹具，`v2.8.1-guard.json` 不变。测试数据都是测试里内联的 CSV（`STANDARDIZE_CSV`：编号 / 日期 / 金额（元）/ 区域 / 年份 / 备注各一种类型，`DMY_EVIDENCE_REWRITTEN`：日月顺序只靠一个会被改写的格），看不见的字符一律写 `\u` 转义。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `v2.10.0 standardizeDateCell: the boundary table` | 各种日期写法的导出值和处理：三种分隔符、中文、日或月在前（dmy / mdy / none / conflict）、英文（含星期写错）、带时间和只写时区的保持原值、已是 `YYYY-MM-DD` 只带空格的记“去首尾空格”、保持原值的格保留首尾空格、读不成日期与日月顺序无法确定、疑似缺失值未确认 / 已确认、只有空白的格 |
+| `v2.10.0 standardizeNumberCell: the boundary table, as text and never through a float` | 纯数字（含 `007`、`1.50`、`-0`、20 位）不改写只去空格；单位、千分位、空格和 U+00A0 分组、全角、万 / 亿移位、货币、会计负数、`+`、`.5`、`5.` 的改写结果；读出 0 的改写去掉 `-`（`(0)`、`(0.00)`、`-0,000` → `0000`、`+0`、`-0万`）；百分比、科学计数法、读不成、疑似缺失值和货币混用保持原值且保留首尾空格 |
+| `v2.10.0 standardizeNumberCell: the safety net keeps a rewrite that would read as another number` | 兜底走得到：测试里把 `toNumber` 换成对 `2,200` 读出 2201，结果是“无法安全改写，保持原值”；别的值照常改写 |
+| `v2.10.0 standardizeTextCell: …` | 首尾半角空格、U+3000、U+00A0、U+FEFF 去掉；只有空白的格清空；U+200B、全角字母不改；未确认的疑似缺失值只去空格 |
+| `v2.10.0 the action texts` | 13 种处理的文字和 `STANDARDIZE_KEPT_ACTIONS` 的顺序 |
+| `v2.10.0 guard: a rewritten date reads as the same day…` / `guard: every rewritten number reads back…`（语料护栏） | 日期：改写后同一天、读不出原样、带时间判断与独立判断一致（4 种顺序）；数字：`toPlainNumber(新值)` 与字段解析结果 `Object.is` 相同（两边都是 0 时按 `===`），改写结果是纯数字且读出 0 时不带 `-`，兜底不触发，保持原值的格逐字不变 |
+| `v2.10.0 guard: the one-cell rules never need the safety net…`（护栏，改前就通过的性质） | 14 个文件导入后和全部确认后，数值 / 日期字段逐格：兜底不触发、改写读回同一个数 |
+| `v2.10.0 the constructed table: …`、`confirmed placeholders become empty…` | 构造表的类型、每列计数、合计；年份字段按文本去首尾空格、`2021年` 不改写日期；已确认的疑似缺失值在数值、分类、年份字段清空，被忽略的字段整列原样 |
+| `v2.10.0 currency: …` | 只有一种货币符号时去掉；`¥` 和 `￥` 算一种；两种以上时带符号的格保持原值；百分比格的符号也计入（`$50%` 让 `￥12` 保持原值） |
+| `v2.10.0 guard: the check never runs on import, filter, field configuration or confirmations` | 给 `buildStandardizedExport` 计数：再次导入、筛选、应用配置、确认、恢复自动识别都是 0 次，点检查 1 次 |
+| `v2.10.0 a filter keeps the check; import, commit, …` | 筛选、清除筛选不作废；应用配置、恢复、确认、撤销、导入、重置都作废。“直接 `commitTabularData()`”这一步是必要的：页面导入都先经 `beginImport()` → `resetAnalysisState()`，只测导入抓不到“提交时不作废” |
+| `v2.10.0 D8: …` | 顺序证据格被改写、带时间的格保持原值时提示，并且再导入确实变成分类；证据格带时间（证据还在）不提示；普通 dmy、mdy 列全部改写不提示且再导入仍是日期；没有确定顺序的字段不看。故意改坏时，去掉“顺序变了”这个条件测不出来，属于等价改坏：两种策略下 `toDate()` 只有日月顺序不同才会一边读得出、一边读不出（`allowYearOnly` 只会让重算后的策略读得更多），所以“有格读不出了”本身就意味着顺序变了；条件保留是为了读起来清楚 |
+| `v2.10.0 all fixtures and examples: rows and exports unchanged, counts = list, round trip…`（护栏 + 数字） | 14 个文件：检查前后 `state.rows` 和两种现有导出逐字相同；每列计数 = 清单里这一列的条数；都不出顺序提示；标准化 CSV 再导入每个字段的类型相同；各文件清单条数（订单表 36、写法不一致 13、分区小计表 14、两个成绩表各 3、花名册 8、sample-user-behavior 119，其余 0） |
+| `v2.10.0 the check needs data, a finished analysis and no unapplied field draft` | 无数据、有草稿、分析未完成时不计算；有草稿时旧结果保留，撤销草稿后仍在 |
+| `v2.10.0 the check table: …`（2 条） | 摘要句、表头、每行的数字和保持原值样例（`␣` 显示空白）、年份 / 单位 / 顺序三种说明、合计、被忽略字段只在摘要句计数、转义；没有改动时只有摘要句、“导出改动清单”禁用 |
+| `v2.10.0 the panel follows the check: …` | 筛选后面板、表格、状态行都不变；应用配置、确认、直接提交、重置后面板收起，表格、摘要、状态行清空，两个导出按钮禁用 |
+| `v2.10.0 gate: …` | 无数据时三个按钮禁用并写原因；有草稿时三个按钮禁用并写原因、面板仍在；撤销草稿后恢复 |
+| `v2.10.0 the page: …`、`the export buttons are bound once each` | `index.html` 的第三个选项、静态隐藏面板和按钮；打印样式隐藏 `.standardized-export-actions`；`script.js` 三个按钮各绑定一次 |
+| `v2.10.0 the two downloads: …` | 构造表的改动清单全文（按行再按字段、`'-50元` 中和）和标准化 CSV 全文（`'=1+1` 中和）、文件名、BOM、类型、两条状态行；导出时不再调用 `buildStandardizedExport` |
+| `v2.10.0 D13: …` | 上限取 3：超出时只导出前 3 条、文件名带“前3条”、状态行“只导出了前 3 条，共 21 条”；正好等于和不超出时完整导出、文件名不变；检查表计数不变；上限常量 1,048,575；千分位 |
+| `v2.10.0 file names: …` | 文件名清理非法字符、日期总在末尾、带“前N条” |
+| `v2.10.0 the exports need a check: …` | 没检查过、检查已作废时写“请先检查标准化改动。”；0 条时改动清单不导出，标准化 CSV 照常 |
+| `v2.10.0 all fixtures and examples: the downloads match the check…` | 14 个文件的下载内容与检查结果一致、清单条数 = 计数、全是 CRLF、再导入类型相同 |
+| `v2.10.0 the downloads ignore the filter and never guess a file row` | 筛选后两份下载仍是全部行；没有文件行号的行，清单第一列为空 |
+
+**性能**：新代码不在刷新路径里。10 万行 × 20 列（固定种子生成的 CSV，含日期、数值、分类、ID 列），与 v2.9.0 交替各 5 次取中位数：导入 +0.4%、筛选 +1.1%、重建 −0.2%。检查约 1.6 s（干净数据）/ 3.9 s（每格都要处理的 200 万格）；最坏情况导出改动清单到上限约 2.55 s、峰值 RSS 约 1.22 GB。
+
+假 DOM 不算样式：检查表是否可见、1280 / 390 宽度有没有横向滚动、打印时按钮是否隐藏，要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。

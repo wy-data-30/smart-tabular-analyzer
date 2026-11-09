@@ -19,14 +19,14 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 
 | 顺序 | 文件 | 职责 |
 | --- | --- | --- |
-| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和写法细节不同的值，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响）。 |
+| 1 | `parsing.js` | 单元格值的缺失判断与解析：疑似缺失值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和写法细节不同的值，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响），以及标准化导出时单个单元格的标准写法。 |
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
-| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，以及 HTML 转义。 |
+| 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，ID 重复值的行号列表和说明文字，疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法、常量列和写法细节不同的值的说明文字，CSV 解析警告的中文消息，问题行的按钮、类别和摘要文字，标准化导出的处理文字、检查表说明和状态行，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。 |
 | 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用、常量列、写法细节不同的值的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
-| 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染。 |
+| 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染，还有标准化导出检查表的显示和作废。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，记下日期单元格，最后交给 commitTabularData() 提交。 |
-| 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出和问题行 CSV 导出、导出门禁、文件名和下载。 |
+| 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和标准化导出（整表检查、标准化 CSV 和改动清单）、导出门禁、文件名和下载。 |
 | 9 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
 
 - 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。前 8 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
@@ -45,14 +45,14 @@ Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静
 .
 ├── index.html                  # 页面结构、控件和 vendor/ 依赖引用
 ├── style.css                   # 页面样式与响应式规则
-├── parsing.js                  # 缺失判断与疑似缺失值清单，数值和日期解析，日期写法和写法细节的 key
+├── parsing.js                  # 缺失判断与疑似缺失值清单，数值和日期解析，日期写法和写法细节的 key，单元格的标准化写法
 ├── profiling.js                # 字段类型识别和字段 profile
-├── format.js                   # 显示格式化、表头位置 / ID 重复值 / 疑似缺失值 / 解析警告 / 问题行 / 格式一致性文字、HTML 转义
+├── format.js                   # 显示格式化、表头位置 / ID 重复值 / 疑似缺失值 / 解析警告 / 问题行 / 格式一致性 / 标准化导出文字、HTML 转义
 ├── stats.js                    # 描述统计、IQR、分组、趋势、直方图
 ├── quality.js                  # 转换失败、重复行、ID 重复值、疑似缺失值、格式一致性、缺失率等级、问题行列表
-├── app.js                      # state / dom、三条刷新路径、页面渲染（含预览分页和问题行查看区）
+├── app.js                      # state / dom、三条刷新路径、页面渲染（含预览分页、问题行查看区和标准化导出检查表）
 ├── importer.js                 # CSV / Excel 导入和导入并发保护
-├── report.js                   # 报告生成、数据导出和问题行导出
+├── report.js                   # 报告生成、数据导出、问题行导出和标准化导出
 ├── script.js                   # 启动入口（最后加载）：自检、导航和事件绑定
 ├── package.json                # Node 测试命令
 ├── .nojekyll                   # 空文件，让 GitHub Pages 跳过 Jekyll、原样发布 vendor/
@@ -132,6 +132,7 @@ flowchart LR
 | 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选和去重结果与 `rows` 共享行对象，所以同样能查到 |
 | 表头检测 | `headerDetection` | `null`，或 `{ headerRowNumber, skippedRows: [{ rowNumber, preview }] }`：导入时跳过了表头上方的标题行才有值。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 清空；筛选和字段配置两条刷新路径不改它 |
 | 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待状态、当前读取器和导入版本号 |
+| 标准化导出（v2.10.0） | `standardizedExport` | `null`，或 `buildStandardizedExport()` 的结果（每列计数、按行再按字段排的四个平行数组、合计）。只由“检查标准化改动”（`checkStandardizedExport()`）写入；`commitTabularData()`、`rebuildAnalysisFromProfiles()`、`resetAnalysisState()` 经 `clearStandardizedExport()` 清成 `null` 并收起面板，筛选不改它（见“标准化导出（v2.10.0）”） |
 | 来源与完成状态 | `sourceFileName`, `sourceSheetName`, `sourceType`, `analysisCompletedAt` | 报告元信息和导出门禁 |
 | 图表与筛选 UI | `charts`, `categoryFilterOptions`, `categoryFilterDraftValues` | Chart 实例及分类筛选草稿 |
 
@@ -146,6 +147,7 @@ flowchart LR
 - `refreshFilteredAnalysis()`：筛选后重算当前范围的统计、结论、图表和导出状态。
 - `rebuildAnalysisFromProfiles(message, setMessage)`：字段类型提交或疑似缺失值确认后清除筛选，并重建依赖字段类型的全部结果；`setMessage` 决定结果消息写到哪里，默认是字段配置区。
 - `updatePlaceholderConfirmations()`：第 4 条刷新路径，疑似缺失值的确认、撤销和全部确认都经过它（见“疑似缺失值”）。
+- `clearStandardizedExport()`（v2.10.0）：作废上一次“检查标准化改动”并收起面板。`commitTabularData()`、`rebuildAnalysisFromProfiles()`（含疑似缺失值的确认 / 撤销）和 `resetAnalysisState()` 调用它，`refreshFilteredAnalysis()` 不调用；刷新路径都不计算标准化导出（见“标准化导出（v2.10.0）”）。
 - `resetAnalysisState()`：销毁图表，同时清空领域状态和结果 DOM；不会把 `activeImportId` 重置为旧值。
 
 **输入 / 输出**
@@ -387,7 +389,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 | `inferFieldTypeKey(field, counts)` | 按下面的优先级从非空数、唯一值数、数值数和日期数得出自动类型；`buildColumnProfile()` 和疑似缺失值的预估共用 |
 | `isIdFieldName(field)` | 根据英文边界、常见实体后缀和中文编号语义识别 ID 名称；整个字段名等于序号、行号、行序号、index、idx、No.、Row No.、Row No 或 `#`（不区分大小写），以及以"中文字符 + ID"结尾（如 学生ID、客户 ID）的名称也判为 ID |
 | `buildDateStrategy(field, values)` | 从整列建立 none / DMY / MDY / conflict 和 year-only 策略 |
-| `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期 |
+| `toDate(value, strategy)` / `buildUtcDate()` | 严格解析并验证真实日历日期。三个日期匹配器（`matchYearFirstDate()`、`matchDayOrMonthFirstDate()`、`matchChineseDate()`）把时间后缀放在最后一个捕获组（没写时间为 `""`，v2.10.0），英文日期由 `readEnglishCalendarDate()` 返回 `{ date, hasTime }`、`parseEnglishCalendarDate()` 只取日期；`dateTextHasTime()` 按 `toDate()` 走的那条路径判断有没有写时间（或时区）。`formatIsoDate(date)` 把读出的日历日写成 `YYYY-MM-DD`，Excel 日期单元格的读取和标准化导出共用 |
 | `toNumber(value, strategy)` | 不带策略（或策略没有开关）时就是 `toPlainNumber(value)`：解析普通数值、科学计数、规范千分位、货币、会计负数和百分比；带策略时另外读单位、万/亿和全角数字，见“数字策略” |
 | `detectNumericFormat(values, strategy)` | 只有所有可转换值（按字段的数字策略）都带 `%` 时标记为 percent，策略开了全角时 `％` 也算；Excel 列在 `detectNumericFormat` 为 `"number"`、但格式提示为 `"percent"` 时，`buildColumnProfile` 也标记为 percent |
 | `countFieldConversionFailures()` | 取得指定字段按数值或日期解释时的失败数量 |
@@ -776,6 +778,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 **主要职责**
 
 - 导出当前筛选数据或原始数据去重结果。
+- 检查并导出标准化数据和它的改动清单（v2.10.0）。
 - 生成 HTML 或 Markdown 分析报告。
 - 保持字段顺序、UTF-8 BOM、文件名安全和内容转义。
 - 阻止未完成分析或未应用字段配置时导出报告。
@@ -811,6 +814,41 @@ exportProblemRows()
 - 导出整类全部条目，不是当前页。列为“文件行号”“说明”，再加全部原始字段（原顺序）；没有对应行的解析警告，原始列为空。额外两列和原字段同名时加“（2）”，再冲突就递增，原字段名不变。
 - 文件名 `<原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv`，类别用中文短名（`PROBLEM_KIND_FILE_NAMES`：缺失、格式问题、异常值、整行重复、ID重复、疑似缺失值、解析警告）。只对日期之前的部分做 `sanitizeFileName()`（含截到 80 个字符），日期总在末尾；写法 N/A 变成 N-A。
 - 结果写到查看区的状态行：“已导出 N 条：文件名”或“导出失败：…”。打开、切换类别和关闭查看区时清空。
+
+### 标准化导出（v2.10.0）
+
+导出区的第三个选项。先点“检查标准化改动”，按已应用的字段配置把全部原始行逐格过一遍，页面列出每列会改写多少格、哪些格保持原值；再导出“标准化 CSV”和“改动清单”。**只多一个导出，现有结果一律不变**：`state.rows`、profile、类型、缺失计数、统计、图表、筛选、质量页数字、问题行、报告、筛选后 / 去重后两种 CSV 都不变（护栏测试在 stage3 和全部示例上核对检查前后 `state.rows` 和两种导出逐字相同）。
+
+```text
+checkStandardizedExport()                      # 只在点“检查标准化改动”时
+→ buildStandardizedExport(rows, fields, profiles, confirmations)
+  → buildStandardizeRule()  每个字段取一次：profile、已确认的写法、策略、findCurrencyMode()
+  → standardizeDateCell() / standardizeNumberCell() / standardizeTextCell()   （parsing.js，按字段 × 不同原文记忆）
+→ state.standardizedExport → renderStandardizedExport() → updateExportButtons()
+
+exportStandardizedData("data")    → buildStandardizedCsvContent() → buildStandardizedCellRows() + buildCsvTableContent()
+exportStandardizedData("changes") → buildStandardizedChangesCsvContent(…, limit) → buildCsvTableContent()
+→ buildStandardizedFileName() → downloadUtf8TextFile()
+```
+
+**单格规则**（每格返回 `{ value, action }`；`action` 为空表示原样导出、不进清单；保持原值的格一律逐字原样，连首尾空格也不去）：
+
+| 字段 | 规则 |
+| --- | --- |
+| 所有未忽略的字段 | 只有空白的格清空，记“去首尾空格”；已确认的疑似缺失值清空，记“已确认的疑似缺失值，清空” |
+| 日期（不按年份读） | `toDate(value, dateStrategy)` 读得出、没写时间的格写成 `YYYY-MM-DD`（已是这种写法只带首尾空格的，记“去首尾空格”）。保持原值：带时间（含只写了时区的英文日期）；读不成日期；日月顺序无法确定（`matchDayOrMonthFirstDate()` 匹配、两段都 ≤ 12 且不相等、`order` 是 none 或 conflict）；未确认的疑似缺失值 |
+| 按年份读的日期字段 | 不改写日期，其余按文本规则 |
+| 数值 | 按字段数字策略读得出、写法不是纯数字（去首尾空格后 `^-?\d+(?:\.\d+)?$`）的格改写成纯数字，只做字符串变换，不经过浮点：去掉会计括号（写成 `-`）、唯一的货币符号、开头的 `+`、千分位逗号和空格分组、单位；`.5` 补成 `0.5`、`5.` 去掉小数点；万 / 亿用 `shiftDecimalText()` 移动小数点，只去掉移位留下的前导零；数字本身按原文保留（`+007` → `007`，`1,234.50` → `1234.50`）。改写结果读出是 0 时去掉开头的 `-`（`(0)` → `0`）。纯数字只去首尾空格。保持原值：百分比、科学计数法、货币符号不一致（一列的可读格里出现两种以上，`￥` 和 `¥` 算一种）、读不成数字、未确认的疑似缺失值；兜底：改写结果用 `toPlainNumber()` 读回来不是原来那个数（两边都是 0 时按 `===`，其余按 `Object.is`）就保持原值，记“无法安全改写，保持原值”（测试保证现有数据上不触发） |
+| 分类、ID | 去掉 `trim()` 能去的首尾空白（含 U+3000、U+00A0、U+FEFF）；零宽字符、全角字母、大小写不改，只有不可见字符的格原样；未确认的疑似缺失值只去空格 |
+| 被忽略的字段 | 整列原样，包括已确认的疑似缺失值 |
+
+- **整表汇总**：外层按行、内层按字段，清单天然按行、再按字段排好。`state.standardizedExport = { counts, cells, totals, cellCount }`：`counts` 每字段一项 `{ field, typeKey, kind, currencyMode, unit, date, number, placeholder, trim, kept, keptByAction, keptSamples, orderHint }`；`cells` 是四个平行数组（行下标、字段下标、动作码 `STANDARDIZE_ACTIONS`、导出值，保持原值的格存 `undefined`），不存行对象副本，原值和文件行号在导出时现取。
+- **日月顺序提示**（`orderHint`）：已应用 `dateStrategy.order` 是 dmy / mdy 的日期字段，用 `buildDateStrategy()` 对导出后的非缺失值重算；顺序变了、并且有导出值原来读得出、按重算后的策略读不出时提示——典型是唯一的顺序证据格被改写，剩下的带时间的写法保持原值，再导入时读不成日期。普通的 dmy / mdy 列全部改写后不提示（它们再导入仍是日期）。
+- **时机和作废**：三条刷新路径都不计算；导入、字段配置应用 / 恢复、疑似缺失值确认 / 撤销后作废（`clearStandardizedExport()`，面板收起、表格和状态行清空），筛选不影响（结果基于原始数据）。
+- **页面**：`#dataExportSection` 里 `.data-export-options` 的第三个 `.data-export-option`（`#checkStandardizedExport`、门禁说明 `#standardizedExportGate`），选项下方的静态面板 `#standardizedExportPanel`（摘要句、检查表 `#standardizedExportTable`、`#exportStandardizedCsv`、`#exportStandardizedChanges`、状态行 `#standardizedExportStatus`）。检查表只列有改动、保持原值、按年份读或有顺序提示的字段，字段名下面可有三条说明（按年份读取、单位不写进导出文件、顺序提示）；被忽略的字段只在摘要句里计数；没有任何改动时写“没有需要标准化的单元格，导出的数据与原始数据相同。”。打印样式隐藏两个导出按钮。
+- **门禁**：检查按钮与报告同条件（`canCheckStandardizedExport()` = `canExportReport()`）；两个导出按钮还要求有检查结果；改动清单 0 条时“导出改动清单”禁用。检查后又出现未应用的字段草稿时三个按钮都禁用并写原因，检查结果不作废。
+- **两份导出**：都经过 `buildCsvTableContent()`（公式中和照旧，改动清单的“原值”列也中和），UTF-8 BOM、CRLF。改动清单列为“文件行号、字段、原值、导出值、处理”，行号查不到为空；最多 `STANDARDIZED_CHANGE_LIMIT`（1,048,575，Excel 一张表的行数减表头）条，超出时只导出前 N 条，文件名 `<原文件名>_标准化改动清单_前1048575条_<yyyymmdd>.csv`、状态行“只导出了前 1,048,575 条，共 M 条”，检查表计数仍是全部。标准化 CSV 是 `<原文件名>_标准化_<yyyymmdd>.csv`，全部原始行、原字段顺序、原表头（单位不写进表头）。
+- **性能**（本机 Node 24、假 DOM，10 万行 × 20 列）：刷新路径与 v2.9.0 交替各 5 次取中位数，导入 +0.4%、筛选 +1.1%、重建 −0.2%（不在刷新路径里）。检查约 1.6 s（干净数据：纯数字和标准日期）、约 3.9 s（最坏情况：每格都要改写或保持原值，200 万格）；最坏情况检查结果约占 108 MB，导出改动清单（到上限 1,048,575 条，约 60 MB）约 2.55 s，峰值 RSS 约 1.22 GB（不设上限时 200 万条约 5.5 s、1.89 GB）。
 
 ### HTML / Markdown 报告
 
@@ -883,7 +921,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
 | 自定义分析 | `renderV2Analysis()` 及其子 renderer |
 | 图表控件 | `populateControls()`, `renderCharts()` |
-| 导出 | `updateExportButtons()`, `renderDataExportSummary()`, `setReportExportStatus()`, `setDataExportStatus()`, `setProblemRowsExportStatus()` |
+| 导出 | `updateExportButtons()`, `renderDataExportSummary()`, `setReportExportStatus()`, `setDataExportStatus()`, `setProblemRowsExportStatus()`, `renderStandardizedExport()`, `clearStandardizedExport()`, `setStandardizedExportStatus()` |
 | 全量清理 | `resetAnalysisState()` |
 
 当前有三个主要渲染编排入口：
@@ -894,7 +932,7 @@ refreshFilteredAnalysis()       # 筛选变化
 rebuildAnalysisFromProfiles()   # 字段类型变化
 ```
 
-三者都按各自场景手工组合“重算 → render → 图表 → 图表结论 → 自定义分析 → 导出状态”。图表结论（`renderChartInsights()`）排在 `populateControls()` 和 `renderCharts()` 之后，因为它读图表下拉框的值；它不放在 `renderCharts()` 里面，因为 `window.Chart` 不存在时 `renderCharts()` 会提前返回，而结论和报告快照不依赖 Chart.js。分类 / 趋势下拉框变化时，`script.js` 只重算各自那一句（趋势句在 10 万行上约 0.7 s，不能挂到所有图表下拉框上）。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。
+三者都按各自场景手工组合“重算 → render → 图表 → 图表结论 → 自定义分析 → 导出状态”。图表结论（`renderChartInsights()`）排在 `populateControls()` 和 `renderCharts()` 之后，因为它读图表下拉框的值；它不放在 `renderCharts()` 里面，因为 `window.Chart` 不存在时 `renderCharts()` 会提前返回，而结论和报告快照不依赖 Chart.js。分类 / 趋势下拉框变化时，`script.js` 只重算各自那一句（趋势句在 10 万行上约 0.7 s，不能挂到所有图表下拉框上）。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。三条路径都不计算标准化导出（v2.10.0）：`buildStandardizedExport()` 只在点“检查标准化改动”时调用（有调用次数护栏）；`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 只调用 `clearStandardizedExport()` 作废上一次检查，`refreshFilteredAnalysis()` 不碰它。
 
 **输入 / 输出**
 
