@@ -49,7 +49,7 @@
         <p class="product-description">自动完成字段识别、数据质量检查、描述性统计、可视化分析和报告导出。无需安装软件，数据仅在浏览器本地处理。</p>
         <ul class="product-capabilities" aria-label="主要功能">
           <li>自动识别数值、分类、日期和 ID 字段</li>
-          <li>检查缺失值、重复行和数值异常</li>
+          <li>检查空值、重复行和偏大或偏小的值</li>
           <li>支持筛选、图表分析和报告导出</li>
         </ul>
       </div>
@@ -209,7 +209,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">数据质量</p>
-            <h2>缺失、重复与异常检查</h2>
+            <h2>空值、重复和其他问题</h2>
           </div>
         </div>
         <p class="section-note">本模块始终基于导入的原始数据计算，不受当前筛选条件影响。</p>
@@ -217,25 +217,25 @@
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">疑似合计 / 小计行</h3>
-          <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。</p>
+          <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
           <div id="suspectedTotalDetails" class="number-note-details"></div>
         </div>
         <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">公式错误单元格</h3>
-          <p class="section-note">这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。</p>
+          <p class="section-note">这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。</p>
           <div id="formulaErrorDetails" class="number-note-details"></div>
         </div>
         <div class="two-column">
           <div>
-            <h3 class="subsection-title">缺失值检查</h3>
-            <div class="table-wrap compact" tabindex="0" aria-label="缺失值检查表，可横向滚动">
-              <table id="qualityTable" aria-label="字段缺失值检查"></table>
+            <h3 class="subsection-title">空值检查</h3>
+            <div class="table-wrap compact" tabindex="0" aria-label="空值检查表，可横向滚动">
+              <table id="qualityTable" aria-label="字段空值检查"></table>
             </div>
           </div>
           <div>
-            <h3 class="subsection-title">数值字段异常值检查</h3>
-            <div class="table-wrap compact" tabindex="0" aria-label="异常值检查表，可横向滚动">
-              <table id="outlierTable" aria-label="数值字段异常值检查"></table>
+            <h3 class="subsection-title">数值字段里偏大或偏小的值</h3>
+            <div class="table-wrap compact" tabindex="0" aria-label="偏大或偏小的值检查表，可横向滚动">
+              <table id="outlierTable" aria-label="数值字段里偏大或偏小的值"></table>
             </div>
           </div>
         </div>
@@ -272,7 +272,7 @@
           <div id="numberConversionDetails" class="number-note-details"></div>
         </div>
         <div id="numericLookingSection" class="module-subsection hidden">
-          <h3 class="subsection-title">疑似数值列</h3>
+          <h3 class="subsection-title">像是数字的文本列</h3>
           <div id="numericLookingDetails" class="number-note-details"></div>
         </div>
         <div id="dateStyleSection" class="module-subsection row-note-section hidden">
@@ -281,23 +281,23 @@
           <div id="dateStyleDetails" class="number-note-details"></div>
         </div>
         <div id="constantFieldSection" class="module-subsection hidden">
-          <h3 class="subsection-title">常量列</h3>
+          <h3 class="subsection-title">整列只有一个值</h3>
           <p class="section-note">这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。</p>
           <div id="constantFieldDetails" class="number-note-details"></div>
         </div>
         <div id="lookAlikeSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">写法细节不同的值</h3>
-          <p class="section-note">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和 ID 重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按缺失处理，分类统计和筛选里会多出一个看不见的值。</p>
+          <h3 class="subsection-title">同一个值，写法不一样</h3>
+          <p class="section-note">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。</p>
           <div id="lookAlikeDetails" class="number-note-details"></div>
         </div>
         <div class="module-subsection">
-          <h3 class="subsection-title">疑似缺失值</h3>
-          <p class="section-note">这些写法常被用来表示“没有数据”。确认后按缺失值处理：不再算作转换失败，也不参与统计、Top 10、分组、筛选选项和 ID 重复检查。原始数据、数据预览和导出的 CSV 不变。</p>
+          <h3 class="subsection-title">像是空值的写法</h3>
+          <p class="section-note">这些写法常被用来表示“没有数据”。按空值处理后：不再算作认不出的数字或日期，也不参与统计、Top 10、分组、筛选选项和编号重复检查。原始数据、数据预览和导出的 CSV 不变。</p>
           <div id="placeholderDetails" class="placeholder-details"></div>
           <p id="placeholderMessage" class="placeholder-message" role="status" tabindex="-1"></p>
         </div>
         <div class="module-subsection">
-          <h3 class="subsection-title">ID 字段重复值</h3>
+          <h3 class="subsection-title">编号重复</h3>
           <div id="idDuplicateDetails" class="id-duplicate-details"></div>
         </div>
       </section>
@@ -445,7 +445,7 @@
                 <label class="chart-control" for="dateChartAggregate"><span>汇总方式</span>
                   <select id="dateChartAggregate">
                     <option value="avg" selected>平均值</option>
-                    <option value="sum">合计</option>
+                    <option value="sum">求和</option>
                   </select>
                 </label>
               </div>
@@ -564,18 +564,18 @@
             </div>
             <div class="data-export-option">
               <div>
-                <h3>标准化数据</h3>
-                <p>全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已确认的疑似缺失值，去掉文本首尾空格。先检查会改哪些单元格。</p>
+                <h3>写法统一的表</h3>
+                <p>全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已按空值处理的写法，去掉文本首尾空格。先检查会改哪些单元格。</p>
                 <p id="standardizedExportGate" class="standardize-gate"></p>
               </div>
-              <button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查标准化改动</button>
+              <button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格</button>
             </div>
           </div>
           <div id="standardizedExportPanel" class="standardized-export hidden">
             <p id="standardizedExportSummary"></p>
-            <div class="table-wrap compact" tabindex="0" aria-label="标准化改动表，可横向滚动"><table id="standardizedExportTable"></table></div>
+            <div class="table-wrap compact" tabindex="0" aria-label="写法统一改动表，可横向滚动"><table id="standardizedExportTable"></table></div>
             <div class="standardized-export-actions">
-              <button id="exportStandardizedCsv" type="button" disabled>导出标准化 CSV</button>
+              <button id="exportStandardizedCsv" type="button" disabled>导出写法统一的表</button>
               <button id="exportStandardizedChanges" class="secondary-button" type="button" disabled>导出改动清单</button>
             </div>
             <p id="standardizedExportStatus" class="inline-status" aria-live="polite"></p>

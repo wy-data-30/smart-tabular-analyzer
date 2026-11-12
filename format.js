@@ -86,7 +86,7 @@ function formatNumberConversion(item) {
 
 // One line of "疑似数值列" for a state.numericLooking item.
 function formatNumericLookingHint(item) {
-  return `「${item.field}」：去掉缺失值和疑似缺失值后，${formatInteger(item.valueCount)} 个值里有 ${formatInteger(item.numericCount)} 个能读成数字（${formatPercent(item.ratio)}），其余的如 ${item.samples.join("、")}。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。`;
+  return `「${item.field}」：去掉空值和像是空值的写法后，${formatInteger(item.valueCount)} 个值里有 ${formatInteger(item.numericCount)} 个能读成数字（${formatPercent(item.ratio)}），其余的如 ${item.samples.join("、")}。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。`;
 }
 
 // How many columns a suspected total's line names before "等 N 列".
@@ -96,8 +96,8 @@ const STATUS_ROW_NUMBER_LIMIT = 5;
 
 // The notes of "疑似合计 / 小计行" and "公式错误单元格" in reports; index.html has the same
 // sentences.
-const SUSPECTED_TOTAL_NOTE = "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和异常值。";
-const FORMULA_ERROR_NOTE = "这些单元格的公式算出了错误，按缺失值处理（已计入缺失值）。整行都是错误值的行不会导入，也不在这里列出。";
+const SUSPECTED_TOTAL_NOTE = "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。";
+const FORMULA_ERROR_NOTE = "这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。";
 
 function formatTotalMatchedFields(fields) {
   if (fields.length <= TOTAL_MATCHED_FIELD_LIMIT) return fields.join("、");
@@ -150,7 +150,7 @@ function formatFormulaErrorCount(items) {
 
 // The status bar's sentence after an import, or "".
 function formatFormulaErrorStatus(items) {
-  return items.length ? `发现 ${formatInteger(formatFormulaErrorCount(items))} 个公式错误单元格，已按缺失值处理，详情见“数据质量”。` : "";
+  return items.length ? `发现 ${formatInteger(formatFormulaErrorCount(items))} 个公式错误单元格，已按空值处理，详情见“数据质量”。` : "";
 }
 
 // One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
@@ -212,17 +212,17 @@ function formatCsvWarningMessage(code, { line = null, cellCount = null, headerCo
 // aria-label of a 查看 button for a problem-row category.
 function formatProblemViewLabel(category) {
   switch (category.kind) {
-    case "missing": return `查看「${category.field}」的缺失行`;
-    case "conversion": return `查看「${category.field}」的格式问题`;
-    case "outlier": return `查看「${category.field}」的异常值`;
+    case "missing": return `查看「${category.field}」的空值行`;
+    case "conversion": return `查看「${category.field}」认不出的值`;
+    case "outlier": return `查看「${category.field}」偏大或偏小的值`;
     case "duplicateRows": return "查看重复行";
     case "idDuplicate": return `查看「${category.field}」的重复行`;
     case "placeholder": return `查看「${category.field}」中「${category.key}」所在的行`;
     case "suspectedTotal": return "查看疑似合计 / 小计行";
     case "formulaError": return `查看「${category.field}」的公式错误`;
     case "dateStyle": return `查看「${category.field}」不是主写法的行`;
-    case "lookAlike": return `查看「${category.field}」写法不同的行`;
-    default: return "查看解析警告";
+    case "lookAlike": return `查看「${category.field}」写法不一样的行`;
+    default: return "查看读取时有疑问的行";
   }
 }
 
@@ -230,17 +230,17 @@ function formatProblemViewLabel(category) {
 function formatProblemCategoryLabel(category) {
   const count = formatInteger(category.count);
   switch (category.kind) {
-    case "missing": return `缺失 · ${category.field}（${count} 行）`;
-    case "conversion": return `格式问题 · ${category.field}（${count} 个值）`;
-    case "outlier": return `异常值 · ${category.field}（${count} 行）`;
+    case "missing": return `空值 · ${category.field}（${count} 行）`;
+    case "conversion": return `认不出的数字或日期 · ${category.field}（${count} 个值）`;
+    case "outlier": return `偏大或偏小的值 · ${category.field}（${count} 行）`;
     case "duplicateRows": return `整行重复（${count} 行）`;
-    case "idDuplicate": return `ID 重复 · ${category.field}（${count} 个重复值）`;
-    case "placeholder": return `疑似缺失值 · ${category.field} · 「${category.key}」（${count} 行）`;
+    case "idDuplicate": return `编号重复 · ${category.field}（${count} 个重复值）`;
+    case "placeholder": return `像是空值的写法 · ${category.field} · 「${category.key}」（${count} 行）`;
     case "suspectedTotal": return `疑似合计 / 小计行（${count} 行）`;
     case "formulaError": return `公式错误 · ${category.field}（${count} 个值）`;
     case "dateStyle": return `日期写法 · ${category.field}（${count} 个值）`;
-    case "lookAlike": return `写法不同 · ${category.field}（${count} 行）`;
-    default: return `解析警告（${count} 条）`;
+    case "lookAlike": return `写法不一样 · ${category.field}（${count} 行）`;
+    default: return `读取时有疑问（${count} 处）`;
   }
 }
 
@@ -251,7 +251,7 @@ function formatProblemRowsSummary(category, list, page, pageCount) {
   const listed = formatInteger(list.items.length);
   if (category.kind === "duplicateRows") return `重复 ${formatInteger(list.count)} 行（${formatInteger(list.groupCount)} 组，共 ${listed} 行，每组第一行保留），${pages}`;
   if (category.kind === "conversion" || category.kind === "formulaError" || category.kind === "dateStyle") return `共 ${listed} 个值，${pages}`;
-  if (category.kind === "parseWarnings") return `共 ${listed} 条警告，${pages}`;
+  if (category.kind === "parseWarnings") return `共 ${listed} 处，${pages}`;
   return `共 ${listed} 行，${pages}`;
 }
 
@@ -275,7 +275,7 @@ function formatIdDuplicateOverflow(totalCount, listedCount) {
 
 // Names the ID fields without duplicates; afterOthers when other ID fields were reported first.
 function formatCleanIdFieldsNote(fields, afterOthers = false) {
-  return `${afterOthers ? "其余 " : ""}ID 字段没有重复值（已检查：${fields.join("、")}）`;
+  return `${afterOthers ? "其余" : ""}类型为 ID 的字段没有编号重复（已检查：${fields.join("、")}）`;
 }
 
 // Shown instead of the value list for a mostly repeated ID field (plain text).
@@ -304,15 +304,15 @@ function formatPlaceholderChange(field, missingBefore, typeKeyBefore, preview) {
   const typeText = preview.typeKey === typeKeyBefore
     ? `类型仍为${FIELD_TYPE_LABELS[typeKeyBefore]}`
     : `「${field}」会识别为${FIELD_TYPE_LABELS[preview.typeKey]}（现在是${FIELD_TYPE_LABELS[typeKeyBefore]}）`;
-  return `缺失值 ${formatInteger(missingBefore)} → ${formatInteger(preview.missingCount)}，${typeText}`;
+  return `空值 ${formatInteger(missingBefore)} → ${formatInteger(preview.missingCount)}，${typeText}`;
 }
 
 function formatPendingPlaceholder(entry, change) {
-  return `「${entry.field}」：${formatPlaceholderValue(entry)}${formatInteger(entry.count)} 个${formatPlaceholderRows(entry.rowNumbers, entry.count)}。确认后${change}。`;
+  return `「${entry.field}」：${formatPlaceholderValue(entry)}${formatInteger(entry.count)} 个${formatPlaceholderRows(entry.rowNumbers, entry.count)}。按空值处理后，${change}。`;
 }
 
 function formatConfirmedPlaceholder(entry) {
-  return `「${entry.field}」${entry.fieldIgnored ? "（字段已忽略）" : ""}：${formatPlaceholderValue(entry)}已按缺失处理（${formatInteger(entry.count)} 个）。`;
+  return `「${entry.field}」${entry.fieldIgnored ? "（字段已忽略）" : ""}：${formatPlaceholderValue(entry)}已按空值处理（${formatInteger(entry.count)} 个）。`;
 }
 
 function formatPlaceholderNotes(keys) {
@@ -325,7 +325,7 @@ function formatPlaceholderNotes(keys) {
 // sentences.
 const DATE_STYLE_NOTE = "这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。";
 const CONSTANT_FIELD_NOTE = "这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。";
-const LOOK_ALIKE_NOTE = "首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和 ID 重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按缺失处理，分类统计和筛选里会多出一个看不见的值。";
+const LOOK_ALIKE_NOTE = "首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。";
 // Names of the date styles, as a user would recognise them in Excel.
 const DATE_STYLE_NAMES = Object.freeze({
   excelCell: "Excel 日期单元格",
@@ -367,7 +367,7 @@ function formatDateStyleLine({ field, styles, otherCount }) {
 }
 // 「备注」：只有一种取值「正常」（6 行），另有 3 行缺失。
 function formatConstantField({ field, value, count, missingCount }) {
-  return `「${field}」：只有一种取值「${formatVisibleText(value)}」（${formatInteger(count)} 行）${missingCount ? `，另有 ${formatInteger(missingCount)} 行缺失` : ""}。`;
+  return `「${field}」：只有一种取值「${formatVisibleText(value)}」（${formatInteger(count)} 行）${missingCount ? `，另有 ${formatInteger(missingCount)} 行是空值` : ""}。`;
 }
 
 const LOOK_ALIKE_REASON_NAMES = Object.freeze({ compat: "全角半角或兼容写法", case: "大小写", invisible: "不可见字符", innerSpace: "中间空格多少" });
@@ -389,7 +389,7 @@ function formatLookAlikeLine({ field, edgeSpaceCount, edgeSample, invisibleOnlyC
   if (invisibleOnlyCount) parts.push(`只有不可见字符 ${formatInteger(invisibleOnlyCount)} 格`);
   if (groupCount) {
     const overflow = groupCount > groups.length ? `，只列出前 ${groups.length} 组` : "";
-    parts.push(`${formatInteger(groupCount)} 组写法不同${overflow}：${groups.map(formatLookAlikeGroup).join("；")}`);
+    parts.push(`${formatInteger(groupCount)} 组写法不一样${overflow}：${groups.map(formatLookAlikeGroup).join("；")}`);
   }
   return `「${field}」共 ${formatInteger(rowCount)} 行：${parts.join("；")}。`;
 }
@@ -412,13 +412,13 @@ function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
 const STANDARDIZE_ACTION_LABELS = Object.freeze({
   date: "日期改写为 YYYY-MM-DD",
   number: "数字改写为纯数字",
-  placeholder: "已确认的疑似缺失值，清空",
+  placeholder: "已按空值处理的写法，清空",
   trim: "去首尾空格",
   keptTime: "带时间，保持原值",
   keptPercent: "百分比，不改写",
   keptScientific: "科学计数法，不改写",
   keptCurrencyMix: "货币符号不一致，保持原值",
-  keptPendingPlaceholder: "疑似缺失值，未确认",
+  keptPendingPlaceholder: "像是空值的写法，未确认",
   keptDateUnreadable: "读不成日期，保持原值",
   keptDateOrder: "日月顺序无法确定，保持原值",
   keptNumberUnreadable: "读不成数字，保持原值",
@@ -464,7 +464,7 @@ function formatStandardizedChangesStatus(exported, total, fileName) {
 // The sentence above the check table.
 function formatStandardizedSummary({ changed, kept, quietCount, ignoredCount }) {
   const ignored = ignoredCount ? `已忽略的 ${formatInteger(ignoredCount)} 个字段原样导出。` : "";
-  if (!changed && !kept) return `没有需要标准化的单元格，导出的数据与原始数据相同。${ignored}`;
+  if (!changed && !kept) return `没有需要统一写法的单元格，导出的数据与原始数据相同。${ignored}`;
   const quiet = quietCount ? `其余 ${formatInteger(quietCount)} 个字段没有改动。` : "";
   return `共改写 ${formatInteger(changed)} 格，保持原值 ${formatInteger(kept)} 格。${quiet}${ignored}`;
 }

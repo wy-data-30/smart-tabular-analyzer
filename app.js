@@ -347,7 +347,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-    setStatus(`CSV 已载入，但发现 ${formatInteger(state.parseWarnings.length)} 个解析警告${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning", Boolean(headerNote));
+    setStatus(`CSV 已载入，但读取时有 ${formatInteger(state.parseWarnings.length)} 处疑问${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning", Boolean(headerNote));
   } else {
     setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
@@ -424,7 +424,7 @@ function renderStandardizedExport() {
   }).join("");
   const total = `<tr class="standardize-total"><td>合计</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
   dom.standardizedExportTable.innerHTML = listed.length
-    ? `<thead><tr><th>字段</th><th>类型</th><th>日期改写</th><th>数字改写</th><th>清空疑似缺失值</th><th>去首尾空格</th><th>保持原值</th></tr></thead><tbody>${rows}${total}</tbody>`
+    ? `<thead><tr><th>字段</th><th>类型</th><th>日期改写</th><th>数字改写</th><th>清空空值写法</th><th>去首尾空格</th><th>保持原值</th></tr></thead><tbody>${rows}${total}</tbody>`
     : "";
 }
 
@@ -445,7 +445,7 @@ function renderOverview() {
     ["字段数", state.fields.length],
     ["数值字段数", numericCount],
     ["分类字段数", categoryCount],
-    ["缺失值概览", activeMissing]
+    ["空值概览", activeMissing]
   ];
 
   dom.overviewCards.innerHTML = cards.map(([label, value]) => `
@@ -595,7 +595,7 @@ function renderSchema() {
         const requiresConversion = draftTypeKey === "numeric" || draftTypeKey === "date";
         const exampleText = profile.sampleValues.join("、") || "—";
         const failureLabel = requiresConversion
-          ? `${profile.field} 转换失败 ${formatInteger(failureCount)} 个`
+          ? `${profile.field} 认不出 ${formatInteger(failureCount)} 个`
           : `${profile.field} 当前类型无需转换`;
         return `
           <tr>
@@ -615,8 +615,8 @@ function renderSchema() {
                   <dt>自动类型</dt><dd><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></dd>
                   <dt>非空值</dt><dd>${formatInteger(profile.nonMissingCount)}</dd>
                   <dt>唯一值</dt><dd>${formatInteger(profile.uniqueCount)}</dd>
-                  <dt>转换失败</dt>
-                  <dd><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中无法安全转换的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></dd>
+                  <dt>认不出</dt>
+                  <dd><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></dd>
                 </dl>
               </details>
             </td>
@@ -651,7 +651,7 @@ function stageFieldTypeChange(field, typeKey) {
     sum + countFieldConversionFailures(item.field, getDraftTypeKey(item))
   ), 0);
   const failureText = totalFailures
-    ? `；当前配置预计有 ${formatInteger(totalFailures)} 个非空值无法安全转换，应用后会从对应统计中跳过`
+    ? `；当前配置预计有 ${formatInteger(totalFailures)} 个非空值认不出，应用后会从对应统计中跳过`
     : "";
   setFieldConfigMessage(`字段配置有未应用的修改${failureText}。`, "warning");
 }
@@ -669,12 +669,12 @@ function updateSchemaDraftRow(field, typeKey) {
   failureElement.textContent = requiresConversion ? formatInteger(failureCount) : "—";
   failureElement.classList.toggle("warning", failureCount > 0);
   failureElement.title = requiresConversion
-    ? "非空值中无法安全转换的数量"
+    ? "非空值中认不出的数量"
     : "该类型不需要转换";
   failureElement.setAttribute(
     "aria-label",
     requiresConversion
-      ? `${field} 转换失败 ${formatInteger(failureCount)} 个`
+      ? `${field} 认不出 ${formatInteger(failureCount)} 个`
       : `${field} 当前类型无需转换`
   );
 }
@@ -702,7 +702,7 @@ function applyFieldConfiguration() {
 
   const failureCount = state.profiles.reduce((sum, profile) => sum + profile.conversionFailureCount, 0);
   const message = failureCount
-    ? `字段配置已应用；${formatInteger(failureCount)} 个非空值转换失败，已从对应统计和图表中跳过。`
+    ? `字段配置已应用；${formatInteger(failureCount)} 个非空值认不出，已从对应统计和图表中跳过。`
     : "字段配置已应用，统计、图表和分析结论已重新计算。";
   rebuildAnalysisFromProfiles(message);
 }
@@ -785,7 +785,7 @@ function confirmPlaceholder(field, key) {
   const pending = state.placeholders.some((entry) => entry.field === field && entry.key === key && !entry.confirmed && !entry.fieldIgnored);
   const keysByField = Object.create(null);
   if (pending) keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
-  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按缺失处理，统计、图表和分析结论已重新计算。`);
+  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按空值处理，统计、图表和分析结论已重新计算。`);
 }
 
 function undoPlaceholderConfirmation(field, key) {
@@ -802,15 +802,15 @@ function confirmAllCommonPlaceholders() {
     keysByField[entry.field] ??= [...getConfirmedPlaceholderKeys(entry.field)];
     keysByField[entry.field].push(entry.key);
   });
-  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按缺失处理，统计、图表和分析结论已重新计算。`);
+  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按空值处理，统计、图表和分析结论已重新计算。`);
 }
 
 // The fourth refresh path. keysByField replaces the confirmed keys of each listed
 // field; refused while the field configuration has unapplied drafts.
 function updatePlaceholderConfirmations(keysByField, message) {
   if (!state.rows.length) return false;
-  if (!ensureFieldConfigurationApplied("处理疑似缺失值")) {
-    setPlaceholderMessage("字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。", "warning");
+  if (!ensureFieldConfigurationApplied("处理像是空值的写法")) {
+    setPlaceholderMessage("字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。", "warning");
     return false;
   }
   const fields = Object.keys(keysByField).filter((field) => getFieldProfile(field));
@@ -1215,12 +1215,12 @@ function renderQuality() {
   // First, so every 查看 button below can carry its category's index.
   state.problemCategories = listProblemCategories();
   dom.qualitySummary.innerHTML = `
-    <span class="quality-pill ${missingClass}">缺失值总数：${formatInteger(state.totalMissing)}</span>
+    <span class="quality-pill ${missingClass}">空值总数：${formatInteger(state.totalMissing)}</span>
     <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
-    <span class="quality-pill ${conversionFailureClass}">格式问题：${formatInteger(conversionFailureTotal)} 个值</span>
-    <span class="quality-pill">异常值字段：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
-    <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">ID 重复字段：${formatInteger(listedIdFieldCount)}</span>
-    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">疑似缺失值：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
+    <span class="quality-pill ${conversionFailureClass}">认不出的数字或日期：${formatInteger(conversionFailureTotal)} 个值</span>
+    <span class="quality-pill">偏大或偏小的值：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)} 个字段</span>
+    <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">编号重复：${formatInteger(listedIdFieldCount)} 个字段</span>
+    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">像是空值的写法：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
     ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
   renderParseWarningSummary();
@@ -1239,9 +1239,9 @@ function renderQuality() {
       <tr>
         <th>字段</th>
         <th>类型</th>
-        <th>缺失值数量</th>
-        <th>缺失率</th>
-        <th>无法转换</th>
+        <th>空值数量</th>
+        <th>空值占比</th>
+        <th>认不出</th>
         <th>查看</th>
       </tr>
     </thead>
@@ -1254,8 +1254,8 @@ function renderQuality() {
           <td>${formatPercent(profile.missingRate)}</td>
           <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
           <td>${problemViewCell([
-            problemViewButton({ kind: "missing", field: profile.field }, "缺失"),
-            problemViewButton({ kind: "conversion", field: profile.field }, "格式问题")
+            problemViewButton({ kind: "missing", field: profile.field }, "空值"),
+            problemViewButton({ kind: "conversion", field: profile.field }, "认不出")
           ])}</td>
         </tr>
       `).join("")}
@@ -1271,7 +1271,7 @@ function renderQuality() {
     <thead>
       <tr>
         <th>字段</th>
-        <th>异常值数量</th>
+        <th>偏大或偏小的个数</th>
         <th>下界</th>
         <th>上界</th>
         <th>查看</th>
@@ -1318,7 +1318,7 @@ function renderParseWarningSummary() {
     return;
   }
   const rowCount = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-  dom.parseWarningSummary.innerHTML = `${escapeHtml(`CSV 解析警告：${formatInteger(count)} 条${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
+  dom.parseWarningSummary.innerHTML = `${escapeHtml(`读取时有疑问：${formatInteger(count)} 处${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
 }
 
 // "疑似合计 / 小计行" and "公式错误单元格": lines of ready HTML, then footer, the whole
@@ -1514,7 +1514,7 @@ function renderIdDuplicateDetails() {
 // Buttons carry indexes into state.placeholders for handlePlaceholderClick().
 function renderPlaceholderDetails() {
   if (!state.placeholders.length) {
-    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现疑似缺失值。</p>`;
+    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现像是空值的写法。</p>`;
     return;
   }
   const commonCount = getPendingCommonPlaceholders().length;
@@ -1530,19 +1530,19 @@ function renderPlaceholderDetails() {
     } else {
       const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, [entry.key]));
       const notes = formatPlaceholderNotes([entry.key]);
-      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按缺失处理</button>${viewButton}</li>`;
+      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按空值处理</button>${viewButton}</li>`;
     }
     if (state.placeholders[index + 1]?.field === entry.field) return item;
     const pendingKeys = state.placeholders.filter((other) => other.field === entry.field && !other.confirmed).map((other) => other.key);
     if (pendingKeys.length < 2) return item;
     const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, pendingKeys));
-    return `${item}<li class="placeholder-field-summary">${escapeHtml(`「${entry.field}」全部确认后：${change}。`)}</li>`;
+    return `${item}<li class="placeholder-field-summary">${escapeHtml(`「${entry.field}」全部按空值处理后：${change}。`)}</li>`;
   });
   const typeChangeNote = typeChanges.length
-    ? `<span class="placeholder-note">${escapeHtml(`确认后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
+    ? `<span class="placeholder-note">${escapeHtml(`按空值处理后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
     : "";
   dom.placeholderDetails.innerHTML = `
-    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>全部确认常见写法（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
+    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>常见写法全部按空值处理（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
     <ul class="placeholder-list">${items.join("")}</ul>
   `;
 }
@@ -1572,7 +1572,7 @@ function renderNumericStats() {
       <tr>
         <th>字段</th>
         <th>有效数量</th>
-        <th>无法转换</th>
+        <th>认不出</th>
         <th>平均值</th>
         <th>中位数</th>
         <th>最大值</th>
@@ -1672,7 +1672,7 @@ function renderNumericDistributionChart() {
   if (!field) return drawEmptyChart(canvas, "没有可用的数值字段");
 
   const values = getNumericValues(field);
-  if (!values.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效数值");
+  if (!values.length) return drawEmptyChart(canvas, "该字段没有认得出的数字");
   const bins = buildDiscreteValueCounts(values, field) || buildHistogram(values, 10, field);
   state.charts.numericDistributionChart = new Chart(canvas, {
     type: "bar",
@@ -1725,7 +1725,7 @@ function renderDateTrendChart() {
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
 
   const trend = buildDateChartTrend(field, numericField, aggregate);
-  if (!trend.labels.length) return drawEmptyChart(canvas, "该字段没有可安全转换的有效日期");
+  if (!trend.labels.length) return drawEmptyChart(canvas, "该字段没有认得出的日期");
   const timeUnit = getDateGranularity(field) === "year"
     ? "年份"
     : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
@@ -1764,7 +1764,7 @@ function getDateChartSelection() {
 }
 
 function getDateChartAggregateLabel(aggregate) {
-  return { count: "记录数", avg: "平均值", sum: "合计" }[aggregate] || "记录数";
+  return { count: "记录数", avg: "平均值", sum: "求和" }[aggregate] || "记录数";
 }
 
 function resetV2AnalysisState() {
@@ -1826,7 +1826,7 @@ function renderV2Analysis() {
   renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod);
   renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod);
   const invalidMetricText = metricInvalidCount
-    ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值无法转换为数字，已从计算中排除。`
+    ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值认不出是数字，已从计算中排除。`
     : "";
   dom.v2ResultSummary.textContent = (hasActiveFilters()
     ? `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于当前筛选数据 ${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行。`

@@ -628,7 +628,7 @@ function listMissingRows(field) {
   state.rows.forEach((row, index) => {
     if (!isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
     const error = state.sourceFormulaErrors.get(row)?.[field];
-    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按缺失处理"));
+    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按空值处理"));
   });
   return { items, count: profile.missingCount };
 }
@@ -641,7 +641,7 @@ function listConversionFailureRows(field) {
   const items = [];
   state.rows.forEach((row, index) => {
     const value = row[field];
-    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `无法转换为${profile.type}`));
+    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `认不出是${profile.typeKey === "date" ? "日期" : "数字"}`));
   });
   return { items, count: profile.conversionFailureCount };
 }
@@ -708,7 +708,7 @@ function listIdDuplicateRows(field) {
 function listPlaceholderRows(field, key) {
   const entry = state.placeholders.find((item) => item.field === field && item.key === key);
   if (!entry) return null;
-  const note = entry.confirmed ? "已按缺失处理" : "待确认";
+  const note = entry.confirmed ? "已按空值处理" : "待确认";
   const items = [];
   state.rows.forEach((row, index) => {
     if (placeholderKey(row[field]) === key) items.push(problemRowItem(index, note));
