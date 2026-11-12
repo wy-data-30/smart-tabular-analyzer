@@ -342,14 +342,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v2.11.0", () => {
+test("public current version markers agree on v2.12.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.11.0");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.11\.0/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.11\.0/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "2.12.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v2\.12\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v2\.12\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v2.11.0");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.11.0");
+  assert.equal(evaluate("buildReportData().version"), "v2.12.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v2.12.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -1589,8 +1589,8 @@ test("v2.10.0 the action texts", () => {
   const { context, evaluate } = createScriptContext();
   context.__actions = ["date", "number", "placeholder", "trim", "keptTime", "keptPercent", "keptScientific", "keptCurrencyMix", "keptPendingPlaceholder", "keptDateUnreadable", "keptDateOrder", "keptNumberUnreadable", "keptUnsafe"];
   assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__actions.map(formatStandardizeAction))")), [
-    "日期改写为 YYYY-MM-DD", "数字改写为纯数字", "已确认的疑似缺失值，清空", "去首尾空格", "带时间，保持原值", "百分比，不改写", "科学计数法，不改写",
-    "货币符号不一致，保持原值", "疑似缺失值，未确认", "读不成日期，保持原值", "日月顺序无法确定，保持原值", "读不成数字，保持原值", "无法安全改写，保持原值"
+    "日期改写为 YYYY-MM-DD", "数字改写为纯数字", "已按空值处理的写法，清空", "去首尾空格", "带时间，保持原值", "百分比，不改写", "科学计数法，不改写",
+    "货币符号不一致，保持原值", "像是空值的写法，未确认", "读不成日期，保持原值", "日月顺序无法确定，保持原值", "读不成数字，保持原值", "无法安全改写，保持原值"
   ]);
   assert.deepEqual(JSON.parse(evaluate("JSON.stringify(STANDARDIZE_KEPT_ACTIONS)")), context.__actions.filter((action) => action.startsWith("kept")));
 });

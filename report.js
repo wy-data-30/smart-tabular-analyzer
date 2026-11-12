@@ -1,4 +1,4 @@
-// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和标准化导出（整表检查、标准化 CSV 和改动清单）、导出门禁、文件名和下载。
+// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。
 
 const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",
@@ -150,17 +150,17 @@ function buildProblemRowsCsvContent(list, fields) {
 }
 
 const PROBLEM_KIND_FILE_NAMES = Object.freeze({
-  missing: "缺失",
-  conversion: "格式问题",
-  outlier: "异常值",
+  missing: "空值",
+  conversion: "认不出",
+  outlier: "偏大或偏小",
   duplicateRows: "整行重复",
-  idDuplicate: "ID重复",
-  placeholder: "疑似缺失值",
-  parseWarnings: "解析警告",
+  idDuplicate: "编号重复",
+  placeholder: "像是空值的写法",
+  parseWarnings: "读取有疑问",
   suspectedTotal: "疑似合计",
   formulaError: "公式错误",
   dateStyle: "日期写法",
-  lookAlike: "写法不同"
+  lookAlike: "写法不一样"
 });
 
 // <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv; only the part before the
@@ -352,7 +352,7 @@ function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, 
 function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
-  const label = kind === "changes" ? `标准化改动清单${truncatedTo ? `_前${truncatedTo}条` : ""}` : "标准化";
+  const label = kind === "changes" ? `写法统一改动清单${truncatedTo ? `_前${truncatedTo}条` : ""}` : "写法统一";
   return `${sanitizeFileName(`${stem}_${label}`)}_${formatReportFileDate(now)}.csv`;
 }
 
@@ -360,7 +360,7 @@ function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
 function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
   const result = state.standardizedExport;
   if (!result || !canCheckStandardizedExport()) {
-    setStandardizedExportStatus("请先检查标准化改动。", "warning");
+    setStandardizedExportStatus("请先点“检查会改哪些格”。", "warning");
     return;
   }
   if (kind === "changes" && !result.cellCount) {
@@ -380,7 +380,7 @@ function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
     const content = buildStandardizedCsvContent(result, state.rows, state.fields);
     const fileName = buildStandardizedFileName("data", now);
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-    setStandardizedExportStatus(`已导出标准化数据 ${formatInteger(state.rows.length)} 行：${fileName}`, "success");
+    setStandardizedExportStatus(`已导出写法统一的表 ${formatInteger(state.rows.length)} 行：${fileName}`, "success");
   } catch (error) {
     setStandardizedExportStatus(`导出失败：${error.message}`, "error");
   }
@@ -569,7 +569,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v2.11.0",
+    version: "v2.12.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -602,7 +602,7 @@ function buildReportData(now = new Date()) {
       parseWarningCount: state.parseWarnings.length,
       parseWarnings: state.parseWarnings.slice(0, 50).map((warning) => ({
         row: warning.row ?? "",
-        message: warning.message || warning.code || warning.type || "CSV 解析警告"
+        message: warning.message || warning.code || warning.type || "读取时有疑问"
       })),
       missingByField: state.profiles.map((profile) => ({
         field: profile.field,
@@ -657,7 +657,7 @@ function buildReportPlaceholders() {
         rawValues: [...entry.rawValues],
         count: entry.count,
         rowNumbers: [...entry.rowNumbers],
-        effect: `确认后${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`
+        effect: `按空值处理后，${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`
       };
     })
   };
@@ -721,7 +721,7 @@ function buildReportDateTrends() {
         values: [],
         start: "",
         end: "",
-        summary: `日期字段「${profile.field}」没有可安全转换的有效日期。`
+        summary: `日期字段「${profile.field}」里没有认得出的日期。`
       };
     }
 
@@ -809,7 +809,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v2.11.0",
+    version: reportData.version || "v2.12.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -922,20 +922,20 @@ function buildReportIdDuplicateSection(idDuplicates) {
 }
 
 const REPORT_PLACEHOLDER_CONFIRMED_HEADERS = ["字段", "写法", "出现次数", "状态"];
-const REPORT_PLACEHOLDER_PENDING_HEADERS = ["字段", "写法", "档位", "出现次数", "文件行号", "确认后的影响"];
+const REPORT_PLACEHOLDER_PENDING_HEADERS = ["字段", "写法", "档位", "出现次数", "文件行号", "按空值处理后的影响"];
 const REPORT_PLACEHOLDER_TIER_LABELS = { common: "常见", maybe: "可能是有效值" };
 
 // Plain-text tables and notes of the report's placeholder section. Every note
 // starts with fixed text, never with a field name or value.
 function buildReportPlaceholderSection({ confirmed, pending }) {
-  if (!confirmed.length && !pending.length) return { confirmedRows: [], pendingRows: [], notes: ["没有发现疑似缺失值。"] };
+  if (!confirmed.length && !pending.length) return { confirmedRows: [], pendingRows: [], notes: ["没有发现像是空值的写法。"] };
   const notes = formatPlaceholderNotes(pending.map((entry) => entry.key));
   return {
     confirmedRows: confirmed.map((entry) => [
       entry.field,
       formatPlaceholderValue(entry),
       entry.count,
-      entry.fieldIgnored ? "已按缺失处理（字段已忽略）" : "已按缺失处理"
+      entry.fieldIgnored ? "已按空值处理（字段已忽略）" : "已按空值处理"
     ]),
     pendingRows: pending.map((entry) => [
       entry.field,
@@ -997,8 +997,8 @@ function buildReportFormatSections(quality) {
     lookAlikeCount: lookAlikes.length,
     sections: [
       { title: "日期写法混用", note: DATE_STYLE_NOTE, lines: dateStyles.map(formatDateStyleLine) },
-      { title: "常量列", note: CONSTANT_FIELD_NOTE, lines: constantFields.map(formatConstantField) },
-      { title: "写法细节不同的值", note: LOOK_ALIKE_NOTE, lines: lookAlikes.map(formatLookAlikeLine) }
+      { title: "整列只有一个值", note: CONSTANT_FIELD_NOTE, lines: constantFields.map(formatConstantField) },
+      { title: "同一个值，写法不一样", note: LOOK_ALIKE_NOTE, lines: lookAlikes.map(formatLookAlikeLine) }
     ].filter((section) => section.lines.length)
   };
 }
@@ -1009,15 +1009,15 @@ function buildHtmlReport(reportData, chartImages = []) {
   const numberSections = buildReportNumberSections(reportData.quality);
   // The summary counts problems only: numbers read by unit get their section, no count.
   const numericLookingSummary = numberSections.numericLooking.length
-    ? `；疑似数值列：<strong>${escapeHtml(numberSections.numericLooking.length)}</strong> 个字段`
+    ? `；像是数字的文本列：<strong>${escapeHtml(numberSections.numericLooking.length)}</strong> 个字段`
     : "";
   const numberSectionHtml = [
     ["按单位读取的数字", numberSections.conversions],
-    ["疑似数值列", numberSections.numericLooking]
+    ["像是数字的文本列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).map(([title, lines]) => `<h3>${title}</h3>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const formatSections = buildReportFormatSections(reportData.quality);
-  const formatSummary = `${formatSections.dateStyleCount ? `；日期写法混用：<strong>${escapeHtml(formatSections.dateStyleCount)}</strong> 个字段` : ""}${formatSections.lookAlikeCount ? `；写法不同的值：<strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> 个字段` : ""}`;
+  const formatSummary = `${formatSections.dateStyleCount ? `；日期写法混用：<strong>${escapeHtml(formatSections.dateStyleCount)}</strong> 个字段` : ""}${formatSections.lookAlikeCount ? `；同一个值，写法不一样：<strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> 个字段` : ""}`;
   const formatSectionHtml = formatSections.sections.map(({ title, note, lines }) => `<h3>${title}</h3>
     <p>${escapeHtml(note)}</p>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
@@ -1037,22 +1037,22 @@ function buildHtmlReport(reportData, chartImages = []) {
     : "";
   const idDuplicates = reportData.quality.idDuplicates;
   const idSummary = idDuplicates
-    ? `；ID 重复字段：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong>`
+    ? `；编号重复：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong> 个字段`
     : "";
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const placeholders = reportData.quality.placeholders;
   const placeholderSummary = placeholders && (placeholders.confirmed.length || placeholders.pending.length)
-    ? `；疑似缺失值：<strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> 个字段`
+    ? `；像是空值的写法：<strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> 个字段`
     : "";
   const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
   const placeholderSectionHtml = placeholderSection
-    ? `<h3>疑似缺失值</h3>
-    ${placeholderSection.confirmedRows.length ? `<p>已按缺失处理的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows, "")}` : ""}
-    ${placeholderSection.pendingRows.length ? `<p>还没确认的疑似值：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows, "")}` : ""}
+    ? `<h3>像是空值的写法</h3>
+    ${placeholderSection.confirmedRows.length ? `<p>已按空值处理的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows, "")}` : ""}
+    ${placeholderSection.pendingRows.length ? `<p>还没确认的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows, "")}` : ""}
     ${placeholderSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
     : "";
   const idSectionHtml = idSection
-    ? `<h3>ID 字段重复值</h3>
+    ? `<h3>编号重复</h3>
     ${idSection.rows.length ? buildHtmlReportTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows, "") : ""}
     ${idSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
     : "";
@@ -1172,7 +1172,7 @@ function buildHtmlReport(reportData, chartImages = []) {
   <section>
     <h2>字段类型结果</h2>
     ${buildHtmlReportTable(
-      ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "缺失值", "转换失败", "示例值"],
+      ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "空值", "认不出", "示例值"],
       reportData.fieldTypes.map((field) => [
         field.field,
         field.inferredType,
@@ -1188,20 +1188,20 @@ function buildHtmlReport(reportData, chartImages = []) {
   </section>
   <section>
     <h2>数据质量报告</h2>
-    <p>缺失值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；解析警告：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}。</p>
+    <p>空值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；读取时有疑问：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong> 处${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}。</p>
     ${rowNoteSectionHtml}
-    <h3>各字段缺失情况</h3>
+    <h3>各字段空值情况</h3>
     ${buildHtmlReportTable(
-      ["字段", "类型", "缺失值", "缺失率"],
+      ["字段", "类型", "空值", "空值占比"],
       reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate]),
       "无字段质量结果。"
     )}
     ${numberSectionHtml}
     ${formatSectionHtml}
     ${placeholderSectionHtml}
-    <h3>数值异常值</h3>
+    <h3>偏大或偏小的值</h3>
     ${buildHtmlReportTable(
-      ["字段", "异常值数量", "下界", "上界"],
+      ["字段", "偏大或偏小的个数", "下界", "上界"],
       reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
@@ -1210,7 +1210,7 @@ function buildHtmlReport(reportData, chartImages = []) {
   <section>
     <h2>数值字段描述性统计</h2>
     ${buildHtmlReportTable(
-      ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+      ["字段", "有效数量", "认不出", "平均值", "中位数", "最小值", "最大值", "标准差"],
       reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
       "未识别到数值字段，暂无可用数值统计。"
     )}
@@ -1257,7 +1257,7 @@ function buildMarkdownReport(reportData) {
   const numberSections = buildReportNumberSections(reportData.quality);
   const numberSectionLines = [
     ["按单位读取的数字", numberSections.conversions],
-    ["疑似数值列", numberSections.numericLooking]
+    ["像是数字的文本列", numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).flatMap(([title, lines]) => [`### ${title}`, "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
   const formatSections = buildReportFormatSections(reportData.quality);
   const formatSectionLines = formatSections.sections.flatMap(({ title, note, lines }) => [`### ${title}`, "", escapeMarkdownText(note), "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
@@ -1274,7 +1274,7 @@ function buildMarkdownReport(reportData) {
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const idSectionLines = idSection
     ? [
-      "### ID 字段重复值",
+      "### 编号重复",
       "",
       ...(idSection.rows.length ? [buildMarkdownTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows), ""] : []),
       ...idSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
@@ -1284,10 +1284,10 @@ function buildMarkdownReport(reportData) {
   const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
   const placeholderSectionLines = placeholderSection
     ? [
-      "### 疑似缺失值",
+      "### 像是空值的写法",
       "",
-      ...(placeholderSection.confirmedRows.length ? ["已按缺失处理的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows), ""] : []),
-      ...(placeholderSection.pendingRows.length ? ["还没确认的疑似值：", "", buildMarkdownTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows), ""] : []),
+      ...(placeholderSection.confirmedRows.length ? ["已按空值处理的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows), ""] : []),
+      ...(placeholderSection.pendingRows.length ? ["还没确认的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows), ""] : []),
       ...placeholderSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
     ]
     : [];
@@ -1332,7 +1332,7 @@ function buildMarkdownReport(reportData) {
     "",
     reportData.fieldTypes.length
       ? buildMarkdownTable(
-        ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "缺失值", "转换失败", "示例值"],
+        ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "空值", "认不出", "示例值"],
         reportData.fieldTypes.map((field) => [
           field.field,
           field.inferredType,
@@ -1348,25 +1348,25 @@ function buildMarkdownReport(reportData) {
     "",
     "## 数据质量报告",
     "",
-    `- 缺失值总数：${reportData.quality.totalMissing}`,
+    `- 空值总数：${reportData.quality.totalMissing}`,
     `- 重复行：${reportData.quality.duplicateRows}`,
-    `- 解析警告：${reportData.quality.parseWarningCount}`,
-    ...(idDuplicates ? [`- ID 重复字段：${countListedIdDuplicateFields(idDuplicates)}`] : []),
+    `- 读取时有疑问：${reportData.quality.parseWarningCount} 处`,
+    ...(idDuplicates ? [`- 编号重复：${countListedIdDuplicateFields(idDuplicates)} 个字段`] : []),
     ...(placeholders && (placeholders.confirmed.length || placeholders.pending.length)
-      ? [`- 疑似缺失值：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
+      ? [`- 像是空值的写法：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
       : []),
-    ...(numberSections.numericLooking.length ? [`- 疑似数值列：${numberSections.numericLooking.length} 个字段`] : []),
+    ...(numberSections.numericLooking.length ? [`- 像是数字的文本列：${numberSections.numericLooking.length} 个字段`] : []),
     ...(rowNotes.suspectedTotalCount ? [`- 疑似合计 / 小计行：${rowNotes.suspectedTotalCount} 行`] : []),
     ...(rowNotes.formulaErrorCount ? [`- 公式错误：${rowNotes.formulaErrorCount} 个单元格`] : []),
     ...(formatSections.dateStyleCount ? [`- 日期写法混用：${formatSections.dateStyleCount} 个字段`] : []),
-    ...(formatSections.lookAlikeCount ? [`- 写法不同的值：${formatSections.lookAlikeCount} 个字段`] : []),
+    ...(formatSections.lookAlikeCount ? [`- 同一个值，写法不一样：${formatSections.lookAlikeCount} 个字段`] : []),
     "",
     ...rowNoteSectionLines,
-    "### 各字段缺失情况",
+    "### 各字段空值情况",
     "",
     reportData.quality.missingByField.length
       ? buildMarkdownTable(
-        ["字段", "类型", "缺失值", "缺失率"],
+        ["字段", "类型", "空值", "空值占比"],
         reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate])
       )
       : "无字段质量结果。",
@@ -1374,11 +1374,11 @@ function buildMarkdownReport(reportData) {
     ...numberSectionLines,
     ...formatSectionLines,
     ...placeholderSectionLines,
-    "### 数值异常值",
+    "### 偏大或偏小的值",
     "",
     reportData.quality.outliers.length
       ? buildMarkdownTable(
-        ["字段", "异常值数量", "下界", "上界"],
+        ["字段", "偏大或偏小的个数", "下界", "上界"],
         reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound])
       )
       : "未识别到数值字段，暂无可用数值统计。",
@@ -1388,7 +1388,7 @@ function buildMarkdownReport(reportData) {
     "",
     reportData.numericStats.length
       ? buildMarkdownTable(
-        ["字段", "有效数量", "无法转换", "平均值", "中位数", "最小值", "最大值", "标准差"],
+        ["字段", "有效数量", "认不出", "平均值", "中位数", "最小值", "最大值", "标准差"],
         reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
       )
       : "未识别到数值字段，暂无可用数值统计。",

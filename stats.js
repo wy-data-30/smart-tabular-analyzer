@@ -101,7 +101,7 @@ function groupNumericFieldByCategory(metricField, groupField) {
   getAnalysisRows().forEach((row) => {
     const value = parseNumber(row[metricField]);
     if (value === null) return;
-    const groupName = analysisValue(row[groupField], groupKeys) || "未填写";
+    const groupName = analysisValue(row[groupField], groupKeys) || "（空值）";
     if (!groups.has(groupName)) groups.set(groupName, []);
     groups.get(groupName).push(value);
   });
@@ -172,7 +172,7 @@ function fieldHasDateData(field, rows = getAnalysisRows()) {
 function buildTrendInsight(dateField) {
   const trend = buildDateTrend(dateField, "");
   if (!trend.labels.length) {
-    return `日期字段「${dateField}」没有可安全转换的有效日期，因此未生成趋势结论。`;
+    return `日期字段「${dateField}」里没有认得出的日期，因此未生成趋势结论。`;
   }
   if (trend.values.length < 2) {
     return `日期字段「${dateField}」可用于趋势分析，但有效时间点不足以判断变化方向。`;

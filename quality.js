@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、ID 字段重复值、疑似缺失值、按单位读取的数字、疑似数值列、疑似合计 / 小计行、公式错误单元格、日期写法混用、常量列、写法细节不同的值的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -628,7 +628,7 @@ function listMissingRows(field) {
   state.rows.forEach((row, index) => {
     if (!isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
     const error = state.sourceFormulaErrors.get(row)?.[field];
-    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按缺失处理"));
+    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按空值处理"));
   });
   return { items, count: profile.missingCount };
 }
@@ -641,7 +641,7 @@ function listConversionFailureRows(field) {
   const items = [];
   state.rows.forEach((row, index) => {
     const value = row[field];
-    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `无法转换为${profile.type}`));
+    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `认不出是${profile.typeKey === "date" ? "日期" : "数字"}`));
   });
   return { items, count: profile.conversionFailureCount };
 }
@@ -708,7 +708,7 @@ function listIdDuplicateRows(field) {
 function listPlaceholderRows(field, key) {
   const entry = state.placeholders.find((item) => item.field === field && item.key === key);
   if (!entry) return null;
-  const note = entry.confirmed ? "已按缺失处理" : "待确认";
+  const note = entry.confirmed ? "已按空值处理" : "待确认";
   const items = [];
   state.rows.forEach((row, index) => {
     if (placeholderKey(row[field]) === key) items.push(problemRowItem(index, note));
