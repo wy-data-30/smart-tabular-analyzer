@@ -4235,12 +4235,16 @@ test("v2.7.0 templates: templates.js, its markup, styles, startup check and repo
 
 test("v2.7.0 conclusions: the findings section and its navigation entries are gone, the conclusions sit in the chart cards", () => {
   const html = repoFile("index.html");
-  assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>|<span>09<\/span>/);
-  const navHrefs = [...html.matchAll(/<a[^>]*href="#(\w+Section)"><span>(\d\d)<\/span>/g)].map((match) => [match[1], match[2]]);
-  assert.deepEqual(navHrefs.map(([, number]) => number), ["01", "02", "03", "04", "05", "06", "07", "08"]);
-  assert.equal(navHrefs.at(-1)[0], "exportSection");
-  const mobile = [...html.slice(html.indexOf('id="mobileSectionNav"')).matchAll(/<option value="(\w+)">/g)].map((match) => match[1]).slice(0, navHrefs.length);
-  assert.deepEqual(mobile, navHrefs.map(([id]) => id));
+  assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>/);
+  // v3.0.0: one navigation of exactly 8 links, in module order and without numbers; the phone
+  // select is gone.
+  const navBlocks = [...html.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav>/g)].map((match) => match[1]).filter((block) => /href="#\w+Section"/.test(block));
+  assert.equal(navBlocks.length, 1);
+  const navHrefs = [...navBlocks[0].matchAll(/<a\b[^>]*href="#(\w+)"[^>]*>([^<]*)<\/a>/g)].map((match) => match[1]);
+  assert.deepEqual(navHrefs, ["overviewSection", "schemaSection", "qualitySection", "filterSection", "statisticsSection", "chartsSection", "customSection", "exportSection"]);
+  assert.equal((navBlocks[0].match(/<a\b/g) || []).length, 8);
+  assert.doesNotMatch(navBlocks[0], /<span>\d\d<\/span>/);
+  assert.doesNotMatch(html, /id="mobileSectionNav"/);
   const chartCard = (canvasId) => html.slice(html.lastIndexOf('<div class="chart-card', html.indexOf('id="' + canvasId + '"')), html.indexOf('id="' + canvasId + '"') + 400);
   assert.match(chartCard("categoryTopChart"), /id="categoryChartInsight" class="chart-insight hidden"/);
   assert.match(chartCard("dateTrendChart"), /id="dateChartInsight" class="chart-insight hidden"/);
@@ -7192,4 +7196,128 @@ test("v3.0.0 guard: the sample's report text is the v2.12.0 text", async () => {
   const normalized = texts.join("\n----\n").split(version).join("VERSION");
   assert.ok(normalized.includes("VERSION"));
   assert.equal(crypto.createHash("sha256").update(normalized).digest("hex"), GUARD_REPORT_SHA256);
+});
+
+// v3.0.0 commit 1: one module at a time.
+const MODULE_SECTION_IDS = ["overviewSection", "schemaSection", "qualitySection", "filterSection", "statisticsSection", "chartsSection", "customSection", "exportSection"];
+
+// The fake page has no navigation links, history or scrolling, and its focus() does nothing:
+// this gives showModule() all three and records what it did.
+function withModuleNavigation(scope) {
+  const record = { urls: [], scrolls: [], focused: [] };
+  const links = MODULE_SECTION_IDS.map((id) => {
+    const attributes = { href: `#${id}` };
+    const classes = new Set();
+    return {
+      getAttribute: (name) => (name in attributes ? attributes[name] : null),
+      setAttribute: (name, value) => { attributes[name] = String(value); },
+      removeAttribute: (name) => { delete attributes[name]; },
+      classList: {
+        toggle(name, force) { if (force) classes.add(name); else classes.delete(name); return classes.has(name); },
+        contains: (name) => classes.has(name)
+      }
+    };
+  });
+  const document = scope.context.document;
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = (selector) => (selector === "#moduleNav a" ? links : originalQuery.call(document, selector));
+  scope.context.window.history = { replaceState: (state, title, url) => record.urls.push(url) };
+  // JSON copy: objects made inside the VM have another realm's prototype.
+  scope.context.window.scrollTo = (...args) => record.scrolls.push(JSON.parse(JSON.stringify(args)));
+  MODULE_SECTION_IDS.forEach((id) => { document.getElementById(`${id}Title`).focus = () => record.focused.push(id); });
+  document.getElementById("reportTitle").focus = () => record.focused.push("reportTitle");
+  record.current = () => links.filter((link) => link.getAttribute("aria-current") === "page").map((link) => link.getAttribute("href"));
+  record.shown = () => MODULE_SECTION_IDS.filter((id) => !document.getElementById(id).classList.contains("module-off"));
+  record.inert = () => MODULE_SECTION_IDS.filter((id) => document.getElementById(id).inert === true);
+  record.hiddenClass = () => MODULE_SECTION_IDS.filter((id) => document.getElementById(id).classList.contains("hidden"));
+  record.clear = () => { record.urls.length = 0; record.scrolls.length = 0; record.focused.length = 0; };
+  return record;
+}
+
+test("v3.0.0 modules: the page wraps the eight modules in one stage, each title can take the focus", () => {
+  const html = repoFile("index.html");
+  const stageStart = html.indexOf('<div id="moduleStage" class="module-stage">');
+  assert.ok(stageStart >= 0);
+  assertInOrder(html.slice(stageStart), MODULE_SECTION_IDS.map((id) => `<section id="${id}"`));
+  MODULE_SECTION_IDS.forEach((id) => {
+    const section = html.slice(html.indexOf(`<section id="${id}"`));
+    assert.match(section.slice(0, 400), new RegExp(`<h2 id="${id}Title" tabindex="-1">`), id);
+  });
+  assert.match(html, /<nav id="moduleNav"[^>]*>/);
+});
+
+test("v3.0.0 modules: hidden modules keep their layout (visibility, never display: none or .hidden), print shows all", () => {
+  const css = repoFile("style.css");
+  const stage = css.match(/\n\.module-stage \{([^}]*)\}/);
+  assert.ok(stage, ".module-stage rule");
+  assert.match(stage[1], /overflow: clip;/);
+  const off = css.match(/\n\.module-stage \.module-off \{([^}]*)\}/);
+  assert.ok(off, ".module-off rule");
+  assert.match(off[1], /visibility: hidden;/);
+  assert.match(off[1], /position: absolute;/);
+  assert.doesNotMatch(off[1], /display:/);
+  const script = repoFile("script.js");
+  const start = script.indexOf("function showModule(");
+  assert.ok(start >= 0);
+  const showModule = script.slice(start, start + script.slice(start).search(/\r?\n\}\r?\n/));
+  assert.match(showModule, /module-off/);
+  assert.doesNotMatch(showModule, /"hidden"/);
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.equal((css.match(/@media print \{/g) || []).length, 1);
+  assert.match(print, /\.module-stage \.module-off \{[^}]*position: static !important;[^}]*visibility: visible !important;/);
+  assert.match(print, /\.skip-link,/);
+  assert.match(print, /\.chart-frame canvas \{[^}]*max-width: 100% !important;/);
+  assert.match(print, /\.chart-frame,\s*\.chart-card\.wide \.chart-frame \{\s*height: auto;/);
+});
+
+test("v3.0.0 modules: showModule shows one module, marks one link, writes the hash, scrolls up and focuses its title", () => {
+  const scope = createScriptContext();
+  const record = withModuleNavigation(scope);
+  scope.evaluate('showModule("qualitySection")');
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual(record.inert(), MODULE_SECTION_IDS.filter((id) => id !== "qualitySection"));
+  assert.deepEqual(record.hiddenClass(), []);
+  assert.deepEqual(record.current(), ["#qualitySection"]);
+  assert.deepEqual(record.urls, ["#qualitySection"]);
+  assert.deepEqual(record.scrolls, [[{ top: 0, behavior: "instant" }]]);
+  assert.deepEqual(record.focused, ["qualitySection"]);
+  // Not a module: nothing changes.
+  record.clear();
+  scope.evaluate('showModule("dropZone")');
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual([record.urls, record.scrolls, record.focused], [[], [], []]);
+});
+
+test("v3.0.0 modules: an import shows the overview, scrolls up and focuses its title; a reset goes back quietly", () => {
+  const scope = createChartContext();
+  const record = withModuleNavigation(scope);
+  scope.evaluate('showModule("exportSection")');
+  record.clear();
+  commitGuardRows(scope, ["城市", "金额"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京", 金额: String(index) })), "cities.csv");
+  assert.deepEqual(record.shown(), ["overviewSection"]);
+  assert.deepEqual(record.current(), ["#overviewSection"]);
+  assert.deepEqual(record.focused, ["overviewSection"]);
+  assert.deepEqual(record.scrolls, [[{ top: 0, behavior: "instant" }]]);
+  scope.evaluate('showModule("chartsSection")');
+  record.clear();
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(record.shown(), ["overviewSection"]);
+  assert.deepEqual(record.current(), ["#overviewSection"]);
+  assert.deepEqual([record.urls, record.scrolls, record.focused], [[], [], []]);
+});
+
+test("v3.0.0 modules: field configuration, placeholder confirmations and filters stay in the current module", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const record = withModuleNavigation(orders);
+  orders.evaluate('showModule("qualitySection")');
+  record.clear();
+  orders.evaluate('stageFieldTypeChange("客户类型", "id"); applyFieldConfiguration()');
+  assert.equal(orders.evaluate('getFieldProfile("客户类型").typeKey'), "id");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.ok(orders.evaluate("Object.keys(state.placeholderConfirmations).length") > 0);
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual(record.current(), ["#qualitySection"]);
+  assert.deepEqual([record.urls, record.scrolls], [[], []]);
+  assert.ok(!record.focused.some((id) => MODULE_SECTION_IDS.includes(id)), JSON.stringify(record.focused));
 });

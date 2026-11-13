@@ -194,7 +194,9 @@ const resultSectionOrder = [
   "exportSection"
 ].map((id) => htmlSource.indexOf(`id="${id}"`));
 assert.equal(resultSectionOrder.every((position, index) => position >= 0 && (!index || position > resultSectionOrder[index - 1])), true);
-assert.match(htmlSource, /id="mobileSectionNav"/);
+// v3.0.0: no phone select; one navigation of eight module links.
+assert.doesNotMatch(htmlSource, /id="mobileSectionNav"/);
+assert.equal((htmlSource.match(/<a\b[^>]*href="#(?:overview|schema|quality|filter|statistics|charts|custom|export)Section"/g) || []).length, 8);
 assert.match(htmlSource, /id="globalFilterSummary"/);
 assert.match(htmlSource, /id="globalClearFilters"/);
 assert.match(htmlSource, /href="#exportSection"/);

@@ -680,28 +680,14 @@ body.has-results #statusPanel.success:not(.has-note) {
   text-decoration: none;
 }
 
-.results-nav nav a span {
-  color: #98a2b3;
-  font-size: 11px;
-}
-
 .results-nav nav a:hover {
   background: #f2f4f7;
 }
 
 .results-nav nav a.active,
-.results-nav nav a[aria-current="location"] {
+.results-nav nav a[aria-current="page"] {
   background: var(--primary-soft);
   color: var(--primary);
-}
-
-.results-nav nav a.active span,
-.results-nav nav a[aria-current="location"] span {
-  color: var(--primary);
-}
-
-.mobile-results-nav {
-  display: none;
 }
 
 .global-filter-status {
@@ -735,6 +721,23 @@ body.has-results #statusPanel.success:not(.has-note) {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
+}
+
+/* v3.0.0: one module at a time. A hidden module stays laid out at the stage's width, so a
+   chart drawn there keeps its size for the HTML report; clip (not hidden) keeps sticky
+   elements inside the modules working and stops a long hidden module from lengthening
+   the page. */
+.module-stage {
+  position: relative;
+  overflow: clip;
+}
+
+.module-stage .module-off {
+  visibility: hidden;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
 }
 
 .section-heading {
@@ -2252,27 +2255,6 @@ select:focus-visible,
     padding: 7px 8px;
   }
 
-  .desktop-results-nav {
-    display: none;
-  }
-
-  .mobile-results-nav {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 8px;
-    align-items: center;
-    min-width: 0;
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 650;
-  }
-
-  .mobile-results-nav select {
-    width: 100%;
-    max-width: none;
-    min-height: 36px;
-  }
-
   .global-filter-status {
     grid-column: 1 / -1;
     justify-content: space-between;
@@ -2438,6 +2420,22 @@ select:focus-visible,
     background: #fff;
   }
 
+  .module-stage .module-off {
+    position: static !important;
+    visibility: visible !important;
+  }
+
+  .chart-frame,
+  .chart-card.wide .chart-frame {
+    height: auto;
+  }
+
+  .chart-frame canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  .skip-link,
   .app-header,
   .workspace-intro,
   #statusPanel,

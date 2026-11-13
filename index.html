@@ -131,40 +131,28 @@
       </header>
 
       <aside class="results-nav" aria-label="分析模块导航">
-        <nav class="desktop-results-nav" aria-label="分析模块目录">
-          <a class="active" href="#overviewSection"><span>01</span>数据概览</a>
-          <a href="#schemaSection"><span>02</span>字段配置</a>
-          <a href="#qualitySection"><span>03</span>数据质量</a>
-          <a href="#filterSection"><span>04</span>数据筛选</a>
-          <a href="#statisticsSection"><span>05</span>描述性统计</a>
-          <a href="#chartsSection"><span>06</span>图表分析</a>
-          <a href="#customSection"><span>07</span>自定义分析</a>
-          <a href="#exportSection"><span>08</span>导出</a>
+        <nav id="moduleNav" class="desktop-results-nav" aria-label="分析模块目录">
+          <a class="active" href="#overviewSection" aria-current="page">数据概览</a>
+          <a href="#schemaSection">字段配置</a>
+          <a href="#qualitySection">数据质量</a>
+          <a href="#filterSection">筛选</a>
+          <a href="#statisticsSection">统计</a>
+          <a href="#chartsSection">图表</a>
+          <a href="#customSection">自定义分析</a>
+          <a href="#exportSection">导出</a>
         </nav>
-        <label class="mobile-results-nav" for="mobileSectionNav">
-          <span>当前模块</span>
-          <select id="mobileSectionNav" aria-label="选择分析模块">
-            <option value="overviewSection">数据概览</option>
-            <option value="schemaSection">字段配置</option>
-            <option value="qualitySection">数据质量</option>
-            <option value="filterSection">数据筛选</option>
-            <option value="statisticsSection">描述性统计</option>
-            <option value="chartsSection">图表分析</option>
-            <option value="customSection">自定义分析</option>
-            <option value="exportSection">导出</option>
-          </select>
-        </label>
         <div id="globalFilterStatus" class="global-filter-status" aria-live="polite">
           <span id="globalFilterSummary">尚未加载数据</span>
           <button id="globalClearFilters" class="text-button hidden" type="button">清除筛选</button>
         </div>
       </aside>
 
+      <div id="moduleStage" class="module-stage">
       <section id="overviewSection" class="section-block">
         <div class="section-heading">
           <div>
             <p class="section-label">数据概览</p>
-            <h2>数据规模与预览</h2>
+            <h2 id="overviewSectionTitle" tabindex="-1">数据规模与预览</h2>
           </div>
         </div>
         <div id="overviewCards" class="metric-grid"></div>
@@ -189,7 +177,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">字段配置</p>
-            <h2>确认字段类型</h2>
+            <h2 id="schemaSectionTitle" tabindex="-1">确认字段类型</h2>
           </div>
         </div>
         <p class="section-note">系统已自动推断字段类型。只有在识别不准确时才需要修改；应用后会统一重新计算统计、图表和分析结论。</p>
@@ -209,7 +197,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">数据质量</p>
-            <h2>空值、重复和其他问题</h2>
+            <h2 id="qualitySectionTitle" tabindex="-1">空值、重复和其他问题</h2>
           </div>
         </div>
         <p class="section-note">本模块始终基于导入的原始数据计算，不受当前筛选条件影响。</p>
@@ -306,7 +294,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">数据筛选</p>
-            <h2>设置当前分析范围</h2>
+            <h2 id="filterSectionTitle" tabindex="-1">设置当前分析范围</h2>
           </div>
         </div>
         <p class="section-note">分类、数值和日期条件可以同时应用。筛选只影响当前分析结果，不修改原始数据和数据质量报告。</p>
@@ -398,7 +386,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">描述性统计</p>
-            <h2>数值与分类统计</h2>
+            <h2 id="statisticsSectionTitle" tabindex="-1">数值与分类统计</h2>
           </div>
         </div>
         <div class="module-subsection first">
@@ -417,7 +405,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">图表分析</p>
-            <h2>字段分布与趋势</h2>
+            <h2 id="chartsSectionTitle" tabindex="-1">字段分布与趋势</h2>
           </div>
         </div>
         <div class="chart-grid">
@@ -460,7 +448,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">自定义分析</p>
-            <h2>按业务需要组合字段</h2>
+            <h2 id="customSectionTitle" tabindex="-1">按业务需要组合字段</h2>
           </div>
         </div>
         <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
@@ -522,7 +510,7 @@
         <div class="section-heading">
           <div>
             <p class="section-label">导出</p>
-            <h2>保存数据与分析报告</h2>
+            <h2 id="exportSectionTitle" tabindex="-1">保存数据与分析报告</h2>
           </div>
         </div>
         <section id="dataExportSection" class="export-module" aria-labelledby="dataExportTitle">
@@ -601,6 +589,7 @@
           <p id="reportExportStatus" class="inline-status" aria-live="polite"></p>
         </section>
       </section>
+      </div>
     </section>
   </main>
 

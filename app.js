@@ -103,7 +103,6 @@ const dom = {
   results: document.getElementById("results"),
   reportTitle: document.getElementById("reportTitle"),
   sourceName: document.getElementById("sourceName"),
-  mobileSectionNav: document.getElementById("mobileSectionNav"),
   globalFilterStatus: document.getElementById("globalFilterStatus"),
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
@@ -245,13 +244,12 @@ function setImportBusy(isBusy) {
   dom.dropZone.setAttribute("aria-busy", String(isBusy));
 }
 
+// An import opens the first module at the top of the page with the focus on its title
+// (v3.0.0); the address stays as it was.
 function showResultsWorkspace() {
   document.body.classList.add("has-results");
   setImportBusy(false);
-  window.requestAnimationFrame(() => {
-    dom.reportTitle?.focus({ preventScroll: true });
-    dom.results.scrollIntoView({ block: "start" });
-  });
+  window.requestAnimationFrame(() => showModule("overviewSection", { hash: false }));
 }
 
 // The format-consistency summaries: on import, field configuration and placeholder
@@ -2142,12 +2140,7 @@ function resetAnalysisState() {
   document.querySelectorAll("#customSection details").forEach((details) => {
     details.open = false;
   });
-  document.querySelectorAll(".desktop-results-nav a").forEach((link, index) => {
-    link.classList.toggle("active", index === 0);
-    if (index === 0) link.setAttribute("aria-current", "location");
-    else link.removeAttribute("aria-current");
-  });
-  dom.mobileSectionNav.value = "overviewSection";
+  showModule("overviewSection", { quiet: true });
   dom.results.classList.add("hidden");
   updateGlobalFilterStatus();
   updateExportButtons();

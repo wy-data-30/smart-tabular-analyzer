@@ -66,6 +66,9 @@ function createScriptContext() {
       innerHeight: 900,
       print() {},
       requestAnimationFrame(callback) { callback(); return 1; },
+      // v3.0.0: showModule() scrolls to the top and writes the module into the address.
+      scrollTo() {},
+      history: { replaceState() {} },
       scrollY: 0
     },
     TextDecoder,

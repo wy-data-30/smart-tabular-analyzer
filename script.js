@@ -1,5 +1,8 @@
 // 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。
 
+// The eight modules in page order (v3.0.0). Declared before the load-time calls below use it.
+const MODULE_IDS = ["overviewSection", "schemaSection", "qualitySection", "filterSection", "statisticsSection", "chartsSection", "customSection", "exportSection"];
+
 ensureDomElementsPresent();
 
 // A cached older index.html can lack elements this script expects. Stop here
@@ -195,71 +198,41 @@ updateExportButtons();
   });
 });
 
+// v3.0.0: one module at a time. The others get .module-off (visibility: hidden, laid out in
+// place, see style.css) and inert, never display: none or .hidden: a chart drawn while its
+// module is hidden must keep its size, and captureCurrentChartImages() skips anything inside
+// .hidden. Switching only shows and hides; it recalculates and redraws nothing.
+// quiet: only the classes (resets). hash: false keeps the address (imports).
+function showModule(sectionId, { quiet = false, hash = true } = {}) {
+  if (!MODULE_IDS.includes(sectionId)) return;
+  MODULE_IDS.forEach((id) => {
+    const section = document.getElementById(id);
+    const isActive = id === sectionId;
+    section.classList.toggle("module-off", !isActive);
+    section.inert = !isActive;
+  });
+  document.querySelectorAll("#moduleNav a").forEach((link) => {
+    const isActive = link.getAttribute("href") === `#${sectionId}`;
+    link.classList.toggle("active", isActive);
+    if (isActive) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  if (quiet) return;
+  // A narrow navigation scrolls sideways; bring the current link into view.
+  document.querySelector?.(`#moduleNav a[href="#${sectionId}"]`)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  if (hash) window.history.replaceState(null, "", `#${sectionId}`);
+  window.scrollTo({ top: 0, behavior: "instant" });
+  document.getElementById(`${sectionId}Title`).focus({ preventScroll: true });
+}
+
 function setupResultNavigation() {
-  const links = Array.from(document.querySelectorAll(".results-nav nav a"));
-  const sections = links
-    .map((link) => document.querySelector(link.getAttribute("href")))
-    .filter(Boolean);
-
-  const setActiveLink = (sectionId) => {
-    links.forEach((link) => {
-      const isActive = link.getAttribute("href") === `#${sectionId}`;
-      link.classList.toggle("active", isActive);
-      if (isActive) {
-        link.setAttribute("aria-current", "location");
-      } else {
-        link.removeAttribute("aria-current");
-      }
-    });
-    if (dom.mobileSectionNav && dom.mobileSectionNav.value !== sectionId) {
-      dom.mobileSectionNav.value = sectionId;
-    }
-  };
-
-  const navigateToSection = (sectionId) => {
-    const section = document.getElementById(sectionId);
-    if (!section) return;
-    setActiveLink(sectionId);
-    window.history.replaceState(null, "", `#${sectionId}`);
-    section.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  links.forEach((link) => {
+  document.querySelectorAll("#moduleNav a").forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
-      navigateToSection(link.getAttribute("href").slice(1));
+      showModule(link.getAttribute("href").slice(1));
     });
   });
-
-  dom.mobileSectionNav?.addEventListener("change", () => {
-    navigateToSection(dom.mobileSectionNav.value);
-  });
-
-  let navigationFrame = null;
-  const updateActiveLinkFromScroll = () => {
-    navigationFrame = null;
-    const isAtPageEnd = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4;
-    if (isAtPageEnd && sections.length) {
-      setActiveLink(sections[sections.length - 1].id);
-      return;
-    }
-
-    const navigationHeight = document.querySelector(".results-nav")?.getBoundingClientRect?.().height || 0;
-    const readingLine = Math.max(150, Math.min(320, window.innerHeight * 0.35, navigationHeight + 130));
-    const currentSection = sections.reduce((current, section) => (
-      section.getBoundingClientRect().top <= readingLine ? section : current
-    ), sections[0]);
-    if (currentSection) setActiveLink(currentSection.id);
-  };
-
-  if (typeof window.addEventListener === "function") {
-    window.addEventListener("scroll", () => {
-      if (navigationFrame !== null) return;
-      navigationFrame = window.requestAnimationFrame(updateActiveLinkFromScroll);
-    }, { passive: true });
-  }
-
-  if (sections[0]) setActiveLink(sections[0].id);
+  showModule(MODULE_IDS[0], { quiet: true });
 }
 
 function setupWorkspaceNavigation() {
