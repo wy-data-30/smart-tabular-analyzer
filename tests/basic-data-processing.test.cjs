@@ -7032,3 +7032,164 @@ test("v2.12.0: charts, insights and the report say 认得出 when a filtered ran
     scope.evaluate("drawEmptyChart = __originalDrawEmptyChart");
   }
 });
+
+// v3.0.0 guards (commit 0). They pass on v2.12.0: they pin what the new shell must leave as it
+// is, so the later commits cannot change it unnoticed.
+
+// A fake Chart whose instances the report can capture (captureCurrentChartImages() keeps only
+// png / jpeg / webp data URLs).
+function withCapturableCharts(scope) {
+  scope.context.Chart = scope.context.window.Chart = class {
+    constructor(canvas, config) { this.canvas = canvas; this.data = config.data; }
+    destroy() {}
+    toBase64Image() { return "data:image/png;base64,iVBORw0KGgo="; }
+  };
+}
+const capturedCharts = (scope) => JSON.parse(scope.evaluate("JSON.stringify(captureCurrentChartImages().map((chart) => [chart.id, chart.title]))"));
+const GUARD_CUSTOM_ANALYSIS = 'dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期"; renderV2Analysis()';
+const GUARD_EAST_FILTER = 'state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null }; state.filteredRows = filterRowsByConfig(state.rows, state.filters); state.filterSourceRows = state.rows; refreshFilteredAnalysis()';
+
+test("v3.0.0 guard: the HTML report takes the same charts and titles after import, a custom analysis and a filter", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  withCapturableCharts(orders);
+  // A browser <select> shows its first option; the fake one stays "" until set (contract 11).
+  orders.evaluate('dom.numericChartField.value = "数量"; renderCharts()');
+  const three = [
+    ["numericDistributionChart", "数量 数值分布（记录频数）"],
+    ["categoryTopChart", "地区 Top 10（记录数）"],
+    ["dateTrendChart", "下单日期 按月份趋势（记录数）"]
+  ];
+  assert.deepEqual(capturedCharts(orders), three);
+  orders.evaluate(GUARD_CUSTOM_ANALYSIS);
+  const five = [...three, ["v2TopGroupChart", "金额（元） 按 地区 分组 Top 10（求和）"], ["v2SelectedTrendChart", "金额（元） 按月份趋势（求和）"]];
+  assert.deepEqual(capturedCharts(orders), five);
+  // The filter reruns the open custom analysis, so all five charts stay.
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 10);
+  assert.deepEqual(capturedCharts(orders), five);
+});
+
+// Records every drawEmptyChart() call as [canvas id, text]; installed before the commit so the
+// sentences drawn while importing count too.
+function collectEmptyChartTexts(scope) {
+  scope.evaluate(`(() => {
+    globalThis.__guardEmptyTexts = [];
+    const ids = ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"];
+    const original = drawEmptyChart;
+    drawEmptyChart = function (canvas, text) {
+      __guardEmptyTexts.push([ids.find((id) => document.getElementById(id) === canvas) || "other", text]);
+      return original(canvas, text);
+    };
+  })()`);
+  return () => JSON.parse(scope.evaluate("JSON.stringify(__guardEmptyTexts.splice(0))"));
+}
+function commitGuardRows(scope, fields, rows, fileName) {
+  put(scope.context, "__guardFields", fields);
+  put(scope.context, "__guardRows", rows);
+  scope.evaluate(`commitTabularData(__guardFields, __guardRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+function filterGuardRows(scope, field, values) {
+  put(scope.context, "__guardFilter", { field, values });
+  scope.evaluate("state.filters = { category: __guardFilter, numeric: null, date: null }; state.filteredRows = filterRowsByConfig(state.rows, state.filters); state.filterSourceRows = state.rows; refreshFilteredAnalysis()");
+}
+
+// v3.0.0 F3 restyles these sentences; every one must still appear, word for word, under its
+// trigger. (这一类已经没有问题行。 is pinned by the contract 19 tests.)
+test("v3.0.0 guard: every empty-state sentence still appears under its trigger", () => {
+  const html = (scope, id) => scope.elements.get(id).innerHTML;
+  const text = (scope, id) => scope.elements.get(id).textContent;
+
+  // Only text columns: no numeric, date or ID field, no placeholder.
+  const words = createChartContext();
+  const wordTexts = collectEmptyChartTexts(words);
+  commitGuardRows(words, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  assert.deepEqual(JSON.parse(words.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "category"]);
+  assert.match(html(words, "outlierTable"), /<td>未识别到数值字段。<\/td>/);
+  assert.match(html(words, "numericStatsTable"), /<td>未识别到数值字段。<\/td>/);
+  assert.match(html(words, "idDuplicateDetails"), />未识别到 ID 字段。</);
+  assert.match(html(words, "placeholderDetails"), />没有发现像是空值的写法。</);
+  assert.equal(text(words, "numericFilterRange"), "没有可用字段");
+  assert.equal(text(words, "dateFilterRange"), "没有可用字段");
+  assert.equal(text(words, "categoryFilterEmpty"), "请选择分类字段。");
+  assert.deepEqual(wordTexts(), [["numericDistributionChart", "没有可用的数值字段"], ["dateTrendChart", "没有可用的日期字段"]]);
+  words.evaluate('dom.categoryFilterField.value = "名称"; updateCategoryFilterField(); dom.categoryFilterSearch.value = "zzz"; renderCategoryFilterValues()');
+  assert.match(html(words, "categoryFilterValues"), />没有匹配的类别。</);
+
+  // Only a numeric column: no category field.
+  const amounts = createChartContext();
+  const amountTexts = collectEmptyChartTexts(amounts);
+  commitGuardRows(amounts, ["金额"], Array.from({ length: 20 }, (_, index) => ({ 金额: String(index * 10 + 1) })), "amounts.csv");
+  assert.match(html(amounts, "categoryStats"), />未识别到分类字段。</);
+  assert.equal(text(amounts, "categoryFilterEmpty"), "没有可用的分类字段。");
+  assert.deepEqual(amountTexts().filter(([id]) => id === "categoryTopChart"), [["categoryTopChart", "没有可用的分类字段"]]);
+
+  // A filtered range where 日期, 金额 and 备注 are all empty, then a range with no rows.
+  const range = createChartContext();
+  const rangeTexts = collectEmptyChartTexts(range);
+  commitGuardRows(range, ["日期", "金额", "组", "备注"], Array.from({ length: 30 }, (_, index) => (index < 25
+    ? { 日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: "A", 备注: index % 2 ? "x" : "y" }
+    : { 日期: "", 金额: "", 组: "B", 备注: "" })), "range.csv");
+  assert.deepEqual(JSON.parse(range.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["date", "numeric", "category", "category"]);
+  rangeTexts();
+  filterGuardRows(range, "组", ["B"]);
+  assert.equal(range.evaluate("getAnalysisRows().length"), 5);
+  assert.match(html(range, "categoryStats"), />当前筛选结果中没有非空类别值。</);
+  range.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart(); dom.numericChartField.value = "金额"; renderNumericDistributionChart()');
+  const filtered = rangeTexts();
+  assert.ok(filtered.some(([id, sentence]) => id === "dateTrendChart" && sentence === "该字段没有认得出的日期"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前筛选结果中没有可统计的分类值"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "numericDistributionChart" && sentence === "该字段没有认得出的数字"), JSON.stringify(filtered));
+  filterGuardRows(range, "组", ["C"]);
+  assert.equal(range.evaluate("getAnalysisRows().length"), 0);
+  assert.match(html(range, "previewTable"), /<td>当前筛选条件下没有可预览的数据。<\/td>/);
+
+  // A filtered range with amounts but no dates: the custom analysis has no trend.
+  const trend = createChartContext();
+  const trendTexts = collectEmptyChartTexts(trend);
+  commitGuardRows(trend, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: index < 25 ? `2025-01-${String(index + 1).padStart(2, "0")}` : "", 金额: String(100 + index * 10), 组: index < 25 ? "A" : "B"
+  })), "trend.csv");
+  filterGuardRows(trend, "组", ["B"]);
+  trendTexts();
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(trendTexts(), [["v2SelectedTrendChart", "所选时间字段没有可用的趋势数据"]]);
+
+  // Chart.js missing: every chart says so.
+  const noChart = createScriptContext();
+  const noChartTexts = collectEmptyChartTexts(noChart);
+  commitGuardRows(noChart, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: index % 2 ? "A" : "B"
+  })), "no-chart.csv");
+  noChartTexts();
+  noChart.evaluate('renderCharts(); dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  const failed = "图表组件加载失败，请刷新页面重试";
+  assert.deepEqual(noChartTexts(), [
+    ["numericDistributionChart", failed], ["categoryTopChart", failed], ["dateTrendChart", failed],
+    ["v2TopGroupChart", failed], ["v2SelectedTrendChart", failed]
+  ]);
+});
+
+// The report text of the sample (custom analysis, then filtered to 华东), times and version
+// blanked, is the v2.12.0 text: a new shell changes no word of the report.
+const GUARD_REPORT_SHA256 = "a0238e0947b3924235966b011aeb32a353f9d1d23378241865733e6e33fdfbef";
+test("v3.0.0 guard: the sample's report text is the v2.12.0 text", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const version = orders.evaluate("buildReportData().version");
+  const texts = [];
+  const snapshot = () => {
+    const report = JSON.parse(orders.evaluate("JSON.stringify(buildReportData())"));
+    ["analysisTime", "analysisTimeIso", "exportTime"].forEach((key) => {
+      assert.ok(key in report, key);
+      report[key] = "T";
+    });
+    put(orders.context, "__guardReport", report);
+    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"), orders.evaluate("buildMarkdownReport(__guardReport)"));
+  };
+  orders.evaluate(GUARD_CUSTOM_ANALYSIS);
+  snapshot();
+  orders.evaluate(GUARD_EAST_FILTER);
+  snapshot();
+  const normalized = texts.join("\n----\n").split(version).join("VERSION");
+  assert.ok(normalized.includes("VERSION"));
+  assert.equal(crypto.createHash("sha256").update(normalized).digest("hex"), GUARD_REPORT_SHA256);
+});
