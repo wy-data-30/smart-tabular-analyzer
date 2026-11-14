@@ -103,6 +103,20 @@ const dom = {
   results: document.getElementById("results"),
   reportTitle: document.getElementById("reportTitle"),
   sourceName: document.getElementById("sourceName"),
+  topbarFileName: document.getElementById("topbarFileName"),
+  sidebarToggle: document.getElementById("sidebarToggle"),
+  appSidebar: document.getElementById("appSidebar"),
+  sidebarClose: document.getElementById("sidebarClose"),
+  sidebarBackdrop: document.getElementById("sidebarBackdrop"),
+  sidebarFileSize: document.getElementById("sidebarFileSize"),
+  sidebarFieldsToggle: document.getElementById("sidebarFieldsToggle"),
+  sidebarFieldCount: document.getElementById("sidebarFieldCount"),
+  sidebarFieldList: document.getElementById("sidebarFieldList"),
+  sidebarFilterSummary: document.getElementById("sidebarFilterSummary"),
+  sidebarHeaderRow: document.getElementById("sidebarHeaderRow"),
+  sidebarHeaderValue: document.getElementById("sidebarHeaderValue"),
+  sidebarPlaceholderRow: document.getElementById("sidebarPlaceholderRow"),
+  sidebarPlaceholderValue: document.getElementById("sidebarPlaceholderValue"),
   globalFilterStatus: document.getElementById("globalFilterStatus"),
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
@@ -249,7 +263,97 @@ function setImportBusy(isBusy) {
 function showResultsWorkspace() {
   document.body.classList.add("has-results");
   setImportBusy(false);
+  syncSidebarToggle();
   window.requestAnimationFrame(() => showModule("overviewSection", { hash: false }));
+}
+
+// The sidebar (v3.0.0): the file, its fields and the current state, for display only.
+const SIDEBAR_TYPE_MARKS = Object.freeze({ id: "#", date: "日", category: "Aa", numeric: "12", ignore: "—" });
+
+function renderSidebar() {
+  dom.sidebarFileSize.textContent = `${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`;
+  dom.sidebarFieldCount.textContent = formatInteger(state.fields.length);
+  dom.sidebarFieldList.innerHTML = state.profiles.map((profile) => {
+    const unit = profile.typeKey === "numeric" ? getFieldNumberUnit(profile.field) : "";
+    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] || ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
+  }).join("");
+  const headerRowNumber = state.headerDetection?.headerRowNumber;
+  const showsHeader = Boolean(headerRowNumber) && headerRowNumber !== 1;
+  dom.sidebarHeaderRow.classList.toggle("hidden", !showsHeader);
+  dom.sidebarHeaderValue.textContent = showsHeader ? `第 ${formatInteger(headerRowNumber)} 行` : "";
+  const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
+  dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
+  dom.sidebarPlaceholderValue.textContent = confirmedCount ? `${formatInteger(confirmedCount)} 处` : "";
+}
+
+// Open by default from 1100 px, closed below; once the user opens or closes it, body carries
+// sidebar-open / sidebar-closed until the next reset (nothing is stored). Below 1100 px it
+// covers the content: Escape and the backdrop close it and the focus stays inside it.
+const SIDEBAR_WIDE_QUERY = "(min-width: 1100px)";
+
+function isSidebarWide() {
+  return typeof window.matchMedia === "function" ? window.matchMedia(SIDEBAR_WIDE_QUERY).matches : true;
+}
+
+function isSidebarOpen() {
+  const classes = document.body.classList;
+  if (classes.contains("sidebar-open")) return true;
+  if (classes.contains("sidebar-closed")) return false;
+  return isSidebarWide();
+}
+
+function syncSidebarToggle() {
+  const open = isSidebarOpen();
+  dom.sidebarToggle.setAttribute("aria-expanded", String(open));
+  dom.sidebarBackdrop.hidden = !(open && !isSidebarWide());
+}
+
+function openSidebar() {
+  document.body.classList.add("sidebar-open");
+  document.body.classList.remove("sidebar-closed");
+  syncSidebarToggle();
+  if (!isSidebarWide()) dom.sidebarClose.focus();
+}
+
+function closeSidebar({ returnFocus = true } = {}) {
+  const overlay = !isSidebarWide();
+  document.body.classList.add("sidebar-closed");
+  document.body.classList.remove("sidebar-open");
+  syncSidebarToggle();
+  if (overlay && returnFocus) dom.sidebarToggle.focus();
+}
+
+function toggleSidebar() {
+  if (isSidebarOpen()) closeSidebar();
+  else openSidebar();
+}
+
+// Escape closes an open overlay; Tab and Shift+Tab stay inside it.
+function handleSidebarKeydown(event) {
+  if (!isSidebarOpen() || isSidebarWide()) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSidebar();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(dom.appSidebar.querySelectorAll("button, a[href]")).filter((element) => element.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function toggleSidebarFields() {
+  const expanded = dom.sidebarFieldsToggle.getAttribute("aria-expanded") !== "false";
+  dom.sidebarFieldsToggle.setAttribute("aria-expanded", String(!expanded));
+  dom.sidebarFieldList.classList.toggle("hidden", expanded);
 }
 
 // The format-consistency summaries: on import, field configuration and placeholder
@@ -337,8 +441,11 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryStats = buildCategoryStats(state.filteredRows);
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
-  dom.sourceName.textContent = `已载入 · ${sourceDisplayName}`;
+  // The sidebar's file name (v3.0.0); report.js reads its title for the report.
+  dom.sourceName.textContent = sourceDisplayName;
   dom.sourceName.title = sourceDisplayName;
+  dom.topbarFileName.textContent = sourceDisplayName;
+  dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
   const headerNote = `${formatHeaderDetectionNote(state.headerDetection)}${formatSuspectedTotalStatus(state.suspectedTotals)}${formatFormulaErrorStatus(state.formulaErrors)}`;
@@ -353,6 +460,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   renderOverview();
   renderPreview();
   renderSchema();
+  renderSidebar();
   initializeFilterControls();
   renderQuality();
   renderNumericStats();
@@ -1130,6 +1238,13 @@ function updateGlobalFilterStatus() {
     : `全部 ${formatInteger(totalCount)} 行`;
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
+  // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
+  // elements carry no id) and in the sidebar.
+  const summary = dom.globalFilterSummary.textContent;
+  document.querySelectorAll(".filter-scope").forEach((scope) => scope.classList.toggle("active", activeCount > 0));
+  document.querySelectorAll(".filter-scope-text").forEach((text) => { text.textContent = summary; });
+  document.querySelectorAll(".filter-scope-clear").forEach((button) => button.classList.toggle("hidden", activeCount === 0));
+  dom.sidebarFilterSummary.textContent = summary;
 }
 
 function setFilterMessage(message, tone = "") {
@@ -1189,6 +1304,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderOverview();
   renderPreview();
   renderSchema();
+  renderSidebar();
   initializeFilterControls();
   renderQuality();
   renderNumericStats();
@@ -2078,6 +2194,19 @@ function resetAnalysisState() {
 
   dom.sourceName.textContent = "";
   dom.sourceName.removeAttribute("title");
+  dom.topbarFileName.textContent = "";
+  dom.topbarFileName.removeAttribute("title");
+  dom.sidebarFileSize.textContent = "";
+  dom.sidebarFieldCount.textContent = "";
+  dom.sidebarFieldList.innerHTML = "";
+  dom.sidebarFieldList.classList.remove("hidden");
+  dom.sidebarFieldsToggle.setAttribute("aria-expanded", "true");
+  dom.sidebarHeaderRow.classList.add("hidden");
+  dom.sidebarHeaderValue.textContent = "";
+  dom.sidebarPlaceholderRow.classList.add("hidden");
+  dom.sidebarPlaceholderValue.textContent = "";
+  document.body.classList.remove("sidebar-open", "sidebar-closed");
+  syncSidebarToggle();
   dom.reportTitle.textContent = "数据分析工作区";
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");

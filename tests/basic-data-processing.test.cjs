@@ -7321,3 +7321,195 @@ test("v3.0.0 modules: field configuration, placeholder confirmations and filters
   assert.deepEqual([record.urls, record.scrolls], [[], []]);
   assert.ok(!record.focused.some((id) => MODULE_SECTION_IDS.includes(id)), JSON.stringify(record.focused));
 });
+
+// v3.0.0 commit 2: top bar and sidebar.
+test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 换一个文件; no section labels", () => {
+  const html = repoFile("index.html");
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
+  assertInOrder(header, ['<button id="sidebarToggle"', "<strong>Smart Tabular Analyzer</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
+  assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
+  assert.match(header, /数据仅在浏览器本地处理/);
+  assert.doesNotMatch(html, /class="header-cta"|上传文件<\/a>|上传新文件/);
+  assert.doesNotMatch(html, /class="section-label"/);
+  assert.doesNotMatch(html, /class="report-header"|class="results-nav"/);
+  assert.match(html, /<h2 id="reportTitle" class="visually-hidden" tabindex="-1">数据分析工作区<\/h2>/);
+  assert.match(html, /<section id="results" class="results hidden" aria-labelledby="reportTitle">/);
+});
+
+test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside it for phones", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<aside id="appSidebar"');
+  assert.ok(start >= 0);
+  const sidebar = html.slice(start, html.indexOf("</aside>", start));
+  assertInOrder(sidebar, [
+    '<h2 id="sidebarTitle" class="sidebar-title">文件和字段</h2>',
+    '<button id="sidebarClose"',
+    '<p id="sourceName" class="source-name"></p>',
+    'id="sidebarFileSize"',
+    '<a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone">换一个文件</a>',
+    '<button id="sidebarFieldsToggle"',
+    '<ul id="sidebarFieldList"',
+    "当前状态",
+    "<dt>筛选</dt>",
+    '<div id="sidebarHeaderRow" class="hidden"><dt>表头</dt>',
+    '<div id="sidebarPlaceholderRow" class="hidden"><dt>已按空值处理</dt>',
+    "表格只在这台电脑的浏览器里处理，不会上传。"
+  ]);
+  assert.match(html, /<div id="sidebarBackdrop" class="sidebar-backdrop" hidden><\/div>/);
+  assert.equal((html.match(/class="nav-new-analysis /g) || []).length, 2);
+});
+
+test("v3.0.0 shell: the analysis range sits by four module titles; only the overview's carries the ids", () => {
+  const html = repoFile("index.html");
+  const heading = (id) => {
+    const section = html.slice(html.indexOf(`<section id="${id}"`));
+    return section.slice(0, section.indexOf("</h2>") + 600);
+  };
+  assert.match(heading("overviewSection"), /<p id="globalFilterStatus" class="filter-scope" aria-live="polite">当前分析范围：<span id="globalFilterSummary">尚未加载数据<\/span>\s*<button id="globalClearFilters" class="text-button hidden" type="button">清除筛选<\/button><\/p>/);
+  ["statisticsSection", "chartsSection", "customSection"].forEach((id) => {
+    assert.match(heading(id), /<p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据<\/span>\s*<button class="text-button filter-scope-clear hidden" type="button">清除筛选<\/button><\/p>/, id);
+  });
+  // With the colon: the filter module's own title is 设置当前分析范围.
+  ["schemaSection", "qualitySection", "filterSection", "exportSection"].forEach((id) => assert.doesNotMatch(heading(id), /当前分析范围：/, id));
+  assert.equal((html.match(/id="globalClearFilters"/g) || []).length, 1);
+  assert.match(repoFile("script.js"), /document\.querySelectorAll\("\.filter-scope-clear"\)\.forEach\(\(button\) => button\.addEventListener\("click", clearAllFilters\)\)/);
+});
+
+// The three range sentences without ids: the fake page's querySelectorAll returns [], so this
+// gives it three of each.
+function withFilterScopes(scope) {
+  const make = () => Array.from({ length: 3 }, () => {
+    const classes = new Set(["hidden"]);
+    return { textContent: "", classList: { toggle(name, force) { if (force) classes.add(name); else classes.delete(name); return classes.has(name); }, contains: (name) => classes.has(name) } };
+  });
+  const parts = { ".filter-scope": make(), ".filter-scope-text": make(), ".filter-scope-clear": make() };
+  const document = scope.context.document;
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = (selector) => parts[selector] || originalQuery.call(document, selector);
+  return parts;
+}
+
+test("v3.0.0 shell: the range sentences, their 清除筛选 buttons and the sidebar's 筛选 row follow #globalFilterSummary", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const parts = withFilterScopes(orders);
+  const summary = () => orders.elements.get("globalFilterSummary").textContent;
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.equal(summary(), "已筛选 1 项 · 10 / 42 行");
+  assert.deepEqual(parts[".filter-scope-text"].map((part) => part.textContent), [summary(), summary(), summary()]);
+  assert.deepEqual(parts[".filter-scope-clear"].map((part) => part.classList.contains("hidden")), [false, false, false]);
+  assert.deepEqual(parts[".filter-scope"].map((part) => part.classList.contains("active")), [true, true, true]);
+  assert.equal(orders.elements.get("sidebarFilterSummary").textContent, summary());
+  orders.evaluate("clearAllFilters()");
+  assert.equal(summary(), "全部 42 行");
+  assert.deepEqual(parts[".filter-scope-text"].map((part) => part.textContent), ["全部 42 行", "全部 42 行", "全部 42 行"]);
+  assert.deepEqual(parts[".filter-scope-clear"].map((part) => part.classList.contains("hidden")), [true, true, true]);
+  assert.equal(orders.elements.get("sidebarFilterSummary").textContent, "全部 42 行");
+});
+
+const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?<\/li>/g)]
+  .map((match) => [match[1], match[2], match[3], match[4], match[5] || ""]);
+
+test("v3.0.0 shell: the sidebar lists the file, its size and every field with its applied type, and the state rows", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const text = (id) => orders.elements.get(id).textContent;
+  const hidden = (id) => orders.elements.get(id).classList.contains("hidden");
+  assert.equal(text("sourceName"), "sample-orders.csv");
+  assert.equal(orders.elements.get("sourceName").title, "sample-orders.csv");
+  assert.equal(text("topbarFileName"), "sample-orders.csv");
+  assert.equal(text("sidebarFileSize"), "42 行 × 9 列");
+  assert.equal(text("sidebarFieldCount"), "9");
+  assert.deepEqual(sidebarItems(orders), [
+    ["sidebar-field", "订单编号", "#", "订单编号", ""],
+    ["sidebar-field", "下单日期", "日", "下单日期", ""],
+    ["sidebar-field", "地区", "Aa", "地区", ""],
+    ["sidebar-field", "品类", "Aa", "品类", ""],
+    ["sidebar-field", "产品", "Aa", "产品", ""],
+    ["sidebar-field", "客户类型", "Aa", "客户类型", ""],
+    ["sidebar-field", "数量", "12", "数量", ""],
+    ["sidebar-field", "金额", "12", "金额", "元"],
+    ["sidebar-field", "销售代表", "Aa", "销售代表", ""]
+  ]);
+  assert.equal(hidden("sidebarHeaderRow"), false);
+  assert.equal(text("sidebarHeaderValue"), "第 2 行");
+  assert.equal(hidden("sidebarPlaceholderRow"), true);
+  assert.equal(text("sidebarFilterSummary"), "全部 42 行");
+
+  // Confirmations count entries; an ignored field greys out with a dash for its mark.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(hidden("sidebarPlaceholderRow"), false);
+  assert.equal(text("sidebarPlaceholderValue"), "2 处");
+  orders.evaluate('stageFieldTypeChange("销售代表", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", ""]);
+  assert.equal(text("sidebarPlaceholderValue"), "2 处");
+
+  orders.evaluate("resetAnalysisState()");
+  ["sourceName", "topbarFileName", "sidebarFileSize", "sidebarFieldCount", "sidebarHeaderValue", "sidebarPlaceholderValue"].forEach((id) => assert.equal(text(id), "", id));
+  assert.equal(orders.elements.get("sidebarFieldList").innerHTML, "");
+  assert.equal(hidden("sidebarHeaderRow"), true);
+  assert.equal(hidden("sidebarPlaceholderRow"), true);
+});
+
+test("v3.0.0 shell: an Excel sheet joins the file name; a header in row 1 shows no header row; field names are escaped", () => {
+  const scope = createChartContext();
+  put(scope.context, "__sidebarRows", Array.from({ length: 12 }, (_, index) => ({ "字段<script>": index % 2 ? "x" : "y" })));
+  scope.evaluate('commitTabularData(["字段<script>"], __sidebarRows, "a<b>.xlsx", beginImport(), [], "表一")');
+  assert.equal(scope.elements.get("sourceName").textContent, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("sourceName").title, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("topbarFileName").textContent, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("sidebarHeaderRow").classList.contains("hidden"), true);
+  const list = scope.elements.get("sidebarFieldList").innerHTML;
+  assert.match(list, /字段&lt;script&gt;/);
+  assert.doesNotMatch(list, /字段<script>/);
+});
+
+test("v3.0.0 shell: the sidebar opens by width until the user chooses; Escape closes an overlay and gives the focus back", () => {
+  const scope = createChartContext();
+  let wide = true;
+  scope.context.window.matchMedia = () => ({ matches: wide, addEventListener() {} });
+  const body = scope.context.document.body;
+  const toggle = scope.elements.get("sidebarToggle") || scope.context.document.getElementById("sidebarToggle");
+  const attributes = {};
+  toggle.setAttribute = (name, value) => { attributes[name] = String(value); };
+  const focused = [];
+  toggle.focus = () => focused.push("toggle");
+  scope.context.document.getElementById("sidebarClose").focus = () => focused.push("close");
+  const backdrop = scope.context.document.getElementById("sidebarBackdrop");
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "cities.csv");
+  assert.equal(attributes["aria-expanded"], "true");
+  scope.evaluate("toggleSidebar()");
+  assert.equal(body.classList.contains("sidebar-closed"), true);
+  assert.equal(attributes["aria-expanded"], "false");
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(body.classList.contains("sidebar-closed"), false);
+  assert.equal(body.classList.contains("sidebar-open"), false);
+
+  // Narrow: closed by default; opening moves the focus in, Escape closes and returns it.
+  wide = false;
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "cities.csv");
+  assert.equal(attributes["aria-expanded"], "false");
+  scope.evaluate("toggleSidebar()");
+  assert.equal(body.classList.contains("sidebar-open"), true);
+  assert.equal(backdrop.hidden, false);
+  assert.deepEqual(focused, ["close"]);
+  let prevented = 0;
+  put(scope.context, "__escape", { key: "Escape", preventDefault() { prevented += 1; } });
+  scope.evaluate("handleSidebarKeydown(__escape)");
+  assert.equal(body.classList.contains("sidebar-open"), false);
+  assert.equal(backdrop.hidden, true);
+  assert.deepEqual(focused, ["close", "toggle"]);
+  assert.equal(prevented, 1);
+  // Escape with the sidebar closed does nothing.
+  scope.evaluate("handleSidebarKeydown(__escape)");
+  assert.equal(prevented, 1);
+});
+
+test("v3.0.0 shell: the sidebar controls are bound once each in script.js", () => {
+  const script = repoFile("script.js");
+  [
+    /dom\.sidebarToggle\.addEventListener\("click", toggleSidebar\)/,
+    /dom\.sidebarClose\.addEventListener\("click", \(\) => closeSidebar\(\)\)/,
+    /dom\.sidebarBackdrop\.addEventListener\("click", \(\) => closeSidebar\(\)\)/,
+    /dom\.sidebarFieldsToggle\.addEventListener\("click", toggleSidebarFields\)/,
+    /dom\.appSidebar\.addEventListener\("keydown", handleSidebarKeydown\)/
+  ].forEach((pattern) => assert.equal((script.match(new RegExp(pattern.source, "g")) || []).length, 1, pattern.source));
+});

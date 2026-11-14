@@ -14,6 +14,12 @@
 
   <header class="app-header">
     <div class="header-inner">
+      <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.25" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M7.5 3.75v12.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </button>
       <a class="brand" href="#mainContent" aria-label="Smart Tabular Analyzer 首页">
         <span class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 40 40">
@@ -27,6 +33,18 @@
           <small>表格数据体检工具</small>
         </span>
       </a>
+      <p id="topbarFileName" class="topbar-file-name"></p>
+
+      <nav id="moduleNav" class="module-nav" aria-label="分析模块目录">
+        <a class="active" href="#overviewSection" aria-current="page">数据概览</a>
+        <a href="#schemaSection">字段配置</a>
+        <a href="#qualitySection">数据质量</a>
+        <a href="#filterSection">筛选</a>
+        <a href="#statisticsSection">统计</a>
+        <a href="#chartsSection">图表</a>
+        <a href="#customSection">自定义分析</a>
+        <a href="#exportSection">导出</a>
+      </nav>
 
       <div class="header-actions">
         <span class="privacy-badge">
@@ -36,10 +54,38 @@
           </svg>
           数据仅在浏览器本地处理
         </span>
-        <a class="header-cta" href="#dropZone">上传文件</a>
+        <a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>
       </div>
     </div>
   </header>
+
+  <aside id="appSidebar" class="app-sidebar" aria-labelledby="sidebarTitle">
+    <div class="sidebar-head">
+      <h2 id="sidebarTitle" class="sidebar-title">文件和字段</h2>
+      <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="关闭文件和字段">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>
+      </button>
+    </div>
+    <div class="sidebar-file">
+      <p id="sourceName" class="source-name"></p>
+      <p id="sidebarFileSize" class="sidebar-file-size"></p>
+    </div>
+    <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone">换一个文件</a>
+    <div class="sidebar-section">
+      <button id="sidebarFieldsToggle" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="sidebarFieldList">字段 <span id="sidebarFieldCount"></span></button>
+      <ul id="sidebarFieldList" class="sidebar-field-list"></ul>
+    </div>
+    <div class="sidebar-section">
+      <h3 class="sidebar-subtitle">当前状态</h3>
+      <dl class="sidebar-status">
+        <div><dt>筛选</dt><dd id="sidebarFilterSummary"></dd></div>
+        <div id="sidebarHeaderRow" class="hidden"><dt>表头</dt><dd id="sidebarHeaderValue"></dd></div>
+        <div id="sidebarPlaceholderRow" class="hidden"><dt>已按空值处理</dt><dd id="sidebarPlaceholderValue"></dd></div>
+      </dl>
+    </div>
+    <p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。</p>
+  </aside>
+  <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
 
   <main id="mainContent" class="app-shell">
     <section class="workspace-intro" aria-labelledby="heroTitle">
@@ -106,7 +152,6 @@
 
     <section id="sheetSelectionPanel" class="sheet-selection-panel hidden" aria-labelledby="sheetSelectionTitle">
       <div>
-        <p class="section-label">Excel 工作簿</p>
         <h2 id="sheetSelectionTitle">选择要分析的工作表</h2>
         <p id="excelWorkbookName" class="muted-text"></p>
       </div>
@@ -121,39 +166,15 @@
     </section>
 
     <section id="results" class="results hidden" aria-labelledby="reportTitle">
-      <header class="report-header">
-        <div>
-          <p class="section-label">分析工作区</p>
-          <h2 id="reportTitle" tabindex="-1">数据分析工作区</h2>
-          <p id="sourceName" class="source-name"></p>
-        </div>
-        <a class="nav-new-analysis secondary-button" href="#dropZone">上传新文件</a>
-      </header>
-
-      <aside class="results-nav" aria-label="分析模块导航">
-        <nav id="moduleNav" class="desktop-results-nav" aria-label="分析模块目录">
-          <a class="active" href="#overviewSection" aria-current="page">数据概览</a>
-          <a href="#schemaSection">字段配置</a>
-          <a href="#qualitySection">数据质量</a>
-          <a href="#filterSection">筛选</a>
-          <a href="#statisticsSection">统计</a>
-          <a href="#chartsSection">图表</a>
-          <a href="#customSection">自定义分析</a>
-          <a href="#exportSection">导出</a>
-        </nav>
-        <div id="globalFilterStatus" class="global-filter-status" aria-live="polite">
-          <span id="globalFilterSummary">尚未加载数据</span>
-          <button id="globalClearFilters" class="text-button hidden" type="button">清除筛选</button>
-        </div>
-      </aside>
+      <h2 id="reportTitle" class="visually-hidden" tabindex="-1">数据分析工作区</h2>
 
       <div id="moduleStage" class="module-stage">
       <section id="overviewSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">数据概览</p>
             <h2 id="overviewSectionTitle" tabindex="-1">数据规模与预览</h2>
           </div>
+          <p id="globalFilterStatus" class="filter-scope" aria-live="polite">当前分析范围：<span id="globalFilterSummary">尚未加载数据</span> <button id="globalClearFilters" class="text-button hidden" type="button">清除筛选</button></p>
         </div>
         <div id="overviewCards" class="metric-grid"></div>
         <div class="module-subsection">
@@ -176,7 +197,6 @@
       <section id="schemaSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">字段配置</p>
             <h2 id="schemaSectionTitle" tabindex="-1">确认字段类型</h2>
           </div>
         </div>
@@ -196,7 +216,6 @@
       <section id="qualitySection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">数据质量</p>
             <h2 id="qualitySectionTitle" tabindex="-1">空值、重复和其他问题</h2>
           </div>
         </div>
@@ -293,7 +312,6 @@
       <section id="filterSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">数据筛选</p>
             <h2 id="filterSectionTitle" tabindex="-1">设置当前分析范围</h2>
           </div>
         </div>
@@ -385,9 +403,9 @@
       <section id="statisticsSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">描述性统计</p>
             <h2 id="statisticsSectionTitle" tabindex="-1">数值与分类统计</h2>
           </div>
+          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
         </div>
         <div class="module-subsection first">
           <h3 class="subsection-title">数值字段统计指标</h3>
@@ -404,9 +422,9 @@
       <section id="chartsSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">图表分析</p>
             <h2 id="chartsSectionTitle" tabindex="-1">字段分布与趋势</h2>
           </div>
+          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
         </div>
         <div class="chart-grid">
           <div class="chart-card">
@@ -447,9 +465,9 @@
       <section id="customSection" class="section-block">
         <div class="section-heading">
           <div>
-            <p class="section-label">自定义分析</p>
             <h2 id="customSectionTitle" tabindex="-1">按业务需要组合字段</h2>
           </div>
+          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
         </div>
         <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
@@ -509,13 +527,11 @@
       <section id="exportSection" class="section-block export-section">
         <div class="section-heading">
           <div>
-            <p class="section-label">导出</p>
             <h2 id="exportSectionTitle" tabindex="-1">保存数据与分析报告</h2>
           </div>
         </div>
         <section id="dataExportSection" class="export-module" aria-labelledby="dataExportTitle">
           <div class="export-module-heading">
-            <p class="section-label">数据导出</p>
             <h3 id="dataExportTitle">保存处理后的数据</h3>
           </div>
           <p class="section-note">导出过程仅在浏览器本地完成。下载文件使用 UTF-8 BOM，并保留原始字段顺序；不会修改或覆盖原始文件。</p>
@@ -573,7 +589,6 @@
 
         <section id="reportSection" class="export-module report-section" aria-labelledby="reportExportTitle">
           <div class="export-module-heading">
-            <p class="section-label">报告导出</p>
             <h3 id="reportExportTitle">保存分析结果</h3>
           </div>
           <div class="report-export-layout">

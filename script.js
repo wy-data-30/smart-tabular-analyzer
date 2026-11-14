@@ -115,6 +115,16 @@ dom.v2AnalyzeButton.addEventListener("click", renderV2Analysis);
 
 dom.globalClearFilters.addEventListener("click", clearAllFilters);
 
+// The other three 清除筛选 by the module titles carry no id (v3.0.0).
+document.querySelectorAll(".filter-scope-clear").forEach((button) => button.addEventListener("click", clearAllFilters));
+
+dom.sidebarToggle.addEventListener("click", toggleSidebar);
+dom.sidebarClose.addEventListener("click", () => closeSidebar());
+dom.sidebarBackdrop.addEventListener("click", () => closeSidebar());
+dom.sidebarFieldsToggle.addEventListener("click", toggleSidebarFields);
+dom.appSidebar.addEventListener("keydown", handleSidebarKeydown);
+if (typeof window.matchMedia === "function") window.matchMedia(SIDEBAR_WIDE_QUERY).addEventListener("change", syncSidebarToggle);
+
 dom.exportFilteredCsv.addEventListener("click", () => exportProcessedCsv("filtered"));
 
 dom.exportDeduplicatedCsv.addEventListener("click", () => exportProcessedCsv("deduplicated"));
@@ -236,8 +246,11 @@ function setupResultNavigation() {
 }
 
 function setupWorkspaceNavigation() {
-  document.querySelectorAll(".header-cta, .nav-new-analysis").forEach((link) => {
+  // 换一个文件: the top bar's, and the copy in the phone sidebar.
+  document.querySelectorAll(".nav-new-analysis").forEach((link) => {
     link.addEventListener("click", () => {
+      if (!isSidebarWide()) document.body.classList.remove("sidebar-open");
+      syncSidebarToggle();
       document.body.classList.remove("has-results");
       dom.results.classList.add("hidden");
       dom.statusPanel.className = "status-panel hidden";
