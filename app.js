@@ -95,6 +95,9 @@ const dom = {
   loadSample: document.getElementById("loadSample"),
   dropZone: document.getElementById("dropZone"),
   statusPanel: document.getElementById("statusPanel"),
+  statusNote: document.getElementById("statusNote"),
+  statusNoteSummary: document.getElementById("statusNoteSummary"),
+  statusNoteToggle: document.getElementById("statusNoteToggle"),
   sheetSelectionPanel: document.getElementById("sheetSelectionPanel"),
   excelWorkbookName: document.getElementById("excelWorkbookName"),
   excelSheetSelect: document.getElementById("excelSheetSelect"),
@@ -448,7 +451,8 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
-  const headerNote = `${formatHeaderDetectionNote(state.headerDetection)}${formatSuspectedTotalStatus(state.suspectedTotals)}${formatFormulaErrorStatus(state.formulaErrors)}`;
+  const notes = [formatHeaderDetectionNote(state.headerDetection), formatSuspectedTotalStatus(state.suspectedTotals), formatFormulaErrorStatus(state.formulaErrors)];
+  const headerNote = notes.join("");
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
@@ -456,6 +460,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   } else {
     setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
+  dom.statusNoteSummary.textContent = headerNote ? formatStatusNoteSummary(sourceDisplayName, notes.filter(Boolean).length) : "";
 
   renderOverview();
   renderPreview();
@@ -2207,6 +2212,8 @@ function resetAnalysisState() {
   dom.sidebarPlaceholderValue.textContent = "";
   document.body.classList.remove("sidebar-open", "sidebar-closed");
   syncSidebarToggle();
+  resetStatusNote();
+  dom.statusNoteSummary.textContent = "";
   dom.reportTitle.textContent = "数据分析工作区";
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");
@@ -2308,6 +2315,28 @@ function setStatus(message, tone = "", hasNote = false) {
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));
   setImportBusy(!tone);
+  // Only a success with notes can fold (v3.0.0); every new message starts unfolded. The kind
+  // of message is marked on #statusNote: style.css keeps successes to the first module, while
+  // warnings and errors (the report export's among them) show on every module.
+  resetStatusNote();
+  dom.statusNote.classList.toggle("can-collapse", tone === "success" && hasNote);
+  dom.statusNote.dataset.tone = tone || "loading";
+}
+
+// The fold of the import message (v3.0.0) lives on #statusNote, never on #statusPanel: its
+// text, classes and role stay as setStatus() wrote them, and a folded message is only moved
+// out of sight (style.css), so screen readers still have it.
+function resetStatusNote() {
+  dom.statusNote.classList.remove("can-collapse", "is-collapsed");
+  dom.statusNoteToggle.setAttribute("aria-expanded", "true");
+  dom.statusNoteToggle.textContent = "收起";
+}
+
+function toggleStatusNote() {
+  const collapse = !dom.statusNote.classList.contains("is-collapsed");
+  dom.statusNote.classList.toggle("is-collapsed", collapse);
+  dom.statusNoteToggle.setAttribute("aria-expanded", String(!collapse));
+  dom.statusNoteToggle.textContent = collapse ? "看说明" : "收起";
 }
 
 function showError(message, importId = state.activeImportId) {
@@ -2318,5 +2347,6 @@ function showError(message, importId = state.activeImportId) {
   dom.statusPanel.textContent = message;
   dom.statusPanel.setAttribute("role", "alert");
   dom.statusPanel.setAttribute("aria-busy", "false");
+  dom.statusNote.dataset.tone = "error";
   dom.results.classList.add("hidden");
 }

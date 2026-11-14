@@ -148,7 +148,13 @@
       </section>
     </section>
 
-    <section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"></section>
+    <div id="statusNote" class="status-note">
+      <div class="status-note-bar">
+        <p id="statusNoteSummary" class="status-note-summary" aria-hidden="true"></p>
+        <button id="statusNoteToggle" class="text-button status-note-toggle" type="button" aria-controls="statusPanel" aria-expanded="true">收起</button>
+      </div>
+      <section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"></section>
+    </div>
 
     <section id="sheetSelectionPanel" class="sheet-selection-panel hidden" aria-labelledby="sheetSelectionTitle">
       <div>

@@ -118,6 +118,8 @@ dom.globalClearFilters.addEventListener("click", clearAllFilters);
 // The other three 清除筛选 by the module titles carry no id (v3.0.0).
 document.querySelectorAll(".filter-scope-clear").forEach((button) => button.addEventListener("click", clearAllFilters));
 
+dom.statusNoteToggle.addEventListener("click", toggleStatusNote);
+
 dom.sidebarToggle.addEventListener("click", toggleSidebar);
 dom.sidebarClose.addEventListener("click", () => closeSidebar());
 dom.sidebarBackdrop.addEventListener("click", () => closeSidebar());
@@ -215,6 +217,8 @@ updateExportButtons();
 // quiet: only the classes (resets). hash: false keeps the address (imports).
 function showModule(sectionId, { quiet = false, hash = true } = {}) {
   if (!MODULE_IDS.includes(sectionId)) return;
+  // style.css shows the import message only on the first module.
+  document.body.dataset.module = sectionId;
   MODULE_IDS.forEach((id) => {
     const section = document.getElementById(id);
     const isActive = id === sectionId;
@@ -256,6 +260,7 @@ function setupWorkspaceNavigation() {
       dom.statusPanel.className = "status-panel hidden";
       dom.statusPanel.textContent = "";
       dom.statusPanel.removeAttribute("aria-busy");
+      resetStatusNote();
       setImportBusy(false);
     });
   });

@@ -698,6 +698,76 @@ body.has-results #statusPanel.success:not(.has-note) {
   display: none;
 }
 
+/* v3.0.0: a success with notes is a light grey bar that can fold to one line. The fold is
+   on #statusNote; the folded message is only moved out of sight, so screen readers keep it.
+   In the workspace a success shows on the first module only; warnings and errors (#statusNote
+   data-tone, set by setStatus()) show on every module. */
+.status-note-bar {
+  display: none;
+}
+
+.status-note.can-collapse .status-note-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 6px 8px 6px 16px;
+  border: 1px solid rgba(28, 28, 30, 0.07);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: #f2f2f7;
+}
+
+.status-note.can-collapse.is-collapsed .status-note-bar {
+  border-bottom: 1px solid rgba(28, 28, 30, 0.07);
+  border-radius: 12px;
+}
+
+.status-note-summary {
+  overflow: hidden;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-note-toggle {
+  flex: 0 0 auto;
+}
+
+.status-note.can-collapse #statusPanel {
+  margin-top: 0;
+  border-color: rgba(28, 28, 30, 0.07);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: #f2f2f7;
+  color: var(--text);
+}
+
+.status-note.can-collapse #statusPanel::before {
+  color: var(--text-secondary);
+}
+
+.status-note.is-collapsed #statusPanel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+body.has-results:not([data-module="overviewSection"]) #statusNote[data-tone="success"] {
+  display: none;
+}
+
 /* v3.0.0 sidebar: the file, its fields and the current state. Open by default from 1100 px
    (beside the content), closed below 1100 px (it then covers the content). body carries
    sidebar-open / sidebar-closed once the user has chosen. */
@@ -880,9 +950,12 @@ body.has-results .app-sidebar {
 }
 
 @media screen and (min-width: 1100px) {
+  /* An explicit width: body is a flex column, and auto margins would shrink these to their
+     content. */
   body.has-results:not(.sidebar-closed) .app-shell,
   body.has-results:not(.sidebar-closed) .app-footer {
-    width: auto;
+    width: calc(100% - var(--sidebar-width));
+    margin-right: 0;
     margin-left: var(--sidebar-width);
   }
 
@@ -909,9 +982,11 @@ body.has-results .app-sidebar {
   }
 }
 
-/* v3.0.0 content: one column up to 920 px (screen only: print uses the page width). */
+/* v3.0.0 content: one column up to 920 px (screen only: print uses the page width); the
+   import message above it lines up with it. */
 @media screen {
-  body.has-results .results {
+  body.has-results .results,
+  body.has-results #statusNote {
     max-width: 920px;
     margin-right: auto;
     margin-left: auto;

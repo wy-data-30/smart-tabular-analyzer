@@ -7513,3 +7513,120 @@ test("v3.0.0 shell: the sidebar controls are bound once each in script.js", () =
     /dom\.appSidebar\.addEventListener\("keydown", handleSidebarKeydown\)/
   ].forEach((pattern) => assert.equal((script.match(new RegExp(pattern.source, "g")) || []).length, 1, pattern.source));
 });
+
+// v3.0.0 commit 3: the import message with notes can fold to one line. #statusPanel itself
+// keeps its text, classes and role: the fold lives on the wrapper #statusNote.
+test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by CSS that keeps the text for screen readers", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<div id="statusNote" class="status-note">');
+  assert.ok(start >= 0);
+  const note = html.slice(start, html.indexOf('<section id="sheetSelectionPanel"'));
+  assertInOrder(note, [
+    '<div class="status-note-bar">',
+    '<p id="statusNoteSummary" class="status-note-summary" aria-hidden="true"></p>',
+    '<button id="statusNoteToggle" class="text-button status-note-toggle" type="button" aria-controls="statusPanel" aria-expanded="true">收起</button>',
+    '<section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"></section>'
+  ]);
+  const css = repoFile("style.css");
+  const folded = css.match(/\n\.status-note\.is-collapsed #statusPanel \{([^}]*)\}/);
+  assert.ok(folded, "folded rule");
+  assert.match(folded[1], /position: absolute;/);
+  assert.match(folded[1], /clip-path: inset\(50%\);/);
+  assert.doesNotMatch(folded[1], /display:|visibility:/);
+  // Off the overview only a success hides: warnings and errors (the report export's) show
+  // on every module.
+  assert.match(css, /body\.has-results:not\(\[data-module="overviewSection"\]\) #statusNote\[data-tone="success"\] \{\s*display: none;\s*\}/);
+  assert.equal((css.match(/#statusNote(?:\[[^\]]*\])* \{\s*display: none;/g) || []).length, 1);
+  assert.doesNotMatch(css, /#statusNote \{\s*display: none;/);
+  assert.match(css, /body\.has-results #statusPanel\.success:not\(\.has-note\)\s*\{\s*display:\s*none;\s*\}/);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.statusNoteToggle\.addEventListener\("click", toggleStatusNote\)/g) || []).length, 1);
+  const workspace = script.slice(script.indexOf("function setupWorkspaceNavigation("));
+  assert.match(workspace, /resetStatusNote\(\);/);
+});
+
+test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入，有 N 条说明; #statusPanel never changes", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const panel = orders.elements.get("statusPanel");
+  const note = orders.elements.get("statusNote");
+  const toggle = orders.elements.get("statusNoteToggle");
+  const attributes = {};
+  toggle.setAttribute = (name, value) => { attributes[name] = String(value); };
+  const before = { className: panel.className, text: panel.textContent, role: panel.role };
+  assert.equal(before.className, "status-panel success has-note");
+  assert.match(before.text, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行/);
+  assert.equal(note.classList.contains("can-collapse"), true);
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(orders.elements.get("statusNoteSummary").textContent, "sample-orders.csv 已载入，有 2 条说明");
+
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(attributes["aria-expanded"], "false");
+  assert.equal(toggle.textContent, "看说明");
+  assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+
+  // A later message replaces the import's: nothing left to fold.
+  orders.evaluate('toggleStatusNote(); setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(note.classList.contains("can-collapse"), false);
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+
+  // A reset clears the summary.
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.elements.get("statusNoteSummary").textContent, "");
+  assert.equal(note.classList.contains("can-collapse"), false);
+});
+
+test("v3.0.0 status note: N counts the notes that are there; a warning never folds", async () => {
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(errors.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(errors.elements.get("statusNoteSummary").textContent, "公式错误.xlsx · 公式错误 已载入，有 1 条说明");
+  const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
+  assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
+  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), false);
+  // A plain success has no note: no summary, nothing to fold.
+  const plain = createChartContext();
+  commitGuardRows(plain, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "plain.csv");
+  assert.equal(plain.elements.get("statusPanel").className, "status-panel success");
+  assert.equal(plain.elements.get("statusNote").classList.contains("can-collapse"), false);
+  assert.equal(plain.elements.get("statusNoteSummary").textContent, "");
+});
+
+test("v3.0.0 status note: showModule marks the current module on <body>, so the note shows only on the overview", () => {
+  const scope = createScriptContext();
+  const body = scope.context.document.body;
+  scope.evaluate('showModule("chartsSection")');
+  assert.equal(body.dataset.module, "chartsSection");
+  scope.evaluate('showModule("overviewSection", { quiet: true })');
+  assert.equal(body.dataset.module, "overviewSection");
+});
+
+test("v3.0.0 status note: on the export module, setStatus marks warnings and errors so they show; #statusPanel is as setStatus wrote it", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const note = orders.elements.get("statusNote");
+  const panel = orders.elements.get("statusPanel");
+  assert.equal(note.dataset.tone, "success");
+  orders.evaluate('showModule("exportSection")');
+  assert.equal(orders.context.document.body.dataset.module, "exportSection");
+  // report.js:433 and report.js:464 write these two.
+  orders.evaluate('setStatus("请先完成数据分析，再导出报告。", "warning")');
+  assert.equal(note.dataset.tone, "warning");
+  assert.equal(panel.className, "status-panel warning");
+  assert.equal(panel.textContent, "请先完成数据分析，再导出报告。");
+  orders.evaluate('setStatus("报告导出失败：x", "error")');
+  assert.equal(note.dataset.tone, "error");
+  assert.equal(panel.className, "status-panel error");
+  assert.equal(panel.textContent, "报告导出失败：x");
+  orders.evaluate('setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(note.dataset.tone, "success");
+  orders.evaluate('setStatus("正在读取 x.csv ...")');
+  assert.equal(note.dataset.tone, "loading");
+  orders.evaluate('showError("文件中没有可分析的数据。", state.activeImportId)');
+  assert.equal(note.dataset.tone, "error");
+  assert.equal(panel.className, "status-panel error");
+});
