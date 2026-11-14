@@ -252,16 +252,49 @@ function setupResultNavigation() {
 function setupWorkspaceNavigation() {
   // 换一个文件: the top bar's, and the copy in the phone sidebar.
   document.querySelectorAll(".nav-new-analysis").forEach((link) => {
-    link.addEventListener("click", () => {
-      if (!isSidebarWide()) document.body.classList.remove("sidebar-open");
-      syncSidebarToggle();
-      document.body.classList.remove("has-results");
-      dom.results.classList.add("hidden");
-      dom.statusPanel.className = "status-panel hidden";
-      dom.statusPanel.textContent = "";
-      dom.statusPanel.removeAttribute("aria-busy");
-      resetStatusNote();
-      setImportBusy(false);
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      showUploadPage();
     });
   });
+  dom.returnToAnalysis.addEventListener("click", returnToAnalysis);
+}
+
+// 换一个文件 (v3.0.0): back to the upload page. The analysis stays in memory until a new import
+// begins (beginImport() resets it), so the upload page offers the way back to it; the focus goes
+// to that entry, or to the file input when there is nothing to go back to.
+function showUploadPage() {
+  const canReturn = state.rows.length > 0 && Boolean(state.importStatus) && !state.pendingExcel
+    && !document.body.classList.contains("is-loading");
+  state.returnModule = document.body.dataset.module || MODULE_IDS[0];
+  if (!isSidebarWide()) document.body.classList.remove("sidebar-open");
+  syncSidebarToggle();
+  document.body.classList.remove("has-results");
+  dom.results.classList.add("hidden");
+  dom.statusPanel.className = "status-panel hidden";
+  dom.statusPanel.textContent = "";
+  dom.statusPanel.removeAttribute("aria-busy");
+  resetStatusNote();
+  setImportBusy(false);
+  const sourceDisplayName = state.sourceSheetName ? `${state.sourceFileName} · ${state.sourceSheetName}` : state.sourceFileName;
+  dom.returnToAnalysis.textContent = canReturn ? formatReturnToAnalysis(sourceDisplayName) : "";
+  dom.returnToAnalysis.classList.toggle("hidden", !canReturn);
+  window.scrollTo({ top: 0, behavior: "instant" });
+  if (canReturn) dom.returnToAnalysis.focus();
+  else dom.fileInput.focus();
+}
+
+// Back to the analysis 换一个文件 left: the same module and the import's message, shown again
+// as they were; nothing is recalculated or redrawn.
+function returnToAnalysis() {
+  if (!state.rows.length || !state.importStatus) return;
+  dom.returnToAnalysis.classList.add("hidden");
+  dom.returnToAnalysis.textContent = "";
+  document.body.classList.add("has-results");
+  dom.results.classList.remove("hidden");
+  const { message, tone, hasNote, summary } = state.importStatus;
+  setStatus(message, tone, hasNote);
+  dom.statusNoteSummary.textContent = summary;
+  syncSidebarToggle();
+  showModule(state.returnModule || MODULE_IDS[0]);
 }

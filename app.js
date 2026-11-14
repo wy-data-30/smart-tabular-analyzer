@@ -80,6 +80,11 @@ const state = {
   // buildStandardizedExport() as of the last 检查标准化改动, or null. Imports, field
   // configuration and placeholder confirmations clear it; filters never.
   standardizedExport: null,
+  // v3.0.0: the import's message { message, tone, hasNote, summary }, set by every commit and
+  // put back by returnToAnalysis(); a new import (resetAnalysisState()) clears it.
+  importStatus: null,
+  // v3.0.0: the module shown when 换一个文件 left the workspace, for returnToAnalysis().
+  returnModule: null,
   filters: {
     category: null,
     numeric: null,
@@ -104,6 +109,7 @@ const dom = {
   confirmSheetSelection: document.getElementById("confirmSheetSelection"),
   sheetSelectionMessage: document.getElementById("sheetSelectionMessage"),
   results: document.getElementById("results"),
+  returnToAnalysis: document.getElementById("returnToAnalysis"),
   reportTitle: document.getElementById("reportTitle"),
   sourceName: document.getElementById("sourceName"),
   topbarFileName: document.getElementById("topbarFileName"),
@@ -461,6 +467,13 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
     setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
   dom.statusNoteSummary.textContent = headerNote ? formatStatusNoteSummary(sourceDisplayName, notes.filter(Boolean).length) : "";
+  state.importStatus = {
+    message: dom.statusPanel.textContent,
+    tone: state.parseWarnings.length ? "warning" : "success",
+    hasNote: Boolean(headerNote),
+    summary: dom.statusNoteSummary.textContent
+  };
+  state.returnModule = null;
 
   renderOverview();
   renderPreview();
@@ -2214,6 +2227,10 @@ function resetAnalysisState() {
   syncSidebarToggle();
   resetStatusNote();
   dom.statusNoteSummary.textContent = "";
+  state.importStatus = null;
+  state.returnModule = null;
+  dom.returnToAnalysis.classList.add("hidden");
+  dom.returnToAnalysis.textContent = "";
   dom.reportTitle.textContent = "数据分析工作区";
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");

@@ -7630,3 +7630,170 @@ test("v3.0.0 status note: on the export module, setStatus marks warnings and err
   assert.equal(note.dataset.tone, "error");
   assert.equal(panel.className, "status-panel error");
 });
+
+// v3.0.0 commit 4: the upload page and the way back to the last analysis.
+test("v3.0.0 upload page: the new title, the drop area and the encoding line; the old intro is gone", () => {
+  const html = repoFile("index.html");
+  const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div id="statusNote"'));
+  assertInOrder(hero, [
+    '<h1 id="heroTitle">上传表格，先做一次体检</h1>',
+    '<p class="product-description">不用安装，表格不会离开这台电脑。</p>',
+    '<button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>',
+    '<section id="dropZone" class="upload-panel" aria-labelledby="uploadTitle">',
+    '<h2 id="uploadTitle">把文件拖到这里</h2>',
+    '<p class="upload-limits">CSV、XLSX、XLS，单文件最大 25 MB，最多 100,000 行、200 列</p>',
+    '<input id="csvFile" type="file"',
+    '<label class="file-button" for="csvFile">',
+    "选择数据文件",
+    '<button id="loadSample" class="secondary-button" type="button">',
+    "使用示例数据",
+    '<label class="encoding-control" for="fileEncoding">',
+    "<span>CSV 文件编码</span>",
+    '<select id="fileEncoding">',
+    '<p class="upload-encoding-hint">不确定时保持“自动识别”即可</p>',
+    '<a href="examples/sample-orders.csv" download>下载示例 CSV</a>'
+  ]);
+  // The visually hidden file input stays right before its label (focus ring, style.css).
+  assert.match(hero, /<input id="csvFile" type="file"[^>]*>\s*<label class="file-button" for="csvFile">/);
+  assert.doesNotMatch(html, /class="eyebrow"|浏览器端 CSV \/ Excel 数据分析工具|快速看懂你的数据|product-capabilities|主要功能|上传数据文件<\/h2>|拖放文件到此处/);
+});
+
+// The six rows of examples/sample-orders.csv shown on the upload page, as they are in the file.
+test("v3.0.0 upload page: the sample table shows rows 10, 12, 20, 21, 29 and 44 of sample-orders.csv with their marks", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
+  assert.ok(start >= 0);
+  assert.ok(start > html.indexOf('<div id="statusNote"'), "below the upload card and the status");
+  const section = html.slice(start, html.indexOf("</section>", start));
+  assertInOrder(section, ['<h2 id="samplePreviewTitle">会帮你查这些</h2>', '<span class="sample-preview-note">示例数据里的几行</span>']);
+  assert.match(section, /<thead><tr><th>行<\/th><th>订单编号<\/th><th>下单日期<\/th><th>地区<\/th><th>金额<\/th><th>会标出来<\/th><\/tr><\/thead>/);
+  const rows = [...section.matchAll(/<tr>(<td[\s\S]*?)<\/tr>/g)].map((match) => [...match[1].matchAll(/<td(?: class="([^"]*)")?>([\s\S]*?)<\/td>/g)]
+    .map((cell) => [cell[1] || "", cell[2].replace(/<span class="visible-space" aria-hidden="true">␣<\/span>/g, " ")]));
+  assert.deepEqual(rows.map((cells) => cells[0][1]), ["10", "12", "20", "21", "29", "44"]);
+  const lines = readExampleCsv("sample-orders.csv").replace(/^\uFEFF/, "").split(/\r?\n/);
+  const header = lines[1].split(",");
+  rows.forEach((cells) => {
+    const values = lines[Number(cells[0][1]) - 1].split(",");
+    ["订单编号", "下单日期", "地区", "金额"].forEach((field, index) => assert.equal(cells[index + 1][1], values[header.indexOf(field)], `${cells[0][1]} ${field}`));
+  });
+  const marks = rows.map((cells) => cells.slice(1, 5).map(([className], index) => (className ? `${["订单编号", "下单日期", "地区", "金额"][index]}:${className}` : "")).filter(Boolean));
+  assert.deepEqual(marks, [
+    ["地区:mark mark-look-alike"],
+    ["下单日期:mark mark-date"],
+    ["订单编号:mark mark-duplicate"],
+    ["订单编号:mark mark-duplicate"],
+    ["金额:mark mark-placeholder"],
+    ["订单编号:mark mark-total"]
+  ]);
+  assert.deepEqual(rows.map((cells) => cells[5]), [
+    ["mark-note mark-look-alike", "后面多了一个空格"],
+    ["mark-note mark-date", "日期写法和别的行不一样"],
+    ["mark-note", ""],
+    ["mark-note mark-duplicate", "和上一行完全相同"],
+    ["mark-note mark-placeholder", "像是空值的写法，认不出是数字"],
+    ["mark-note mark-total", "合计行混在数据里"]
+  ]);
+});
+
+test("v3.0.0 upload page: an error shows between the title and the card; loading text stays below the card", () => {
+  const css = repoFile("style.css");
+  assert.match(css, /body:not\(\.has-results\) \.upload-hero \{\s*order: -2;\s*\}/);
+  assert.match(css, /body:not\(\.has-results\) #statusNote\[data-tone="error"\] \{\s*order: -1;\s*\}/);
+  assert.match(css, /body\.has-results \.upload-hero,\s*body\.has-results \.sample-preview \{\s*display: none;\s*\}/);
+  const html = repoFile("index.html");
+  // The sheet choice sits right under the card, above the sample rows.
+  assertInOrder(html, ['<div class="upload-hero">', '<section id="dropZone"', '<div id="statusNote"', '<section id="sheetSelectionPanel"', '<section class="sample-preview"', '<section id="results"']);
+  assert.match(css, /\.sheet-selection-panel \{\s*grid-template-columns: 1fr;\s*\}/);
+  // The upload page's top bar has no sidebar toggle: .icon-button (inline-grid) comes later in
+  // the file, so the hiding rule must be more specific than a bare .sidebar-toggle.
+  assert.match(css, /body:not\(\.has-results\) \.sidebar-toggle,/);
+});
+
+// What 换一个文件 does, and the way back. The fake page ignores addEventListener, so these call
+// the functions script.js binds.
+function withRenderCounts(scope) {
+  scope.evaluate(`(() => {
+    globalThis.__renderCalls = 0;
+    ["renderOverview", "renderPreview", "renderSchema", "renderSidebar", "renderQuality", "renderNumericStats", "renderCategoryStats", "renderCharts", "renderChartInsights", "populateControls", "initializeFilterControls"].forEach((name) => {
+      const original = globalThis[name];
+      globalThis[name] = function (...args) { __renderCalls += 1; return original.apply(this, args); };
+    });
+  })()`);
+  return () => scope.evaluate("__renderCalls");
+}
+
+test("v3.0.0 way back: 换一个文件 keeps the analysis, offers 回到「名」的分析, and coming back restores the module and the message without recalculating", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const record = withModuleNavigation(orders);
+  const entry = orders.elements.get("returnToAnalysis");
+  const focused = [];
+  entry.focus = () => focused.push("entry");
+  orders.elements.get("csvFile").focus = () => focused.push("file");
+  const body = orders.context.document.body;
+  const panel = orders.elements.get("statusPanel");
+  const imported = { className: panel.className, text: panel.textContent, summary: orders.elements.get("statusNoteSummary").textContent };
+  assert.equal(imported.summary, "sample-orders.csv 已载入，有 2 条说明");
+  orders.evaluate('showModule("chartsSection")');
+  const renders = withRenderCounts(orders);
+
+  orders.evaluate("showUploadPage()");
+  assert.equal(body.classList.contains("has-results"), false);
+  assert.equal(orders.elements.get("results").classList.contains("hidden"), true);
+  assert.equal(panel.className, "status-panel hidden");
+  assert.equal(panel.textContent, "");
+  assert.equal(entry.classList.contains("hidden"), false);
+  assert.equal(entry.textContent, "回到「sample-orders.csv」的分析");
+  assert.deepEqual(focused, ["entry"]);
+  assert.equal(orders.evaluate("state.rows.length"), 42);
+
+  record.clear();
+  orders.evaluate("returnToAnalysis()");
+  assert.equal(body.classList.contains("has-results"), true);
+  assert.equal(orders.elements.get("results").classList.contains("hidden"), false);
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.deepEqual(record.shown(), ["chartsSection"]);
+  assert.deepEqual(record.focused, ["chartsSection"]);
+  assert.deepEqual({ className: panel.className, text: panel.textContent, summary: orders.elements.get("statusNoteSummary").textContent }, imported);
+  assert.equal(orders.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(renders(), 0);
+});
+
+test("v3.0.0 way back: no entry without an analysis, while a workbook waits for its sheet, or after a failed import", async () => {
+  const scope = createChartContext();
+  const entry = scope.elements.get("returnToAnalysis") || scope.context.document.getElementById("returnToAnalysis");
+  const focused = [];
+  scope.context.document.getElementById("csvFile").focus = () => focused.push("file");
+  entry.focus = () => focused.push("entry");
+  scope.evaluate("showUploadPage()");
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.deepEqual(focused, ["file"]);
+
+  // An Excel sheet name joins the file name.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "a.xlsx");
+  scope.evaluate('state.sourceSheetName = "表一"; showUploadPage()');
+  assert.equal(entry.textContent, "回到「a.xlsx · 表一」的分析");
+
+  // A new import begins: the analysis and the recorded message are gone.
+  scope.evaluate("beginImport()");
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.equal(scope.evaluate("state.importStatus"), null);
+  scope.evaluate("showUploadPage()");
+  assert.equal(entry.classList.contains("hidden"), true);
+
+  // A workbook waiting for its sheet.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "b.csv");
+  scope.evaluate('state.pendingExcel = { fileName: "c.xlsx" }; showUploadPage()');
+  assert.equal(entry.classList.contains("hidden"), true);
+
+  // A failed import.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "d.csv");
+  scope.evaluate('showError("文件中没有可分析的数据。", state.activeImportId); showUploadPage()');
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.equal(scope.evaluate("returnToAnalysis(); document.body.classList.contains('has-results')"), false);
+});
+
+test("v3.0.0 way back: 换一个文件 and the entry are bound in script.js", () => {
+  const script = repoFile("script.js");
+  assert.match(script, /document\.querySelectorAll\("\.nav-new-analysis"\)\.forEach\(\(link\) => \{\s*link\.addEventListener\("click", \(event\) => \{\s*event\.preventDefault\(\);\s*showUploadPage\(\);/);
+  assert.equal((script.match(/dom\.returnToAnalysis\.addEventListener\("click", returnToAnalysis\)/g) || []).length, 1);
+});

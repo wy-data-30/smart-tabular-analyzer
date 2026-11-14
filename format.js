@@ -159,6 +159,11 @@ function formatStatusNoteSummary(sourceName, count) {
   return `${sourceName} 已载入，有 ${formatInteger(count)} 条说明`;
 }
 
+// The upload page's way back to the analysis still in memory (v3.0.0).
+function formatReturnToAnalysis(sourceName) {
+  return `回到「${sourceName}」的分析`;
+}
+
 // One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
 function formatFormulaError({ field, count, byError, lines, fieldIgnored = false }) {
   const errors = Object.entries(byError).map(([error, errorCount]) => `${error} ${formatInteger(errorCount)} 个`).join("、");

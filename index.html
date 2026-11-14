@@ -88,41 +88,42 @@
   <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
 
   <main id="mainContent" class="app-shell">
-    <section class="workspace-intro" aria-labelledby="heroTitle">
-      <div class="product-summary">
-        <p class="eyebrow">浏览器端 CSV / Excel 数据分析工具</p>
-        <h1 id="heroTitle"><span>上传表格，</span><span>快速看懂你的数据</span></h1>
-        <p class="product-description">自动完成字段识别、数据质量检查、描述性统计、可视化分析和报告导出。无需安装软件，数据仅在浏览器本地处理。</p>
-        <ul class="product-capabilities" aria-label="主要功能">
-          <li>自动识别数值、分类、日期和 ID 字段</li>
-          <li>检查空值、重复行和偏大或偏小的值</li>
-          <li>支持筛选、图表分析和报告导出</li>
-        </ul>
-      </div>
+    <div class="upload-hero">
+      <h1 id="heroTitle">上传表格，先做一次体检</h1>
+      <p class="product-description">不用安装，表格不会离开这台电脑。</p>
+      <button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>
+    </div>
 
+    <div class="workspace-intro">
       <section id="dropZone" class="upload-panel" aria-labelledby="uploadTitle">
-        <div class="upload-heading">
+        <div class="upload-drop">
           <span class="upload-icon" aria-hidden="true">
             <svg viewBox="0 0 48 48">
               <path d="M14 7h15l8 8v26H14a4 4 0 0 1-4-4V11a4 4 0 0 1 4-4Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="2"/>
               <path d="M29 7v8h8M18 30l6-6 6 6M24 24v11" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
             </svg>
           </span>
-          <div>
-            <h2 id="uploadTitle">上传数据文件</h2>
-            <p>拖放文件到此处，或从本地选择 CSV、XLSX、XLS 文件。</p>
+          <h2 id="uploadTitle">把文件拖到这里</h2>
+          <p class="upload-limits">CSV、XLSX、XLS，单文件最大 25 MB，最多 100,000 行、200 列</p>
+          <div class="upload-buttons">
+            <input id="csvFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+            <label class="file-button" for="csvFile">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M10 13.8V3.5m0 0L6.4 7.1M10 3.5l3.6 3.6M4 12.5v2.3a1.7 1.7 0 0 0 1.7 1.7h8.6a1.7 1.7 0 0 0 1.7-1.7v-2.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/>
+              </svg>
+              选择数据文件
+            </label>
+            <button id="loadSample" class="secondary-button" type="button">
+              <svg viewBox="0 0 20 20" aria-hidden="true">
+                <path d="M5.8 3.8h6.6l2.8 2.8v9.6H5.8a1.8 1.8 0 0 1-1.8-1.8V5.6a1.8 1.8 0 0 1 1.8-1.8Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"/>
+                <path d="M12.4 3.8v2.8h2.8M7 10h5.3M7 13h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/>
+              </svg>
+              使用示例数据
+            </button>
           </div>
         </div>
 
-        <input id="csvFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
-        <label class="file-button" for="csvFile">
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M10 13.8V3.5m0 0L6.4 7.1M10 3.5l3.6 3.6M4 12.5v2.3a1.7 1.7 0 0 0 1.7 1.7h8.6a1.7 1.7 0 0 0 1.7-1.7v-2.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/>
-          </svg>
-          选择数据文件
-        </label>
-
-        <div class="upload-options">
+        <div class="upload-footer">
           <label class="encoding-control" for="fileEncoding">
             <span>CSV 文件编码</span>
             <select id="fileEncoding">
@@ -132,21 +133,11 @@
               <option value="gb18030">GB18030</option>
             </select>
           </label>
-          <button id="loadSample" class="secondary-button" type="button">
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M5.8 3.8h6.6l2.8 2.8v9.6H5.8a1.8 1.8 0 0 1-1.8-1.8V5.6a1.8 1.8 0 0 1 1.8-1.8Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"/>
-              <path d="M12.4 3.8v2.8h2.8M7 10h5.3M7 13h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/>
-            </svg>
-            使用示例数据
-          </button>
-        </div>
-
-        <div class="upload-footer">
-          <p>CSV 编码不确定时保持“自动识别”即可；单文件最大 25 MB，最多 100,000 行、200 列。</p>
+          <p class="upload-encoding-hint">不确定时保持“自动识别”即可</p>
           <a href="examples/sample-orders.csv" download>下载示例 CSV</a>
         </div>
       </section>
-    </section>
+    </div>
 
     <div id="statusNote" class="status-note">
       <div class="status-note-bar">
@@ -169,6 +160,26 @@
         <button id="confirmSheetSelection" type="button">分析所选工作表</button>
       </div>
       <p id="sheetSelectionMessage" class="sheet-selection-message" aria-live="polite"></p>
+    </section>
+
+    <section class="sample-preview" aria-labelledby="samplePreviewTitle">
+      <div class="sample-preview-heading">
+        <h2 id="samplePreviewTitle">会帮你查这些</h2>
+        <span class="sample-preview-note">示例数据里的几行</span>
+      </div>
+      <div class="table-wrap" tabindex="0" aria-label="示例数据里的几行，可横向滚动">
+        <table class="sample-preview-table" aria-label="示例数据里的几行">
+          <thead><tr><th>行</th><th>订单编号</th><th>下单日期</th><th>地区</th><th>金额</th><th>会标出来</th></tr></thead>
+          <tbody>
+            <tr><td>10</td><td>SO-1008</td><td>2025-02-11</td><td class="mark mark-look-alike">华南<span class="visible-space" aria-hidden="true">␣</span></td><td>1800</td><td class="mark-note mark-look-alike">后面多了一个空格</td></tr>
+            <tr><td>12</td><td>SO-1010</td><td class="mark mark-date">2025/2/18</td><td>西南</td><td>3120</td><td class="mark-note mark-date">日期写法和别的行不一样</td></tr>
+            <tr><td>20</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td>华南</td><td>3900</td><td class="mark-note"></td></tr>
+            <tr><td>21</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td>华南</td><td>3900</td><td class="mark-note mark-duplicate">和上一行完全相同</td></tr>
+            <tr><td>29</td><td>SO-1026</td><td>2025-05-09</td><td>西北</td><td class="mark mark-placeholder">N/A</td><td class="mark-note mark-placeholder">像是空值的写法，认不出是数字</td></tr>
+            <tr><td>44</td><td class="mark mark-total">合计</td><td></td><td></td><td>123440</td><td class="mark-note mark-total">合计行混在数据里</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section id="results" class="results hidden" aria-labelledby="reportTitle">

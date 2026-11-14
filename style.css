@@ -124,7 +124,7 @@ svg {
 
 /* v3.0.0: the toggle, the navigation, 换一个文件 and the phone file name belong to the
    workspace; the upload page shows only the brand and the privacy note. */
-.sidebar-toggle,
+body:not(.has-results) .sidebar-toggle,
 .module-nav,
 .header-actions .nav-new-analysis,
 .topbar-file-name {
@@ -290,86 +290,70 @@ body.has-results .privacy-badge {
   flex: 1 0 auto;
 }
 
-@media (min-width: 1101px) {
-  body:not(.has-results) .app-shell {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
+/* v3.0.0 upload page: one column of title, upload card, status and sample rows. An error
+   moves between the title and the card; loading text stays below the card. */
+body:not(.has-results) .app-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+body:not(.has-results) .app-shell > * {
+  width: min(760px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+body:not(.has-results) .upload-hero {
+  order: -2;
+}
+
+body:not(.has-results) #statusNote[data-tone="error"] {
+  order: -1;
+}
+
+body:not(.has-results) #statusNote[data-tone="error"] .status-panel {
+  margin-top: 0;
+  margin-bottom: 16px;
 }
 
 .workspace-intro {
-  display: grid;
-  grid-template-columns: minmax(300px, 0.78fr) minmax(500px, 1.22fr);
-  gap: 32px;
-  align-items: stretch;
+  display: block;
 }
 
 body.has-results .workspace-intro {
   display: none;
 }
 
-.product-summary,
+body.has-results .upload-hero,
+body.has-results .sample-preview {
+  display: none;
+}
+
+.upload-hero {
+  margin: 24px 0;
+}
+
+.upload-hero h1 {
+  margin: 0 0 8px;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.product-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+.return-to-analysis {
+  margin-top: 16px;
+}
+
 .upload-panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--panel);
-}
-
-.product-summary {
-  padding: 32px;
-}
-
-.eyebrow {
-  margin: 0 0 7px;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.product-summary h1 {
-  max-width: 11em;
-  margin-bottom: 16px;
-  font-size: clamp(30px, 3.4vw, 44px);
-  font-weight: 740;
-  letter-spacing: -0.035em;
-  line-height: 1.18;
-}
-
-.product-summary h1 span {
-  display: block;
-}
-
-.product-description {
-  max-width: 620px;
-  margin-bottom: 24px;
-  color: var(--text-secondary);
-  font-size: 15px;
-  line-height: 1.75;
-}
-
-.product-capabilities {
-  display: grid;
-  gap: 10px;
-  margin: 0;
-  padding: 0;
-  color: var(--text-secondary);
-  list-style: none;
-}
-
-.product-capabilities li {
-  position: relative;
-  padding-left: 24px;
-}
-
-.product-capabilities li::before {
-  position: absolute;
-  top: 0.2em;
-  left: 0;
-  color: var(--success);
-  content: "✓";
-  font-weight: 750;
 }
 
 .upload-panel {
@@ -386,11 +370,35 @@ body.has-results .workspace-intro {
   background: var(--primary-soft);
 }
 
-.upload-heading {
+.upload-drop {
   display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 22px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.upload-drop h2 {
+  margin: 4px 0 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.upload-limits {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.upload-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
 }
 
 .upload-icon {
@@ -407,18 +415,6 @@ body.has-results .workspace-intro {
 .upload-icon svg {
   width: 31px;
   height: 31px;
-}
-
-.upload-heading h2 {
-  margin-bottom: 5px;
-  font-size: 22px;
-  font-weight: 720;
-}
-
-.upload-heading p {
-  margin-bottom: 0;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 #csvFile {
@@ -492,8 +488,7 @@ button:disabled:hover {
 }
 
 .file-button {
-  width: 100%;
-  min-height: 48px;
+  min-height: 42px;
   font-size: 15px;
 }
 
@@ -508,13 +503,6 @@ body.is-loading .file-button {
 #csvFile:focus-visible + .file-button {
   outline: 3px solid rgba(79, 70, 229, 0.22);
   outline-offset: 2px;
-}
-
-.upload-options {
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  gap: 10px;
-  margin-top: 14px;
 }
 
 .encoding-control {
@@ -541,12 +529,17 @@ body.is-loading .file-button {
 
 .upload-footer {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
   margin-top: 16px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.upload-encoding-hint {
+  flex: 1 1 auto;
+  margin: 0;
 }
 
 .upload-footer p {
@@ -562,6 +555,62 @@ body.is-loading .file-button {
 
 .upload-footer a:hover {
   text-decoration: underline;
+}
+
+.sample-preview {
+  margin-top: 28px;
+}
+
+.sample-preview-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+}
+
+.sample-preview-heading h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.sample-preview-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.sample-preview-table td.mark {
+  font-weight: 600;
+}
+
+.mark-total { --mark: #5856d6; --mark-soft: rgba(88, 86, 214, 0.12); }
+.mark-duplicate { --mark: #af52de; --mark-soft: rgba(175, 82, 222, 0.12); }
+.mark-placeholder { --mark: #148a9e; --mark-soft: rgba(20, 138, 158, 0.12); }
+.mark-date { --mark: #a86400; --mark-soft: rgba(168, 100, 0, 0.12); }
+.mark-look-alike { --mark: #22973f; --mark-soft: rgba(34, 151, 63, 0.12); }
+
+.sample-preview-table td.mark {
+  background: var(--mark-soft);
+}
+
+.sample-preview-table td.mark-note {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.sample-preview-table td.mark-note[class*="mark-"]:not(:empty)::before {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--mark);
+  content: "";
+}
+
+.visible-space {
+  color: var(--text-secondary);
 }
 
 .status-panel {
@@ -2387,14 +2436,6 @@ select:focus-visible,
 }
 
 @media (max-width: 1100px) {
-  .workspace-intro {
-    grid-template-columns: 1fr;
-  }
-
-  .product-summary {
-    padding: 28px;
-  }
-
   .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2426,10 +2467,6 @@ select:focus-visible,
   .app-footer {
     padding-right: 16px;
     padding-left: 16px;
-  }
-
-  .workspace-intro {
-    gap: 14px;
   }
 
   .chart-grid,
@@ -2540,33 +2577,39 @@ select:focus-visible,
     padding-bottom: 32px;
   }
 
-  .product-summary,
   .upload-panel,
   .section-block {
     padding: 18px;
-  }
-
-  .product-summary h1 {
-    font-size: 30px;
   }
 
   .product-description {
     font-size: 14px;
   }
 
-  .upload-heading {
-    gap: 12px;
+  .upload-buttons > * {
+    flex: 1 1 100%;
+    min-height: 44px;
   }
 
-  .upload-heading h2 {
-    font-size: 19px;
-  }
-
-  .upload-options {
+  /* The sheet choice stacks (in v2.12.0 it made a 390 px page scroll sideways by 54 px). */
+  .sheet-selection-panel {
     grid-template-columns: 1fr;
   }
 
-  .upload-footer,
+  .sheet-selection-controls {
+    flex-wrap: wrap;
+  }
+
+  .sheet-selection-controls label {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .sheet-selection-controls button {
+    flex: 1 1 100%;
+    min-height: 44px;
+  }
+
   .analysis-panel-heading {
     align-items: flex-start;
     flex-direction: column;
@@ -2718,7 +2761,7 @@ select:focus-visible,
 }
 
 @media (max-width: 390px) {
-  .product-summary h1 {
+  .upload-hero h1 {
     font-size: 27px;
   }
 
