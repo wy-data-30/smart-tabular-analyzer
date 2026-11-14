@@ -144,7 +144,7 @@ v2.7.0 只做删减和把“主要发现”降级为图表下的两句结论。�
 | `v2.7.0 quick grouping: the advanced settings block…` | 页面没有快速分组的 id 和“高级设置 / 快速分组”字样，`renderCustomAnalysisChart` 未定义，`dom` 和 `REPORT_CHART_TITLES` / `REPORT_CHART_HEADING_IDS` 里没有对应项，`script.js` 没有 `dom.metricField` 等 |
 | `v2.7.0 quick grouping: the report has a custom-analysis section only after…` | 没点“生成自定义分析”时 `buildReportData().customAnalysis.completed` 为 `false`，点过之后为 `true`。它在 v2.7.0 之前的版本上会失败，是因为当时的报告用快速分组的下拉框回推这一节；假 DOM 不会像浏览器那样默认选第一项，所以测试里有一行“如果还有这些下拉框就给它们赋值”，在删除之后只是空操作 |
 | `v2.7.0 templates: …` | `templates.js` 不存在，页面 / 样式里没有模板，4 个模板全局名未定义，`dom` 没有 template 键，`REPORT_CHART_TITLES` 恰好 5 项，`script.js` 启动自检恰好列出 8 个应用脚本的代表函数 |
-| `v2.7.0 conclusions: the findings section and its navigation entries are gone…` | 没有 `#insightsSection` / `#insights` / “主要发现”；桌面导航编号 01–08、末项是 `exportSection`，手机下拉框选项与导航一一对应；两个新元素在对应的 `.chart-card` 里且默认带 `hidden`；`script.js` 给两个下拉框各绑一个监听；`renderInsights` / `renderInsightGroups` 未定义 |
+| `v2.7.0 conclusions: the findings section and its navigation entries are gone…` | 没有 `#insightsSection` / `#insights` / “主要发现”；v3.0.0 起改为：只有一个导航，恰好 8 个链接，依次指向 8 个模块 id、末项是 `exportSection`，没有 01–08 编号，没有手机下拉框 `#mobileSectionNav`（`core.test.cjs` 的对应一行同时改了，见第 13 节）；两个新元素在对应的 `.chart-card` 里且默认带 `hidden`；`script.js` 给两个下拉框各绑一个监听；`renderInsights` / `renderInsightGroups` 未定义 |
 | `v2.7.0 conclusions: each sentence follows its own chart select…` | 默认选择、改分类下拉框只变分类句（含“取值比较分散”的单字段说明）、改日期下拉框只变趋势句，趋势图的指标和汇总方式不影响趋势句 |
 | `v2.7.0 conclusions: import, filter, field configuration and placeholder confirmation all refresh them` | 四个触发点都刷新（确认 N/A 后最多的类别从「N/A」变成「A」）；筛选保持所选字段并按筛选后的行重算；筛选到 0 行两句都隐藏；忽略所选分类字段后改选下一个；所有字段都忽略时两句都不显示 |
 | `v2.7.0 conclusions: a field with no values and a new import reset the sentences` | 字段全空时写“当前没有可统计的取值，不做概括。”；`resetAnalysisState()` 清空两句并隐藏 |
@@ -208,7 +208,7 @@ v2.8.0 加了疑似合计 / 小计行和 Excel 公式错误单元格，并让带
 
 另外批准改过 4 处现有断言：`scopes.length` 从 11 改成 13（两处，新夹具）；状态栏那条结尾加第 33 行的句子；`problemRowCheck()` 加 `suspectedTotal`、`formulaError` 两个 `expected` 分支。
 
-假 DOM 的 `getElementById` 对任何 id 都返回替身，也不计算样式，所以这些只能靠浏览器验证：状态栏是否看得见、高亮的空格是否看得见、两个小节的排版、390 宽度下“说明”列的最小宽度（`#problemRowsTable td:nth-child(2)`）。用 Excel 打开 `公式错误.xlsx` 看错误是否和页面一致，也要人工做。
+假 DOM 的 `getElementById` 对任何 id 都返回替身，也不计算样式，所以这些只能靠浏览器验证：状态栏是否看得见（v3.0.0 起还有：收起后再展开，收起时原文仍在无障碍树里、读屏能读到）、高亮的空格是否看得见、两个小节的排版、390 宽度下“说明”列的最小宽度（`#problemRowsTable td:nth-child(2)`）。用 Excel 打开 `公式错误.xlsx` 看错误是否和页面一致，也要人工做。
 
 ## 8. v2.8.1 新增测试固定了什么
 
@@ -287,7 +287,7 @@ v2.10.0 加了“标准化数据”导出（v2.12.0 起叫“写法统一的表�
 
 **性能**：新代码不在刷新路径里。10 万行 × 20 列（固定种子生成的 CSV，含日期、数值、分类、ID 列），与 v2.9.0 交替各 5 次取中位数：导入 +0.4%、筛选 +1.1%、重建 −0.2%。检查约 1.6 s（干净数据）/ 3.9 s（每格都要处理的 200 万格）；最坏情况导出改动清单到上限约 2.55 s、峰值 RSS 约 1.22 GB。
 
-假 DOM 不算样式：检查表是否可见、1280 / 390 宽度有没有横向滚动、打印时按钮是否隐藏，要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。
+假 DOM 不算样式：检查表是否可见、1280 / 390 宽度有没有横向滚动、打印时按钮是否隐藏，要靠浏览器验证（见 `docs/RELEASE_CHECKLIST.md`）。v3.0.0 起还要在浏览器里看：停在别的模块时导出 HTML 报告，看不见的模块里的图表仍按原尺寸导出（假 DOM 没有尺寸）。
 
 ## 11. v2.11.0 新增测试固定了什么
 
@@ -342,3 +342,25 @@ v2.12.0 统一了界面说法（13 组，见 `docs/ARCHITECTURE.md`“界面说�
 - 顺序：9 条“A 在 B 之前”改用 `assertInOrder(text, markers)`：每个 marker 先断言存在，再断言位置严格递增。只写 `indexOf(a) < indexOf(b)` 时 a 不在也会通过。报告大标题顺序那 4 条（`<h2>数据规模</h2>` 等）没有涉及改名，没有改。
 
 **故意改坏的结果**（在分支快照上，用软断言记录每一处失败的断言行）：审查时的 15 个变异（让应该隐藏的节 / 计数 / 按钮出现、把标题改回旧说法、报告一节不转义）都让对应断言失败；另加 4 个：`#dateChartAggregate` 选项改回“合计”、`getDateChartAggregateLabel()` 改回“合计”、`LOOK_ALIKE_NOTE` 里加回空格，都让新护栏失败；没有类型变化时也显示“按空值处理后类型会变”，让 `doesNotMatch(html, /按空值处理后类型会变/)` 失败。“认得出的”四句各改回旧文字一次，第二条新测试都失败。
+
+## 13. v3.0.0 新增测试固定了什么
+
+v3.0.0 只换外壳和样式（一次显示一个模块、顶栏和侧栏、可收起的状态栏、新的上传页和“回到分析”、字段配置表 F1 F2、空状态 F3、新外观），检测规则、计数、报告文字和导出文件一样不变。新增 55 条测试（461 → 516），都在 `basic-data-processing.test.cjs`，名字以 `v3.0.0` 开头；`tests/test-context.cjs` 的假 `window` 加了 `scrollTo()` 和 `history.replaceState()`（`showModule()` 要用）。
+
+| 测试组（名字前缀） | 条数 | 固定的内容 |
+| --- | --- | --- |
+| `v3.0.0 guard:` | 3 | 护栏，在 v2.12.0 上就通过：导入示例、生成自定义分析、应用筛选后 HTML 报告的图表张数和标题；每一句空状态文字在各自的触发条件下仍出现；示例数据的报告文字与 v2.12.0 相同（`buildHtmlReport(report, [])` 的 SHA-256，不含图片，所以不受图表配色影响） |
+| `v3.0.0 modules:` | 5 | 8 个模块在一个舞台里；看不见的模块用 `visibility`，从不 `display: none` 或 `.hidden`，打印时全部显示；`showModule()` 只显示一个、只标一个链接、写地址、回到顶部、聚焦标题；导入停在数据概览；应用字段配置、按空值处理、筛选后停在当前模块 |
+| `v3.0.0 shell:` | 8 | 顶栏的组成，没有 `section-label`；侧栏的静态部分和手机面板里的“换一个文件”；四个模块标题旁的数据范围句（只有数据概览那句带 id）和它们的“清除筛选”、侧栏的“筛选”一行都跟着 `#globalFilterSummary`；侧栏的字段、类型、单位和状态行；Excel 工作表名、表头在第 1 行时不显示、字段名转义；按宽度的默认开合和 Esc；`script.js` 里每个控件只绑一次 |
+| `v3.0.0 status note:` | 5 | `#statusPanel` 原样、外面包一层；收起用 `clip-path`，读屏仍能读到；“〈文件名〉已载入，有 N 条说明”的 N；`warning` 不收起；成功消息只在数据概览显示，导出时的警告和报错在每个模块都显示 |
+| `v3.0.0 upload page:` / `v3.0.0 way back:` | 3 / 3 | 上传页的新文字和示例小表（第 10、12、20、21、29、44 行的值和说明，第 20 行最后一列为空）；报错排在标题和卡片之间、载入文字在卡片下面；“换一个文件”保留分析、给出“回到「名」的分析”并回到原来的模块；没有分析、等选工作表、导入失败时不给入口 |
+| `v3.0.0 F1:` / `v3.0.0 F2:` | 2 / 6 | 字段配置表的 7 列和“认不出”的粉点、草稿即时更新；多于 20 个字段时的搜索和类型切换、个数、隐藏行、应用后保留、新导入清空、转义 |
+| `v3.0.0 F3:` | 4 | 每个图表框有静态的空状态段落；`drawEmptyChart()` 逐字写文字、不在画布上画，下一张图清掉它；自定义分析的空趋势；空表格和空列表靠容器上的类得到统一外观，句子不变 |
+| `v3.0.0 overview:` 等（7a） | 9 | 5 个数字写成一行；数据预览在 `<details open>` 里；字段配置的说明和按钮在表格下方、有草稿时加 `has-draft`；只有多于一句的小节说明有“展开”；频数比例条；导出页各选项标题后的行数；截断单元格的悬停全文和图表标题的提示；单元格限宽、手机上示例小表的两行排法、质量页两张表上下排 |
+| `v3.0.0 look:` | 7 | 只读 `style.css`、`app.js` 的 `CHART_THEME` 和 `script.js` 的 Chart.js 默认值：颜色变量、系统字体栈（`Segoe UI` 在微软雅黑之前）、7 档字号和 3 档字重、焦点环；模块不是卡片，内容块是白卡，`box-shadow` 只给侧栏浮层；按钮高度、次按钮和文字按钮、手机上的 44 px、分段导航、表头；质量页标签中性、没有琥珀色和圆点，5 个小节的类别色圆点，“认不出”的粉点，问题格浅灰加粗；一组一个主按钮（只用 id 选择器）；空值检查表约 10 行不滚动、640 以下不限高、打印不限高；图表主色 `#0068e0`、第二色比主色浅且对白底不低于 3:1、图表结论和自定义分析结果句的浅灰框 |
+
+**改动的现有断言（2 处，都和导航有关）**：`basic` 的 `v2.7.0 conclusions: the findings section and its navigation entries are gone…` 原来固定导航编号 01–08 和手机下拉框，改成只有一个导航、恰好 8 个链接、依次指向 8 个模块 id、没有编号、没有 `#mobileSectionNav`（旧写法里的 `<span>09</span>` 一支在去掉编号后会永远匹配不到）；`core.test.cjs` 原来断言有 `#mobileSectionNav`，改成断言没有它，并且恰好 8 个指向模块的链接。读样式表的 4 条旧断言（`workflow-`、`.template-`、`:not(.has-note)`、打印块隐藏 `.standardized-export-actions`）都没改，仍然通过。
+
+**外观测试是怎么验证的**：`v3.0.0 look:` 的每一条都先在改样式前的代码上跑过，确认失败，改完再通过。后来补的两句断言（筛选页日期框不超出卡片、自定义分析结果句的样式）也各自确认过：去掉对应的规则就失败。
+
+假 DOM 不算样式和尺寸：模块切换后的可见性、Tab 走不进看不见的模块、隐藏模块里图表的导出尺寸、吸顶表头、侧栏在 1100 / 641–1099 / ≤640 三档的行为、横向滚动、打印，都要在浏览器里看（`docs/RELEASE_CHECKLIST.md` 第 7 节）。

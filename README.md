@@ -55,17 +55,23 @@ Upload CSV or Excel files, or start immediately with the built-in sample data.
 
 ![Smart Tabular Analyzer home and file upload](./assets/homepage.png)
 
+*Screenshot of the previous interface.*
+
 ### Data Quality
 
 Review missing values, duplicate rows, format problems, IQR-based numeric outliers, and duplicate ID values in one view.
 
 ![Smart Tabular Analyzer data quality checks](./assets/data-quality.png)
 
+*Screenshot of the previous interface.*
+
 ### Analysis Results
 
 Compare numeric distributions, categorical Top 10 results, and date trends through interactive charts.
 
 ![Smart Tabular Analyzer analysis charts](./assets/analysis-results.png)
+
+*Screenshot of the previous interface.*
 
 ## Privacy
 
