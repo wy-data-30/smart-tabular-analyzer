@@ -2,7 +2,7 @@
 
 > 一款在浏览器中完成 CSV 和 Excel 快速探索分析的隐私友好型工具。
 
-**当前版本：** v2.12.0
+**当前版本：** v3.0.0
 
 ## 语言
 
@@ -55,17 +55,23 @@ Smart Tabular Analyzer 用于帮助用户理解字段结构陌生或不一致的
 
 ![Smart Tabular Analyzer 首页与文件上传](./assets/homepage.png)
 
+*截图为旧版界面。*
+
 ### 数据质量
 
 在同一视图中检查空值、重复行、认不出的数字或日期、基于 IQR 判断的偏大或偏小的值和编号重复。
 
 ![Smart Tabular Analyzer 数据质量检查](./assets/data-quality.png)
 
+*截图为旧版界面。*
+
 ### 分析结果
 
 通过交互图表查看数值分布、分类 Top 10 和日期趋势。
 
 ![Smart Tabular Analyzer 分析图表](./assets/analysis-results.png)
+
+*截图为旧版界面。*
 
 ## 隐私说明
 

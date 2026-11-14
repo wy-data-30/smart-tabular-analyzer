@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer v2.12.0 架构说明
+# Smart Tabular Analyzer v3.0.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -762,7 +762,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 - 输入：当前分析行、已应用字段类型、图表选择控件和 Chart.js 全局对象。
 - 输出：canvas 上的 Chart.js 图表、标题和 `aria-label`，以及登记在 `state.charts` 中的实例。
-- 缺少可用字段、有效值或 Chart.js 时，`drawEmptyChart()` 绘制空状态，不创建实例。
+- 缺少可用字段、有效值或 Chart.js 时，`drawEmptyChart(canvas, text)` 显示空状态，不创建实例。v3.0.0 起它不在画布上画字，而是把原句逐字写进画布后面的静态段落 `#<canvas id>Empty`（`.empty-state.chart-empty`，叠在图表框上），画布留空；`destroyChart()` 经 `clearChartEmpty()` 清掉这句，所以下一张真正的图出来时文字就消失。
 
 **与其他模块的关系**
 
@@ -906,15 +906,18 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 
 - 缓存页面节点并在脚本加载时绑定事件。
 - 渲染概览、预览、字段配置、质量、统计、筛选、图表（含图表下的两句结论）、自定义分析和导出区域。
-- 管理加载、错误、成功、工作流步骤和响应式导航状态。
+- 管理加载、错误、成功的消息，模块切换（一次显示一个模块，v3.0.0）和侧栏开合。
 - 在数据集切换时清理旧 DOM 和图表。
 
 **主要函数**
 
 | UI 范围 | 主要函数 |
 | --- | --- |
-| 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()` |
-| 导入状态 | `setImportBusy()`, `setStatus()`, `showError()` |
+| 导航与工作区 | `setupResultNavigation()`, `setupWorkspaceNavigation()`, `showResultsWorkspace()`, `showModule()`, `showUploadPage()`, `returnToAnalysis()`（后四个 v3.0.0，`showModule()` 等在 `script.js`） |
+| 侧栏（v3.0.0） | `renderSidebar()`, `isSidebarWide()`, `isSidebarOpen()`, `openSidebar()`, `closeSidebar()`, `toggleSidebar()`, `syncSidebarToggle()`, `handleSidebarKeydown()`, `toggleSidebarFields()` |
+| 导入状态 | `setImportBusy()`, `setStatus()`, `showError()`, `resetStatusNote()`, `toggleStatusNote()` |
+| 字段配置表的搜索和类型切换（v3.0.0，F2） | `renderSchemaFilter()`, `renderSchemaKinds()`, `applySchemaFilter()`, `countSchemaKinds()`, `listSchemaFieldsShown()`, `handleSchemaSearch()`, `selectSchemaKind()`, `handleSchemaKindClick()` |
+| 小节说明和截断的单元格（v3.0.0） | `toggleSectionNote()`, `showTruncatedCellTitle()` |
 | 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderPlaceholderDetails()`, `renderParseWarningSummary()`, `renderNumericStats()`, `renderCategoryStats()` |
 | 分页表格与问题行 | `buildRowTableHtml()`, `getRowPage()`, `movePage()`, `setPagerButtons()`, `goToPreviewPage()`, `handleProblemViewClick()`, `openProblemView()`, `renderProblemView()`, `selectProblemCategory()`, `goToProblemRowsPage()`, `refreshProblemView()`, `closeProblemView()` / `hideProblemView()` |
 | 图表结论 | `renderChartInsights()`, `renderCategoryInsight()`, `renderTrendInsight()`, `buildCategoryInsight()`, `setChartInsight()` |
@@ -940,6 +943,17 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 - 输出：`innerHTML`、`textContent`、class、disabled、ARIA 属性、滚动和焦点等浏览器副作用。
 - 表格和文本模板在写入 `innerHTML` 前使用 `escapeHtml()`；状态文字优先使用 `textContent`。
 - 状态栏（v2.8.0）：`body.has-results #statusPanel.success:not(.has-note)` 隐藏导入成功后的普通消息。消息带说明句（表头位置、疑似合计、公式错误）时，`commitTabularData()` 经 `setStatus(message, tone, true)` 加 `has-note` 类，状态栏留在页面上；之后任何一条 `setStatus()` 消息都整体替换 `className`，所以导出报告成功后这条说明和状态栏一起消失（已接受，留给阶段五）。状态栏也没有关闭按钮。表头说明从 v2.2.0 加入起到 v2.8.0 之前，导入成功时都被旧规则 `#statusPanel.success` 隐藏，只在 DOM 里。
+- 状态栏的外层（v3.0.0）：`#statusPanel` 的文字、类名、`role` 和上面的 `has-note` 规则都不变，外面包了一层 `#statusNote`。`setStatus()` 把消息类别写进 `#statusNote` 的 `data-tone`（没有类别时为 `loading`），`showError()` 写 `error`。成功且带说明时外层加 `can-collapse`，多出一行“〈文件名〉已载入，有 N 条说明”（`formatStatusNoteSummary()`，N 是表头位置、疑似合计、公式错误三句里出现了几句）和“收起 / 看说明”按钮，默认展开；收起（`is-collapsed`）时原文只是移出视线（`clip-path`），读屏仍能读到，不用 `display: none` 或 `visibility`。`warning` 一直展开，不给按钮。工作区里成功消息只在数据概览模块显示（`body[data-module]`，由 `showModule()` 写），警告和报错在每个模块都显示。导入成功时把状态文字和类别记在 `state.importStatus`，从上传页“回到〈文件名〉的分析”时原样设回；新导入一开始就清掉这份记录。
+
+### v3.0.0 外壳
+
+- **一次显示一个模块。** 8 个模块在 `#moduleStage` 里，`showModule(sectionId)`（`script.js`）给其余 7 个加 `module-off` 类和 `inert`，给当前导航链接加 `aria-current="page"`，用 `replaceState` 写 `#模块 id`（加载时不读它），把页面滚回顶部、焦点移到模块标题。切换只是显示和隐藏，不重算、不重画图表。导入成功后停在数据概览；应用字段配置、应用筛选、按空值处理之后停在当前模块。
+- **看不见的模块不能用 `display: none`，也不能加 `.hidden`。** 在 `display: none` 的容器里 Chart.js 把图表建成 0×0，`captureCurrentChartImages()` 拿不到图；它还会跳过 `closest(".hidden")` 里的图表。两种写法都会让 HTML 报告少图。所以 `.module-off` 用 `visibility: hidden; position: absolute; top/right/left: 0`，外层 `.module-stage` 是 `position: relative; overflow: clip`（`clip` 而不是 `hidden`，模块里吸顶的表头才不失效）。这样隐藏的模块仍按舞台宽度排版，图表尺寸和显示时相同，无论停在哪个模块，导出的报告图片张数和标题都与 v2.12.0 相同（有护栏测试）。打印时 `.module-off` 改回 `position: static; visibility: visible`，8 个模块都打印。
+- **侧栏**（`#appSidebar`）：文件名和“N 行 × K 列”、按文件顺序列出全部字段和已应用类型的小标、当前状态（筛选、表头所在行、已按空值处理的条数），由 `renderSidebar()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里刷新；“筛选”一行和 `#globalFilterSummary` 同文，由 `updateGlobalFilterStatus()` 写，所以筛选路径也会更新它。宽度不小于 1100 px 默认展开、在内容旁边；小于 1100 px 默认收起，打开时盖在内容上（遮罩、Esc 关闭、焦点关在面板里、关闭后回到按钮）。用户点过开合以后按用户的来（`body.sidebar-open` / `sidebar-closed`），刷新回到默认。
+- **上传页与回到分析**：“换一个文件”回到上传页（`showUploadPage()`），不清除当前分析；这时上传页给出“回到〈文件名〉的分析”（`#returnToAnalysis`，`formatReturnToAnalysis()`），点了回到原来的模块（`state.returnModule`）。新导入开始、导入失败或工作簿还在等选工作表时不给这个入口。
+- **字段配置表（F1、F2）**：列是字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值。字段多于 20 个（`SCHEMA_FILTER_MIN_FIELDS`）时出现搜索框和按确认类型的切换（`SCHEMA_KINDS`），状态在 `state.schemaFilter = { query, kind }`；只给表格行加 `hidden`，不重画表格，应用、恢复和“有未应用的修改”都按全部字段算。新导入清空，应用后保留（所选类型没有字段了回到“全部”）。
+- **外观**：颜色、字号（12 / 13 / 15 / 17 / 22 / 28 / 40）、字重（400 / 600 / 700）在 `style.css` 的 `:root` 和各规则里；模块本身不是卡片，模块里的表格框、频数卡、导出列表、筛选卡和图表卡是白卡，投影只给盖在内容上的侧栏。“一组一个蓝色主按钮”只用 id 选择器调整（`#exportFilteredCsv`、`#placeholderDetails` 下每条的“按空值处理”显示成次按钮），按钮的类名没有改。类别色只用在上传页示例小表、质量页 5 个小节标题前的圆点和字段配置表“认不出”前的粉点。图表配色在 `app.js` 的 `CHART_THEME`，字体在 `script.js` 的 `Chart.defaults`，报告自己的样式没有动。
+- **假 DOM 测不到的**：元素是否看得见、隐藏模块里图表的尺寸、吸顶表头、焦点和 `inert` 的实际效果、侧栏在各宽度下的开合、横向滚动和打印，都要在浏览器里看（`docs/RELEASE_CHECKLIST.md` 第 7 节）。
 
 **与其他模块的关系**
 

@@ -153,6 +153,22 @@ function formatFormulaErrorStatus(items) {
   return items.length ? `发现 ${formatInteger(formatFormulaErrorCount(items))} 个公式错误单元格，已按空值处理，详情见“数据质量”。` : "";
 }
 
+// The folded import message (v3.0.0): count is how many of the header, total and formula
+// error sentences the message carries.
+function formatStatusNoteSummary(sourceName, count) {
+  return `${sourceName} 已载入，有 ${formatInteger(count)} 条说明`;
+}
+
+// The field table's search box (v3.0.0 F2), shown for more than 20 fields.
+function formatSchemaSearchPlaceholder(fieldCount) {
+  return `搜索 ${formatInteger(fieldCount)} 个字段`;
+}
+
+// The upload page's way back to the analysis still in memory (v3.0.0).
+function formatReturnToAnalysis(sourceName) {
+  return `回到「${sourceName}」的分析`;
+}
+
 // One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
 function formatFormulaError({ field, count, byError, lines, fieldIgnored = false }) {
   const errors = Object.entries(byError).map(([error, errorCount]) => `${error} ${formatInteger(errorCount)} 个`).join("、");

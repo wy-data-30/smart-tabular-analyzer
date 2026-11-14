@@ -44,7 +44,7 @@ function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = tru
 }
 
 function tableCells(elements, id) {
-  return [...elements.get(id).innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  return [...elements.get(id).innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
 }
 
 function profileSummary(evaluate) {
@@ -445,7 +445,7 @@ test("statistics count unconvertible values for the current rows only", () => {
   commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
 
   assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 3);
-  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th>有效数量<\/th>\s*<th>认不出<\/th>/);
+  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th(?: class="[^"]*")?>有效数量<\/th>\s*<th(?: class="[^"]*")?>认不出<\/th>/);
   assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(0, 3), [
     { warning: false, text: "金额" },
     { warning: false, text: "12" },
@@ -1009,7 +1009,7 @@ test("quality outlier bounds near zero are displayed without negative zero", () 
   evaluate('commitTabularData(["比例"], __rows, "near-zero.csv", beginImport())');
 
   assert.equal(evaluate("state.qualityNumericStats[0].lowerBound"), -0.00075);
-  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
   assert.deepEqual(outlierCells, ["比例", "3", "-0.00075", "0.00125"]);
   assert.equal(outlierCells.includes("-0"), false);
 
@@ -1023,7 +1023,7 @@ test("descriptive statistics show small averages instead of rounding them to zer
   put(context, "__rows", rows);
   evaluate('commitTabularData(["误差"], __rows, "small-mean.csv", beginImport())');
 
-  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
   // statsCells[2] is the 无法转换 count; the statistics start at index 3.
   assert.equal(statsCells[0], "误差");
   assert.equal(statsCells[2], "0");
@@ -3707,6 +3707,42 @@ test("opening the viewer moves focus to its title, and closing hides it", async 
   assert.equal(orders.elements.get("problemRowsCategory").innerHTML, "");
 });
 
+// v3.0.0: 查看 scrolls the viewer to the top of the screen (the title alone only scrolled
+// into view, landing at the bottom); switching category, paging and re-listing never scroll.
+test("v3.0.0: 查看 scrolls the problem rows section to the top; category, paging and re-listing do not", async () => {
+  const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "scroll.csv");
+  const scrolls = [];
+  const focuses = [];
+  scope.elements.get("problemRowsSection").scrollIntoView = (...args) => { scrolls.push(args); };
+  scope.elements.get("problemRowsTitle").focus = (...args) => { focuses.push(args); };
+  const missingIndex = scope.evaluate('state.problemCategories.findIndex((item) => item.kind === "missing" && item.field === "备注")');
+  const placeholderIndex = scope.evaluate('state.problemCategories.findIndex((item) => item.kind === "placeholder")');
+  assert.ok(missingIndex >= 0 && placeholderIndex >= 0);
+
+  // A button whose category is gone opens nothing and scrolls nothing.
+  clickProblemButton(scope, 999);
+  assert.deepEqual(scrolls, []);
+  assert.deepEqual(focuses, []);
+
+  clickProblemButton(scope, missingIndex);
+  assert.equal(viewerState(scope).hidden, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(scrolls)), [[{ block: "start" }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(focuses)), [[{ preventScroll: true }]]);
+
+  scope.evaluate(`selectProblemCategory("${placeholderIndex}")`);
+  assert.equal(openCategory(scope).kind, "placeholder");
+  scope.evaluate(`selectProblemCategory("${missingIndex}")`);
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+  scope.evaluate('goToProblemRowsPage("first")');
+  scope.evaluate("refreshProblemView()");
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  assert.equal(scrolls.length, 1);
+  assert.equal(focuses.length, 1);
+});
+
 test("the viewer finds its category again after field configuration, confirmation and undo", async () => {
   const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
   const scope = await importCsvFile(csv, "refind.csv");
@@ -4235,12 +4271,16 @@ test("v2.7.0 templates: templates.js, its markup, styles, startup check and repo
 
 test("v2.7.0 conclusions: the findings section and its navigation entries are gone, the conclusions sit in the chart cards", () => {
   const html = repoFile("index.html");
-  assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>|<span>09<\/span>/);
-  const navHrefs = [...html.matchAll(/<a[^>]*href="#(\w+Section)"><span>(\d\d)<\/span>/g)].map((match) => [match[1], match[2]]);
-  assert.deepEqual(navHrefs.map(([, number]) => number), ["01", "02", "03", "04", "05", "06", "07", "08"]);
-  assert.equal(navHrefs.at(-1)[0], "exportSection");
-  const mobile = [...html.slice(html.indexOf('id="mobileSectionNav"')).matchAll(/<option value="(\w+)">/g)].map((match) => match[1]).slice(0, navHrefs.length);
-  assert.deepEqual(mobile, navHrefs.map(([id]) => id));
+  assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>/);
+  // v3.0.0: one navigation of exactly 8 links, in module order and without numbers; the phone
+  // select is gone.
+  const navBlocks = [...html.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav>/g)].map((match) => match[1]).filter((block) => /href="#\w+Section"/.test(block));
+  assert.equal(navBlocks.length, 1);
+  const navHrefs = [...navBlocks[0].matchAll(/<a\b[^>]*href="#(\w+)"[^>]*>([^<]*)<\/a>/g)].map((match) => match[1]);
+  assert.deepEqual(navHrefs, ["overviewSection", "schemaSection", "qualitySection", "filterSection", "statisticsSection", "chartsSection", "customSection", "exportSection"]);
+  assert.equal((navBlocks[0].match(/<a\b/g) || []).length, 8);
+  assert.doesNotMatch(navBlocks[0], /<span>\d\d<\/span>/);
+  assert.doesNotMatch(html, /id="mobileSectionNav"/);
   const chartCard = (canvasId) => html.slice(html.lastIndexOf('<div class="chart-card', html.indexOf('id="' + canvasId + '"')), html.indexOf('id="' + canvasId + '"') + 400);
   assert.match(chartCard("categoryTopChart"), /id="categoryChartInsight" class="chart-insight hidden"/);
   assert.match(chartCard("dateTrendChart"), /id="dateChartInsight" class="chart-insight hidden"/);
@@ -7031,4 +7071,1530 @@ test("v2.12.0: charts, insights and the report say 认得出 when a filtered ran
   } finally {
     scope.evaluate("drawEmptyChart = __originalDrawEmptyChart");
   }
+});
+
+// v3.0.0 guards (commit 0). They pass on v2.12.0: they pin what the new shell must leave as it
+// is, so the later commits cannot change it unnoticed.
+
+// A fake Chart whose instances the report can capture (captureCurrentChartImages() keeps only
+// png / jpeg / webp data URLs).
+function withCapturableCharts(scope) {
+  scope.context.Chart = scope.context.window.Chart = class {
+    constructor(canvas, config) { this.canvas = canvas; this.data = config.data; }
+    destroy() {}
+    toBase64Image() { return "data:image/png;base64,iVBORw0KGgo="; }
+  };
+}
+const capturedCharts = (scope) => JSON.parse(scope.evaluate("JSON.stringify(captureCurrentChartImages().map((chart) => [chart.id, chart.title]))"));
+const GUARD_CUSTOM_ANALYSIS = 'dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期"; renderV2Analysis()';
+const GUARD_EAST_FILTER = 'state.filters = { category: { field: "地区", values: ["华东"] }, numeric: null, date: null }; state.filteredRows = filterRowsByConfig(state.rows, state.filters); state.filterSourceRows = state.rows; refreshFilteredAnalysis()';
+
+test("v3.0.0 guard: the HTML report takes the same charts and titles after import, a custom analysis and a filter", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  withCapturableCharts(orders);
+  // A browser <select> shows its first option; the fake one stays "" until set (contract 11).
+  orders.evaluate('dom.numericChartField.value = "数量"; renderCharts()');
+  const three = [
+    ["numericDistributionChart", "数量 数值分布（记录频数）"],
+    ["categoryTopChart", "地区 Top 10（记录数）"],
+    ["dateTrendChart", "下单日期 按月份趋势（记录数）"]
+  ];
+  assert.deepEqual(capturedCharts(orders), three);
+  orders.evaluate(GUARD_CUSTOM_ANALYSIS);
+  const five = [...three, ["v2TopGroupChart", "金额（元） 按 地区 分组 Top 10（求和）"], ["v2SelectedTrendChart", "金额（元） 按月份趋势（求和）"]];
+  assert.deepEqual(capturedCharts(orders), five);
+  // The filter reruns the open custom analysis, so all five charts stay.
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 10);
+  assert.deepEqual(capturedCharts(orders), five);
+});
+
+// Records every drawEmptyChart() call as [canvas id, text]; installed before the commit so the
+// sentences drawn while importing count too.
+function collectEmptyChartTexts(scope) {
+  scope.evaluate(`(() => {
+    globalThis.__guardEmptyTexts = [];
+    const ids = ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"];
+    const original = drawEmptyChart;
+    drawEmptyChart = function (canvas, text) {
+      __guardEmptyTexts.push([ids.find((id) => document.getElementById(id) === canvas) || "other", text]);
+      return original(canvas, text);
+    };
+  })()`);
+  return () => JSON.parse(scope.evaluate("JSON.stringify(__guardEmptyTexts.splice(0))"));
+}
+function commitGuardRows(scope, fields, rows, fileName) {
+  put(scope.context, "__guardFields", fields);
+  put(scope.context, "__guardRows", rows);
+  scope.evaluate(`commitTabularData(__guardFields, __guardRows, ${JSON.stringify(fileName)}, beginImport())`);
+}
+function filterGuardRows(scope, field, values) {
+  put(scope.context, "__guardFilter", { field, values });
+  scope.evaluate("state.filters = { category: __guardFilter, numeric: null, date: null }; state.filteredRows = filterRowsByConfig(state.rows, state.filters); state.filterSourceRows = state.rows; refreshFilteredAnalysis()");
+}
+
+// v3.0.0 F3 restyles these sentences; every one must still appear, word for word, under its
+// trigger. (这一类已经没有问题行。 is pinned by the contract 19 tests.)
+test("v3.0.0 guard: every empty-state sentence still appears under its trigger", () => {
+  const html = (scope, id) => scope.elements.get(id).innerHTML;
+  const text = (scope, id) => scope.elements.get(id).textContent;
+
+  // Only text columns: no numeric, date or ID field, no placeholder.
+  const words = createChartContext();
+  const wordTexts = collectEmptyChartTexts(words);
+  commitGuardRows(words, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  assert.deepEqual(JSON.parse(words.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["category", "category"]);
+  assert.match(html(words, "outlierTable"), /<td>未识别到数值字段。<\/td>/);
+  assert.match(html(words, "numericStatsTable"), /<td>未识别到数值字段。<\/td>/);
+  assert.match(html(words, "idDuplicateDetails"), />未识别到 ID 字段。</);
+  assert.match(html(words, "placeholderDetails"), />没有发现像是空值的写法。</);
+  assert.equal(text(words, "numericFilterRange"), "没有可用字段");
+  assert.equal(text(words, "dateFilterRange"), "没有可用字段");
+  assert.equal(text(words, "categoryFilterEmpty"), "请选择分类字段。");
+  assert.deepEqual(wordTexts(), [["numericDistributionChart", "没有可用的数值字段"], ["dateTrendChart", "没有可用的日期字段"]]);
+  words.evaluate('dom.categoryFilterField.value = "名称"; updateCategoryFilterField(); dom.categoryFilterSearch.value = "zzz"; renderCategoryFilterValues()');
+  assert.match(html(words, "categoryFilterValues"), />没有匹配的类别。</);
+
+  // Only a numeric column: no category field.
+  const amounts = createChartContext();
+  const amountTexts = collectEmptyChartTexts(amounts);
+  commitGuardRows(amounts, ["金额"], Array.from({ length: 20 }, (_, index) => ({ 金额: String(index * 10 + 1) })), "amounts.csv");
+  assert.match(html(amounts, "categoryStats"), />未识别到分类字段。</);
+  assert.equal(text(amounts, "categoryFilterEmpty"), "没有可用的分类字段。");
+  assert.deepEqual(amountTexts().filter(([id]) => id === "categoryTopChart"), [["categoryTopChart", "没有可用的分类字段"]]);
+
+  // A filtered range where 日期, 金额 and 备注 are all empty, then a range with no rows.
+  const range = createChartContext();
+  const rangeTexts = collectEmptyChartTexts(range);
+  commitGuardRows(range, ["日期", "金额", "组", "备注"], Array.from({ length: 30 }, (_, index) => (index < 25
+    ? { 日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: "A", 备注: index % 2 ? "x" : "y" }
+    : { 日期: "", 金额: "", 组: "B", 备注: "" })), "range.csv");
+  assert.deepEqual(JSON.parse(range.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["date", "numeric", "category", "category"]);
+  rangeTexts();
+  filterGuardRows(range, "组", ["B"]);
+  assert.equal(range.evaluate("getAnalysisRows().length"), 5);
+  assert.match(html(range, "categoryStats"), />当前筛选结果中没有非空类别值。</);
+  range.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart(); dom.numericChartField.value = "金额"; renderNumericDistributionChart()');
+  const filtered = rangeTexts();
+  assert.ok(filtered.some(([id, sentence]) => id === "dateTrendChart" && sentence === "该字段没有认得出的日期"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前筛选结果中没有可统计的分类值"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "numericDistributionChart" && sentence === "该字段没有认得出的数字"), JSON.stringify(filtered));
+  filterGuardRows(range, "组", ["C"]);
+  assert.equal(range.evaluate("getAnalysisRows().length"), 0);
+  assert.match(html(range, "previewTable"), /<td>当前筛选条件下没有可预览的数据。<\/td>/);
+
+  // A filtered range with amounts but no dates: the custom analysis has no trend.
+  const trend = createChartContext();
+  const trendTexts = collectEmptyChartTexts(trend);
+  commitGuardRows(trend, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: index < 25 ? `2025-01-${String(index + 1).padStart(2, "0")}` : "", 金额: String(100 + index * 10), 组: index < 25 ? "A" : "B"
+  })), "trend.csv");
+  filterGuardRows(trend, "组", ["B"]);
+  trendTexts();
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(trendTexts(), [["v2SelectedTrendChart", "所选时间字段没有可用的趋势数据"]]);
+
+  // Chart.js missing: every chart says so.
+  const noChart = createScriptContext();
+  const noChartTexts = collectEmptyChartTexts(noChart);
+  commitGuardRows(noChart, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: index % 2 ? "A" : "B"
+  })), "no-chart.csv");
+  noChartTexts();
+  noChart.evaluate('renderCharts(); dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  const failed = "图表组件加载失败，请刷新页面重试";
+  assert.deepEqual(noChartTexts(), [
+    ["numericDistributionChart", failed], ["categoryTopChart", failed], ["dateTrendChart", failed],
+    ["v2TopGroupChart", failed], ["v2SelectedTrendChart", failed]
+  ]);
+});
+
+// The report text of the sample (custom analysis, then filtered to 华东), times and version
+// blanked, is the v2.12.0 text: a new shell changes no word of the report.
+const GUARD_REPORT_SHA256 = "a0238e0947b3924235966b011aeb32a353f9d1d23378241865733e6e33fdfbef";
+test("v3.0.0 guard: the sample's report text is the v2.12.0 text", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const version = orders.evaluate("buildReportData().version");
+  const texts = [];
+  const snapshot = () => {
+    const report = JSON.parse(orders.evaluate("JSON.stringify(buildReportData())"));
+    ["analysisTime", "analysisTimeIso", "exportTime"].forEach((key) => {
+      assert.ok(key in report, key);
+      report[key] = "T";
+    });
+    put(orders.context, "__guardReport", report);
+    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"), orders.evaluate("buildMarkdownReport(__guardReport)"));
+  };
+  orders.evaluate(GUARD_CUSTOM_ANALYSIS);
+  snapshot();
+  orders.evaluate(GUARD_EAST_FILTER);
+  snapshot();
+  const normalized = texts.join("\n----\n").split(version).join("VERSION");
+  assert.ok(normalized.includes("VERSION"));
+  assert.equal(crypto.createHash("sha256").update(normalized).digest("hex"), GUARD_REPORT_SHA256);
+});
+
+// v3.0.0 commit 1: one module at a time.
+const MODULE_SECTION_IDS = ["overviewSection", "schemaSection", "qualitySection", "filterSection", "statisticsSection", "chartsSection", "customSection", "exportSection"];
+
+// The fake page has no navigation links, history or scrolling, and its focus() does nothing:
+// this gives showModule() all three and records what it did.
+function withModuleNavigation(scope) {
+  const record = { urls: [], scrolls: [], focused: [] };
+  const links = MODULE_SECTION_IDS.map((id) => {
+    const attributes = { href: `#${id}` };
+    const classes = new Set();
+    return {
+      getAttribute: (name) => (name in attributes ? attributes[name] : null),
+      setAttribute: (name, value) => { attributes[name] = String(value); },
+      removeAttribute: (name) => { delete attributes[name]; },
+      classList: {
+        toggle(name, force) { if (force) classes.add(name); else classes.delete(name); return classes.has(name); },
+        contains: (name) => classes.has(name)
+      }
+    };
+  });
+  const document = scope.context.document;
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = (selector) => (selector === "#moduleNav a" ? links : originalQuery.call(document, selector));
+  scope.context.window.history = { replaceState: (state, title, url) => record.urls.push(url) };
+  // JSON copy: objects made inside the VM have another realm's prototype.
+  scope.context.window.scrollTo = (...args) => record.scrolls.push(JSON.parse(JSON.stringify(args)));
+  MODULE_SECTION_IDS.forEach((id) => { document.getElementById(`${id}Title`).focus = () => record.focused.push(id); });
+  document.getElementById("reportTitle").focus = () => record.focused.push("reportTitle");
+  record.current = () => links.filter((link) => link.getAttribute("aria-current") === "page").map((link) => link.getAttribute("href"));
+  record.shown = () => MODULE_SECTION_IDS.filter((id) => !document.getElementById(id).classList.contains("module-off"));
+  record.inert = () => MODULE_SECTION_IDS.filter((id) => document.getElementById(id).inert === true);
+  record.hiddenClass = () => MODULE_SECTION_IDS.filter((id) => document.getElementById(id).classList.contains("hidden"));
+  record.clear = () => { record.urls.length = 0; record.scrolls.length = 0; record.focused.length = 0; };
+  return record;
+}
+
+test("v3.0.0 modules: the page wraps the eight modules in one stage, each title can take the focus", () => {
+  const html = repoFile("index.html");
+  const stageStart = html.indexOf('<div id="moduleStage" class="module-stage">');
+  assert.ok(stageStart >= 0);
+  assertInOrder(html.slice(stageStart), MODULE_SECTION_IDS.map((id) => `<section id="${id}"`));
+  MODULE_SECTION_IDS.forEach((id) => {
+    const section = html.slice(html.indexOf(`<section id="${id}"`));
+    assert.match(section.slice(0, 400), new RegExp(`<h2 id="${id}Title" tabindex="-1">`), id);
+  });
+  assert.match(html, /<nav id="moduleNav"[^>]*>/);
+});
+
+test("v3.0.0 modules: hidden modules keep their layout (visibility, never display: none or .hidden), print shows all", () => {
+  const css = repoFile("style.css");
+  const stage = css.match(/\n\.module-stage \{([^}]*)\}/);
+  assert.ok(stage, ".module-stage rule");
+  assert.match(stage[1], /overflow: clip;/);
+  const off = css.match(/\n\.module-stage \.module-off \{([^}]*)\}/);
+  assert.ok(off, ".module-off rule");
+  assert.match(off[1], /visibility: hidden;/);
+  assert.match(off[1], /position: absolute;/);
+  assert.doesNotMatch(off[1], /display:/);
+  const script = repoFile("script.js");
+  const start = script.indexOf("function showModule(");
+  assert.ok(start >= 0);
+  const showModule = script.slice(start, start + script.slice(start).search(/\r?\n\}\r?\n/));
+  assert.match(showModule, /module-off/);
+  assert.doesNotMatch(showModule, /"hidden"/);
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.equal((css.match(/@media print \{/g) || []).length, 1);
+  assert.match(print, /\.module-stage \.module-off \{[^}]*position: static !important;[^}]*visibility: visible !important;/);
+  assert.match(print, /\.skip-link,/);
+  assert.match(print, /\.chart-frame canvas \{[^}]*max-width: 100% !important;/);
+  assert.match(print, /\.chart-frame,\s*\.chart-card\.wide \.chart-frame \{\s*height: auto;/);
+});
+
+test("v3.0.0 modules: showModule shows one module, marks one link, writes the hash, scrolls up and focuses its title", () => {
+  const scope = createScriptContext();
+  const record = withModuleNavigation(scope);
+  scope.evaluate('showModule("qualitySection")');
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual(record.inert(), MODULE_SECTION_IDS.filter((id) => id !== "qualitySection"));
+  assert.deepEqual(record.hiddenClass(), []);
+  assert.deepEqual(record.current(), ["#qualitySection"]);
+  assert.deepEqual(record.urls, ["#qualitySection"]);
+  assert.deepEqual(record.scrolls, [[{ top: 0, behavior: "instant" }]]);
+  assert.deepEqual(record.focused, ["qualitySection"]);
+  // Not a module: nothing changes.
+  record.clear();
+  scope.evaluate('showModule("dropZone")');
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual([record.urls, record.scrolls, record.focused], [[], [], []]);
+});
+
+test("v3.0.0 modules: an import shows the overview, scrolls up and focuses its title; a reset goes back quietly", () => {
+  const scope = createChartContext();
+  const record = withModuleNavigation(scope);
+  scope.evaluate('showModule("exportSection")');
+  record.clear();
+  commitGuardRows(scope, ["城市", "金额"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京", 金额: String(index) })), "cities.csv");
+  assert.deepEqual(record.shown(), ["overviewSection"]);
+  assert.deepEqual(record.current(), ["#overviewSection"]);
+  assert.deepEqual(record.focused, ["overviewSection"]);
+  assert.deepEqual(record.scrolls, [[{ top: 0, behavior: "instant" }]]);
+  scope.evaluate('showModule("chartsSection")');
+  record.clear();
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(record.shown(), ["overviewSection"]);
+  assert.deepEqual(record.current(), ["#overviewSection"]);
+  assert.deepEqual([record.urls, record.scrolls, record.focused], [[], [], []]);
+});
+
+test("v3.0.0 modules: field configuration, placeholder confirmations and filters stay in the current module", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const record = withModuleNavigation(orders);
+  orders.evaluate('showModule("qualitySection")');
+  record.clear();
+  orders.evaluate('stageFieldTypeChange("客户类型", "id"); applyFieldConfiguration()');
+  assert.equal(orders.evaluate('getFieldProfile("客户类型").typeKey'), "id");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.ok(orders.evaluate("Object.keys(state.placeholderConfirmations).length") > 0);
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.deepEqual(record.shown(), ["qualitySection"]);
+  assert.deepEqual(record.current(), ["#qualitySection"]);
+  assert.deepEqual([record.urls, record.scrolls], [[], []]);
+  assert.ok(!record.focused.some((id) => MODULE_SECTION_IDS.includes(id)), JSON.stringify(record.focused));
+});
+
+// v3.0.0 commit 2: top bar and sidebar.
+test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 换一个文件; no section labels", () => {
+  const html = repoFile("index.html");
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
+  assertInOrder(header, ['<button id="sidebarToggle"', "<strong>Smart Tabular Analyzer</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
+  assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
+  // v3.0.0 look2: no privacy badge in the top bar. Outside the export module (whose notes say how
+  // exporting works) the page states it twice: under the upload title and at the foot of the sidebar.
+  assert.doesNotMatch(header, /数据仅在浏览器本地处理/);
+  const exportStart = html.indexOf('<section id="exportSection"');
+  const outsideExport = html.slice(0, exportStart) + html.slice(html.indexOf("<footer", exportStart));
+  assert.doesNotMatch(outsideExport.replace(/<p class="(?:sidebar-privacy|product-description)">[^<]*<\/p>/g, ""), /不会上传|不会离开|仅在浏览器本地|本地处理/);
+  assert.deepEqual(outsideExport.match(/<p class="[^"]+">[^<]*(?:不会上传|不会离开)[^<]*<\/p>/g),
+    ['<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。</p>', '<p class="product-description">不用安装，表格不会离开这台电脑。</p>']);
+  assert.doesNotMatch(html, /class="header-cta"|上传文件<\/a>|上传新文件/);
+  assert.doesNotMatch(html, /class="section-label"/);
+  assert.doesNotMatch(html, /class="report-header"|class="results-nav"/);
+  assert.match(html, /<h2 id="reportTitle" class="visually-hidden" tabindex="-1">数据分析工作区<\/h2>/);
+  assert.match(html, /<section id="results" class="results hidden" aria-labelledby="reportTitle">/);
+});
+
+test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside it for phones", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<aside id="appSidebar"');
+  assert.ok(start >= 0);
+  const sidebar = html.slice(start, html.indexOf("</aside>", start));
+  assertInOrder(sidebar, [
+    '<h2 id="sidebarTitle" class="sidebar-title">文件和字段</h2>',
+    '<button id="sidebarClose"',
+    '<p id="sourceName" class="source-name"></p>',
+    'id="sidebarFileSize"',
+    '<a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone">换一个文件</a>',
+    '<button id="sidebarFieldsToggle"',
+    '<ul id="sidebarFieldList"',
+    "当前状态",
+    "<dt>筛选</dt>",
+    '<div id="sidebarHeaderRow" class="hidden"><dt>表头</dt>',
+    '<div id="sidebarPlaceholderRow" class="hidden"><dt>已按空值处理</dt>',
+    "表格只在这台电脑的浏览器里处理，不会上传。"
+  ]);
+  assert.match(html, /<div id="sidebarBackdrop" class="sidebar-backdrop" hidden><\/div>/);
+  assert.equal((html.match(/class="nav-new-analysis /g) || []).length, 2);
+});
+
+test("v3.0.0 shell: the analysis range sits by four module titles; only the overview's carries the ids", () => {
+  const html = repoFile("index.html");
+  const heading = (id) => {
+    const section = html.slice(html.indexOf(`<section id="${id}"`));
+    return section.slice(0, section.indexOf("</h2>") + 600);
+  };
+  assert.match(heading("overviewSection"), /<p id="globalFilterStatus" class="filter-scope" aria-live="polite">当前分析范围：<span id="globalFilterSummary">尚未加载数据<\/span>\s*<button id="globalClearFilters" class="text-button hidden" type="button">清除筛选<\/button><\/p>/);
+  ["statisticsSection", "chartsSection", "customSection"].forEach((id) => {
+    assert.match(heading(id), /<p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据<\/span>\s*<button class="text-button filter-scope-clear hidden" type="button">清除筛选<\/button><\/p>/, id);
+  });
+  // With the colon: the filter module's own title is 设置当前分析范围.
+  ["schemaSection", "qualitySection", "filterSection", "exportSection"].forEach((id) => assert.doesNotMatch(heading(id), /当前分析范围：/, id));
+  assert.equal((html.match(/id="globalClearFilters"/g) || []).length, 1);
+  assert.match(repoFile("script.js"), /document\.querySelectorAll\("\.filter-scope-clear"\)\.forEach\(\(button\) => button\.addEventListener\("click", clearAllFilters\)\)/);
+});
+
+// The three range sentences without ids: the fake page's querySelectorAll returns [], so this
+// gives it three of each.
+function withFilterScopes(scope) {
+  const make = () => Array.from({ length: 3 }, () => {
+    const classes = new Set(["hidden"]);
+    return { textContent: "", classList: { toggle(name, force) { if (force) classes.add(name); else classes.delete(name); return classes.has(name); }, contains: (name) => classes.has(name) } };
+  });
+  const parts = { ".filter-scope": make(), ".filter-scope-text": make(), ".filter-scope-clear": make() };
+  const document = scope.context.document;
+  const originalQuery = document.querySelectorAll;
+  document.querySelectorAll = (selector) => parts[selector] || originalQuery.call(document, selector);
+  return parts;
+}
+
+test("v3.0.0 shell: the range sentences, their 清除筛选 buttons and the sidebar's 筛选 row follow #globalFilterSummary", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const parts = withFilterScopes(orders);
+  const summary = () => orders.elements.get("globalFilterSummary").textContent;
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.equal(summary(), "已筛选 1 项 · 10 / 42 行");
+  assert.deepEqual(parts[".filter-scope-text"].map((part) => part.textContent), [summary(), summary(), summary()]);
+  assert.deepEqual(parts[".filter-scope-clear"].map((part) => part.classList.contains("hidden")), [false, false, false]);
+  assert.deepEqual(parts[".filter-scope"].map((part) => part.classList.contains("active")), [true, true, true]);
+  assert.equal(orders.elements.get("sidebarFilterSummary").textContent, summary());
+  orders.evaluate("clearAllFilters()");
+  assert.equal(summary(), "全部 42 行");
+  assert.deepEqual(parts[".filter-scope-text"].map((part) => part.textContent), ["全部 42 行", "全部 42 行", "全部 42 行"]);
+  assert.deepEqual(parts[".filter-scope-clear"].map((part) => part.classList.contains("hidden")), [true, true, true]);
+  assert.equal(orders.elements.get("sidebarFilterSummary").textContent, "全部 42 行");
+});
+
+const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?<\/li>/g)]
+  .map((match) => [match[1], match[2], match[3], match[4], match[5] || ""]);
+
+test("v3.0.0 shell: the sidebar lists the file, its size and every field with its applied type, and the state rows", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const text = (id) => orders.elements.get(id).textContent;
+  const hidden = (id) => orders.elements.get(id).classList.contains("hidden");
+  assert.equal(text("sourceName"), "sample-orders.csv");
+  assert.equal(orders.elements.get("sourceName").title, "sample-orders.csv");
+  assert.equal(text("topbarFileName"), "sample-orders.csv");
+  assert.equal(text("sidebarFileSize"), "42 行 × 9 列");
+  assert.equal(text("sidebarFieldCount"), "9");
+  assert.deepEqual(sidebarItems(orders), [
+    ["sidebar-field", "订单编号", "#", "订单编号", ""],
+    ["sidebar-field", "下单日期", "日", "下单日期", ""],
+    ["sidebar-field", "地区", "Aa", "地区", ""],
+    ["sidebar-field", "品类", "Aa", "品类", ""],
+    ["sidebar-field", "产品", "Aa", "产品", ""],
+    ["sidebar-field", "客户类型", "Aa", "客户类型", ""],
+    ["sidebar-field", "数量", "12", "数量", ""],
+    ["sidebar-field", "金额", "12", "金额", "元"],
+    ["sidebar-field", "销售代表", "Aa", "销售代表", ""]
+  ]);
+  assert.equal(hidden("sidebarHeaderRow"), false);
+  assert.equal(text("sidebarHeaderValue"), "第 2 行");
+  assert.equal(hidden("sidebarPlaceholderRow"), true);
+  assert.equal(text("sidebarFilterSummary"), "全部 42 行");
+
+  // Confirmations count entries; an ignored field greys out with a dash for its mark.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(hidden("sidebarPlaceholderRow"), false);
+  assert.equal(text("sidebarPlaceholderValue"), "2 处");
+  orders.evaluate('stageFieldTypeChange("销售代表", "ignore"); applyFieldConfiguration()');
+  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", ""]);
+  assert.equal(text("sidebarPlaceholderValue"), "2 处");
+
+  orders.evaluate("resetAnalysisState()");
+  ["sourceName", "topbarFileName", "sidebarFileSize", "sidebarFieldCount", "sidebarHeaderValue", "sidebarPlaceholderValue"].forEach((id) => assert.equal(text(id), "", id));
+  assert.equal(orders.elements.get("sidebarFieldList").innerHTML, "");
+  assert.equal(hidden("sidebarHeaderRow"), true);
+  assert.equal(hidden("sidebarPlaceholderRow"), true);
+});
+
+test("v3.0.0 shell: an Excel sheet joins the file name; a header in row 1 shows no header row; field names are escaped", () => {
+  const scope = createChartContext();
+  put(scope.context, "__sidebarRows", Array.from({ length: 12 }, (_, index) => ({ "字段<script>": index % 2 ? "x" : "y" })));
+  scope.evaluate('commitTabularData(["字段<script>"], __sidebarRows, "a<b>.xlsx", beginImport(), [], "表一")');
+  assert.equal(scope.elements.get("sourceName").textContent, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("sourceName").title, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("topbarFileName").textContent, "a<b>.xlsx · 表一");
+  assert.equal(scope.elements.get("sidebarHeaderRow").classList.contains("hidden"), true);
+  const list = scope.elements.get("sidebarFieldList").innerHTML;
+  assert.match(list, /字段&lt;script&gt;/);
+  assert.doesNotMatch(list, /字段<script>/);
+});
+
+test("v3.0.0 shell: the sidebar opens by width until the user chooses; Escape closes an overlay and gives the focus back", () => {
+  const scope = createChartContext();
+  let wide = true;
+  scope.context.window.matchMedia = () => ({ matches: wide, addEventListener() {} });
+  const body = scope.context.document.body;
+  const toggle = scope.elements.get("sidebarToggle") || scope.context.document.getElementById("sidebarToggle");
+  const attributes = {};
+  toggle.setAttribute = (name, value) => { attributes[name] = String(value); };
+  const focused = [];
+  toggle.focus = () => focused.push("toggle");
+  scope.context.document.getElementById("sidebarClose").focus = () => focused.push("close");
+  const backdrop = scope.context.document.getElementById("sidebarBackdrop");
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "cities.csv");
+  assert.equal(attributes["aria-expanded"], "true");
+  scope.evaluate("toggleSidebar()");
+  assert.equal(body.classList.contains("sidebar-closed"), true);
+  assert.equal(attributes["aria-expanded"], "false");
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(body.classList.contains("sidebar-closed"), false);
+  assert.equal(body.classList.contains("sidebar-open"), false);
+
+  // Narrow: closed by default; opening moves the focus in, Escape closes and returns it.
+  wide = false;
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "cities.csv");
+  assert.equal(attributes["aria-expanded"], "false");
+  scope.evaluate("toggleSidebar()");
+  assert.equal(body.classList.contains("sidebar-open"), true);
+  assert.equal(backdrop.hidden, false);
+  assert.deepEqual(focused, ["close"]);
+  let prevented = 0;
+  put(scope.context, "__escape", { key: "Escape", preventDefault() { prevented += 1; } });
+  scope.evaluate("handleSidebarKeydown(__escape)");
+  assert.equal(body.classList.contains("sidebar-open"), false);
+  assert.equal(backdrop.hidden, true);
+  assert.deepEqual(focused, ["close", "toggle"]);
+  assert.equal(prevented, 1);
+  // Escape with the sidebar closed does nothing.
+  scope.evaluate("handleSidebarKeydown(__escape)");
+  assert.equal(prevented, 1);
+});
+
+test("v3.0.0 shell: the sidebar controls are bound once each in script.js", () => {
+  const script = repoFile("script.js");
+  [
+    /dom\.sidebarToggle\.addEventListener\("click", toggleSidebar\)/,
+    /dom\.sidebarClose\.addEventListener\("click", \(\) => closeSidebar\(\)\)/,
+    /dom\.sidebarBackdrop\.addEventListener\("click", \(\) => closeSidebar\(\)\)/,
+    /dom\.sidebarFieldsToggle\.addEventListener\("click", toggleSidebarFields\)/,
+    /dom\.appSidebar\.addEventListener\("keydown", handleSidebarKeydown\)/
+  ].forEach((pattern) => assert.equal((script.match(new RegExp(pattern.source, "g")) || []).length, 1, pattern.source));
+});
+
+// v3.0.0 commit 3: the import message with notes can fold to one line. #statusPanel itself
+// keeps its text, classes and role: the fold lives on the wrapper #statusNote.
+test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by CSS that keeps the text for screen readers", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<div id="statusNote" class="status-note">');
+  assert.ok(start >= 0);
+  const note = html.slice(start, html.indexOf('<section id="sheetSelectionPanel"'));
+  assertInOrder(note, [
+    '<div class="status-note-bar">',
+    '<p id="statusNoteSummary" class="status-note-summary" aria-hidden="true"></p>',
+    '<button id="statusNoteToggle" class="text-button status-note-toggle" type="button" aria-controls="statusPanel" aria-expanded="true">收起</button>',
+    '<section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"></section>'
+  ]);
+  const css = repoFile("style.css");
+  const folded = css.match(/\n\.status-note\.is-collapsed #statusPanel \{([^}]*)\}/);
+  assert.ok(folded, "folded rule");
+  assert.match(folded[1], /position: absolute;/);
+  assert.match(folded[1], /clip-path: inset\(50%\);/);
+  assert.doesNotMatch(folded[1], /display:|visibility:/);
+  // Off the overview only a success hides: warnings and errors (the report export's) show
+  // on every module.
+  assert.match(css, /body\.has-results:not\(\[data-module="overviewSection"\]\) #statusNote\[data-tone="success"\] \{\s*display: none;\s*\}/);
+  assert.equal((css.match(/#statusNote(?:\[[^\]]*\])* \{\s*display: none;/g) || []).length, 1);
+  assert.doesNotMatch(css, /#statusNote \{\s*display: none;/);
+  assert.match(css, /body\.has-results #statusPanel\.success:not\(\.has-note\)\s*\{\s*display:\s*none;\s*\}/);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.statusNoteToggle\.addEventListener\("click", toggleStatusNote\)/g) || []).length, 1);
+  const workspace = script.slice(script.indexOf("function setupWorkspaceNavigation("));
+  assert.match(workspace, /resetStatusNote\(\);/);
+});
+
+test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入，有 N 条说明; #statusPanel never changes", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const panel = orders.elements.get("statusPanel");
+  const note = orders.elements.get("statusNote");
+  const toggle = orders.elements.get("statusNoteToggle");
+  const attributes = {};
+  toggle.setAttribute = (name, value) => { attributes[name] = String(value); };
+  const before = { className: panel.className, text: panel.textContent, role: panel.role };
+  assert.equal(before.className, "status-panel success has-note");
+  assert.match(before.text, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行/);
+  assert.equal(note.classList.contains("can-collapse"), true);
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(orders.elements.get("statusNoteSummary").textContent, "sample-orders.csv 已载入，有 2 条说明");
+
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(attributes["aria-expanded"], "false");
+  assert.equal(toggle.textContent, "看说明");
+  assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+
+  // A later message replaces the import's: nothing left to fold.
+  orders.evaluate('toggleStatusNote(); setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(note.classList.contains("can-collapse"), false);
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+
+  // A reset clears the summary.
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.elements.get("statusNoteSummary").textContent, "");
+  assert.equal(note.classList.contains("can-collapse"), false);
+});
+
+test("v3.0.0 status note: N counts the notes that are there; a warning never folds", async () => {
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.equal(errors.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(errors.elements.get("statusNoteSummary").textContent, "公式错误.xlsx · 公式错误 已载入，有 1 条说明");
+  const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
+  assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
+  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), false);
+  // A plain success has no note: no summary, nothing to fold.
+  const plain = createChartContext();
+  commitGuardRows(plain, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "plain.csv");
+  assert.equal(plain.elements.get("statusPanel").className, "status-panel success");
+  assert.equal(plain.elements.get("statusNote").classList.contains("can-collapse"), false);
+  assert.equal(plain.elements.get("statusNoteSummary").textContent, "");
+});
+
+test("v3.0.0 status note: showModule marks the current module on <body>, so the note shows only on the overview", () => {
+  const scope = createScriptContext();
+  const body = scope.context.document.body;
+  scope.evaluate('showModule("chartsSection")');
+  assert.equal(body.dataset.module, "chartsSection");
+  scope.evaluate('showModule("overviewSection", { quiet: true })');
+  assert.equal(body.dataset.module, "overviewSection");
+});
+
+test("v3.0.0 status note: on the export module, setStatus marks warnings and errors so they show; #statusPanel is as setStatus wrote it", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const note = orders.elements.get("statusNote");
+  const panel = orders.elements.get("statusPanel");
+  assert.equal(note.dataset.tone, "success");
+  orders.evaluate('showModule("exportSection")');
+  assert.equal(orders.context.document.body.dataset.module, "exportSection");
+  // report.js:433 and report.js:464 write these two.
+  orders.evaluate('setStatus("请先完成数据分析，再导出报告。", "warning")');
+  assert.equal(note.dataset.tone, "warning");
+  assert.equal(panel.className, "status-panel warning");
+  assert.equal(panel.textContent, "请先完成数据分析，再导出报告。");
+  orders.evaluate('setStatus("报告导出失败：x", "error")');
+  assert.equal(note.dataset.tone, "error");
+  assert.equal(panel.className, "status-panel error");
+  assert.equal(panel.textContent, "报告导出失败：x");
+  orders.evaluate('setStatus("HTML 报告已生成：x.html", "success")');
+  assert.equal(note.dataset.tone, "success");
+  orders.evaluate('setStatus("正在读取 x.csv ...")');
+  assert.equal(note.dataset.tone, "loading");
+  orders.evaluate('showError("文件中没有可分析的数据。", state.activeImportId)');
+  assert.equal(note.dataset.tone, "error");
+  assert.equal(panel.className, "status-panel error");
+});
+
+// v3.0.0 commit 4: the upload page and the way back to the last analysis.
+test("v3.0.0 upload page: the new title, the drop area and the encoding line; the old intro is gone", () => {
+  const html = repoFile("index.html");
+  const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div id="statusNote"'));
+  assertInOrder(hero, [
+    '<h1 id="heroTitle">上传表格，先做一次体检</h1>',
+    '<p class="product-description">不用安装，表格不会离开这台电脑。</p>',
+    '<button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>',
+    '<section id="dropZone" class="upload-panel" aria-labelledby="uploadTitle">',
+    '<h2 id="uploadTitle">把文件拖到这里</h2>',
+    '<p class="upload-limits">CSV、XLSX、XLS，单文件最大 25 MB，最多 100,000 行、200 列</p>',
+    '<input id="csvFile" type="file"',
+    '<label class="file-button" for="csvFile">',
+    "选择数据文件",
+    '<button id="loadSample" class="secondary-button" type="button">',
+    "使用示例数据",
+    '<label class="encoding-control" for="fileEncoding">',
+    "<span>CSV 文件编码</span>",
+    '<select id="fileEncoding">',
+    '<p class="upload-encoding-hint">不确定时保持“自动识别”即可</p>',
+    '<a href="examples/sample-orders.csv" download>下载示例 CSV</a>'
+  ]);
+  // The visually hidden file input stays right before its label (focus ring, style.css).
+  assert.match(hero, /<input id="csvFile" type="file"[^>]*>\s*<label class="file-button" for="csvFile">/);
+  assert.doesNotMatch(html, /class="eyebrow"|浏览器端 CSV \/ Excel 数据分析工具|快速看懂你的数据|product-capabilities|主要功能|上传数据文件<\/h2>|拖放文件到此处/);
+});
+
+// The six rows of examples/sample-orders.csv shown on the upload page, as they are in the file.
+test("v3.0.0 upload page: the sample table shows rows 10, 12, 20, 21, 29 and 44 of sample-orders.csv with their marks", () => {
+  const html = repoFile("index.html");
+  const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
+  assert.ok(start >= 0);
+  assert.ok(start > html.indexOf('<div id="statusNote"'), "below the upload card and the status");
+  const section = html.slice(start, html.indexOf("</section>", start));
+  assertInOrder(section, ['<h2 id="samplePreviewTitle">会帮你查这些</h2>', '<span class="sample-preview-note">示例数据里的几行</span>']);
+  assert.match(section, /<thead><tr><th>行<\/th><th>订单编号<\/th><th>下单日期<\/th><th>地区<\/th><th>金额<\/th><th>会标出来<\/th><\/tr><\/thead>/);
+  const rows = [...section.matchAll(/<tr>(<td[\s\S]*?)<\/tr>/g)].map((match) => [...match[1].matchAll(/<td(?: class="([^"]*)")?>([\s\S]*?)<\/td>/g)]
+    .map((cell) => [cell[1] || "", cell[2].replace(/<span class="visible-space" aria-hidden="true">␣<\/span>/g, " ")]));
+  assert.deepEqual(rows.map((cells) => cells[0][1]), ["10", "12", "20", "21", "29", "44"]);
+  const lines = readExampleCsv("sample-orders.csv").replace(/^\uFEFF/, "").split(/\r?\n/);
+  const header = lines[1].split(",");
+  rows.forEach((cells) => {
+    const values = lines[Number(cells[0][1]) - 1].split(",");
+    ["订单编号", "下单日期", "地区", "金额"].forEach((field, index) => assert.equal(cells[index + 1][1], values[header.indexOf(field)], `${cells[0][1]} ${field}`));
+  });
+  const marks = rows.map((cells) => cells.slice(1, 5).map(([className], index) => (className ? `${["订单编号", "下单日期", "地区", "金额"][index]}:${className}` : "")).filter(Boolean));
+  assert.deepEqual(marks, [
+    ["地区:mark mark-look-alike"],
+    ["下单日期:mark mark-date"],
+    ["订单编号:mark mark-duplicate"],
+    ["订单编号:mark mark-duplicate"],
+    ["金额:mark mark-placeholder"],
+    ["订单编号:mark mark-total"]
+  ]);
+  assert.deepEqual(rows.map((cells) => cells[5]), [
+    ["mark-note mark-look-alike", "后面多了一个空格"],
+    ["mark-note mark-date", "日期写法和别的行不一样"],
+    ["mark-note", ""],
+    ["mark-note mark-duplicate", "和上一行完全相同"],
+    ["mark-note mark-placeholder", "像是空值的写法，认不出是数字"],
+    ["mark-note mark-total", "合计行混在数据里"]
+  ]);
+});
+
+test("v3.0.0 upload page: an error shows between the title and the card; loading text stays below the card", () => {
+  const css = repoFile("style.css");
+  assert.match(css, /body:not\(\.has-results\) \.upload-hero \{\s*order: -2;\s*\}/);
+  assert.match(css, /body:not\(\.has-results\) #statusNote\[data-tone="error"\] \{\s*order: -1;\s*\}/);
+  assert.match(css, /body\.has-results \.upload-hero,\s*body\.has-results \.sample-preview \{\s*display: none;\s*\}/);
+  const html = repoFile("index.html");
+  // The sheet choice sits right under the card, above the sample rows.
+  assertInOrder(html, ['<div class="upload-hero">', '<section id="dropZone"', '<div id="statusNote"', '<section id="sheetSelectionPanel"', '<section class="sample-preview"', '<section id="results"']);
+  assert.match(css, /\.sheet-selection-panel \{\s*grid-template-columns: 1fr;\s*\}/);
+  // The upload page's top bar has no sidebar toggle: .icon-button (inline-grid) comes later in
+  // the file, so the hiding rule must be more specific than a bare .sidebar-toggle.
+  assert.match(css, /body:not\(\.has-results\) \.sidebar-toggle,/);
+});
+
+// What 换一个文件 does, and the way back. The fake page ignores addEventListener, so these call
+// the functions script.js binds.
+function withRenderCounts(scope) {
+  scope.evaluate(`(() => {
+    globalThis.__renderCalls = 0;
+    ["renderOverview", "renderPreview", "renderSchema", "renderSidebar", "renderQuality", "renderNumericStats", "renderCategoryStats", "renderCharts", "renderChartInsights", "populateControls", "initializeFilterControls"].forEach((name) => {
+      const original = globalThis[name];
+      globalThis[name] = function (...args) { __renderCalls += 1; return original.apply(this, args); };
+    });
+  })()`);
+  return () => scope.evaluate("__renderCalls");
+}
+
+test("v3.0.0 way back: 换一个文件 keeps the analysis, offers 回到「名」的分析, and coming back restores the module and the message without recalculating", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const record = withModuleNavigation(orders);
+  const entry = orders.elements.get("returnToAnalysis");
+  const focused = [];
+  entry.focus = () => focused.push("entry");
+  orders.elements.get("csvFile").focus = () => focused.push("file");
+  const body = orders.context.document.body;
+  const panel = orders.elements.get("statusPanel");
+  const imported = { className: panel.className, text: panel.textContent, summary: orders.elements.get("statusNoteSummary").textContent };
+  assert.equal(imported.summary, "sample-orders.csv 已载入，有 2 条说明");
+  orders.evaluate('showModule("chartsSection")');
+  const renders = withRenderCounts(orders);
+
+  orders.evaluate("showUploadPage()");
+  assert.equal(body.classList.contains("has-results"), false);
+  assert.equal(orders.elements.get("results").classList.contains("hidden"), true);
+  assert.equal(panel.className, "status-panel hidden");
+  assert.equal(panel.textContent, "");
+  assert.equal(entry.classList.contains("hidden"), false);
+  assert.equal(entry.textContent, "回到「sample-orders.csv」的分析");
+  assert.deepEqual(focused, ["entry"]);
+  assert.equal(orders.evaluate("state.rows.length"), 42);
+
+  record.clear();
+  orders.evaluate("returnToAnalysis()");
+  assert.equal(body.classList.contains("has-results"), true);
+  assert.equal(orders.elements.get("results").classList.contains("hidden"), false);
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.deepEqual(record.shown(), ["chartsSection"]);
+  assert.deepEqual(record.focused, ["chartsSection"]);
+  assert.deepEqual({ className: panel.className, text: panel.textContent, summary: orders.elements.get("statusNoteSummary").textContent }, imported);
+  assert.equal(orders.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(renders(), 0);
+});
+
+test("v3.0.0 way back: no entry without an analysis, while a workbook waits for its sheet, or after a failed import", async () => {
+  const scope = createChartContext();
+  const entry = scope.elements.get("returnToAnalysis") || scope.context.document.getElementById("returnToAnalysis");
+  const focused = [];
+  scope.context.document.getElementById("csvFile").focus = () => focused.push("file");
+  entry.focus = () => focused.push("entry");
+  scope.evaluate("showUploadPage()");
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.deepEqual(focused, ["file"]);
+
+  // An Excel sheet name joins the file name.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "a.xlsx");
+  scope.evaluate('state.sourceSheetName = "表一"; showUploadPage()');
+  assert.equal(entry.textContent, "回到「a.xlsx · 表一」的分析");
+
+  // A new import begins: the analysis and the recorded message are gone.
+  scope.evaluate("beginImport()");
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.equal(scope.evaluate("state.importStatus"), null);
+  scope.evaluate("showUploadPage()");
+  assert.equal(entry.classList.contains("hidden"), true);
+
+  // A workbook waiting for its sheet.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "b.csv");
+  scope.evaluate('state.pendingExcel = { fileName: "c.xlsx" }; showUploadPage()');
+  assert.equal(entry.classList.contains("hidden"), true);
+
+  // A failed import.
+  commitGuardRows(scope, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "d.csv");
+  scope.evaluate('showError("文件中没有可分析的数据。", state.activeImportId); showUploadPage()');
+  assert.equal(entry.classList.contains("hidden"), true);
+  assert.equal(scope.evaluate("returnToAnalysis(); document.body.classList.contains('has-results')"), false);
+});
+
+test("v3.0.0 way back: 换一个文件 and the entry are bound in script.js", () => {
+  const script = repoFile("script.js");
+  assert.match(script, /document\.querySelectorAll\("\.nav-new-analysis"\)\.forEach\(\(link\) => \{\s*link\.addEventListener\("click", \(event\) => \{\s*event\.preventDefault\(\);\s*showUploadPage\(\);/);
+  assert.equal((script.match(/dom\.returnToAnalysis\.addEventListener\("click", returnToAnalysis\)/g) || []).length, 1);
+});
+
+// v3.0.0 commit 5: the field table (F1) and its search and type filters (F2).
+const schemaHeaders = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<th(?: class="[^"]*")?>([^<]*)<\/th>/g)].map((match) => match[1]);
+const schemaRows = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].slice(1).map((match) => match[1]);
+const schemaRowOf = (scope, field) => schemaRows(scope).find((row) => row.includes(`data-field-type="${field}"`));
+
+test("v3.0.0 F1: the field table shows 字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值, without 查看详情", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  assert.deepEqual(schemaHeaders(orders), ["字段名", "自动类型", "确认类型", "非空值", "唯一值", "认不出", "示例值"]);
+  const html = orders.elements.get("schemaTable").innerHTML;
+  assert.doesNotMatch(html, /查看详情|<details|字段详情/);
+  const profiles = JSON.parse(orders.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.inferredTypeKey, profile.inferredType, profile.nonMissingCount, profile.uniqueCount, profile.conversionFailureCount]))"));
+  assert.equal(schemaRows(orders).length, profiles.length);
+  profiles.forEach(([field, typeKey, typeLabel, nonMissing, unique, failures]) => {
+    const row = schemaRowOf(orders, field);
+    const cells = [...row.matchAll(/<td(?: class="[^"]*")?>([\s\S]*?)<\/td>/g)].map((match) => match[1].trim());
+    assert.equal(cells.length, 7, field);
+    assert.equal(cells[0], `<span class="field-name" title="${field}">${field}</span>`);
+    assert.equal(cells[1], `<span class="type-badge ${typeKey}">${typeLabel}</span>`);
+    assert.match(cells[2], /^<select class="schema-type-select" data-field-type="/);
+    assert.equal(cells[3], orders.evaluate(`formatInteger(${nonMissing})`));
+    assert.equal(cells[4], orders.evaluate(`formatInteger(${unique})`));
+    assert.equal((cells[5].match(/class="conversion-failure-count/g) || []).length, 1, field);
+    assert.equal(/class="conversion-failure-count warning"/.test(cells[5]), failures > 0, field);
+  });
+  // 金额 has one N/A: 认不出 1 with the pink dot (.warning).
+  assert.match(schemaRowOf(orders, "金额"), /<span class="conversion-failure-count warning"[^>]*>1<\/span>/);
+});
+
+test("v3.0.0 F1: a draft type marks its select and counts its 认不出 under the draft", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  orders.evaluate('stageFieldTypeChange("客户类型", "numeric"); renderSchema()');
+  const changed = schemaRowOf(orders, "客户类型");
+  assert.match(changed, /<select class="schema-type-select is-changed" data-field-type="客户类型"/);
+  const failures = orders.evaluate('countFieldConversionFailures("客户类型", "numeric")');
+  assert.ok(failures > 0);
+  assert.match(changed, new RegExp(`<span class="conversion-failure-count warning"[^>]*>${failures}</span>`));
+  orders.evaluate('stageFieldTypeChange("客户类型", "category"); renderSchema()');
+  const back = schemaRowOf(orders, "客户类型");
+  assert.match(back, /<select class="schema-type-select" data-field-type="客户类型"/);
+  assert.match(back, /<span class="conversion-failure-count"[^>]*>—<\/span>/);
+});
+
+// 21 fields: 6 numeric (one named Price), 5 category, 5 date, 5 ID-like, 20 rows each.
+function commitWideSchema(scope) {
+  const fields = [
+    "数值1", "数值2", "数值3", "数值4", "数值5", "Price",
+    "类别1", "类别2", "类别3", "类别4", "类别5",
+    "日期1", "日期2", "日期3", "日期4", "日期5",
+    "代码1", "代码2", "代码3", "代码4", "代码5"
+  ];
+  const rows = Array.from({ length: 20 }, (_, index) => Object.fromEntries(fields.map((field, column) => [field,
+    column < 6 ? String(index * 3 + column) : column < 11 ? ["甲", "乙", "丙"][(index + column) % 3]
+      : column < 16 ? `2025-01-${String(index + 1).padStart(2, "0")}` : `K${column}-${index}`])));
+  commitGuardRows(scope, fields, rows, "wide.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")),
+    [...Array(6).fill("numeric"), ...Array(5).fill("category"), ...Array(5).fill("date"), ...Array(5).fill("id")]);
+}
+const kindCounts = (scope) => JSON.parse(scope.evaluate("JSON.stringify(countSchemaKinds())"));
+const shownFields = (scope) => JSON.parse(scope.evaluate("JSON.stringify(listSchemaFieldsShown())"));
+const kindButtons = (scope) => [...scope.elements.get("schemaKinds").innerHTML.matchAll(/<button type="button" class="schema-kind" data-schema-kind="(\w+)" aria-pressed="(true|false)">([^<]*)<span class="schema-kind-count">([\d,]+)<\/span><\/button>/g)]
+  .map((match) => [match[1], match[2], match[3].trim(), match[4]]);
+
+test("v3.0.0 F2: more than 20 fields show the search and the type filters with counts; zero counts hide", () => {
+  const sample = createChartContext();
+  commitGuardRows(sample, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "small.csv");
+  assert.equal(sample.elements.get("schemaFilter").classList.contains("hidden"), true);
+
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  assert.equal(scope.elements.get("schemaFilter").classList.contains("hidden"), false);
+  assert.equal(scope.elements.get("schemaSearch").placeholder, "搜索 21 个字段");
+  assert.deepEqual(kindCounts(scope), { all: 21, numeric: 6, category: 5, date: 5, id: 5, ignore: 0, failing: 0, changed: 0 });
+  assert.deepEqual(kindButtons(scope), [
+    ["all", "true", "全部", "21"], ["numeric", "false", "数值", "6"], ["category", "false", "分类", "5"], ["date", "false", "日期", "5"], ["id", "false", "ID", "5"]
+  ]);
+  assert.equal(shownFields(scope).length, 21);
+});
+
+test("v3.0.0 F2: the search matches a part of the name, ignores case and edge spaces; nothing found says so", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate('dom.schemaSearch.value = "  price "; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), ["Price"]);
+  assert.equal(scope.elements.get("schemaFilterEmpty").classList.contains("hidden"), true);
+  scope.evaluate('dom.schemaSearch.value = "数值"; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), ["数值1", "数值2", "数值3", "数值4", "数值5"]);
+  scope.evaluate('dom.schemaSearch.value = "zzz"; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), []);
+  // Its sentence is static (checked with the toolbar markup below).
+  assert.equal(scope.elements.get("schemaFilterEmpty").classList.contains("hidden"), false);
+  // Search and type combine.
+  scope.evaluate('dom.schemaSearch.value = "1"; handleSchemaSearch(); selectSchemaKind("date")');
+  assert.deepEqual(shownFields(scope), ["日期1"]);
+});
+
+test("v3.0.0 F2: the types follow the selects; a change while filtered only updates the counts, and the chosen type stays until the user moves on", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate("selectSchemaKind(\"date\")");
+  assert.deepEqual(shownFields(scope), ["日期1", "日期2", "日期3", "日期4", "日期5"]);
+  scope.evaluate("globalThis.__applyCalls = 0; const __apply = applySchemaFilter; applySchemaFilter = function (...args) { __applyCalls += 1; return __apply.apply(this, args); }");
+  scope.evaluate('stageFieldTypeChange("日期2", "ignore")');
+  assert.equal(scope.evaluate("__applyCalls"), 0, "a select change does not filter again");
+  assert.deepEqual(kindCounts(scope), { all: 21, numeric: 6, category: 5, date: 4, id: 5, ignore: 1, failing: 0, changed: 1 });
+  assert.deepEqual(kindButtons(scope).map(([kind, pressed, , count]) => [kind, pressed, count]), [
+    ["all", "false", "21"], ["numeric", "false", "6"], ["category", "false", "5"], ["date", "true", "4"], ["id", "false", "5"], ["ignore", "false", "1"], ["changed", "false", "1"]
+  ]);
+  // The chosen type at zero stays on screen until the user picks another one.
+  scope.evaluate('selectSchemaKind("changed"); stageFieldTypeChange("日期2", "date")');
+  assert.deepEqual(kindButtons(scope).map(([kind, pressed, , count]) => [kind, pressed, count]).filter(([kind]) => kind === "changed"), [["changed", "true", "0"]]);
+  scope.evaluate('selectSchemaKind("all")');
+  assert.deepEqual(kindButtons(scope).map(([kind]) => kind), ["all", "numeric", "category", "date", "id"]);
+  // 有认不出的 follows the draft type.
+  scope.evaluate('stageFieldTypeChange("类别1", "numeric")');
+  assert.equal(kindCounts(scope).failing, 1);
+  assert.deepEqual(kindButtons(scope).find(([kind]) => kind === "failing"), ["failing", "false", "有认不出的", "1"]);
+});
+
+test("v3.0.0 F2: applying keeps the search and the type (back to 全部 when it is empty); a new import clears them", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate('dom.schemaSearch.value = "日期"; handleSchemaSearch(); selectSchemaKind("date")');
+  scope.evaluate('stageFieldTypeChange("代码1", "category"); applyFieldConfiguration()');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "日期", kind: "date" });
+  assert.equal(scope.elements.get("schemaSearch").value, "日期");
+  assert.equal(shownFields(scope).length, 5);
+  // Every date field becomes a category: the type has no field left and falls back to 全部.
+  scope.evaluate('["日期1", "日期2", "日期3", "日期4", "日期5"].forEach((field) => stageFieldTypeChange(field, "category")); applyFieldConfiguration()');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "日期", kind: "all" });
+  commitWideSchema(scope);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "", kind: "all" });
+  assert.equal(scope.elements.get("schemaSearch").value, "");
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "", kind: "all" });
+});
+
+test("v3.0.0 F2: the toolbar is static, bound once, and the table box is limited only above 640 px", () => {
+  const html = repoFile("index.html");
+  const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
+  assertInOrder(schema, [
+    '<div id="schemaFilter" class="schema-filter hidden">',
+    '<input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">',
+    '<div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>',
+    '<p id="schemaFilterEmpty" class="empty-state hidden">没有符合条件的字段。</p>',
+    '<div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">',
+    '<table id="schemaTable"'
+  ]);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.schemaSearch\.addEventListener\("input", handleSchemaSearch\)/g) || []).length, 1);
+  assert.equal((script.match(/dom\.schemaKinds\.addEventListener\("click", handleSchemaKindClick\)/g) || []).length, 1);
+  const css = repoFile("style.css");
+  assert.match(css, /@media \(min-width: 641px\) \{\s*\.schema-table-wrap \{\s*max-height: [^;]+;\s*overflow: auto;\s*\}\s*\.schema-table-wrap th \{\s*position: sticky;\s*top: 0;/);
+  // Printed: no search or filters, no height limit, every field.
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.match(print, /\.schema-filter,/);
+  assert.match(print, /\.schema-table-wrap \{\s*max-height: none !important;/);
+  assert.match(print, /\.schema-table-wrap tr\[hidden\] \{\s*display: table-row !important;/);
+});
+
+test("v3.0.0 F2: field names in the table and the kinds are escaped", () => {
+  const scope = createChartContext();
+  const fields = Array.from({ length: 21 }, (_, index) => (index === 0 ? "字段<script>" : `f${index}`));
+  commitGuardRows(scope, fields, Array.from({ length: 12 }, (_, index) => Object.fromEntries(fields.map((field) => [field, index % 2 ? "x" : "y"]))), "escape.csv");
+  const html = scope.elements.get("schemaTable").innerHTML;
+  assert.match(html, /title="字段&lt;script&gt;">字段&lt;script&gt;<\/span>/);
+  assert.doesNotMatch(html + scope.elements.get("schemaKinds").innerHTML, /字段<script>/);
+});
+
+// v3.0.0 commit 6 (F3): empty states as text. drawEmptyChart(canvas, text) keeps its name and
+// arguments (basic:7002 and the commit-0 guard wrap it) but writes the sentence into a static
+// element over the chart instead of painting it on the canvas.
+const CHART_CANVAS_IDS = ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"];
+
+// The fake page's elements have no id of their own; the browser's do.
+function withChartCanvasIds(scope) {
+  const painted = [];
+  CHART_CANVAS_IDS.forEach((id) => {
+    const canvas = scope.context.document.getElementById(id);
+    canvas.id = id;
+    canvas.getContext = () => ({ clearRect() {}, save() {}, restore() {}, fillText(text) { painted.push([id, text]); } });
+  });
+  return painted;
+}
+const chartEmpty = (scope, id) => {
+  const element = scope.context.document.getElementById(`${id}Empty`);
+  return { text: element.textContent, hidden: element.classList.contains("hidden") };
+};
+
+test("v3.0.0 F3: every chart frame has a static, hidden empty-state line after its canvas", () => {
+  const html = repoFile("index.html");
+  CHART_CANVAS_IDS.forEach((id) => {
+    assert.match(html, new RegExp(`<div class="chart-frame"><canvas id="${id}" [^>]*></canvas><p id="${id}Empty" class="empty-state chart-empty hidden"></p></div>`), id);
+  });
+  const css = repoFile("style.css");
+  assert.match(css, /\n\.chart-empty \{[^}]*position: absolute;/);
+});
+
+test("v3.0.0 F3: drawEmptyChart writes its sentence as text, word for word, and paints nothing; the next real chart clears it", () => {
+  const scope = createChartContext();
+  const painted = withChartCanvasIds(scope);
+  commitGuardRows(scope, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  assert.deepEqual(chartEmpty(scope, "numericDistributionChart"), { text: "没有可用的数值字段", hidden: false });
+  assert.deepEqual(chartEmpty(scope, "dateTrendChart"), { text: "没有可用的日期字段", hidden: false });
+  assert.deepEqual(chartEmpty(scope, "categoryTopChart"), { text: "", hidden: true });
+  assert.deepEqual(painted, []);
+  // A file with numbers and dates: the charts are drawn and the sentences go.
+  commitGuardRows(scope, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: index % 2 ? "A" : "B"
+  })), "numbers.csv");
+  scope.evaluate('dom.numericChartField.value = "金额"; renderCharts()');
+  assert.deepEqual(chartEmpty(scope, "numericDistributionChart"), { text: "", hidden: true });
+  assert.deepEqual(chartEmpty(scope, "dateTrendChart"), { text: "", hidden: true });
+  // Chart.js missing: the sentence goes into all three frames.
+  scope.context.Chart = scope.context.window.Chart = null;
+  scope.evaluate("renderCharts()");
+  ["numericDistributionChart", "categoryTopChart", "dateTrendChart"].forEach((id) => {
+    assert.deepEqual(chartEmpty(scope, id), { text: "图表组件加载失败，请刷新页面重试", hidden: false }, id);
+  });
+  // A reset clears all five.
+  scope.evaluate("resetAnalysisState()");
+  CHART_CANVAS_IDS.forEach((id) => assert.deepEqual(chartEmpty(scope, id), { text: "", hidden: true }, id));
+  assert.deepEqual(painted, []);
+});
+
+test("v3.0.0 F3: the custom analysis' empty trend says so in its frame, and a new analysis clears it", () => {
+  const trend = createChartContext();
+  withChartCanvasIds(trend);
+  commitGuardRows(trend, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: index < 25 ? `2025-01-${String(index + 1).padStart(2, "0")}` : "", 金额: String(100 + index * 10), 组: index < 25 ? "A" : "B"
+  })), "trend.csv");
+  filterGuardRows(trend, "组", ["B"]);
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(chartEmpty(trend, "v2SelectedTrendChart"), { text: "所选时间字段没有可用的趋势数据", hidden: false });
+  trend.evaluate("clearAllFilters()");
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(chartEmpty(trend, "v2SelectedTrendChart"), { text: "", hidden: true });
+});
+
+test("v3.0.0 F3: empty tables and lists get the shared empty-state look by a class on their container; the sentences stay as they were", () => {
+  const words = createChartContext();
+  commitGuardRows(words, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  const has = (id, name) => words.elements.get(id).classList.contains(name);
+  assert.equal(has("outlierTable", "is-empty-table"), true);
+  assert.equal(has("numericStatsTable", "is-empty-table"), true);
+  assert.equal(has("idDuplicateDetails", "is-empty"), true);
+  assert.equal(has("placeholderDetails", "is-empty"), true);
+  assert.match(words.elements.get("outlierTable").innerHTML, /<td>未识别到数值字段。<\/td>/);
+  // With data the marks go.
+  // 订单ID is an ID by its name (two values repeat); 金额 has an N/A; 组 is for the filter below.
+  commitGuardRows(words, ["日期", "金额", "订单ID", "组"], Array.from({ length: 20 }, (_, index) => ({ 日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: index === 3 ? "N/A" : String(index), 订单ID: `K${index % 18}`, 组: index % 2 ? "A" : "B" })), "data.csv");
+  assert.deepEqual(JSON.parse(words.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["date", "numeric", "id", "category"]);
+  ["outlierTable", "numericStatsTable"].forEach((id) => assert.equal(has(id, "is-empty-table"), false, id));
+  assert.equal(has("idDuplicateDetails", "is-empty"), false);
+  assert.equal(has("placeholderDetails", "is-empty"), false);
+  // A filtered range with no rows: the preview table.
+  filterGuardRows(words, "组", ["没有这个值"]);
+  assert.equal(has("previewTable", "is-empty-table"), true);
+  words.evaluate("clearAllFilters()");
+  assert.equal(has("previewTable", "is-empty-table"), false);
+
+  const css = repoFile("style.css");
+  const shared = css.match(/\n(\.empty-state,[^{]*)\{/);
+  assert.ok(shared, "one shared rule");
+  [".empty-note", ".filter-value-empty", ".filter-empty-note", ".id-duplicate-details.is-empty .id-duplicate-note", ".placeholder-details.is-empty .placeholder-note"]
+    .forEach((selector) => assert.ok(shared[1].includes(selector), selector));
+  assert.match(css, /\.is-empty-table td \{/);
+});
+
+// v3.0.0 commit 7a: module structure (section 二·6, 二·7, 二·9).
+const metricItems = (scope) => [...scope.elements.get("overviewCards").innerHTML.matchAll(/<span class="metric-item"><span class="metric-label">([^<]*)<\/span> <strong class="metric-value">([^<]*)<\/strong><\/span>/g)].map((match) => [match[1], match[2]]);
+
+test("v3.0.0 overview: the five numbers are one line of text with their old labels; a filter keeps the 总记录 → 当前分析 form", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const counts = JSON.parse(orders.evaluate('JSON.stringify([state.rows.length, state.fields.length, getProfilesByType("numeric").length, getProfilesByType("category").length])'));
+  assert.deepEqual(counts, [42, 9, 2, 5]);
+  assert.match(orders.elements.get("overviewCards").innerHTML, /^\s*<p class="metric-line">/);
+  assert.doesNotMatch(orders.elements.get("overviewCards").innerHTML, /metric-card/);
+  assert.deepEqual(metricItems(orders), [["总记录数", "42"], ["字段数", "9"], ["数值字段数", "2"], ["分类字段数", "5"], ["空值概览", "6"]]);
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.deepEqual(metricItems(orders)[0], ["总记录 → 当前分析", "42 → 10"]);
+});
+
+test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
+  const html = repoFile("index.html");
+  const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assertInOrder(overview, [
+    '<details class="preview-details" open>',
+    '<summary><h3 class="subsection-title">数据预览</h3></summary>',
+    '<table id="previewTable" aria-label="数据预览"></table>',
+    '<p id="previewPageInfo"',
+    "</details>"
+  ]);
+});
+
+test("v3.0.0 field configuration: the message and both buttons sit under the table, marked has-draft while drafts wait", async () => {
+  const html = repoFile("index.html");
+  const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
+  assertInOrder(schema, ['<table id="schemaTable"', '<div id="fieldConfigToolbar" class="field-config-toolbar">', '<p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>', '<button id="restoreAutoFieldTypes"', '<button id="applyFieldConfig"']);
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const toolbar = orders.elements.get("fieldConfigToolbar");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+  orders.evaluate('stageFieldTypeChange("客户类型", "id")');
+  assert.equal(toolbar.classList.contains("has-draft"), true);
+  orders.evaluate("applyFieldConfiguration()");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+});
+
+test("v3.0.0 quality: only notes of more than one sentence keep their paragraph and get a 展开 button after it", () => {
+  const html = repoFile("index.html");
+  const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
+  const notes = [...quality.matchAll(/<p class="section-note">([^<]*)<\/p>(\s*<button type="button" class="text-button note-toggle" aria-expanded="false">展开<\/button>)?/g)];
+  const sentences = notes.map((match) => (match[1].match(/。/g) || []).length);
+  // v3.0.0 look2: the module's own one-sentence note became the aside next to the title.
+  assert.deepEqual(sentences, [1, 2, 1, 2, 3, 3]);
+  // A single sentence shows whole and has no button.
+  assert.deepEqual(notes.map((match) => Boolean(match[2])), sentences.map((count) => count > 1));
+  assert.equal((quality.match(/class="text-button note-toggle"/g) || []).length, 4);
+  // script.js marks the notes before a button; only those are cut to one line.
+  assert.match(repoFile("script.js"), /document\.querySelectorAll\("\.note-toggle"\)\.forEach\(\(button\) => button\.previousElementSibling\.classList\.add\("is-clamped"\)\)/);
+  assert.match(repoFile("style.css"), /#qualitySection \.section-note\.is-clamped:not\(\.is-expanded\) \{[^}]*white-space: nowrap;/);
+  assert.match(quality, /<div id="placeholderSection" class="module-subsection">\s*<h3 class="subsection-title">像是空值的写法<\/h3>/);
+  assert.equal((repoFile("script.js").match(/dom\.qualitySection\.addEventListener\("click", toggleSectionNote\)/g) || []).length, 1);
+});
+
+test("v3.0.0 quality: 展开 / 收起 opens the note before it and says so", () => {
+  const scope = createScriptContext();
+  const classes = new Set();
+  const note = { classList: { toggle(name, force) { if (force) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) } };
+  const attributes = { "aria-expanded": "false" };
+  const button = { textContent: "展开", previousElementSibling: note, getAttribute: (name) => attributes[name], setAttribute: (name, value) => { attributes[name] = String(value); } };
+  put(scope.context, "__noteEvent", { target: { closest: (selector) => (selector === ".note-toggle" ? button : null) } });
+  scope.evaluate("toggleSectionNote(__noteEvent)");
+  assert.deepEqual([classes.has("is-expanded"), attributes["aria-expanded"], button.textContent], [true, "true", "收起"]);
+  scope.evaluate("toggleSectionNote(__noteEvent)");
+  assert.deepEqual([classes.has("is-expanded"), attributes["aria-expanded"], button.textContent], [false, "false", "展开"]);
+  // Clicks elsewhere do nothing.
+  put(scope.context, "__otherEvent", { target: { closest: () => null } });
+  scope.evaluate("toggleSectionNote(__otherEvent)");
+});
+
+test("v3.0.0 statistics: each frequency row has a bar as long as its share, and each card title a tooltip", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const html = orders.elements.get("categoryStats").innerHTML;
+  const rows = [...html.matchAll(/<span class="category-name" title="([^"]*)">[^<]*<\/span>\s*<span class="frequency-bar" aria-hidden="true"><span style="width: ([\d.]+)%"><\/span><\/span>\s*<strong>([^<]*)<\/strong>\s*<span>([^<]*)<\/span>/g)];
+  assert.ok(rows.length > 0);
+  rows.forEach(([, , width, , percent]) => assert.equal(`${Number(width).toFixed(1)}%`, percent, width));
+  assert.match(html, /<h3 title="地区">地区<\/h3>/);
+});
+
+test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
+  const html = repoFile("index.html");
+  const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
+  assert.match(options, /<h3>当前筛选结果<\/h3>\s*<p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>原始数据去重结果<\/h3>\s*<p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
+  assert.doesNotMatch(html, /数据导出记录统计/);
+});
+
+test("v3.0.0 dirty data: a truncated table cell shows its full text on hover; chart titles carry their text as a tooltip", async () => {
+  const scope = createScriptContext();
+  const cell = (scrollWidth, text) => ({ tagName: "TD", textContent: text, scrollWidth, clientWidth: 100, title: "" });
+  const long = cell(300, "很长的一格内容");
+  const short = cell(80, "短");
+  put(scope.context, "__cells", [long, short]);
+  scope.evaluate("__cells.forEach((td) => showTruncatedCellTitle({ target: { closest: (selector) => (selector === \".table-wrap td, .table-wrap th\" ? td : null) } }))");
+  assert.equal(long.title, "很长的一格内容");
+  assert.equal(short.title, "");
+  assert.equal((repoFile("script.js").match(/dom\.results\.addEventListener\("mouseover", showTruncatedCellTitle\)/g) || []).length, 1);
+
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  withCapturableCharts(orders);
+  orders.evaluate(`dom.numericChartField.value = "数量"; renderCharts(); ${GUARD_CUSTOM_ANALYSIS}`);
+  ["numericChartTitle", "categoryChartTitle", "dateChartTitle", "v2TopGroupTitle", "v2TrendTitle", "v2PrimaryTableTitle"].forEach((id) => {
+    const element = orders.elements.get(id);
+    assert.ok(element.textContent.length > 0, id);
+    assert.equal(element.title, element.textContent, id);
+  });
+});
+
+test("v3.0.0 dirty data and phones: table cells are capped and cut; the upload sample rows wrap their reason below on phones", () => {
+  const css = repoFile("style.css");
+  // The tables of raw cell values: the data preview and the problem rows.
+  assert.match(css, /#previewTable td,\s*#problemRowsTable td \{[^}]*max-width: 30em;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(css, /\.table-wrap :is\(td, th\):first-child \{[^}]*position: sticky;[^}]*left: 0;/);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
+  assert.match(phone, /\.sample-preview-table tr \{[^}]*display: grid;/);
+  assert.match(phone, /\.sample-preview-table td\.mark-note,\s*\.sample-preview-table th:last-child \{[^}]*grid-column: 1 \/ -1;/);
+  // The quality page's two tables stack (only there: the charts stay side by side).
+  assert.match(css, /#qualitySection \.two-column \{\s*grid-template-columns: 1fr;/);
+  assert.match(css, /\n\.chart-grid \{\s*display: grid;\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+});
+
+// v3.0.0 commit 7b: the look (section 二·7, 二·11). Styles only: these read style.css.
+const cssRule = (css, selector) => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A rule of its own: not the last selector of a list ("a,\n b {").
+  const match = css.match(new RegExp(`(?:^|\\n)(?<!,\\r?\\n)${escaped} \\{([^}]*)\\}`));
+  assert.ok(match, selector);
+  return match[1];
+};
+
+test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights", () => {
+  const css = repoFile("style.css");
+  const root = cssRule(css, ":root");
+  [["--bg", "#f2f2f7"], ["--panel", "#ffffff"], ["--text", "#1c1c1e"], ["--text-secondary", "#636366"], ["--muted", "#636366"], ["--primary", "#0068e0"], ["--sidebar-bg", "#f9f9fb"], ["--card-border", "rgba(28, 28, 30, 0.07)"], ["--radius-card", "16px"]]
+    .forEach(([name, value]) => assert.ok(root.includes(`${name}: ${value};`), name));
+  const body = cssRule(css, "body");
+  assert.match(body, /background: var\(--bg\);/);
+  const family = body.match(/font-family: ([^;]+);/)[1];
+  assert.doesNotMatch(family, /Inter/);
+  assert.ok(family.indexOf('"Segoe UI"') >= 0 && family.indexOf('"Segoe UI"') < family.indexOf('"Microsoft YaHei"'), family);
+  const sizes = new Set([...css.matchAll(/font-size: ([^;]+);/g)].map((match) => match[1]));
+  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)"].includes(size), size));
+  const weights = new Set([...css.matchAll(/font-weight: ([^;]+);/g)].map((match) => match[1]));
+  weights.forEach((weight) => assert.ok(["400", "600", "700"].includes(weight), weight));
+  // The old purple is gone, the focus ring is the new blue.
+  assert.doesNotMatch(css, /#4f46e5|#4338ca|rgba\(79, 70, 229/i);
+  assert.match(css, /\[tabindex="0"\]:focus-visible \{\s*outline: 3px solid rgba\(0, 104, 224, 0\.45\);/);
+});
+
+test("v3.0.0 look: modules sit on the grey page; their content blocks are white cards with a hairline and no shadow", () => {
+  const css = repoFile("style.css");
+  // The module itself: no card (no fill, border or padding), so its title is on the grey.
+  const block = cssRule(css, ".section-block");
+  assert.match(block, /padding: 0;/);
+  assert.match(block, /border: 0;/);
+  assert.match(block, /background: transparent;/);
+  assert.doesNotMatch(block, /box-shadow/);
+  // The content blocks inside it are the cards.
+  const cards = css.match(/\n(\.table-wrap,\s*\.frequency-card,[^{]*)\{([^}]*)\}/);
+  assert.ok(cards, "one card rule");
+  const cardSelectors = cards[1].split(",").map((part) => part.trim());
+  assert.deepEqual(cardSelectors, [".table-wrap", ".frequency-card", ".data-export-options", ".report-export-layout", ".filter-condition", ".filter-toolbar", ".chart-card"]);
+  assert.match(cards[2], /border: 1px solid var\(--card-border\);/);
+  assert.match(cards[2], /border-radius: var\(--radius-card\);/);
+  assert.match(cards[2], /background: #fff;/);
+  // Those blocks set no other fill, border or radius of their own.
+  cardSelectors.forEach((selector) => {
+    const own = css.match(new RegExp(`(?:^|\\n)(?<!,\\r?\\n)${selector.replace(".", "\\.")} \\{([^}]*)\\}`));
+    if (own) assert.doesNotMatch(own[1], /background:|border:|border-radius:/, selector);
+  });
+  // The containers that hold such cards (custom analysis and its details) are not cards
+  // themselves: no card inside a card. (v3.0.0 look2: the problem rows became a card.)
+  [".analysis-panel", ".analysis-details"].forEach((selector) => {
+    const own = cssRule(css, selector);
+    assert.match(own, /padding: 0;/, selector);
+    assert.match(own, /border: 0;/, selector);
+    assert.match(own, /background: transparent;/, selector);
+  });
+  // Every box-shadow is none, an inset line, a 1 px outline ring, or the sidebar over the content.
+  const shadows = [...css.matchAll(/\n\s*([^{}\n][^{}]*?)\s*\{([^{}]*box-shadow: ([^;]+);[^{}]*)\}/g)].map((match) => [match[1].trim(), match[3]]);
+  assert.ok(shadows.length > 0);
+  shadows.forEach(([selector, value]) => {
+    const ok = value === "none" || /^inset /.test(value) || /^0 0 0 1px /.test(value) || selector === "body.has-results.sidebar-open .app-sidebar";
+    assert.ok(ok, `${selector}: ${value}`);
+  });
+});
+
+test("v3.0.0 look: buttons 34 high (small 28), 44 on phones; the navigation is a segmented control; no hover on plain rows", () => {
+  const css = repoFile("style.css");
+  const base = css.match(/\nbutton,\r?\n\.file-button,\r?\n\.secondary-button \{([^}]*)\}/)[1];
+  assert.match(base, /min-height: 34px;/);
+  assert.match(base, /border-radius: 10px;/);
+  // Secondary buttons are white with a grey line and body-coloured text; text buttons stay blue.
+  const secondary = cssRule(css, ".secondary-button");
+  assert.match(secondary, /border-color: rgba\(28, 28, 30, 0\.14\);/);
+  assert.match(secondary, /background: #fff;/);
+  assert.match(secondary, /color: var\(--text\);/);
+  assert.match(cssRule(css, ".text-button"), /border: 0;[\s\S]*background: transparent;[\s\S]*color: var\(--primary\);/);
+  assert.match(cssRule(css, ".problem-view-button"), /min-height: 28px;[\s\S]*border-radius: 8px;/);
+  const nav = cssRule(css, ".module-nav");
+  assert.match(nav, /background: rgba\(28, 28, 30, 0\.06\);/);
+  assert.match(nav, /border-radius: 11px;/);
+  assert.match(css, /\.module-nav a\[aria-current="page"\] \{[^}]*background: #fff;[^}]*font-weight: 600;/);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\s+button,\s+\.file-button,\s+\.secondary-button,\s+select,\s+input:not\(\[type="checkbox"\], \[type="radio"\], \[type="file"\]\) \{\s*min-height: 44px;/);
+  assert.match(phone, /\.problem-view-button,[^{]*\.placeholder-button,[^{]*\{\s*min-height: 44px;/);
+  assert.doesNotMatch(css, /tbody tr:hover/);
+  // The date inputs shrink with their column instead of sticking out of the filter card.
+  assert.match(cssRule(css, ".filter-range-grid label"), /grid-template-columns: minmax\(0, 1fr\);/);
+  const th = cssRule(css, "th");
+  assert.match(th, /background: #fafafb;/);
+  assert.match(th, /font-size: 12px;/);
+});
+
+test("v3.0.0 look: quality tags are neutral (white, grey line, grey at 0), no amber, no dots; five subsection titles carry their category colour", () => {
+  const css = repoFile("style.css");
+  const pill = cssRule(css, ".quality-pill");
+  assert.match(pill, /min-height: 24px;/);
+  assert.match(pill, /border: 1px solid rgba\(28, 28, 30, 0\.14\);/);
+  assert.match(pill, /border-radius: 6px;/);
+  assert.match(pill, /background: #fff;/);
+  assert.match(pill, /color: var\(--text\);/);
+  assert.match(pill, /font-weight: 600;/);
+  assert.match(cssRule(css, ".quality-pill.success"), /color: var\(--text-secondary\);[\s\S]*font-weight: 400;/);
+  assert.doesNotMatch(css, /\.quality-pill\.(?:warning|danger)/);
+  assert.doesNotMatch(css, /\.quality-pill[^{]*::before/);
+  // 认不出 above 0 (quality and statistics tables): the pink dot of the field table, no amber.
+  const warningCell = cssRule(css, ".cell-warning");
+  assert.doesNotMatch(warningCell, /--warning/);
+  assert.match(css, /\.cell-warning::before \{[^}]*background: #ff2d55;/);
+  // A problem cell in the problem rows: neutral grey and semibold.
+  const problemCell = cssRule(css, "td.cell-problem");
+  assert.doesNotMatch(problemCell, /--warning/);
+  assert.match(problemCell, /background: rgba\(28, 28, 30, 0\.06\);/);
+  assert.match(problemCell, /font-weight: 600;/);
+  // The import message keeps its amber warning.
+  assert.match(cssRule(css, ".status-panel.warning"), /background: var\(--warning-soft\);/);
+  // v3.0.0 look2: the privacy badge and its styles are gone.
+  assert.doesNotMatch(css, /\.privacy-badge/);
+  [["suspectedTotalSection", "#5856d6"], ["formulaErrorSection", "#c93400"], ["dateStyleSection", "#a86400"], ["lookAlikeSection", "#22973f"], ["placeholderSection", "#148a9e"]].forEach(([id, colour]) => {
+    assert.match(css, new RegExp(`#${id} \\{ --dot: ${colour}; \\}`), id);
+  });
+  assert.match(css, /:is\(#suspectedTotalSection, #formulaErrorSection, #dateStyleSection, #lookAlikeSection, #placeholderSection\) > \.subsection-title::before \{[^}]*background: var\(--dot\);/);
+  // The sections without a category colour have no dot.
+  ["numberConversionSection", "numericLookingSection", "constantFieldSection", "problemRowsSection"].forEach((id) => assert.doesNotMatch(css, new RegExp(`#${id} \\{ --dot`), id));
+});
+
+test("v3.0.0 look: one blue button per group, by id only; the class names stay", () => {
+  const css = repoFile("style.css");
+  // 导出筛选后 CSV keeps its markup (no secondary-button) but looks secondary: the data group's
+  // blue button is 导出写法统一的表 (in the check panel).
+  assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
+  // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
+  assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
+  const html = repoFile("index.html");
+  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV<\/button>/);
+});
+
+test("v3.0.0 look: the 空值检查 box shows about ten fields without scrolling; print lifts every height limit", () => {
+  const css = repoFile("style.css");
+  const compact = cssRule(css, ".table-wrap.compact");
+  const height = Number(compact.match(/max-height: (\d+)px;/)[1]);
+  // A header and ten rows of 42 px, and the two border pixels.
+  assert.ok(height >= 42 * 11 + 2, String(height));
+  assert.ok(height <= 600, String(height));
+  // Below 640 px no table box limits its height (二·9).
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.table-wrap\.compact \{\s*max-height: none;/);
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.match(print, /\.table-wrap\.compact,\s*\.schema-table-wrap \{\s*max-height: none !important;/);
+});
+
+test("v3.0.0 look: charts take the new blue and the page's font", () => {
+  const scope = createChartContext();
+  const theme = JSON.parse(scope.evaluate("JSON.stringify(CHART_THEME)"));
+  assert.deepEqual(Object.keys(theme), ["primary", "primaryFill", "secondary", "secondaryFill", "warning", "text", "grid"]);
+  assert.equal(theme.primary, "#0068e0");
+  assert.equal(theme.text, "#636366");
+  // The second series is a lighter blue that still has 3:1 against the white card.
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255)
+      .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  assert.match(theme.secondary, /^#[0-9a-f]{6}$/);
+  const [red, green, blue] = [1, 3, 5].map((index) => parseInt(theme.secondary.slice(index, index + 2), 16));
+  assert.ok(blue > red && blue > green, theme.secondary);
+  assert.ok(luminance(theme.secondary) > luminance(theme.primary), "lighter than the primary");
+  assert.ok(1.05 / (luminance(theme.secondary) + 0.05) >= 3, "3:1 on white");
+  assert.equal(theme.secondaryFill, `rgba(${red}, ${green}, ${blue}, 0.14)`);
+  // The insight under a chart: a light grey box, no side line.
+  const insight = cssRule(repoFile("style.css"), ".chart-insight");
+  assert.doesNotMatch(insight, /border-left/);
+  assert.match(insight, /background: #f6f6f9;/);
+  assert.match(insight, /border-radius: 10px;/);
+  assert.match(insight, /color: var\(--text-secondary\);/);
+  // The custom analysis's result sentence looks the same.
+  const summary = cssRule(repoFile("style.css"), ".custom-result-summary");
+  assert.doesNotMatch(summary, /border-left|--primary-soft/);
+  ["background: #f6f6f9;", "border-radius: 10px;", "color: var(--text-secondary);"].forEach((line) => assert.ok(summary.includes(line), line));
+  const script = repoFile("script.js");
+  const family = script.match(/Chart\.defaults\.font\.family = '([^']+)';/)[1];
+  assert.equal(family, cssRule(repoFile("style.css"), "body").match(/font-family: ([^;]+);/)[1]);
+  assert.match(script, /Chart\.defaults\.font\.size = 12;/);
+});
+
+// v3.0.0 look, second pass (impl-v3.0.0-look2): fewer template touches. Items 1–7 of that file.
+test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no privacy badge); the footer only the GitHub link", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
+  assert.match(header, /<strong>Smart Tabular Analyzer<\/strong>/);
+  assert.doesNotMatch(header, /<small>|brand-mark|privacy-badge|数据仅在浏览器本地处理/);
+  assert.doesNotMatch(html, /brand-mark|privacy-badge/);
+  assert.doesNotMatch(css, /\.brand-mark|\.privacy-badge|\.brand-copy small/);
+  assert.match(html, /<title>Smart Tabular Analyzer \| 表格数据体检工具<\/title>/);
+  const footer = html.slice(html.indexOf('<footer class="app-footer">'), html.indexOf("</footer>"));
+  assert.equal((footer.match(/<p>/g) || []).length, 1);
+  assert.match(footer, /<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<span>GitHub 仓库<\/span><\/a><\/p>/);
+  assert.doesNotMatch(footer, /表格数据体检工具|不会上传到服务器|<strong>/);
+  // The privacy sentences that stay: under the upload title and at the foot of the sidebar.
+  assert.match(html, /<p class="product-description">不用安装，表格不会离开这台电脑。<\/p>/);
+  assert.match(html, /<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。<\/p>/);
+  const footerRule = cssRule(css, ".app-footer");
+  assert.match(footerRule, /justify-content: flex-end;/);
+  assert.match(footerRule, /font-size: 12px;/);
+  assert.match(footerRule, /color: var\(--text-secondary\);/);
+});
+
+test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry a one-line aside next to the title", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const heading = cssRule(css, ".section-heading");
+  assert.doesNotMatch(heading, /border-bottom|padding-bottom/);
+  assert.match(heading, /margin-bottom: 14px;/);
+  const h2 = cssRule(css, ".section-heading h2");
+  assert.match(h2, /font-size: 17px;/);
+  assert.match(h2, /font-weight: 600;/);
+  assert.match(h2, /letter-spacing: 0;/);
+  const aside = cssRule(css, ".section-aside");
+  assert.match(aside, /font-size: 13px;/);
+  assert.match(aside, /color: var\(--text-secondary\);/);
+  assert.match(cssRule(css, ".section-title-line"), /align-items: baseline;/);
+  assert.match(cssRule(css, ".section-title-line"), /flex-wrap: wrap;/);
+  const asides = [
+    ["schemaSection", "schemaSectionTitle", "确认字段类型", "识别不准时再改；应用后统一重新计算"],
+    ["qualitySection", "qualitySectionTitle", "空值、重复和其他问题", "始终按导入的原始数据算，不受筛选影响"],
+    ["filterSection", "filterSectionTitle", "设置当前分析范围", "只影响分析结果，不改原始数据和数据质量"]
+  ];
+  for (const [section, id, title, text] of asides) {
+    const start = html.indexOf(`<section id="${section}"`);
+    const head = html.slice(html.indexOf('<div class="section-heading">', start));
+    assert.match(head, new RegExp(`^<div class="section-heading">\\s*<div class="section-title-line">\\s*<h2 id="${id}" tabindex="-1">${title}</h2>\\s*<p class="section-aside">${text}</p>\\s*</div>\\s*</div>`), section);
+    // The old paragraph under the heading is gone.
+    assert.doesNotMatch(head, /^<div class="section-heading">[\s\S]*?<\/div>\s*<\/div>\s*<p class="section-note">/, section);
+  }
+  assert.doesNotMatch(html, /系统已自动推断字段类型|本模块始终基于导入的原始数据计算|分类、数值和日期条件可以同时应用/);
+  assert.equal((html.match(/class="section-aside"/g) || []).length, 3);
+  // The other modules keep their paragraph (custom analysis) and the 当前分析范围 on the right.
+  assert.match(html, /<\/div>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
+  assert.equal((html.match(/<p class="filter-scope">当前分析范围：/g) || []).length, 3);
+});
+
+test("v3.0.0 look2: the quality page is cards: three of their own, and one holding the seven note subsections", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
+  const start = quality.indexOf('<div class="quality-notes">');
+  assert.ok(start > quality.indexOf('id="problemRowsSection"'), String(start));
+  const notes = quality.slice(start);
+  assertInOrder(notes, ['id="numberConversionSection"', 'id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderSection"', ">编号重复</h3>"]);
+  // Exactly those seven subsections inside it, and none of them before it.
+  assert.equal((notes.match(/<div (?:id="[^"]+" )?class="module-subsection[^"]*">/g) || []).length, 7);
+  assert.equal(quality.slice(0, start).includes('id="numberConversionSection"'), false);
+  const box = cssRule(css, ".quality-notes");
+  assert.match(box, /border: 1px solid var\(--card-border\);/);
+  assert.match(box, /border-radius: var\(--radius-card\);/);
+  assert.match(box, /background: #fff;/);
+  assert.doesNotMatch(box, /box-shadow/);
+  // The three cards of their own are styled by id, so their class lists stay as they were.
+  const card = css.match(/\n#suspectedTotalSection,\r?\n#formulaErrorSection,\r?\n#problemRowsSection \{([^}]*)\}/)[1];
+  assert.match(card, /padding: 18px 20px;/);
+  assert.match(card, /border: 1px solid var\(--card-border\);/);
+  assert.match(card, /border-radius: var\(--radius-card\);/);
+  assert.match(card, /background: #fff;/);
+  // A line only between two shown subsections: hidden ones leave no double line.
+  assert.match(css, /\.quality-notes > \.module-subsection:not\(\.hidden\) ~ \.module-subsection:not\(\.hidden\) \{\s*border-top: 1px solid var\(--card-border\);/);
+  assert.match(cssRule(css, ".quality-notes > .module-subsection"), /border-top: 0;/);
+});
+
+test("v3.0.0 look2: number columns of the three quality and statistics tables carry the num class; the report has none", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const classesOf = (tableHtml) => [...tableHtml.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((row) => [...row[1].matchAll(/<t[hd](?: class="([^"]*)")?>/g)].map((cell) => (cell[1] || "").split(" ").includes("num")));
+  const expectRows = (id, pattern) => {
+    const rows = classesOf(orders.elements.get(id).innerHTML);
+    assert.ok(rows.length > 1, id);
+    rows.forEach((row) => assert.deepEqual(row, pattern, id));
+  };
+  expectRows("qualityTable", [false, false, true, true, true, false]);
+  expectRows("outlierTable", [false, true, true, true, false]);
+  expectRows("numericStatsTable", [false, true, true, true, true, true, true, true]);
+  // The warning colour still sits on the same cell.
+  assert.match(orders.elements.get("qualityTable").innerHTML, /<td class="num cell-warning">/);
+  assert.match(repoFile("style.css"), /\nth\.num,\r?\ntd\.num \{[^}]*text-align: right;/);
+  const report = orders.evaluate("buildHtmlReport(buildReportData(new Date(2026, 0, 1)))");
+  assert.doesNotMatch(report, /class="num/);
+});
+
+test("v3.0.0 look2: trend lines are straight with white points; every chart has at most 5 y ticks", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const charts = withFakeCharts(orders);
+  orders.evaluate(`
+    dom.numericChartField.value = "金额";
+    renderCharts();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderV2Analysis();
+  `);
+  const lines = charts.filter((config) => config.type === "line");
+  assert.equal(lines.length, 2);
+  for (const config of lines) {
+    const dataset = config.data.datasets[0];
+    assert.equal(dataset.tension, 0);
+    assert.equal(dataset.fill, false);
+    assert.equal(dataset.borderWidth, 2.5);
+    assert.equal(dataset.pointRadius, 4);
+    assert.equal(dataset.pointBackgroundColor, "#ffffff");
+    assert.equal(dataset.pointBorderColor, dataset.borderColor);
+  }
+  assert.equal(charts.length, 5);
+  charts.forEach((config) => assert.equal(config.options.scales.y.ticks.maxTicksLimit, 5));
+  assert.equal(orders.evaluate('chartOptions("记录数").scales.y.ticks.maxTicksLimit'), 5);
+  // CHART_THEME keeps its seven keys.
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(Object.keys(CHART_THEME))")), ["primary", "primaryFill", "secondary", "secondaryFill", "warning", "text", "grid"]);
+});
+
+test("v3.0.0 look2: x-axis labels keep a visible gap (autoSkipPadding 16) on every chart", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const charts = withFakeCharts(orders);
+  orders.evaluate(`
+    dom.numericChartField.value = "金额";
+    renderCharts();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderV2Analysis();
+  `);
+  assert.equal(charts.length, 5);
+  charts.forEach((config) => {
+    assert.equal(config.options.scales.x.ticks.autoSkip, true);
+    assert.equal(config.options.scales.x.ticks.autoSkipPadding, 16);
+  });
+});
+
+test("v3.0.0 look2: the field table's 非空值、唯一值、认不出 columns carry the num class", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const rows = [...orders.elements.get("schemaTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((row) => [...row[1].matchAll(/<t[hd](?: class="([^"]*)")?>/g)].map((cell) => (cell[1] || "").split(" ").includes("num")));
+  assert.ok(rows.length > 1);
+  rows.forEach((row) => assert.deepEqual(row, [false, false, false, true, true, true, false]));
+});
+
+test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export headings no longer look like module titles)", () => {
+  const css = repoFile("style.css");
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((match) => [match[1].trim().replace(/\s+/g, " "), match[2]])
+    .filter(([selector, body]) => /(?:^|[ ,])(?:[^ ,]* )?h3$|\.subsection-title$/.test(selector) && /font-size:/.test(body));
+  const selectors = rules.map(([selector]) => selector);
+  assert.deepEqual(selectors, [".subsection-title", ".filter-condition-heading h3", ".frequency-card h3", ".chart-header h3", ".export-module-heading h3", ".data-export-option h3", ".report-export-copy h3"]);
+  rules.forEach(([selector, body]) => {
+    assert.match(body, /font-size: 15px;/, selector);
+    assert.match(body, /font-weight: 600;/, selector);
+  });
+});
+
+test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons have no icon", () => {
+  const html = repoFile("index.html");
+  const buttons = html.slice(html.indexOf('<div class="upload-buttons">'), html.indexOf('<div class="upload-footer">'));
+  assert.match(buttons, /<label class="file-button" for="csvFile">\s*选择数据文件\s*<\/label>/);
+  assert.match(buttons, /<button id="loadSample" class="secondary-button" type="button">\s*使用示例数据\s*<\/button>/);
+  assert.doesNotMatch(buttons, /<svg/);
+  assert.match(html, /<span class="upload-icon" aria-hidden="true">\s*<svg viewBox="0 0 48 48">/);
+  const icon = cssRule(repoFile("style.css"), ".upload-icon");
+  assert.doesNotMatch(icon, /background|border-radius/);
+  assert.match(icon, /color: var\(--primary\);/);
 });

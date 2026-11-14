@@ -80,6 +80,14 @@ const state = {
   // buildStandardizedExport() as of the last 检查标准化改动, or null. Imports, field
   // configuration and placeholder confirmations clear it; filters never.
   standardizedExport: null,
+  // v3.0.0: the import's message { message, tone, hasNote, summary }, set by every commit and
+  // put back by returnToAnalysis(); a new import (resetAnalysisState()) clears it.
+  importStatus: null,
+  // v3.0.0: the module shown when 换一个文件 left the workspace, for returnToAnalysis().
+  returnModule: null,
+  // v3.0.0 F2: the field table's search and type filter (more than 20 fields). Applying the
+  // field configuration keeps them; imports and resets clear them. Nothing is stored.
+  schemaFilter: { query: "", kind: "all" },
   filters: {
     category: null,
     numeric: null,
@@ -95,15 +103,32 @@ const dom = {
   loadSample: document.getElementById("loadSample"),
   dropZone: document.getElementById("dropZone"),
   statusPanel: document.getElementById("statusPanel"),
+  statusNote: document.getElementById("statusNote"),
+  statusNoteSummary: document.getElementById("statusNoteSummary"),
+  statusNoteToggle: document.getElementById("statusNoteToggle"),
   sheetSelectionPanel: document.getElementById("sheetSelectionPanel"),
   excelWorkbookName: document.getElementById("excelWorkbookName"),
   excelSheetSelect: document.getElementById("excelSheetSelect"),
   confirmSheetSelection: document.getElementById("confirmSheetSelection"),
   sheetSelectionMessage: document.getElementById("sheetSelectionMessage"),
   results: document.getElementById("results"),
+  returnToAnalysis: document.getElementById("returnToAnalysis"),
   reportTitle: document.getElementById("reportTitle"),
   sourceName: document.getElementById("sourceName"),
-  mobileSectionNav: document.getElementById("mobileSectionNav"),
+  topbarFileName: document.getElementById("topbarFileName"),
+  sidebarToggle: document.getElementById("sidebarToggle"),
+  appSidebar: document.getElementById("appSidebar"),
+  sidebarClose: document.getElementById("sidebarClose"),
+  sidebarBackdrop: document.getElementById("sidebarBackdrop"),
+  sidebarFileSize: document.getElementById("sidebarFileSize"),
+  sidebarFieldsToggle: document.getElementById("sidebarFieldsToggle"),
+  sidebarFieldCount: document.getElementById("sidebarFieldCount"),
+  sidebarFieldList: document.getElementById("sidebarFieldList"),
+  sidebarFilterSummary: document.getElementById("sidebarFilterSummary"),
+  sidebarHeaderRow: document.getElementById("sidebarHeaderRow"),
+  sidebarHeaderValue: document.getElementById("sidebarHeaderValue"),
+  sidebarPlaceholderRow: document.getElementById("sidebarPlaceholderRow"),
+  sidebarPlaceholderValue: document.getElementById("sidebarPlaceholderValue"),
   globalFilterStatus: document.getElementById("globalFilterStatus"),
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
@@ -117,7 +142,12 @@ const dom = {
   previewNextPage: document.getElementById("previewNextPage"),
   previewLastPage: document.getElementById("previewLastPage"),
   schemaTable: document.getElementById("schemaTable"),
+  schemaFilter: document.getElementById("schemaFilter"),
+  schemaSearch: document.getElementById("schemaSearch"),
+  schemaKinds: document.getElementById("schemaKinds"),
+  schemaFilterEmpty: document.getElementById("schemaFilterEmpty"),
   fieldConfigMessage: document.getElementById("fieldConfigMessage"),
+  fieldConfigToolbar: document.getElementById("fieldConfigToolbar"),
   applyFieldConfig: document.getElementById("applyFieldConfig"),
   restoreAutoFieldTypes: document.getElementById("restoreAutoFieldTypes"),
   categoryFilterField: document.getElementById("categoryFilterField"),
@@ -228,13 +258,13 @@ const dom = {
 const INSIGHT_CATEGORY_MAX_DISTINCT = 20;
 
 const CHART_THEME = {
-  primary: "#625bde",
-  primaryFill: "rgba(98, 91, 222, 0.12)",
-  secondary: "#0f9f8f",
-  secondaryFill: "rgba(15, 159, 143, 0.12)",
-  warning: "#e09a32",
-  text: "#697084",
-  grid: "rgba(211, 215, 227, 0.72)"
+  primary: "#0068e0",
+  primaryFill: "rgba(0, 104, 224, 0.12)",
+  secondary: "#4792e9",
+  secondaryFill: "rgba(71, 146, 233, 0.14)",
+  warning: "#b54708",
+  text: "#636366",
+  grid: "rgba(28, 28, 30, 0.08)"
 };
 
 function setImportBusy(isBusy) {
@@ -245,13 +275,102 @@ function setImportBusy(isBusy) {
   dom.dropZone.setAttribute("aria-busy", String(isBusy));
 }
 
+// An import opens the first module at the top of the page with the focus on its title
+// (v3.0.0); the address stays as it was.
 function showResultsWorkspace() {
   document.body.classList.add("has-results");
   setImportBusy(false);
-  window.requestAnimationFrame(() => {
-    dom.reportTitle?.focus({ preventScroll: true });
-    dom.results.scrollIntoView({ block: "start" });
-  });
+  syncSidebarToggle();
+  window.requestAnimationFrame(() => showModule("overviewSection", { hash: false }));
+}
+
+// The sidebar (v3.0.0): the file, its fields and the current state, for display only.
+const SIDEBAR_TYPE_MARKS = Object.freeze({ id: "#", date: "日", category: "Aa", numeric: "12", ignore: "—" });
+
+function renderSidebar() {
+  dom.sidebarFileSize.textContent = `${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`;
+  dom.sidebarFieldCount.textContent = formatInteger(state.fields.length);
+  dom.sidebarFieldList.innerHTML = state.profiles.map((profile) => {
+    const unit = profile.typeKey === "numeric" ? getFieldNumberUnit(profile.field) : "";
+    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] || ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
+  }).join("");
+  const headerRowNumber = state.headerDetection?.headerRowNumber;
+  const showsHeader = Boolean(headerRowNumber) && headerRowNumber !== 1;
+  dom.sidebarHeaderRow.classList.toggle("hidden", !showsHeader);
+  dom.sidebarHeaderValue.textContent = showsHeader ? `第 ${formatInteger(headerRowNumber)} 行` : "";
+  const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
+  dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
+  dom.sidebarPlaceholderValue.textContent = confirmedCount ? `${formatInteger(confirmedCount)} 处` : "";
+}
+
+// Open by default from 1100 px, closed below; once the user opens or closes it, body carries
+// sidebar-open / sidebar-closed until the next reset (nothing is stored). Below 1100 px it
+// covers the content: Escape and the backdrop close it and the focus stays inside it.
+const SIDEBAR_WIDE_QUERY = "(min-width: 1100px)";
+
+function isSidebarWide() {
+  return typeof window.matchMedia === "function" ? window.matchMedia(SIDEBAR_WIDE_QUERY).matches : true;
+}
+
+function isSidebarOpen() {
+  const classes = document.body.classList;
+  if (classes.contains("sidebar-open")) return true;
+  if (classes.contains("sidebar-closed")) return false;
+  return isSidebarWide();
+}
+
+function syncSidebarToggle() {
+  const open = isSidebarOpen();
+  dom.sidebarToggle.setAttribute("aria-expanded", String(open));
+  dom.sidebarBackdrop.hidden = !(open && !isSidebarWide());
+}
+
+function openSidebar() {
+  document.body.classList.add("sidebar-open");
+  document.body.classList.remove("sidebar-closed");
+  syncSidebarToggle();
+  if (!isSidebarWide()) dom.sidebarClose.focus();
+}
+
+function closeSidebar({ returnFocus = true } = {}) {
+  const overlay = !isSidebarWide();
+  document.body.classList.add("sidebar-closed");
+  document.body.classList.remove("sidebar-open");
+  syncSidebarToggle();
+  if (overlay && returnFocus) dom.sidebarToggle.focus();
+}
+
+function toggleSidebar() {
+  if (isSidebarOpen()) closeSidebar();
+  else openSidebar();
+}
+
+// Escape closes an open overlay; Tab and Shift+Tab stay inside it.
+function handleSidebarKeydown(event) {
+  if (!isSidebarOpen() || isSidebarWide()) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSidebar();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = Array.from(dom.appSidebar.querySelectorAll("button, a[href]")).filter((element) => element.offsetParent !== null);
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function toggleSidebarFields() {
+  const expanded = dom.sidebarFieldsToggle.getAttribute("aria-expanded") !== "false";
+  dom.sidebarFieldsToggle.setAttribute("aria-expanded", String(!expanded));
+  dom.sidebarFieldList.classList.toggle("hidden", expanded);
 }
 
 // The format-consistency summaries: on import, field configuration and placeholder
@@ -296,6 +415,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.previewPage = 1;
   state.problemView = null;
   state.problemViewOpener = null;
+  state.schemaFilter = { query: "", kind: "all" };
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
   state.headerDetection = buildHeaderDetectionState(headerDetection);
@@ -339,11 +459,15 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryStats = buildCategoryStats(state.filteredRows);
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
-  dom.sourceName.textContent = `已载入 · ${sourceDisplayName}`;
+  // The sidebar's file name (v3.0.0); report.js reads its title for the report.
+  dom.sourceName.textContent = sourceDisplayName;
   dom.sourceName.title = sourceDisplayName;
+  dom.topbarFileName.textContent = sourceDisplayName;
+  dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
-  const headerNote = `${formatHeaderDetectionNote(state.headerDetection)}${formatSuspectedTotalStatus(state.suspectedTotals)}${formatFormulaErrorStatus(state.formulaErrors)}`;
+  const notes = [formatHeaderDetectionNote(state.headerDetection), formatSuspectedTotalStatus(state.suspectedTotals), formatFormulaErrorStatus(state.formulaErrors)];
+  const headerNote = notes.join("");
   if (state.parseWarnings.length) {
     // Warnings without a line count in the total only.
     const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
@@ -351,10 +475,19 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   } else {
     setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
   }
+  dom.statusNoteSummary.textContent = headerNote ? formatStatusNoteSummary(sourceDisplayName, notes.filter(Boolean).length) : "";
+  state.importStatus = {
+    message: dom.statusPanel.textContent,
+    tone: state.parseWarnings.length ? "warning" : "success",
+    hasNote: Boolean(headerNote),
+    summary: dom.statusNoteSummary.textContent
+  };
+  state.returnModule = null;
 
   renderOverview();
   renderPreview();
   renderSchema();
+  renderSidebar();
   initializeFilterControls();
   renderQuality();
   renderNumericStats();
@@ -448,12 +581,29 @@ function renderOverview() {
     ["空值概览", activeMissing]
   ];
 
-  dom.overviewCards.innerHTML = cards.map(([label, value]) => `
-    <div class="metric-card">
-      <div class="metric-label">${escapeHtml(label)}</div>
-      <div class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</div>
-    </div>
-  `).join("");
+  // v3.0.0: one line of text, same labels and numbers as the old cards.
+  dom.overviewCards.innerHTML = `<p class="metric-line">${cards.map(([label, value]) => (
+    `<span class="metric-item"><span class="metric-label">${escapeHtml(label)}</span> <strong class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</strong></span>`
+  )).join("")}</p>`;
+}
+
+// v3.0.0: a quality subsection's note shows its first line; 展开 / 收起 shows the rest. The text
+// is all in the page either way.
+function toggleSectionNote(event) {
+  const button = event.target.closest(".note-toggle");
+  if (!button) return;
+  const expand = button.getAttribute("aria-expanded") !== "true";
+  button.previousElementSibling.classList.toggle("is-expanded", expand);
+  button.setAttribute("aria-expanded", String(expand));
+  button.textContent = expand ? "收起" : "展开";
+}
+
+// v3.0.0 dirty data: table cells are capped and cut (style.css); hovering one that is cut shows
+// its full text. Added on hover, so the tables' HTML stays as it was.
+function showTruncatedCellTitle(event) {
+  const cell = event.target.closest(".table-wrap td, .table-wrap th");
+  if (!cell || cell.title || cell.scrollWidth <= cell.clientWidth) return;
+  cell.title = cell.textContent;
 }
 
 // A category field's values are concentrated enough to summarise when there are at most
@@ -566,9 +716,11 @@ function renderPreview() {
   dom.previewPageInfo.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rows.length)} 行`;
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
+    dom.previewTable.classList.add("is-empty-table");
     dom.previewTable.innerHTML = emptyTable("当前筛选条件下没有可预览的数据。");
     return;
   }
+  dom.previewTable.classList.remove("is-empty-table");
   dom.previewTable.innerHTML = buildRowTableHtml(state.fields, rows.slice(start, end).map((row) => ({ row, line: getSourceRowNumber(row) })));
 }
 
@@ -578,14 +730,19 @@ function goToPreviewPage(action) {
   renderPreview();
 }
 
+// v3.0.0 F1: the numbers of the old 查看详情 are columns now. A select whose draft differs
+// from the applied type carries is-changed; 认不出 follows the draft (updateSchemaDraftRow()).
 function renderSchema() {
   dom.schemaTable.innerHTML = `
     <thead>
       <tr>
         <th>字段名</th>
+        <th>自动类型</th>
         <th>确认类型</th>
+        <th class="num">非空值</th>
+        <th class="num">唯一值</th>
+        <th class="num">认不出</th>
         <th>示例值</th>
-        <th>字段详情</th>
       </tr>
     </thead>
     <tbody>
@@ -599,36 +756,121 @@ function renderSchema() {
           : `${profile.field} 当前类型无需转换`;
         return `
           <tr>
-            <td>${escapeHtml(profile.field)}</td>
+            <td><span class="field-name" title="${escapeHtml(profile.field)}">${escapeHtml(profile.field)}</span></td>
+            <td><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></td>
             <td>
-              <select class="schema-type-select" data-field-type="${escapeHtml(profile.field)}" aria-label="调整 ${escapeHtml(profile.field)} 的字段类型">
+              <select class="schema-type-select${draftTypeKey !== profile.typeKey ? " is-changed" : ""}" data-field-type="${escapeHtml(profile.field)}" aria-label="调整 ${escapeHtml(profile.field)} 的字段类型">
                 ${Object.entries(FIELD_TYPE_LABELS).map(([typeKey, label]) => `
                   <option value="${typeKey}"${draftTypeKey === typeKey ? " selected" : ""}>${escapeHtml(label)}</option>
                 `).join("")}
               </select>
             </td>
+            <td class="num">${formatInteger(profile.nonMissingCount)}</td>
+            <td class="num">${formatInteger(profile.uniqueCount)}</td>
+            <td class="num"><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
             <td><span class="schema-example" title="${escapeHtml(exampleText)}">${escapeHtml(exampleText)}</span></td>
-            <td>
-              <details class="schema-details">
-                <summary>查看详情</summary>
-                <dl class="schema-detail-list">
-                  <dt>自动类型</dt><dd><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></dd>
-                  <dt>非空值</dt><dd>${formatInteger(profile.nonMissingCount)}</dd>
-                  <dt>唯一值</dt><dd>${formatInteger(profile.uniqueCount)}</dd>
-                  <dt>认不出</dt>
-                  <dd><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></dd>
-                </dl>
-              </details>
-            </td>
           </tr>
         `;
       }).join("")}
     </tbody>
   `;
+  renderSchemaFilter();
   updateFieldConfigActions();
   if (!dom.fieldConfigMessage.textContent) {
     setFieldConfigMessage("自动识别已完成。可修改类型后统一应用。", "");
   }
+}
+
+// v3.0.0 F2: with more than 20 fields, a search by name and filters by the selects' current
+// types. They only hide rows (tr.hidden): the selects stay in the page, so the one in use keeps
+// the focus, and applying, restoring and the draft check still cover every field.
+const SCHEMA_FILTER_MIN_FIELDS = 21;
+const SCHEMA_KINDS = Object.freeze([
+  ["all", "全部"], ["numeric", "数值"], ["category", "分类"], ["date", "日期"], ["id", "ID"], ["ignore", "忽略"],
+  ["failing", "有认不出的"], ["changed", "改过的"]
+]);
+
+function isSchemaFilterOn() {
+  return state.profiles.length >= SCHEMA_FILTER_MIN_FIELDS;
+}
+
+function isSchemaKind(profile, kind) {
+  const draftTypeKey = getDraftTypeKey(profile);
+  if (kind === "all") return true;
+  if (kind === "failing") return countFieldConversionFailures(profile.field, draftTypeKey) > 0;
+  if (kind === "changed") return draftTypeKey !== profile.typeKey;
+  return draftTypeKey === kind;
+}
+
+function countSchemaKinds() {
+  return Object.fromEntries(SCHEMA_KINDS.map(([kind]) => [kind, state.profiles.filter((profile) => isSchemaKind(profile, kind)).length]));
+}
+
+// Field names the table shows: name contains the search (edge spaces trimmed, case ignored)
+// and the field is of the chosen type.
+function listSchemaFieldsShown() {
+  const query = state.schemaFilter.query.trim().toLocaleLowerCase();
+  return state.profiles
+    .filter((profile) => (!query || profile.field.toLocaleLowerCase().includes(query)) && isSchemaKind(profile, state.schemaFilter.kind))
+    .map((profile) => profile.field);
+}
+
+// The type buttons with their counts. A count of 0 hides its button, except 全部 and the chosen
+// one: that stays until the user picks another type or searches again.
+function renderSchemaKinds() {
+  const counts = countSchemaKinds();
+  dom.schemaKinds.innerHTML = SCHEMA_KINDS
+    .filter(([kind]) => kind === "all" || counts[kind] > 0 || kind === state.schemaFilter.kind)
+    .map(([kind, label]) => `<button type="button" class="schema-kind" data-schema-kind="${kind}" aria-pressed="${kind === state.schemaFilter.kind}">${escapeHtml(label)} <span class="schema-kind-count">${formatInteger(counts[kind])}</span></button>`)
+    .join("");
+}
+
+function applySchemaFilter() {
+  const on = isSchemaFilterOn();
+  const shown = new Set(on ? listSchemaFieldsShown() : state.profiles.map((profile) => profile.field));
+  dom.schemaTable.querySelectorAll("select[data-field-type]").forEach((select) => {
+    const row = select.closest("tr");
+    if (row) row.hidden = !shown.has(select.dataset.fieldType);
+  });
+  dom.schemaFilterEmpty.classList.toggle("hidden", !on || shown.size > 0);
+}
+
+// After each renderSchema(): show or hide the toolbar, fall back to 全部 when the chosen type has
+// no field left (after applying), and filter the new rows.
+function renderSchemaFilter() {
+  const on = isSchemaFilterOn();
+  dom.schemaFilter.classList.toggle("hidden", !on);
+  if (!on) {
+    dom.schemaKinds.innerHTML = "";
+    applySchemaFilter();
+    return;
+  }
+  if (state.schemaFilter.kind !== "all" && countSchemaKinds()[state.schemaFilter.kind] === 0) state.schemaFilter.kind = "all";
+  dom.schemaSearch.placeholder = formatSchemaSearchPlaceholder(state.profiles.length);
+  dom.schemaSearch.value = state.schemaFilter.query;
+  renderSchemaKinds();
+  applySchemaFilter();
+}
+
+function handleSchemaSearch() {
+  state.schemaFilter.query = dom.schemaSearch.value;
+  if (state.schemaFilter.kind !== "all" && countSchemaKinds()[state.schemaFilter.kind] === 0) state.schemaFilter.kind = "all";
+  renderSchemaKinds();
+  applySchemaFilter();
+}
+
+function selectSchemaKind(kind, { focus = false } = {}) {
+  if (!SCHEMA_KINDS.some(([key]) => key === kind)) return;
+  state.schemaFilter.kind = kind;
+  renderSchemaKinds();
+  applySchemaFilter();
+  // The buttons were drawn again: give the focus to the new one.
+  if (focus) dom.schemaKinds.querySelector?.(`[data-schema-kind="${kind}"]`)?.focus();
+}
+
+function handleSchemaKindClick(event) {
+  const button = event.target.closest("[data-schema-kind]");
+  if (button) selectSchemaKind(button.dataset.schemaKind, { focus: true });
 }
 
 function getDraftTypeKey(profile) {
@@ -642,6 +884,9 @@ function stageFieldTypeChange(field, typeKey) {
 
   state.fieldTypeDrafts[field] = typeKey;
   updateSchemaDraftRow(field, typeKey);
+  // F2: the counts follow the selects, but the rows are not filtered again, so the select in
+  // use stays on screen with its focus.
+  if (isSchemaFilterOn()) renderSchemaKinds();
   updateFieldConfigActions();
   if (!hasFieldConfigDraftChanges()) {
     setFieldConfigMessage("当前选择与已应用的字段配置一致。", "");
@@ -661,6 +906,8 @@ function updateSchemaDraftRow(field, typeKey) {
     .find((item) => item.dataset.fieldType === field);
   if (!select) return;
   select.value = typeKey;
+  const profile = state.profiles.find((item) => item.field === field);
+  select.classList.toggle("is-changed", Boolean(profile) && typeKey !== profile.typeKey);
 
   const failureElement = select.closest("tr")?.querySelector(".conversion-failure-count");
   if (!failureElement) return;
@@ -736,6 +983,8 @@ function hasAutomaticTypeDifferences() {
 
 function updateFieldConfigActions() {
   dom.applyFieldConfig.disabled = !hasFieldConfigDraftChanges();
+  // v3.0.0: a light blue banner while drafts wait; otherwise a grey line under the table.
+  dom.fieldConfigToolbar.classList.toggle("has-draft", hasFieldConfigDraftChanges());
   dom.restoreAutoFieldTypes.disabled = !hasAutomaticTypeDifferences();
   // The problem rows follow the applied configuration; say so while drafts wait.
   dom.problemRowsDraftNote.classList.toggle("hidden", !state.problemView || !hasFieldConfigDraftChanges());
@@ -1132,6 +1381,13 @@ function updateGlobalFilterStatus() {
     : `全部 ${formatInteger(totalCount)} 行`;
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
+  // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
+  // elements carry no id) and in the sidebar.
+  const summary = dom.globalFilterSummary.textContent;
+  document.querySelectorAll(".filter-scope").forEach((scope) => scope.classList.toggle("active", activeCount > 0));
+  document.querySelectorAll(".filter-scope-text").forEach((text) => { text.textContent = summary; });
+  document.querySelectorAll(".filter-scope-clear").forEach((button) => button.classList.toggle("hidden", activeCount === 0));
+  dom.sidebarFilterSummary.textContent = summary;
 }
 
 function setFilterMessage(message, tone = "") {
@@ -1191,6 +1447,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderOverview();
   renderPreview();
   renderSchema();
+  renderSidebar();
   initializeFilterControls();
   renderQuality();
   renderNumericStats();
@@ -1239,9 +1496,9 @@ function renderQuality() {
       <tr>
         <th>字段</th>
         <th>类型</th>
-        <th>空值数量</th>
-        <th>空值占比</th>
-        <th>认不出</th>
+        <th class="num">空值数量</th>
+        <th class="num">空值占比</th>
+        <th class="num">认不出</th>
         <th>查看</th>
       </tr>
     </thead>
@@ -1250,9 +1507,9 @@ function renderQuality() {
         <tr>
           <td>${escapeHtml(profile.field)}</td>
           <td>${escapeHtml(profile.type)}</td>
-          <td>${formatInteger(profile.missingCount)}</td>
-          <td>${formatPercent(profile.missingRate)}</td>
-          <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
+          <td class="num">${formatInteger(profile.missingCount)}</td>
+          <td class="num">${formatPercent(profile.missingRate)}</td>
+          <td class="num${profile.conversionFailureCount ? " cell-warning" : ""}">${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
           <td>${problemViewCell([
             problemViewButton({ kind: "missing", field: profile.field }, "空值"),
             problemViewButton({ kind: "conversion", field: profile.field }, "认不出")
@@ -1263,17 +1520,19 @@ function renderQuality() {
   `;
 
   if (!qualityNumericStats.length) {
+    dom.outlierTable.classList.add("is-empty-table");
     dom.outlierTable.innerHTML = emptyTable("未识别到数值字段。");
     return;
   }
 
+  dom.outlierTable.classList.remove("is-empty-table");
   dom.outlierTable.innerHTML = `
     <thead>
       <tr>
         <th>字段</th>
-        <th>偏大或偏小的个数</th>
-        <th>下界</th>
-        <th>上界</th>
+        <th class="num">偏大或偏小的个数</th>
+        <th class="num">下界</th>
+        <th class="num">上界</th>
         <th>查看</th>
       </tr>
     </thead>
@@ -1281,9 +1540,9 @@ function renderQuality() {
       ${qualityNumericStats.map((stat) => `
         <tr>
           <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
-          <td>${formatInteger(stat.outlierCount)}</td>
-          <td>${formatFieldNumber(stat.field, stat.lowerBound)}</td>
-          <td>${formatFieldNumber(stat.field, stat.upperBound)}</td>
+          <td class="num">${formatInteger(stat.outlierCount)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.lowerBound)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.upperBound)}</td>
           <td>${problemViewCell([problemViewButton({ kind: "outlier", field: stat.field }, "查看")])}</td>
         </tr>
       `).join("")}
@@ -1358,7 +1617,10 @@ function handleProblemViewClick(event) {
   const category = state.problemCategories[Number(button.dataset.problemIndex)];
   if (!category || !openProblemView(category)) return;
   state.problemViewOpener = button;
-  dom.problemRowsTitle.focus();
+  // Only 查看 scrolls: the section goes to the top (under the bar, via scroll-padding-top);
+  // focusing the title alone would only bring it into view, at the bottom of the screen.
+  dom.problemRowsSection.scrollIntoView({ block: "start" });
+  dom.problemRowsTitle.focus({ preventScroll: true });
 }
 
 // Opens the viewer on a category of state.problemCategories at page 1. Returns false,
@@ -1480,11 +1742,13 @@ function renderNumberNoteSection(section, details, lines) {
 // and a closing note naming the ID fields without duplicates.
 function renderIdDuplicateDetails() {
   if (!state.idDuplicates.length) {
+    dom.idDuplicateDetails.classList.add("is-empty");
     dom.idDuplicateDetails.innerHTML = `<p class="id-duplicate-note">未识别到 ID 字段。</p>`;
     return;
   }
   const reported = state.idDuplicates.filter((item) => item.mostlyRepeated || item.values.length);
   const cleanFields = state.idDuplicates.filter((item) => !reported.includes(item)).map((item) => item.field);
+  dom.idDuplicateDetails.classList.remove("is-empty");
   dom.idDuplicateDetails.innerHTML = [
     ...reported.map((item) => {
       if (item.mostlyRepeated) {
@@ -1514,6 +1778,7 @@ function renderIdDuplicateDetails() {
 // Buttons carry indexes into state.placeholders for handlePlaceholderClick().
 function renderPlaceholderDetails() {
   if (!state.placeholders.length) {
+    dom.placeholderDetails.classList.add("is-empty");
     dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现像是空值的写法。</p>`;
     return;
   }
@@ -1541,6 +1806,7 @@ function renderPlaceholderDetails() {
   const typeChangeNote = typeChanges.length
     ? `<span class="placeholder-note">${escapeHtml(`按空值处理后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
     : "";
+  dom.placeholderDetails.classList.remove("is-empty");
   dom.placeholderDetails.innerHTML = `
     ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>常见写法全部按空值处理（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
     <ul class="placeholder-list">${items.join("")}</ul>
@@ -1563,34 +1829,36 @@ function handlePlaceholderClick(event) {
 
 function renderNumericStats() {
   if (!state.numericStats.length) {
+    dom.numericStatsTable.classList.add("is-empty-table");
     dom.numericStatsTable.innerHTML = emptyTable("未识别到数值字段。");
     return;
   }
 
+  dom.numericStatsTable.classList.remove("is-empty-table");
   dom.numericStatsTable.innerHTML = `
     <thead>
       <tr>
         <th>字段</th>
-        <th>有效数量</th>
-        <th>认不出</th>
-        <th>平均值</th>
-        <th>中位数</th>
-        <th>最大值</th>
-        <th>最小值</th>
-        <th>标准差</th>
+        <th class="num">有效数量</th>
+        <th class="num">认不出</th>
+        <th class="num">平均值</th>
+        <th class="num">中位数</th>
+        <th class="num">最大值</th>
+        <th class="num">最小值</th>
+        <th class="num">标准差</th>
       </tr>
     </thead>
     <tbody>
       ${state.numericStats.map((stat) => `
         <tr>
           <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
-          <td>${formatInteger(stat.count)}</td>
-          <td${stat.invalidCount ? ' class="cell-warning"' : ""}>${formatInteger(stat.invalidCount)}</td>
-          <td>${formatFieldNumber(stat.field, stat.mean)}</td>
-          <td>${formatFieldNumber(stat.field, stat.median)}</td>
-          <td>${formatFieldNumber(stat.field, stat.max)}</td>
-          <td>${formatFieldNumber(stat.field, stat.min)}</td>
-          <td>${formatFieldNumber(stat.field, stat.std)}</td>
+          <td class="num">${formatInteger(stat.count)}</td>
+          <td class="num${stat.invalidCount ? " cell-warning" : ""}">${formatInteger(stat.invalidCount)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.mean)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.median)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.max)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.min)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.std)}</td>
         </tr>
       `).join("")}
     </tbody>
@@ -1603,12 +1871,14 @@ function renderCategoryStats() {
     return;
   }
 
+  // v3.0.0: a bar as long as the share in each row; the card title carries a tooltip.
   dom.categoryStats.innerHTML = state.categoryStats.map((category) => `
     <div class="frequency-card">
-      <h3>${escapeHtml(category.field)}</h3>
+      <h3 title="${escapeHtml(category.field)}">${escapeHtml(category.field)}</h3>
       ${category.top.length ? category.top.map((item) => `
         <div class="frequency-row">
           <span class="category-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+          <span class="frequency-bar" aria-hidden="true"><span style="width: ${(absorbFloatNoise(item.ratio) * 100).toFixed(1)}%"></span></span>
           <strong>${formatInteger(item.count)}</strong>
           <span>${formatPercent(item.ratio)}</span>
         </div>
@@ -1669,6 +1939,7 @@ function renderNumericDistributionChart() {
   destroyChart("numericDistributionChart");
   dom.numericChartTitle.textContent = field ? `${formatFieldLabel(field)} 数值分布（记录频数）` : "数值字段分布（记录频数）";
   canvas.setAttribute("aria-label", dom.numericChartTitle.textContent);
+  dom.numericChartTitle.title = dom.numericChartTitle.textContent;
   if (!field) return drawEmptyChart(canvas, "没有可用的数值字段");
 
   const values = getNumericValues(field);
@@ -1694,6 +1965,7 @@ function renderCategoryTopChart() {
   destroyChart("categoryTopChart");
   dom.categoryChartTitle.textContent = field ? `${field} Top 10（记录数）` : "分类字段 Top 10（记录数）";
   canvas.setAttribute("aria-label", dom.categoryChartTitle.textContent);
+  dom.categoryChartTitle.title = dom.categoryChartTitle.textContent;
   if (!field) return drawEmptyChart(canvas, "没有可用的分类字段");
 
   const counts = Array.from(countValues(field).entries())
@@ -1720,6 +1992,7 @@ function renderDateTrendChart() {
   destroyChart("dateTrendChart");
   dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   const { metricField: numericField, aggregate } = getDateChartSelection();
   dom.dateChartAggregate.disabled = !numericField;
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
@@ -1735,6 +2008,7 @@ function renderDateTrendChart() {
     ? `${formatFieldLabel(numericField)} 按${timeUnit}趋势（${aggregationLabel}）`
     : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   state.charts.dateTrendChart = new Chart(canvas, {
     type: "line",
     data: {
@@ -1744,10 +2018,7 @@ function renderDateTrendChart() {
           ? `${formatFieldLabel(numericField)}${yearly ? "年度" : " "}${aggregationLabel}趋势`
           : `${yearly ? "年度" : ""}记录数趋势`,
         data: trend.values,
-        borderColor: CHART_THEME.primary,
-        backgroundColor: CHART_THEME.primaryFill,
-        tension: 0.25,
-        fill: true
+        ...trendLineStyle(CHART_THEME.primary)
       }]
     },
     options: chartOptions(numericAxisLabel(numericField, aggregationLabel), numericField)
@@ -1888,6 +2159,7 @@ function renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod)
   ));
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   dom.v2PrimaryTableTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`;
+  dom.v2PrimaryTableTitle.title = dom.v2PrimaryTableTitle.textContent;
   dom.v2PrimaryTable.innerHTML = buildV2AggregationTableHtml(groupField, metricField, sorted, aggregateMethod);
 }
 
@@ -1922,6 +2194,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
     .slice(0, 10);
   dom.v2TopGroupTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TopGroupTitle.textContent);
+  dom.v2TopGroupTitle.title = dom.v2TopGroupTitle.textContent;
   state.charts.v2TopGroupChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -1950,6 +2223,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   dom.v2TrendTitle.textContent = `${formatFieldLabel(metricField)} 按${timeUnit}趋势（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TrendTitle.textContent);
+  dom.v2TrendTitle.title = dom.v2TrendTitle.textContent;
   state.charts.v2SelectedTrendChart = new Chart(canvas, {
     type: "line",
     data: {
@@ -1957,10 +2231,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
       datasets: [{
         label: dom.v2TrendTitle.textContent,
         data: trend.values,
-        borderColor: CHART_THEME.secondary,
-        backgroundColor: CHART_THEME.secondaryFill,
-        tension: 0.25,
-        fill: true
+        ...trendLineStyle(CHART_THEME.secondary)
       }]
     },
     options: chartOptions(numericAxisLabel(metricField, aggregateLabel), metricField)
@@ -1969,6 +2240,21 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
 
 function getAggregateMethodLabel(method) {
   return { sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和";
+}
+
+// v3.0.0: a trend is a straight line with white points outlined in the line's colour, no fill.
+function trendLineStyle(color) {
+  return {
+    borderColor: color,
+    borderWidth: 2.5,
+    tension: 0,
+    fill: false,
+    pointRadius: 4,
+    pointHoverRadius: 5,
+    pointBackgroundColor: "#ffffff",
+    pointBorderColor: color,
+    pointBorderWidth: 2
+  };
 }
 
 function chartOptions(axisLabel, valueField = "") {
@@ -1999,7 +2285,7 @@ function chartOptions(axisLabel, valueField = "") {
     },
     scales: {
       x: {
-        ticks: { maxRotation: 0, minRotation: 0, color: CHART_THEME.text, autoSkip: true, maxTicksLimit: 9 },
+        ticks: { maxRotation: 0, minRotation: 0, color: CHART_THEME.text, autoSkip: true, autoSkipPadding: 16, maxTicksLimit: 9 },
         grid: { display: false },
         border: { display: false }
       },
@@ -2008,6 +2294,7 @@ function chartOptions(axisLabel, valueField = "") {
         title: { display: true, text: axisLabel, color: CHART_THEME.text },
         ticks: {
           color: CHART_THEME.text,
+          maxTicksLimit: 5,
           ...(valueField ? { callback: (value) => formatFieldNumber(valueField, Number(value)) } : {})
         },
         grid: { color: CHART_THEME.grid },
@@ -2017,19 +2304,28 @@ function chartOptions(axisLabel, valueField = "") {
   };
 }
 
+// v3.0.0 F3: the sentence is ordinary text in the static <p id="<canvas id>Empty"> over the
+// chart frame, no longer painted on the canvas; destroyChart() clears it before a chart is drawn.
+// Name and arguments stay: tests wrap this function to collect the sentences.
 function drawEmptyChart(canvas, text) {
-  const context = canvas.getContext("2d");
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.save();
-  context.font = '13px Inter, "Segoe UI", "Microsoft YaHei", sans-serif';
-  context.fillStyle = CHART_THEME.text;
-  context.textAlign = "center";
-  context.fillText(text, canvas.width / 2, canvas.height / 2);
-  context.restore();
+  const context = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+  if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+  const empty = document.getElementById(`${canvas.id}Empty`);
+  if (!empty) return;
+  empty.textContent = text;
+  empty.classList.remove("hidden");
+}
+
+function clearChartEmpty(id) {
+  const empty = document.getElementById(`${id}Empty`);
+  if (!empty) return;
+  empty.textContent = "";
+  empty.classList.add("hidden");
 }
 
 function resetAnalysisState() {
   Object.keys(state.charts).forEach((id) => destroyChart(id));
+  ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"].forEach(clearChartEmpty);
   state.charts = {};
   state.rows = [];
   state.filteredRows = null;
@@ -2080,18 +2376,44 @@ function resetAnalysisState() {
 
   dom.sourceName.textContent = "";
   dom.sourceName.removeAttribute("title");
+  dom.topbarFileName.textContent = "";
+  dom.topbarFileName.removeAttribute("title");
+  dom.sidebarFileSize.textContent = "";
+  dom.sidebarFieldCount.textContent = "";
+  dom.sidebarFieldList.innerHTML = "";
+  dom.sidebarFieldList.classList.remove("hidden");
+  dom.sidebarFieldsToggle.setAttribute("aria-expanded", "true");
+  dom.sidebarHeaderRow.classList.add("hidden");
+  dom.sidebarHeaderValue.textContent = "";
+  dom.sidebarPlaceholderRow.classList.add("hidden");
+  dom.sidebarPlaceholderValue.textContent = "";
+  document.body.classList.remove("sidebar-open", "sidebar-closed");
+  syncSidebarToggle();
+  resetStatusNote();
+  dom.statusNoteSummary.textContent = "";
+  state.importStatus = null;
+  state.returnModule = null;
+  dom.returnToAnalysis.classList.add("hidden");
+  dom.returnToAnalysis.textContent = "";
   dom.reportTitle.textContent = "数据分析工作区";
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
   dom.previewTable.innerHTML = "";
+  dom.previewTable.classList.remove("is-empty-table");
   dom.previewPageInfo.textContent = "";
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], 1, 1);
   dom.schemaTable.innerHTML = "";
+  state.schemaFilter = { query: "", kind: "all" };
+  dom.schemaSearch.value = "";
+  dom.schemaKinds.innerHTML = "";
+  dom.schemaFilter.classList.add("hidden");
+  dom.schemaFilterEmpty.classList.add("hidden");
   dom.fieldConfigMessage.textContent = "";
   dom.fieldConfigMessage.className = "field-config-message";
   dom.applyFieldConfig.disabled = true;
   dom.restoreAutoFieldTypes.disabled = true;
+  dom.fieldConfigToolbar.classList.remove("has-draft");
   dom.categoryFilterField.innerHTML = "";
   dom.categoryFilterSearch.value = "";
   dom.categoryFilterValues.innerHTML = "";
@@ -2121,10 +2443,14 @@ function resetAnalysisState() {
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
+  dom.outlierTable.classList.remove("is-empty-table");
   dom.idDuplicateDetails.innerHTML = "";
+  dom.idDuplicateDetails.classList.remove("is-empty");
   dom.placeholderDetails.innerHTML = "";
+  dom.placeholderDetails.classList.remove("is-empty");
   setPlaceholderMessage("");
   dom.numericStatsTable.innerHTML = "";
+  dom.numericStatsTable.classList.remove("is-empty-table");
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";
   dom.excelSheetSelect.innerHTML = "";
@@ -2142,18 +2468,14 @@ function resetAnalysisState() {
   document.querySelectorAll("#customSection details").forEach((details) => {
     details.open = false;
   });
-  document.querySelectorAll(".desktop-results-nav a").forEach((link, index) => {
-    link.classList.toggle("active", index === 0);
-    if (index === 0) link.setAttribute("aria-current", "location");
-    else link.removeAttribute("aria-current");
-  });
-  dom.mobileSectionNav.value = "overviewSection";
+  showModule("overviewSection", { quiet: true });
   dom.results.classList.add("hidden");
   updateGlobalFilterStatus();
   updateExportButtons();
 }
 
 function destroyChart(id) {
+  clearChartEmpty(id);
   if (state.charts[id]) {
     state.charts[id].destroy();
     state.charts[id] = null;
@@ -2186,6 +2508,28 @@ function setStatus(message, tone = "", hasNote = false) {
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));
   setImportBusy(!tone);
+  // Only a success with notes can fold (v3.0.0); every new message starts unfolded. The kind
+  // of message is marked on #statusNote: style.css keeps successes to the first module, while
+  // warnings and errors (the report export's among them) show on every module.
+  resetStatusNote();
+  dom.statusNote.classList.toggle("can-collapse", tone === "success" && hasNote);
+  dom.statusNote.dataset.tone = tone || "loading";
+}
+
+// The fold of the import message (v3.0.0) lives on #statusNote, never on #statusPanel: its
+// text, classes and role stay as setStatus() wrote them, and a folded message is only moved
+// out of sight (style.css), so screen readers still have it.
+function resetStatusNote() {
+  dom.statusNote.classList.remove("can-collapse", "is-collapsed");
+  dom.statusNoteToggle.setAttribute("aria-expanded", "true");
+  dom.statusNoteToggle.textContent = "收起";
+}
+
+function toggleStatusNote() {
+  const collapse = !dom.statusNote.classList.contains("is-collapsed");
+  dom.statusNote.classList.toggle("is-collapsed", collapse);
+  dom.statusNoteToggle.setAttribute("aria-expanded", String(!collapse));
+  dom.statusNoteToggle.textContent = collapse ? "看说明" : "收起";
 }
 
 function showError(message, importId = state.activeImportId) {
@@ -2196,5 +2540,6 @@ function showError(message, importId = state.activeImportId) {
   dom.statusPanel.textContent = message;
   dom.statusPanel.setAttribute("role", "alert");
   dom.statusPanel.setAttribute("aria-busy", "false");
+  dom.statusNote.dataset.tone = "error";
   dom.results.classList.add("hidden");
 }
