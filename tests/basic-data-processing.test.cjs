@@ -3707,6 +3707,42 @@ test("opening the viewer moves focus to its title, and closing hides it", async 
   assert.equal(orders.elements.get("problemRowsCategory").innerHTML, "");
 });
 
+// v3.0.0: 查看 scrolls the viewer to the top of the screen (the title alone only scrolled
+// into view, landing at the bottom); switching category, paging and re-listing never scroll.
+test("v3.0.0: 查看 scrolls the problem rows section to the top; category, paging and re-listing do not", async () => {
+  const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
+  const scope = await importCsvFile(csv, "scroll.csv");
+  const scrolls = [];
+  const focuses = [];
+  scope.elements.get("problemRowsSection").scrollIntoView = (...args) => { scrolls.push(args); };
+  scope.elements.get("problemRowsTitle").focus = (...args) => { focuses.push(args); };
+  const missingIndex = scope.evaluate('state.problemCategories.findIndex((item) => item.kind === "missing" && item.field === "备注")');
+  const placeholderIndex = scope.evaluate('state.problemCategories.findIndex((item) => item.kind === "placeholder")');
+  assert.ok(missingIndex >= 0 && placeholderIndex >= 0);
+
+  // A button whose category is gone opens nothing and scrolls nothing.
+  clickProblemButton(scope, 999);
+  assert.deepEqual(scrolls, []);
+  assert.deepEqual(focuses, []);
+
+  clickProblemButton(scope, missingIndex);
+  assert.equal(viewerState(scope).hidden, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(scrolls)), [[{ block: "start" }]]);
+  assert.deepEqual(JSON.parse(JSON.stringify(focuses)), [[{ preventScroll: true }]]);
+
+  scope.evaluate(`selectProblemCategory("${placeholderIndex}")`);
+  assert.equal(openCategory(scope).kind, "placeholder");
+  scope.evaluate(`selectProblemCategory("${missingIndex}")`);
+  scope.evaluate('goToProblemRowsPage("next")');
+  assert.equal(viewerState(scope).summary, "共 60 行，第 2 / 2 页");
+  scope.evaluate('goToProblemRowsPage("first")');
+  scope.evaluate("refreshProblemView()");
+  scope.evaluate('confirmPlaceholder("备注", "N/A")');
+  assert.equal(viewerState(scope).summary, "共 90 行，第 1 / 2 页");
+  assert.equal(scrolls.length, 1);
+  assert.equal(focuses.length, 1);
+});
+
 test("the viewer finds its category again after field configuration, confirmation and undo", async () => {
   const csv = `金额,备注\r\n${Array.from({ length: 120 }, (_, index) => `${index},${index % 2 ? "" : index % 4 ? "N/A" : `说明${index}`}`).join("\r\n")}\r\n`;
   const scope = await importCsvFile(csv, "refind.csv");

@@ -1617,7 +1617,10 @@ function handleProblemViewClick(event) {
   const category = state.problemCategories[Number(button.dataset.problemIndex)];
   if (!category || !openProblemView(category)) return;
   state.problemViewOpener = button;
-  dom.problemRowsTitle.focus();
+  // Only 查看 scrolls: the section goes to the top (under the bar, via scroll-padding-top);
+  // focusing the title alone would only bring it into view, at the bottom of the screen.
+  dom.problemRowsSection.scrollIntoView({ block: "start" });
+  dom.problemRowsTitle.focus({ preventScroll: true });
 }
 
 // Opens the viewer on a category of state.problemCategories at page 1. Returns false,
