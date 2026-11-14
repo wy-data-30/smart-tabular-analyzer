@@ -7797,3 +7797,171 @@ test("v3.0.0 way back: 换一个文件 and the entry are bound in script.js", ()
   assert.match(script, /document\.querySelectorAll\("\.nav-new-analysis"\)\.forEach\(\(link\) => \{\s*link\.addEventListener\("click", \(event\) => \{\s*event\.preventDefault\(\);\s*showUploadPage\(\);/);
   assert.equal((script.match(/dom\.returnToAnalysis\.addEventListener\("click", returnToAnalysis\)/g) || []).length, 1);
 });
+
+// v3.0.0 commit 5: the field table (F1) and its search and type filters (F2).
+const schemaHeaders = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<th>([^<]*)<\/th>/g)].map((match) => match[1]);
+const schemaRows = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].slice(1).map((match) => match[1]);
+const schemaRowOf = (scope, field) => schemaRows(scope).find((row) => row.includes(`data-field-type="${field}"`));
+
+test("v3.0.0 F1: the field table shows 字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值, without 查看详情", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  assert.deepEqual(schemaHeaders(orders), ["字段名", "自动类型", "确认类型", "非空值", "唯一值", "认不出", "示例值"]);
+  const html = orders.elements.get("schemaTable").innerHTML;
+  assert.doesNotMatch(html, /查看详情|<details|字段详情/);
+  const profiles = JSON.parse(orders.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.inferredTypeKey, profile.inferredType, profile.nonMissingCount, profile.uniqueCount, profile.conversionFailureCount]))"));
+  assert.equal(schemaRows(orders).length, profiles.length);
+  profiles.forEach(([field, typeKey, typeLabel, nonMissing, unique, failures]) => {
+    const row = schemaRowOf(orders, field);
+    const cells = [...row.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((match) => match[1].trim());
+    assert.equal(cells.length, 7, field);
+    assert.equal(cells[0], `<span class="field-name" title="${field}">${field}</span>`);
+    assert.equal(cells[1], `<span class="type-badge ${typeKey}">${typeLabel}</span>`);
+    assert.match(cells[2], /^<select class="schema-type-select" data-field-type="/);
+    assert.equal(cells[3], orders.evaluate(`formatInteger(${nonMissing})`));
+    assert.equal(cells[4], orders.evaluate(`formatInteger(${unique})`));
+    assert.equal((cells[5].match(/class="conversion-failure-count/g) || []).length, 1, field);
+    assert.equal(/class="conversion-failure-count warning"/.test(cells[5]), failures > 0, field);
+  });
+  // 金额 has one N/A: 认不出 1 with the pink dot (.warning).
+  assert.match(schemaRowOf(orders, "金额"), /<span class="conversion-failure-count warning"[^>]*>1<\/span>/);
+});
+
+test("v3.0.0 F1: a draft type marks its select and counts its 认不出 under the draft", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  orders.evaluate('stageFieldTypeChange("客户类型", "numeric"); renderSchema()');
+  const changed = schemaRowOf(orders, "客户类型");
+  assert.match(changed, /<select class="schema-type-select is-changed" data-field-type="客户类型"/);
+  const failures = orders.evaluate('countFieldConversionFailures("客户类型", "numeric")');
+  assert.ok(failures > 0);
+  assert.match(changed, new RegExp(`<span class="conversion-failure-count warning"[^>]*>${failures}</span>`));
+  orders.evaluate('stageFieldTypeChange("客户类型", "category"); renderSchema()');
+  const back = schemaRowOf(orders, "客户类型");
+  assert.match(back, /<select class="schema-type-select" data-field-type="客户类型"/);
+  assert.match(back, /<span class="conversion-failure-count"[^>]*>—<\/span>/);
+});
+
+// 21 fields: 6 numeric (one named Price), 5 category, 5 date, 5 ID-like, 20 rows each.
+function commitWideSchema(scope) {
+  const fields = [
+    "数值1", "数值2", "数值3", "数值4", "数值5", "Price",
+    "类别1", "类别2", "类别3", "类别4", "类别5",
+    "日期1", "日期2", "日期3", "日期4", "日期5",
+    "代码1", "代码2", "代码3", "代码4", "代码5"
+  ];
+  const rows = Array.from({ length: 20 }, (_, index) => Object.fromEntries(fields.map((field, column) => [field,
+    column < 6 ? String(index * 3 + column) : column < 11 ? ["甲", "乙", "丙"][(index + column) % 3]
+      : column < 16 ? `2025-01-${String(index + 1).padStart(2, "0")}` : `K${column}-${index}`])));
+  commitGuardRows(scope, fields, rows, "wide.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")),
+    [...Array(6).fill("numeric"), ...Array(5).fill("category"), ...Array(5).fill("date"), ...Array(5).fill("id")]);
+}
+const kindCounts = (scope) => JSON.parse(scope.evaluate("JSON.stringify(countSchemaKinds())"));
+const shownFields = (scope) => JSON.parse(scope.evaluate("JSON.stringify(listSchemaFieldsShown())"));
+const kindButtons = (scope) => [...scope.elements.get("schemaKinds").innerHTML.matchAll(/<button type="button" class="schema-kind" data-schema-kind="(\w+)" aria-pressed="(true|false)">([^<]*)<span class="schema-kind-count">([\d,]+)<\/span><\/button>/g)]
+  .map((match) => [match[1], match[2], match[3].trim(), match[4]]);
+
+test("v3.0.0 F2: more than 20 fields show the search and the type filters with counts; zero counts hide", () => {
+  const sample = createChartContext();
+  commitGuardRows(sample, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "small.csv");
+  assert.equal(sample.elements.get("schemaFilter").classList.contains("hidden"), true);
+
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  assert.equal(scope.elements.get("schemaFilter").classList.contains("hidden"), false);
+  assert.equal(scope.elements.get("schemaSearch").placeholder, "搜索 21 个字段");
+  assert.deepEqual(kindCounts(scope), { all: 21, numeric: 6, category: 5, date: 5, id: 5, ignore: 0, failing: 0, changed: 0 });
+  assert.deepEqual(kindButtons(scope), [
+    ["all", "true", "全部", "21"], ["numeric", "false", "数值", "6"], ["category", "false", "分类", "5"], ["date", "false", "日期", "5"], ["id", "false", "ID", "5"]
+  ]);
+  assert.equal(shownFields(scope).length, 21);
+});
+
+test("v3.0.0 F2: the search matches a part of the name, ignores case and edge spaces; nothing found says so", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate('dom.schemaSearch.value = "  price "; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), ["Price"]);
+  assert.equal(scope.elements.get("schemaFilterEmpty").classList.contains("hidden"), true);
+  scope.evaluate('dom.schemaSearch.value = "数值"; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), ["数值1", "数值2", "数值3", "数值4", "数值5"]);
+  scope.evaluate('dom.schemaSearch.value = "zzz"; handleSchemaSearch()');
+  assert.deepEqual(shownFields(scope), []);
+  // Its sentence is static (checked with the toolbar markup below).
+  assert.equal(scope.elements.get("schemaFilterEmpty").classList.contains("hidden"), false);
+  // Search and type combine.
+  scope.evaluate('dom.schemaSearch.value = "1"; handleSchemaSearch(); selectSchemaKind("date")');
+  assert.deepEqual(shownFields(scope), ["日期1"]);
+});
+
+test("v3.0.0 F2: the types follow the selects; a change while filtered only updates the counts, and the chosen type stays until the user moves on", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate("selectSchemaKind(\"date\")");
+  assert.deepEqual(shownFields(scope), ["日期1", "日期2", "日期3", "日期4", "日期5"]);
+  scope.evaluate("globalThis.__applyCalls = 0; const __apply = applySchemaFilter; applySchemaFilter = function (...args) { __applyCalls += 1; return __apply.apply(this, args); }");
+  scope.evaluate('stageFieldTypeChange("日期2", "ignore")');
+  assert.equal(scope.evaluate("__applyCalls"), 0, "a select change does not filter again");
+  assert.deepEqual(kindCounts(scope), { all: 21, numeric: 6, category: 5, date: 4, id: 5, ignore: 1, failing: 0, changed: 1 });
+  assert.deepEqual(kindButtons(scope).map(([kind, pressed, , count]) => [kind, pressed, count]), [
+    ["all", "false", "21"], ["numeric", "false", "6"], ["category", "false", "5"], ["date", "true", "4"], ["id", "false", "5"], ["ignore", "false", "1"], ["changed", "false", "1"]
+  ]);
+  // The chosen type at zero stays on screen until the user picks another one.
+  scope.evaluate('selectSchemaKind("changed"); stageFieldTypeChange("日期2", "date")');
+  assert.deepEqual(kindButtons(scope).map(([kind, pressed, , count]) => [kind, pressed, count]).filter(([kind]) => kind === "changed"), [["changed", "true", "0"]]);
+  scope.evaluate('selectSchemaKind("all")');
+  assert.deepEqual(kindButtons(scope).map(([kind]) => kind), ["all", "numeric", "category", "date", "id"]);
+  // 有认不出的 follows the draft type.
+  scope.evaluate('stageFieldTypeChange("类别1", "numeric")');
+  assert.equal(kindCounts(scope).failing, 1);
+  assert.deepEqual(kindButtons(scope).find(([kind]) => kind === "failing"), ["failing", "false", "有认不出的", "1"]);
+});
+
+test("v3.0.0 F2: applying keeps the search and the type (back to 全部 when it is empty); a new import clears them", () => {
+  const scope = createChartContext();
+  commitWideSchema(scope);
+  scope.evaluate('dom.schemaSearch.value = "日期"; handleSchemaSearch(); selectSchemaKind("date")');
+  scope.evaluate('stageFieldTypeChange("代码1", "category"); applyFieldConfiguration()');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "日期", kind: "date" });
+  assert.equal(scope.elements.get("schemaSearch").value, "日期");
+  assert.equal(shownFields(scope).length, 5);
+  // Every date field becomes a category: the type has no field left and falls back to 全部.
+  scope.evaluate('["日期1", "日期2", "日期3", "日期4", "日期5"].forEach((field) => stageFieldTypeChange(field, "category")); applyFieldConfiguration()');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "日期", kind: "all" });
+  commitWideSchema(scope);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "", kind: "all" });
+  assert.equal(scope.elements.get("schemaSearch").value, "");
+  scope.evaluate("resetAnalysisState()");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.schemaFilter)")), { query: "", kind: "all" });
+});
+
+test("v3.0.0 F2: the toolbar is static, bound once, and the table box is limited only above 640 px", () => {
+  const html = repoFile("index.html");
+  const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
+  assertInOrder(schema, [
+    '<div id="schemaFilter" class="schema-filter hidden">',
+    '<input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">',
+    '<div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>',
+    '<p id="schemaFilterEmpty" class="empty-state hidden">没有符合条件的字段。</p>',
+    '<div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">',
+    '<table id="schemaTable"'
+  ]);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.schemaSearch\.addEventListener\("input", handleSchemaSearch\)/g) || []).length, 1);
+  assert.equal((script.match(/dom\.schemaKinds\.addEventListener\("click", handleSchemaKindClick\)/g) || []).length, 1);
+  const css = repoFile("style.css");
+  assert.match(css, /@media \(min-width: 641px\) \{\s*\.schema-table-wrap \{\s*max-height: [^;]+;\s*overflow: auto;\s*\}\s*\.schema-table-wrap th \{\s*position: sticky;\s*top: 0;/);
+  // Printed: no search or filters, no height limit, every field.
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.match(print, /\.schema-filter,/);
+  assert.match(print, /\.schema-table-wrap \{\s*max-height: none !important;/);
+  assert.match(print, /\.schema-table-wrap tr\[hidden\] \{\s*display: table-row !important;/);
+});
+
+test("v3.0.0 F2: field names in the table and the kinds are escaped", () => {
+  const scope = createChartContext();
+  const fields = Array.from({ length: 21 }, (_, index) => (index === 0 ? "字段<script>" : `f${index}`));
+  commitGuardRows(scope, fields, Array.from({ length: 12 }, (_, index) => Object.fromEntries(fields.map((field) => [field, index % 2 ? "x" : "y"]))), "escape.csv");
+  const html = scope.elements.get("schemaTable").innerHTML;
+  assert.match(html, /title="字段&lt;script&gt;">字段&lt;script&gt;<\/span>/);
+  assert.doesNotMatch(html + scope.elements.get("schemaKinds").innerHTML, /字段<script>/);
+});

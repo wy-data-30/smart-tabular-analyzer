@@ -159,6 +159,11 @@ function formatStatusNoteSummary(sourceName, count) {
   return `${sourceName} 已载入，有 ${formatInteger(count)} 条说明`;
 }
 
+// The field table's search box (v3.0.0 F2), shown for more than 20 fields.
+function formatSchemaSearchPlaceholder(fieldCount) {
+  return `搜索 ${formatInteger(fieldCount)} 个字段`;
+}
+
 // The upload page's way back to the analysis still in memory (v3.0.0).
 function formatReturnToAnalysis(sourceName) {
   return `回到「${sourceName}」的分析`;

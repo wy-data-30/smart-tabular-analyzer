@@ -85,6 +85,9 @@ const state = {
   importStatus: null,
   // v3.0.0: the module shown when 换一个文件 left the workspace, for returnToAnalysis().
   returnModule: null,
+  // v3.0.0 F2: the field table's search and type filter (more than 20 fields). Applying the
+  // field configuration keeps them; imports and resets clear them. Nothing is stored.
+  schemaFilter: { query: "", kind: "all" },
   filters: {
     category: null,
     numeric: null,
@@ -139,6 +142,10 @@ const dom = {
   previewNextPage: document.getElementById("previewNextPage"),
   previewLastPage: document.getElementById("previewLastPage"),
   schemaTable: document.getElementById("schemaTable"),
+  schemaFilter: document.getElementById("schemaFilter"),
+  schemaSearch: document.getElementById("schemaSearch"),
+  schemaKinds: document.getElementById("schemaKinds"),
+  schemaFilterEmpty: document.getElementById("schemaFilterEmpty"),
   fieldConfigMessage: document.getElementById("fieldConfigMessage"),
   applyFieldConfig: document.getElementById("applyFieldConfig"),
   restoreAutoFieldTypes: document.getElementById("restoreAutoFieldTypes"),
@@ -407,6 +414,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.previewPage = 1;
   state.problemView = null;
   state.problemViewOpener = null;
+  state.schemaFilter = { query: "", kind: "all" };
   // Source-file hints are replaced on every commit; only Excel imports pass them.
   state.numberFormatHints = Object.assign(Object.create(null), numberFormatHints);
   state.headerDetection = buildHeaderDetectionState(headerDetection);
@@ -702,14 +710,19 @@ function goToPreviewPage(action) {
   renderPreview();
 }
 
+// v3.0.0 F1: the numbers of the old 查看详情 are columns now. A select whose draft differs
+// from the applied type carries is-changed; 认不出 follows the draft (updateSchemaDraftRow()).
 function renderSchema() {
   dom.schemaTable.innerHTML = `
     <thead>
       <tr>
         <th>字段名</th>
+        <th>自动类型</th>
         <th>确认类型</th>
+        <th>非空值</th>
+        <th>唯一值</th>
+        <th>认不出</th>
         <th>示例值</th>
-        <th>字段详情</th>
       </tr>
     </thead>
     <tbody>
@@ -723,36 +736,121 @@ function renderSchema() {
           : `${profile.field} 当前类型无需转换`;
         return `
           <tr>
-            <td>${escapeHtml(profile.field)}</td>
+            <td><span class="field-name" title="${escapeHtml(profile.field)}">${escapeHtml(profile.field)}</span></td>
+            <td><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></td>
             <td>
-              <select class="schema-type-select" data-field-type="${escapeHtml(profile.field)}" aria-label="调整 ${escapeHtml(profile.field)} 的字段类型">
+              <select class="schema-type-select${draftTypeKey !== profile.typeKey ? " is-changed" : ""}" data-field-type="${escapeHtml(profile.field)}" aria-label="调整 ${escapeHtml(profile.field)} 的字段类型">
                 ${Object.entries(FIELD_TYPE_LABELS).map(([typeKey, label]) => `
                   <option value="${typeKey}"${draftTypeKey === typeKey ? " selected" : ""}>${escapeHtml(label)}</option>
                 `).join("")}
               </select>
             </td>
+            <td>${formatInteger(profile.nonMissingCount)}</td>
+            <td>${formatInteger(profile.uniqueCount)}</td>
+            <td><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
             <td><span class="schema-example" title="${escapeHtml(exampleText)}">${escapeHtml(exampleText)}</span></td>
-            <td>
-              <details class="schema-details">
-                <summary>查看详情</summary>
-                <dl class="schema-detail-list">
-                  <dt>自动类型</dt><dd><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></dd>
-                  <dt>非空值</dt><dd>${formatInteger(profile.nonMissingCount)}</dd>
-                  <dt>唯一值</dt><dd>${formatInteger(profile.uniqueCount)}</dd>
-                  <dt>认不出</dt>
-                  <dd><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></dd>
-                </dl>
-              </details>
-            </td>
           </tr>
         `;
       }).join("")}
     </tbody>
   `;
+  renderSchemaFilter();
   updateFieldConfigActions();
   if (!dom.fieldConfigMessage.textContent) {
     setFieldConfigMessage("自动识别已完成。可修改类型后统一应用。", "");
   }
+}
+
+// v3.0.0 F2: with more than 20 fields, a search by name and filters by the selects' current
+// types. They only hide rows (tr.hidden): the selects stay in the page, so the one in use keeps
+// the focus, and applying, restoring and the draft check still cover every field.
+const SCHEMA_FILTER_MIN_FIELDS = 21;
+const SCHEMA_KINDS = Object.freeze([
+  ["all", "全部"], ["numeric", "数值"], ["category", "分类"], ["date", "日期"], ["id", "ID"], ["ignore", "忽略"],
+  ["failing", "有认不出的"], ["changed", "改过的"]
+]);
+
+function isSchemaFilterOn() {
+  return state.profiles.length >= SCHEMA_FILTER_MIN_FIELDS;
+}
+
+function isSchemaKind(profile, kind) {
+  const draftTypeKey = getDraftTypeKey(profile);
+  if (kind === "all") return true;
+  if (kind === "failing") return countFieldConversionFailures(profile.field, draftTypeKey) > 0;
+  if (kind === "changed") return draftTypeKey !== profile.typeKey;
+  return draftTypeKey === kind;
+}
+
+function countSchemaKinds() {
+  return Object.fromEntries(SCHEMA_KINDS.map(([kind]) => [kind, state.profiles.filter((profile) => isSchemaKind(profile, kind)).length]));
+}
+
+// Field names the table shows: name contains the search (edge spaces trimmed, case ignored)
+// and the field is of the chosen type.
+function listSchemaFieldsShown() {
+  const query = state.schemaFilter.query.trim().toLocaleLowerCase();
+  return state.profiles
+    .filter((profile) => (!query || profile.field.toLocaleLowerCase().includes(query)) && isSchemaKind(profile, state.schemaFilter.kind))
+    .map((profile) => profile.field);
+}
+
+// The type buttons with their counts. A count of 0 hides its button, except 全部 and the chosen
+// one: that stays until the user picks another type or searches again.
+function renderSchemaKinds() {
+  const counts = countSchemaKinds();
+  dom.schemaKinds.innerHTML = SCHEMA_KINDS
+    .filter(([kind]) => kind === "all" || counts[kind] > 0 || kind === state.schemaFilter.kind)
+    .map(([kind, label]) => `<button type="button" class="schema-kind" data-schema-kind="${kind}" aria-pressed="${kind === state.schemaFilter.kind}">${escapeHtml(label)} <span class="schema-kind-count">${formatInteger(counts[kind])}</span></button>`)
+    .join("");
+}
+
+function applySchemaFilter() {
+  const on = isSchemaFilterOn();
+  const shown = new Set(on ? listSchemaFieldsShown() : state.profiles.map((profile) => profile.field));
+  dom.schemaTable.querySelectorAll("select[data-field-type]").forEach((select) => {
+    const row = select.closest("tr");
+    if (row) row.hidden = !shown.has(select.dataset.fieldType);
+  });
+  dom.schemaFilterEmpty.classList.toggle("hidden", !on || shown.size > 0);
+}
+
+// After each renderSchema(): show or hide the toolbar, fall back to 全部 when the chosen type has
+// no field left (after applying), and filter the new rows.
+function renderSchemaFilter() {
+  const on = isSchemaFilterOn();
+  dom.schemaFilter.classList.toggle("hidden", !on);
+  if (!on) {
+    dom.schemaKinds.innerHTML = "";
+    applySchemaFilter();
+    return;
+  }
+  if (state.schemaFilter.kind !== "all" && countSchemaKinds()[state.schemaFilter.kind] === 0) state.schemaFilter.kind = "all";
+  dom.schemaSearch.placeholder = formatSchemaSearchPlaceholder(state.profiles.length);
+  dom.schemaSearch.value = state.schemaFilter.query;
+  renderSchemaKinds();
+  applySchemaFilter();
+}
+
+function handleSchemaSearch() {
+  state.schemaFilter.query = dom.schemaSearch.value;
+  if (state.schemaFilter.kind !== "all" && countSchemaKinds()[state.schemaFilter.kind] === 0) state.schemaFilter.kind = "all";
+  renderSchemaKinds();
+  applySchemaFilter();
+}
+
+function selectSchemaKind(kind, { focus = false } = {}) {
+  if (!SCHEMA_KINDS.some(([key]) => key === kind)) return;
+  state.schemaFilter.kind = kind;
+  renderSchemaKinds();
+  applySchemaFilter();
+  // The buttons were drawn again: give the focus to the new one.
+  if (focus) dom.schemaKinds.querySelector?.(`[data-schema-kind="${kind}"]`)?.focus();
+}
+
+function handleSchemaKindClick(event) {
+  const button = event.target.closest("[data-schema-kind]");
+  if (button) selectSchemaKind(button.dataset.schemaKind, { focus: true });
 }
 
 function getDraftTypeKey(profile) {
@@ -766,6 +864,9 @@ function stageFieldTypeChange(field, typeKey) {
 
   state.fieldTypeDrafts[field] = typeKey;
   updateSchemaDraftRow(field, typeKey);
+  // F2: the counts follow the selects, but the rows are not filtered again, so the select in
+  // use stays on screen with its focus.
+  if (isSchemaFilterOn()) renderSchemaKinds();
   updateFieldConfigActions();
   if (!hasFieldConfigDraftChanges()) {
     setFieldConfigMessage("当前选择与已应用的字段配置一致。", "");
@@ -785,6 +886,8 @@ function updateSchemaDraftRow(field, typeKey) {
     .find((item) => item.dataset.fieldType === field);
   if (!select) return;
   select.value = typeKey;
+  const profile = state.profiles.find((item) => item.field === field);
+  select.classList.toggle("is-changed", Boolean(profile) && typeKey !== profile.typeKey);
 
   const failureElement = select.closest("tr")?.querySelector(".conversion-failure-count");
   if (!failureElement) return;
@@ -2239,6 +2342,11 @@ function resetAnalysisState() {
   dom.previewPageInfo.textContent = "";
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], 1, 1);
   dom.schemaTable.innerHTML = "";
+  state.schemaFilter = { query: "", kind: "all" };
+  dom.schemaSearch.value = "";
+  dom.schemaKinds.innerHTML = "";
+  dom.schemaFilter.classList.add("hidden");
+  dom.schemaFilterEmpty.classList.add("hidden");
   dom.fieldConfigMessage.textContent = "";
   dom.fieldConfigMessage.className = "field-config-message";
   dom.applyFieldConfig.disabled = true;

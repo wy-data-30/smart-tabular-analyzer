@@ -161,6 +161,10 @@ dom.schemaTable.addEventListener("change", (event) => {
 
 dom.applyFieldConfig.addEventListener("click", applyFieldConfiguration);
 
+dom.schemaSearch.addEventListener("input", handleSchemaSearch);
+
+dom.schemaKinds.addEventListener("click", handleSchemaKindClick);
+
 dom.restoreAutoFieldTypes.addEventListener("click", restoreAutomaticFieldTypes);
 
 dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);

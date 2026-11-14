@@ -1846,34 +1846,19 @@ td.cell-problem {
   min-width: 620px;
 }
 
-.schema-details summary {
-  color: var(--primary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 650;
+/* v3.0.0 F1: a select whose draft differs from the applied type has a blue outline. */
+.schema-type-select.is-changed {
+  border-color: #0068e0;
+  box-shadow: 0 0 0 1px #0068e0;
 }
 
-.schema-details[open] summary {
-  margin-bottom: 9px;
-}
-
-.schema-detail-list {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 5px 10px;
-  min-width: 210px;
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
-.schema-detail-list dt,
-.schema-detail-list dd {
-  margin: 0;
-}
-
-.schema-detail-list dt {
-  color: var(--muted);
+.field-name {
+  display: block;
+  overflow: hidden;
+  max-width: 16em;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversion-failure-count {
@@ -1881,8 +1866,107 @@ td.cell-problem {
   font-weight: 700;
 }
 
+/* 认不出 above 0: the pink dot of its category. */
 .conversion-failure-count.warning {
-  color: var(--danger);
+  color: var(--text);
+}
+
+.conversion-failure-count.warning::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #ff2d55;
+  content: "";
+  vertical-align: 0.1em;
+}
+
+/* v3.0.0 F2: search and type filters for more than 20 fields; the table box keeps its header
+   in view above 640 px (below it the table only scrolls sideways). */
+.schema-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.schema-filter.hidden {
+  display: none;
+}
+
+.schema-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 320px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.schema-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.schema-kind {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(28, 28, 30, 0.06);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.schema-kind:hover {
+  border-color: transparent;
+  background: rgba(28, 28, 30, 0.1);
+  color: var(--text);
+}
+
+.schema-kind[aria-pressed="true"] {
+  background: #fff;
+  border-color: rgba(28, 28, 30, 0.12);
+  color: var(--text);
+}
+
+.schema-kind-count {
+  margin-left: 4px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.empty-state {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.empty-state.hidden {
+  display: none;
+}
+
+@media (min-width: 641px) {
+  .schema-table-wrap {
+    max-height: 70vh;
+    overflow: auto;
+  }
+
+  .schema-table-wrap th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #fafafb;
+  }
 }
 
 .cell-warning {
@@ -2803,11 +2887,27 @@ select:focus-visible,
   .sidebar-backdrop,
   .nav-new-analysis,
   .field-config-actions,
+  .schema-filter,
   .filter-toolbar-actions,
   .data-export-option button,
   .standardized-export-actions,
   .report-actions,
   .app-footer {
+    display: none !important;
+  }
+
+  /* The field table prints whole: no height limit, and every field even while a search or a
+     type filter (not printed) hides some on screen. */
+  .schema-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .schema-table-wrap tr[hidden] {
+    display: table-row !important;
+  }
+
+  #schemaFilterEmpty {
     display: none !important;
   }
 

@@ -225,7 +225,12 @@
             <button id="applyFieldConfig" type="button" disabled>应用字段配置</button>
           </div>
         </div>
-        <div class="table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">
+        <div id="schemaFilter" class="schema-filter hidden">
+          <input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">
+          <div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>
+        </div>
+        <p id="schemaFilterEmpty" class="empty-state hidden">没有符合条件的字段。</p>
+        <div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">
           <table id="schemaTable" aria-label="字段类型配置" aria-describedby="fieldConfigMessage"></table>
         </div>
       </section>
