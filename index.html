@@ -454,14 +454,14 @@
               <h3 id="numericChartTitle">数值字段分布（记录频数）</h3>
               <label class="chart-control" for="numericChartField"><span>选择字段</span><select id="numericChartField"></select></label>
             </div>
-            <div class="chart-frame"><canvas id="numericDistributionChart" role="img" aria-label="数值字段分布图"></canvas></div>
+            <div class="chart-frame"><canvas id="numericDistributionChart" role="img" aria-label="数值字段分布图"></canvas><p id="numericDistributionChartEmpty" class="empty-state chart-empty hidden"></p></div>
           </div>
           <div class="chart-card">
             <div class="chart-header">
               <h3 id="categoryChartTitle">分类字段 Top 10（记录数）</h3>
               <label class="chart-control" for="categoryChartField"><span>选择字段</span><select id="categoryChartField"></select></label>
             </div>
-            <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表"></canvas></div>
+            <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表"></canvas><p id="categoryTopChartEmpty" class="empty-state chart-empty hidden"></p></div>
             <p id="categoryChartInsight" class="chart-insight hidden"></p>
           </div>
           <div class="chart-card wide">
@@ -478,7 +478,7 @@
                 </label>
               </div>
             </div>
-            <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas></div>
+            <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas><p id="dateTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
             <p id="dateChartInsight" class="chart-insight hidden"></p>
           </div>
         </div>
@@ -522,12 +522,12 @@
               </div>
               <div class="chart-card">
                 <div class="chart-header"><h3 id="v2TopGroupTitle">分组结果</h3></div>
-                <div class="chart-frame"><canvas id="v2TopGroupChart" role="img" aria-label="自定义分析分组柱状图"></canvas></div>
+                <div class="chart-frame"><canvas id="v2TopGroupChart" role="img" aria-label="自定义分析分组柱状图"></canvas><p id="v2TopGroupChartEmpty" class="empty-state chart-empty hidden"></p></div>
               </div>
             </div>
             <div id="v2TrendCard" class="chart-card v2-trend-card">
                 <div class="chart-header"><h3 id="v2TrendTitle">时间趋势</h3></div>
-                <div class="chart-frame"><canvas id="v2SelectedTrendChart" role="img" aria-label="自定义分析时间趋势图"></canvas></div>
+                <div class="chart-frame"><canvas id="v2SelectedTrendChart" role="img" aria-label="自定义分析时间趋势图"></canvas><p id="v2SelectedTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
             </div>
             <details class="analysis-details result-details">
               <summary>查看完整统计</summary>

@@ -7965,3 +7965,103 @@ test("v3.0.0 F2: field names in the table and the kinds are escaped", () => {
   assert.match(html, /title="字段&lt;script&gt;">字段&lt;script&gt;<\/span>/);
   assert.doesNotMatch(html + scope.elements.get("schemaKinds").innerHTML, /字段<script>/);
 });
+
+// v3.0.0 commit 6 (F3): empty states as text. drawEmptyChart(canvas, text) keeps its name and
+// arguments (basic:7002 and the commit-0 guard wrap it) but writes the sentence into a static
+// element over the chart instead of painting it on the canvas.
+const CHART_CANVAS_IDS = ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"];
+
+// The fake page's elements have no id of their own; the browser's do.
+function withChartCanvasIds(scope) {
+  const painted = [];
+  CHART_CANVAS_IDS.forEach((id) => {
+    const canvas = scope.context.document.getElementById(id);
+    canvas.id = id;
+    canvas.getContext = () => ({ clearRect() {}, save() {}, restore() {}, fillText(text) { painted.push([id, text]); } });
+  });
+  return painted;
+}
+const chartEmpty = (scope, id) => {
+  const element = scope.context.document.getElementById(`${id}Empty`);
+  return { text: element.textContent, hidden: element.classList.contains("hidden") };
+};
+
+test("v3.0.0 F3: every chart frame has a static, hidden empty-state line after its canvas", () => {
+  const html = repoFile("index.html");
+  CHART_CANVAS_IDS.forEach((id) => {
+    assert.match(html, new RegExp(`<div class="chart-frame"><canvas id="${id}" [^>]*></canvas><p id="${id}Empty" class="empty-state chart-empty hidden"></p></div>`), id);
+  });
+  const css = repoFile("style.css");
+  assert.match(css, /\n\.chart-empty \{[^}]*position: absolute;/);
+});
+
+test("v3.0.0 F3: drawEmptyChart writes its sentence as text, word for word, and paints nothing; the next real chart clears it", () => {
+  const scope = createChartContext();
+  const painted = withChartCanvasIds(scope);
+  commitGuardRows(scope, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  assert.deepEqual(chartEmpty(scope, "numericDistributionChart"), { text: "没有可用的数值字段", hidden: false });
+  assert.deepEqual(chartEmpty(scope, "dateTrendChart"), { text: "没有可用的日期字段", hidden: false });
+  assert.deepEqual(chartEmpty(scope, "categoryTopChart"), { text: "", hidden: true });
+  assert.deepEqual(painted, []);
+  // A file with numbers and dates: the charts are drawn and the sentences go.
+  commitGuardRows(scope, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: String(100 + index * 10), 组: index % 2 ? "A" : "B"
+  })), "numbers.csv");
+  scope.evaluate('dom.numericChartField.value = "金额"; renderCharts()');
+  assert.deepEqual(chartEmpty(scope, "numericDistributionChart"), { text: "", hidden: true });
+  assert.deepEqual(chartEmpty(scope, "dateTrendChart"), { text: "", hidden: true });
+  // Chart.js missing: the sentence goes into all three frames.
+  scope.context.Chart = scope.context.window.Chart = null;
+  scope.evaluate("renderCharts()");
+  ["numericDistributionChart", "categoryTopChart", "dateTrendChart"].forEach((id) => {
+    assert.deepEqual(chartEmpty(scope, id), { text: "图表组件加载失败，请刷新页面重试", hidden: false }, id);
+  });
+  // A reset clears all five.
+  scope.evaluate("resetAnalysisState()");
+  CHART_CANVAS_IDS.forEach((id) => assert.deepEqual(chartEmpty(scope, id), { text: "", hidden: true }, id));
+  assert.deepEqual(painted, []);
+});
+
+test("v3.0.0 F3: the custom analysis' empty trend says so in its frame, and a new analysis clears it", () => {
+  const trend = createChartContext();
+  withChartCanvasIds(trend);
+  commitGuardRows(trend, ["日期", "金额", "组"], Array.from({ length: 30 }, (_, index) => ({
+    日期: index < 25 ? `2025-01-${String(index + 1).padStart(2, "0")}` : "", 金额: String(100 + index * 10), 组: index < 25 ? "A" : "B"
+  })), "trend.csv");
+  filterGuardRows(trend, "组", ["B"]);
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(chartEmpty(trend, "v2SelectedTrendChart"), { text: "所选时间字段没有可用的趋势数据", hidden: false });
+  trend.evaluate("clearAllFilters()");
+  trend.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "组"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "日期"; renderV2Analysis()');
+  assert.deepEqual(chartEmpty(trend, "v2SelectedTrendChart"), { text: "", hidden: true });
+});
+
+test("v3.0.0 F3: empty tables and lists get the shared empty-state look by a class on their container; the sentences stay as they were", () => {
+  const words = createChartContext();
+  commitGuardRows(words, ["名称", "备注"], Array.from({ length: 20 }, (_, index) => ({ 名称: ["甲", "乙", "丙"][index % 3], 备注: index % 2 ? "x" : "y" })), "words.csv");
+  const has = (id, name) => words.elements.get(id).classList.contains(name);
+  assert.equal(has("outlierTable", "is-empty-table"), true);
+  assert.equal(has("numericStatsTable", "is-empty-table"), true);
+  assert.equal(has("idDuplicateDetails", "is-empty"), true);
+  assert.equal(has("placeholderDetails", "is-empty"), true);
+  assert.match(words.elements.get("outlierTable").innerHTML, /<td>未识别到数值字段。<\/td>/);
+  // With data the marks go.
+  // 订单ID is an ID by its name (two values repeat); 金额 has an N/A; 组 is for the filter below.
+  commitGuardRows(words, ["日期", "金额", "订单ID", "组"], Array.from({ length: 20 }, (_, index) => ({ 日期: `2025-01-${String(index + 1).padStart(2, "0")}`, 金额: index === 3 ? "N/A" : String(index), 订单ID: `K${index % 18}`, 组: index % 2 ? "A" : "B" })), "data.csv");
+  assert.deepEqual(JSON.parse(words.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["date", "numeric", "id", "category"]);
+  ["outlierTable", "numericStatsTable"].forEach((id) => assert.equal(has(id, "is-empty-table"), false, id));
+  assert.equal(has("idDuplicateDetails", "is-empty"), false);
+  assert.equal(has("placeholderDetails", "is-empty"), false);
+  // A filtered range with no rows: the preview table.
+  filterGuardRows(words, "组", ["没有这个值"]);
+  assert.equal(has("previewTable", "is-empty-table"), true);
+  words.evaluate("clearAllFilters()");
+  assert.equal(has("previewTable", "is-empty-table"), false);
+
+  const css = repoFile("style.css");
+  const shared = css.match(/\n(\.empty-state,[^{]*)\{/);
+  assert.ok(shared, "one shared rule");
+  [".empty-note", ".filter-value-empty", ".filter-empty-note", ".id-duplicate-details.is-empty .id-duplicate-note", ".placeholder-details.is-empty .placeholder-note"]
+    .forEach((selector) => assert.ok(shared[1].includes(selector), selector));
+  assert.match(css, /\.is-empty-table td \{/);
+});

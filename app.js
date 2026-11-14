@@ -698,9 +698,11 @@ function renderPreview() {
   dom.previewPageInfo.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rows.length)} 行`;
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
+    dom.previewTable.classList.add("is-empty-table");
     dom.previewTable.innerHTML = emptyTable("当前筛选条件下没有可预览的数据。");
     return;
   }
+  dom.previewTable.classList.remove("is-empty-table");
   dom.previewTable.innerHTML = buildRowTableHtml(state.fields, rows.slice(start, end).map((row) => ({ row, line: getSourceRowNumber(row) })));
 }
 
@@ -1498,10 +1500,12 @@ function renderQuality() {
   `;
 
   if (!qualityNumericStats.length) {
+    dom.outlierTable.classList.add("is-empty-table");
     dom.outlierTable.innerHTML = emptyTable("未识别到数值字段。");
     return;
   }
 
+  dom.outlierTable.classList.remove("is-empty-table");
   dom.outlierTable.innerHTML = `
     <thead>
       <tr>
@@ -1715,11 +1719,13 @@ function renderNumberNoteSection(section, details, lines) {
 // and a closing note naming the ID fields without duplicates.
 function renderIdDuplicateDetails() {
   if (!state.idDuplicates.length) {
+    dom.idDuplicateDetails.classList.add("is-empty");
     dom.idDuplicateDetails.innerHTML = `<p class="id-duplicate-note">未识别到 ID 字段。</p>`;
     return;
   }
   const reported = state.idDuplicates.filter((item) => item.mostlyRepeated || item.values.length);
   const cleanFields = state.idDuplicates.filter((item) => !reported.includes(item)).map((item) => item.field);
+  dom.idDuplicateDetails.classList.remove("is-empty");
   dom.idDuplicateDetails.innerHTML = [
     ...reported.map((item) => {
       if (item.mostlyRepeated) {
@@ -1749,6 +1755,7 @@ function renderIdDuplicateDetails() {
 // Buttons carry indexes into state.placeholders for handlePlaceholderClick().
 function renderPlaceholderDetails() {
   if (!state.placeholders.length) {
+    dom.placeholderDetails.classList.add("is-empty");
     dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现像是空值的写法。</p>`;
     return;
   }
@@ -1776,6 +1783,7 @@ function renderPlaceholderDetails() {
   const typeChangeNote = typeChanges.length
     ? `<span class="placeholder-note">${escapeHtml(`按空值处理后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
     : "";
+  dom.placeholderDetails.classList.remove("is-empty");
   dom.placeholderDetails.innerHTML = `
     ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>常见写法全部按空值处理（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
     <ul class="placeholder-list">${items.join("")}</ul>
@@ -1798,10 +1806,12 @@ function handlePlaceholderClick(event) {
 
 function renderNumericStats() {
   if (!state.numericStats.length) {
+    dom.numericStatsTable.classList.add("is-empty-table");
     dom.numericStatsTable.innerHTML = emptyTable("未识别到数值字段。");
     return;
   }
 
+  dom.numericStatsTable.classList.remove("is-empty-table");
   dom.numericStatsTable.innerHTML = `
     <thead>
       <tr>
@@ -2252,19 +2262,28 @@ function chartOptions(axisLabel, valueField = "") {
   };
 }
 
+// v3.0.0 F3: the sentence is ordinary text in the static <p id="<canvas id>Empty"> over the
+// chart frame, no longer painted on the canvas; destroyChart() clears it before a chart is drawn.
+// Name and arguments stay: tests wrap this function to collect the sentences.
 function drawEmptyChart(canvas, text) {
-  const context = canvas.getContext("2d");
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.save();
-  context.font = '13px Inter, "Segoe UI", "Microsoft YaHei", sans-serif';
-  context.fillStyle = CHART_THEME.text;
-  context.textAlign = "center";
-  context.fillText(text, canvas.width / 2, canvas.height / 2);
-  context.restore();
+  const context = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+  if (context) context.clearRect(0, 0, canvas.width, canvas.height);
+  const empty = document.getElementById(`${canvas.id}Empty`);
+  if (!empty) return;
+  empty.textContent = text;
+  empty.classList.remove("hidden");
+}
+
+function clearChartEmpty(id) {
+  const empty = document.getElementById(`${id}Empty`);
+  if (!empty) return;
+  empty.textContent = "";
+  empty.classList.add("hidden");
 }
 
 function resetAnalysisState() {
   Object.keys(state.charts).forEach((id) => destroyChart(id));
+  ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"].forEach(clearChartEmpty);
   state.charts = {};
   state.rows = [];
   state.filteredRows = null;
@@ -2339,6 +2358,7 @@ function resetAnalysisState() {
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
   dom.previewTable.innerHTML = "";
+  dom.previewTable.classList.remove("is-empty-table");
   dom.previewPageInfo.textContent = "";
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], 1, 1);
   dom.schemaTable.innerHTML = "";
@@ -2380,10 +2400,14 @@ function resetAnalysisState() {
   hideProblemView();
   dom.qualityTable.innerHTML = "";
   dom.outlierTable.innerHTML = "";
+  dom.outlierTable.classList.remove("is-empty-table");
   dom.idDuplicateDetails.innerHTML = "";
+  dom.idDuplicateDetails.classList.remove("is-empty");
   dom.placeholderDetails.innerHTML = "";
+  dom.placeholderDetails.classList.remove("is-empty");
   setPlaceholderMessage("");
   dom.numericStatsTable.innerHTML = "";
+  dom.numericStatsTable.classList.remove("is-empty-table");
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";
   dom.excelSheetSelect.innerHTML = "";
@@ -2408,6 +2432,7 @@ function resetAnalysisState() {
 }
 
 function destroyChart(id) {
+  clearChartEmpty(id);
   if (state.charts[id]) {
     state.charts[id].destroy();
     state.charts[id] = null;

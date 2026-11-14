@@ -1942,15 +1942,6 @@ td.cell-problem {
   font-weight: 400;
 }
 
-.empty-state {
-  margin: 12px 0;
-  padding: 16px;
-  border: 1px dashed var(--border-strong);
-  border-radius: 12px;
-  color: var(--text-secondary);
-  text-align: center;
-}
-
 .empty-state.hidden {
   display: none;
 }
@@ -2315,14 +2306,44 @@ select:hover {
 .empty-note {
   display: grid;
   min-height: 110px;
-  padding: 22px;
   place-items: center;
+}
+
+/* v3.0.0 F3: one look for every empty state; the sentences are unchanged. The ID duplicate
+   and placeholder notes are empty states only when their container is marked is-empty. */
+.empty-state,
+.empty-note,
+.filter-value-empty,
+.filter-empty-note,
+.id-duplicate-details.is-empty .id-duplicate-note,
+.placeholder-details.is-empty .placeholder-note {
+  margin: 12px 0;
+  padding: 16px;
   border: 1px dashed var(--border-strong);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel-subtle);
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 13px;
   text-align: center;
+}
+
+.is-empty-table td {
+  padding: 24px 16px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* The chart's empty sentence sits over its frame (the canvas stays, empty). */
+.chart-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  margin: 0;
+  place-items: center;
+}
+
+.chart-empty.hidden {
+  display: none;
 }
 
 .data-export-options {
