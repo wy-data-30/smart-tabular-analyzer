@@ -44,7 +44,7 @@ function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = tru
 }
 
 function tableCells(elements, id) {
-  return [...elements.get(id).innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  return [...elements.get(id).innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
 }
 
 function profileSummary(evaluate) {
@@ -445,7 +445,7 @@ test("statistics count unconvertible values for the current rows only", () => {
   commitRows(scope, ["金额", "地区"], BAD_AMOUNT_ROWS);
 
   assert.equal(scope.evaluate('state.numericStats.find((item) => item.field === "金额").invalidCount'), 3);
-  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th>有效数量<\/th>\s*<th>认不出<\/th>/);
+  assert.match(scope.elements.get("numericStatsTable").innerHTML, /<th(?: class="[^"]*")?>有效数量<\/th>\s*<th(?: class="[^"]*")?>认不出<\/th>/);
   assert.deepEqual(cellsWithClass(scope.elements, "numericStatsTable").slice(0, 3), [
     { warning: false, text: "金额" },
     { warning: false, text: "12" },
@@ -1009,7 +1009,7 @@ test("quality outlier bounds near zero are displayed without negative zero", () 
   evaluate('commitTabularData(["比例"], __rows, "near-zero.csv", beginImport())');
 
   assert.equal(evaluate("state.qualityNumericStats[0].lowerBound"), -0.00075);
-  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  const outlierCells = [...elements.get("outlierTable").innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
   assert.deepEqual(outlierCells, ["比例", "3", "-0.00075", "0.00125"]);
   assert.equal(outlierCells.includes("-0"), false);
 
@@ -1023,7 +1023,7 @@ test("descriptive statistics show small averages instead of rounding them to zer
   put(context, "__rows", rows);
   evaluate('commitTabularData(["误差"], __rows, "small-mean.csv", beginImport())');
 
-  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td>([^<]*)<\/td>/g)].map((match) => match[1]);
+  const statsCells = [...elements.get("numericStatsTable").innerHTML.matchAll(/<td(?: class="[^"]*")?>([^<]*)<\/td>/g)].map((match) => match[1]);
   // statsCells[2] is the 无法转换 count; the statistics start at index 3.
   assert.equal(statsCells[0], "误差");
   assert.equal(statsCells[2], "0");
@@ -7364,7 +7364,14 @@ test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
   assertInOrder(header, ['<button id="sidebarToggle"', "<strong>Smart Tabular Analyzer</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
   assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
-  assert.match(header, /数据仅在浏览器本地处理/);
+  // v3.0.0 look2: no privacy badge in the top bar. Outside the export module (whose notes say how
+  // exporting works) the page states it twice: under the upload title and at the foot of the sidebar.
+  assert.doesNotMatch(header, /数据仅在浏览器本地处理/);
+  const exportStart = html.indexOf('<section id="exportSection"');
+  const outsideExport = html.slice(0, exportStart) + html.slice(html.indexOf("<footer", exportStart));
+  assert.doesNotMatch(outsideExport.replace(/<p class="(?:sidebar-privacy|product-description)">[^<]*<\/p>/g, ""), /不会上传|不会离开|仅在浏览器本地|本地处理/);
+  assert.deepEqual(outsideExport.match(/<p class="[^"]+">[^<]*(?:不会上传|不会离开)[^<]*<\/p>/g),
+    ['<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。</p>', '<p class="product-description">不用安装，表格不会离开这台电脑。</p>']);
   assert.doesNotMatch(html, /class="header-cta"|上传文件<\/a>|上传新文件/);
   assert.doesNotMatch(html, /class="section-label"/);
   assert.doesNotMatch(html, /class="report-header"|class="results-nav"/);
@@ -7835,7 +7842,7 @@ test("v3.0.0 way back: 换一个文件 and the entry are bound in script.js", ()
 });
 
 // v3.0.0 commit 5: the field table (F1) and its search and type filters (F2).
-const schemaHeaders = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<th>([^<]*)<\/th>/g)].map((match) => match[1]);
+const schemaHeaders = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<th(?: class="[^"]*")?>([^<]*)<\/th>/g)].map((match) => match[1]);
 const schemaRows = (scope) => [...scope.elements.get("schemaTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)].slice(1).map((match) => match[1]);
 const schemaRowOf = (scope, field) => schemaRows(scope).find((row) => row.includes(`data-field-type="${field}"`));
 
@@ -7848,7 +7855,7 @@ test("v3.0.0 F1: the field table shows 字段名、自动类型、确认类型�
   assert.equal(schemaRows(orders).length, profiles.length);
   profiles.forEach(([field, typeKey, typeLabel, nonMissing, unique, failures]) => {
     const row = schemaRowOf(orders, field);
-    const cells = [...row.matchAll(/<td>([\s\S]*?)<\/td>/g)].map((match) => match[1].trim());
+    const cells = [...row.matchAll(/<td(?: class="[^"]*")?>([\s\S]*?)<\/td>/g)].map((match) => match[1].trim());
     assert.equal(cells.length, 7, field);
     assert.equal(cells[0], `<span class="field-name" title="${field}">${field}</span>`);
     assert.equal(cells[1], `<span class="type-badge ${typeKey}">${typeLabel}</span>`);
@@ -8148,7 +8155,8 @@ test("v3.0.0 quality: only notes of more than one sentence keep their paragraph 
   const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
   const notes = [...quality.matchAll(/<p class="section-note">([^<]*)<\/p>(\s*<button type="button" class="text-button note-toggle" aria-expanded="false">展开<\/button>)?/g)];
   const sentences = notes.map((match) => (match[1].match(/。/g) || []).length);
-  assert.deepEqual(sentences, [1, 1, 2, 1, 2, 3, 3]);
+  // v3.0.0 look2: the module's own one-sentence note became the aside next to the title.
+  assert.deepEqual(sentences, [1, 2, 1, 2, 3, 3]);
   // A single sentence shows whole and has no button.
   assert.deepEqual(notes.map((match) => Boolean(match[2])), sentences.map((count) => count > 1));
   assert.equal((quality.match(/class="text-button note-toggle"/g) || []).length, 4);
@@ -8276,9 +8284,9 @@ test("v3.0.0 look: modules sit on the grey page; their content blocks are white 
     const own = css.match(new RegExp(`(?:^|\\n)(?<!,\\r?\\n)${selector.replace(".", "\\.")} \\{([^}]*)\\}`));
     if (own) assert.doesNotMatch(own[1], /background:|border:|border-radius:/, selector);
   });
-  // The containers that hold such cards (custom analysis, its details, the problem rows) are not
-  // cards themselves: no card inside a card.
-  [".analysis-panel", ".analysis-details", ".problem-rows"].forEach((selector) => {
+  // The containers that hold such cards (custom analysis and its details) are not cards
+  // themselves: no card inside a card. (v3.0.0 look2: the problem rows became a card.)
+  [".analysis-panel", ".analysis-details"].forEach((selector) => {
     const own = cssRule(css, selector);
     assert.match(own, /padding: 0;/, selector);
     assert.match(own, /border: 0;/, selector);
@@ -8343,8 +8351,8 @@ test("v3.0.0 look: quality tags are neutral (white, grey line, grey at 0), no am
   assert.match(problemCell, /font-weight: 600;/);
   // The import message keeps its amber warning.
   assert.match(cssRule(css, ".status-panel.warning"), /background: var\(--warning-soft\);/);
-  // The upload page's privacy note is secondary grey.
-  assert.match(cssRule(css, ".privacy-badge"), /color: var\(--text-secondary\);/);
+  // v3.0.0 look2: the privacy badge and its styles are gone.
+  assert.doesNotMatch(css, /\.privacy-badge/);
   [["suspectedTotalSection", "#5856d6"], ["formulaErrorSection", "#c93400"], ["dateStyleSection", "#a86400"], ["lookAlikeSection", "#22973f"], ["placeholderSection", "#148a9e"]].forEach(([id, colour]) => {
     assert.match(css, new RegExp(`#${id} \\{ --dot: ${colour}; \\}`), id);
   });
@@ -8410,4 +8418,183 @@ test("v3.0.0 look: charts take the new blue and the page's font", () => {
   const family = script.match(/Chart\.defaults\.font\.family = '([^']+)';/)[1];
   assert.equal(family, cssRule(repoFile("style.css"), "body").match(/font-family: ([^;]+);/)[1]);
   assert.match(script, /Chart\.defaults\.font\.size = 12;/);
+});
+
+// v3.0.0 look, second pass (impl-v3.0.0-look2): fewer template touches. Items 1–7 of that file.
+test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no privacy badge); the footer only the GitHub link", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
+  assert.match(header, /<strong>Smart Tabular Analyzer<\/strong>/);
+  assert.doesNotMatch(header, /<small>|brand-mark|privacy-badge|数据仅在浏览器本地处理/);
+  assert.doesNotMatch(html, /brand-mark|privacy-badge/);
+  assert.doesNotMatch(css, /\.brand-mark|\.privacy-badge|\.brand-copy small/);
+  assert.match(html, /<title>Smart Tabular Analyzer \| 表格数据体检工具<\/title>/);
+  const footer = html.slice(html.indexOf('<footer class="app-footer">'), html.indexOf("</footer>"));
+  assert.equal((footer.match(/<p>/g) || []).length, 1);
+  assert.match(footer, /<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<span>GitHub 仓库<\/span><\/a><\/p>/);
+  assert.doesNotMatch(footer, /表格数据体检工具|不会上传到服务器|<strong>/);
+  // The privacy sentences that stay: under the upload title and at the foot of the sidebar.
+  assert.match(html, /<p class="product-description">不用安装，表格不会离开这台电脑。<\/p>/);
+  assert.match(html, /<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。<\/p>/);
+  const footerRule = cssRule(css, ".app-footer");
+  assert.match(footerRule, /justify-content: flex-end;/);
+  assert.match(footerRule, /font-size: 12px;/);
+  assert.match(footerRule, /color: var\(--text-secondary\);/);
+});
+
+test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry a one-line aside next to the title", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const heading = cssRule(css, ".section-heading");
+  assert.doesNotMatch(heading, /border-bottom|padding-bottom/);
+  assert.match(heading, /margin-bottom: 14px;/);
+  const h2 = cssRule(css, ".section-heading h2");
+  assert.match(h2, /font-size: 17px;/);
+  assert.match(h2, /font-weight: 600;/);
+  assert.match(h2, /letter-spacing: 0;/);
+  const aside = cssRule(css, ".section-aside");
+  assert.match(aside, /font-size: 13px;/);
+  assert.match(aside, /color: var\(--text-secondary\);/);
+  assert.match(cssRule(css, ".section-title-line"), /align-items: baseline;/);
+  assert.match(cssRule(css, ".section-title-line"), /flex-wrap: wrap;/);
+  const asides = [
+    ["schemaSection", "schemaSectionTitle", "确认字段类型", "识别不准时再改；应用后统一重新计算"],
+    ["qualitySection", "qualitySectionTitle", "空值、重复和其他问题", "始终按导入的原始数据算，不受筛选影响"],
+    ["filterSection", "filterSectionTitle", "设置当前分析范围", "只影响分析结果，不改原始数据和数据质量"]
+  ];
+  for (const [section, id, title, text] of asides) {
+    const start = html.indexOf(`<section id="${section}"`);
+    const head = html.slice(html.indexOf('<div class="section-heading">', start));
+    assert.match(head, new RegExp(`^<div class="section-heading">\\s*<div class="section-title-line">\\s*<h2 id="${id}" tabindex="-1">${title}</h2>\\s*<p class="section-aside">${text}</p>\\s*</div>\\s*</div>`), section);
+    // The old paragraph under the heading is gone.
+    assert.doesNotMatch(head, /^<div class="section-heading">[\s\S]*?<\/div>\s*<\/div>\s*<p class="section-note">/, section);
+  }
+  assert.doesNotMatch(html, /系统已自动推断字段类型|本模块始终基于导入的原始数据计算|分类、数值和日期条件可以同时应用/);
+  assert.equal((html.match(/class="section-aside"/g) || []).length, 3);
+  // The other modules keep their paragraph (custom analysis) and the 当前分析范围 on the right.
+  assert.match(html, /<\/div>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
+  assert.equal((html.match(/<p class="filter-scope">当前分析范围：/g) || []).length, 3);
+});
+
+test("v3.0.0 look2: the quality page is cards: three of their own, and one holding the seven note subsections", () => {
+  const html = repoFile("index.html");
+  const css = repoFile("style.css");
+  const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
+  const start = quality.indexOf('<div class="quality-notes">');
+  assert.ok(start > quality.indexOf('id="problemRowsSection"'), String(start));
+  const notes = quality.slice(start);
+  assertInOrder(notes, ['id="numberConversionSection"', 'id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderSection"', ">编号重复</h3>"]);
+  // Exactly those seven subsections inside it, and none of them before it.
+  assert.equal((notes.match(/<div (?:id="[^"]+" )?class="module-subsection[^"]*">/g) || []).length, 7);
+  assert.equal(quality.slice(0, start).includes('id="numberConversionSection"'), false);
+  const box = cssRule(css, ".quality-notes");
+  assert.match(box, /border: 1px solid var\(--card-border\);/);
+  assert.match(box, /border-radius: var\(--radius-card\);/);
+  assert.match(box, /background: #fff;/);
+  assert.doesNotMatch(box, /box-shadow/);
+  // The three cards of their own are styled by id, so their class lists stay as they were.
+  const card = css.match(/\n#suspectedTotalSection,\r?\n#formulaErrorSection,\r?\n#problemRowsSection \{([^}]*)\}/)[1];
+  assert.match(card, /padding: 18px 20px;/);
+  assert.match(card, /border: 1px solid var\(--card-border\);/);
+  assert.match(card, /border-radius: var\(--radius-card\);/);
+  assert.match(card, /background: #fff;/);
+  // A line only between two shown subsections: hidden ones leave no double line.
+  assert.match(css, /\.quality-notes > \.module-subsection:not\(\.hidden\) ~ \.module-subsection:not\(\.hidden\) \{\s*border-top: 1px solid var\(--card-border\);/);
+  assert.match(cssRule(css, ".quality-notes > .module-subsection"), /border-top: 0;/);
+});
+
+test("v3.0.0 look2: number columns of the three quality and statistics tables carry the num class; the report has none", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const classesOf = (tableHtml) => [...tableHtml.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((row) => [...row[1].matchAll(/<t[hd](?: class="([^"]*)")?>/g)].map((cell) => (cell[1] || "").split(" ").includes("num")));
+  const expectRows = (id, pattern) => {
+    const rows = classesOf(orders.elements.get(id).innerHTML);
+    assert.ok(rows.length > 1, id);
+    rows.forEach((row) => assert.deepEqual(row, pattern, id));
+  };
+  expectRows("qualityTable", [false, false, true, true, true, false]);
+  expectRows("outlierTable", [false, true, true, true, false]);
+  expectRows("numericStatsTable", [false, true, true, true, true, true, true, true]);
+  // The warning colour still sits on the same cell.
+  assert.match(orders.elements.get("qualityTable").innerHTML, /<td class="num cell-warning">/);
+  assert.match(repoFile("style.css"), /\nth\.num,\r?\ntd\.num \{[^}]*text-align: right;/);
+  const report = orders.evaluate("buildHtmlReport(buildReportData(new Date(2026, 0, 1)))");
+  assert.doesNotMatch(report, /class="num/);
+});
+
+test("v3.0.0 look2: trend lines are straight with white points; every chart has at most 5 y ticks", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const charts = withFakeCharts(orders);
+  orders.evaluate(`
+    dom.numericChartField.value = "金额";
+    renderCharts();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderV2Analysis();
+  `);
+  const lines = charts.filter((config) => config.type === "line");
+  assert.equal(lines.length, 2);
+  for (const config of lines) {
+    const dataset = config.data.datasets[0];
+    assert.equal(dataset.tension, 0);
+    assert.equal(dataset.fill, false);
+    assert.equal(dataset.borderWidth, 2.5);
+    assert.equal(dataset.pointRadius, 4);
+    assert.equal(dataset.pointBackgroundColor, "#ffffff");
+    assert.equal(dataset.pointBorderColor, dataset.borderColor);
+  }
+  assert.equal(charts.length, 5);
+  charts.forEach((config) => assert.equal(config.options.scales.y.ticks.maxTicksLimit, 5));
+  assert.equal(orders.evaluate('chartOptions("记录数").scales.y.ticks.maxTicksLimit'), 5);
+  // CHART_THEME keeps its seven keys.
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(Object.keys(CHART_THEME))")), ["primary", "primaryFill", "secondary", "secondaryFill", "warning", "text", "grid"]);
+});
+
+test("v3.0.0 look2: x-axis labels keep a visible gap (autoSkipPadding 16) on every chart", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const charts = withFakeCharts(orders);
+  orders.evaluate(`
+    dom.numericChartField.value = "金额";
+    renderCharts();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderV2Analysis();
+  `);
+  assert.equal(charts.length, 5);
+  charts.forEach((config) => {
+    assert.equal(config.options.scales.x.ticks.autoSkip, true);
+    assert.equal(config.options.scales.x.ticks.autoSkipPadding, 16);
+  });
+});
+
+test("v3.0.0 look2: the field table's 非空值、唯一值、认不出 columns carry the num class", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const rows = [...orders.elements.get("schemaTable").innerHTML.matchAll(/<tr>([\s\S]*?)<\/tr>/g)]
+    .map((row) => [...row[1].matchAll(/<t[hd](?: class="([^"]*)")?>/g)].map((cell) => (cell[1] || "").split(" ").includes("num")));
+  assert.ok(rows.length > 1);
+  rows.forEach((row) => assert.deepEqual(row, [false, false, false, true, true, true, false]));
+});
+
+test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export headings no longer look like module titles)", () => {
+  const css = repoFile("style.css");
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((match) => [match[1].trim().replace(/\s+/g, " "), match[2]])
+    .filter(([selector, body]) => /(?:^|[ ,])(?:[^ ,]* )?h3$|\.subsection-title$/.test(selector) && /font-size:/.test(body));
+  const selectors = rules.map(([selector]) => selector);
+  assert.deepEqual(selectors, [".subsection-title", ".filter-condition-heading h3", ".frequency-card h3", ".chart-header h3", ".export-module-heading h3", ".data-export-option h3", ".report-export-copy h3"]);
+  rules.forEach(([selector, body]) => {
+    assert.match(body, /font-size: 15px;/, selector);
+    assert.match(body, /font-weight: 600;/, selector);
+  });
+});
+
+test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons have no icon", () => {
+  const html = repoFile("index.html");
+  const buttons = html.slice(html.indexOf('<div class="upload-buttons">'), html.indexOf('<div class="upload-footer">'));
+  assert.match(buttons, /<label class="file-button" for="csvFile">\s*选择数据文件\s*<\/label>/);
+  assert.match(buttons, /<button id="loadSample" class="secondary-button" type="button">\s*使用示例数据\s*<\/button>/);
+  assert.doesNotMatch(buttons, /<svg/);
+  assert.match(html, /<span class="upload-icon" aria-hidden="true">\s*<svg viewBox="0 0 48 48">/);
+  const icon = cssRule(repoFile("style.css"), ".upload-icon");
+  assert.doesNotMatch(icon, /background|border-radius/);
+  assert.match(icon, /color: var\(--primary\);/);
 });

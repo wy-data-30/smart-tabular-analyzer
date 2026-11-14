@@ -739,9 +739,9 @@ function renderSchema() {
         <th>字段名</th>
         <th>自动类型</th>
         <th>确认类型</th>
-        <th>非空值</th>
-        <th>唯一值</th>
-        <th>认不出</th>
+        <th class="num">非空值</th>
+        <th class="num">唯一值</th>
+        <th class="num">认不出</th>
         <th>示例值</th>
       </tr>
     </thead>
@@ -765,9 +765,9 @@ function renderSchema() {
                 `).join("")}
               </select>
             </td>
-            <td>${formatInteger(profile.nonMissingCount)}</td>
-            <td>${formatInteger(profile.uniqueCount)}</td>
-            <td><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
+            <td class="num">${formatInteger(profile.nonMissingCount)}</td>
+            <td class="num">${formatInteger(profile.uniqueCount)}</td>
+            <td class="num"><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
             <td><span class="schema-example" title="${escapeHtml(exampleText)}">${escapeHtml(exampleText)}</span></td>
           </tr>
         `;
@@ -1496,9 +1496,9 @@ function renderQuality() {
       <tr>
         <th>字段</th>
         <th>类型</th>
-        <th>空值数量</th>
-        <th>空值占比</th>
-        <th>认不出</th>
+        <th class="num">空值数量</th>
+        <th class="num">空值占比</th>
+        <th class="num">认不出</th>
         <th>查看</th>
       </tr>
     </thead>
@@ -1507,9 +1507,9 @@ function renderQuality() {
         <tr>
           <td>${escapeHtml(profile.field)}</td>
           <td>${escapeHtml(profile.type)}</td>
-          <td>${formatInteger(profile.missingCount)}</td>
-          <td>${formatPercent(profile.missingRate)}</td>
-          <td${profile.conversionFailureCount ? ' class="cell-warning"' : ""}>${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
+          <td class="num">${formatInteger(profile.missingCount)}</td>
+          <td class="num">${formatPercent(profile.missingRate)}</td>
+          <td class="num${profile.conversionFailureCount ? " cell-warning" : ""}">${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
           <td>${problemViewCell([
             problemViewButton({ kind: "missing", field: profile.field }, "空值"),
             problemViewButton({ kind: "conversion", field: profile.field }, "认不出")
@@ -1530,9 +1530,9 @@ function renderQuality() {
     <thead>
       <tr>
         <th>字段</th>
-        <th>偏大或偏小的个数</th>
-        <th>下界</th>
-        <th>上界</th>
+        <th class="num">偏大或偏小的个数</th>
+        <th class="num">下界</th>
+        <th class="num">上界</th>
         <th>查看</th>
       </tr>
     </thead>
@@ -1540,9 +1540,9 @@ function renderQuality() {
       ${qualityNumericStats.map((stat) => `
         <tr>
           <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
-          <td>${formatInteger(stat.outlierCount)}</td>
-          <td>${formatFieldNumber(stat.field, stat.lowerBound)}</td>
-          <td>${formatFieldNumber(stat.field, stat.upperBound)}</td>
+          <td class="num">${formatInteger(stat.outlierCount)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.lowerBound)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.upperBound)}</td>
           <td>${problemViewCell([problemViewButton({ kind: "outlier", field: stat.field }, "查看")])}</td>
         </tr>
       `).join("")}
@@ -1839,26 +1839,26 @@ function renderNumericStats() {
     <thead>
       <tr>
         <th>字段</th>
-        <th>有效数量</th>
-        <th>认不出</th>
-        <th>平均值</th>
-        <th>中位数</th>
-        <th>最大值</th>
-        <th>最小值</th>
-        <th>标准差</th>
+        <th class="num">有效数量</th>
+        <th class="num">认不出</th>
+        <th class="num">平均值</th>
+        <th class="num">中位数</th>
+        <th class="num">最大值</th>
+        <th class="num">最小值</th>
+        <th class="num">标准差</th>
       </tr>
     </thead>
     <tbody>
       ${state.numericStats.map((stat) => `
         <tr>
           <td>${escapeHtml(formatFieldLabel(stat.field))}</td>
-          <td>${formatInteger(stat.count)}</td>
-          <td${stat.invalidCount ? ' class="cell-warning"' : ""}>${formatInteger(stat.invalidCount)}</td>
-          <td>${formatFieldNumber(stat.field, stat.mean)}</td>
-          <td>${formatFieldNumber(stat.field, stat.median)}</td>
-          <td>${formatFieldNumber(stat.field, stat.max)}</td>
-          <td>${formatFieldNumber(stat.field, stat.min)}</td>
-          <td>${formatFieldNumber(stat.field, stat.std)}</td>
+          <td class="num">${formatInteger(stat.count)}</td>
+          <td class="num${stat.invalidCount ? " cell-warning" : ""}">${formatInteger(stat.invalidCount)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.mean)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.median)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.max)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.min)}</td>
+          <td class="num">${formatFieldNumber(stat.field, stat.std)}</td>
         </tr>
       `).join("")}
     </tbody>
@@ -2018,10 +2018,7 @@ function renderDateTrendChart() {
           ? `${formatFieldLabel(numericField)}${yearly ? "年度" : " "}${aggregationLabel}趋势`
           : `${yearly ? "年度" : ""}记录数趋势`,
         data: trend.values,
-        borderColor: CHART_THEME.primary,
-        backgroundColor: CHART_THEME.primaryFill,
-        tension: 0.25,
-        fill: true
+        ...trendLineStyle(CHART_THEME.primary)
       }]
     },
     options: chartOptions(numericAxisLabel(numericField, aggregationLabel), numericField)
@@ -2234,10 +2231,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
       datasets: [{
         label: dom.v2TrendTitle.textContent,
         data: trend.values,
-        borderColor: CHART_THEME.secondary,
-        backgroundColor: CHART_THEME.secondaryFill,
-        tension: 0.25,
-        fill: true
+        ...trendLineStyle(CHART_THEME.secondary)
       }]
     },
     options: chartOptions(numericAxisLabel(metricField, aggregateLabel), metricField)
@@ -2246,6 +2240,21 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
 
 function getAggregateMethodLabel(method) {
   return { sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和";
+}
+
+// v3.0.0: a trend is a straight line with white points outlined in the line's colour, no fill.
+function trendLineStyle(color) {
+  return {
+    borderColor: color,
+    borderWidth: 2.5,
+    tension: 0,
+    fill: false,
+    pointRadius: 4,
+    pointHoverRadius: 5,
+    pointBackgroundColor: "#ffffff",
+    pointBorderColor: color,
+    pointBorderWidth: 2
+  };
 }
 
 function chartOptions(axisLabel, valueField = "") {
@@ -2276,7 +2285,7 @@ function chartOptions(axisLabel, valueField = "") {
     },
     scales: {
       x: {
-        ticks: { maxRotation: 0, minRotation: 0, color: CHART_THEME.text, autoSkip: true, maxTicksLimit: 9 },
+        ticks: { maxRotation: 0, minRotation: 0, color: CHART_THEME.text, autoSkip: true, autoSkipPadding: 16, maxTicksLimit: 9 },
         grid: { display: false },
         border: { display: false }
       },
@@ -2285,6 +2294,7 @@ function chartOptions(axisLabel, valueField = "") {
         title: { display: true, text: axisLabel, color: CHART_THEME.text },
         ticks: {
           color: CHART_THEME.text,
+          maxTicksLimit: 5,
           ...(valueField ? { callback: (value) => formatFieldNumber(valueField, Number(value)) } : {})
         },
         grid: { color: CHART_THEME.grid },

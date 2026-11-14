@@ -148,10 +148,6 @@ body.has-results .header-actions .nav-new-analysis {
   display: inline-flex;
 }
 
-body.has-results .privacy-badge {
-  display: none;
-}
-
 .icon-button {
   display: inline-grid;
   flex: 0 0 auto;
@@ -239,21 +235,6 @@ body.has-results .privacy-badge {
   text-decoration: none;
 }
 
-.brand-mark {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 10px;
-  background: var(--primary);
-  color: #fff;
-}
-
-.brand-mark svg {
-  width: 25px;
-  height: 25px;
-}
-
 .brand-copy {
   display: grid;
   line-height: 1.2;
@@ -264,32 +245,12 @@ body.has-results .privacy-badge {
   font-weight: 700;
 }
 
-.brand-copy small {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .header-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 16px;
   margin-left: auto;
-}
-
-.privacy-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.privacy-badge svg {
-  width: 18px;
-  height: 18px;
 }
 
 .app-shell {
@@ -416,8 +377,6 @@ body.has-results .sample-preview {
   width: 48px;
   height: 48px;
   place-items: center;
-  border-radius: 10px;
-  background: var(--primary-soft);
   color: var(--primary);
 }
 
@@ -1162,16 +1121,29 @@ body.has-results .app-sidebar {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
 }
 
 .section-heading h2 {
   margin-bottom: 0;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+/* The title and, for three modules, a one-line aside on its baseline (wraps on phones). */
+.section-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  min-width: 0;
+}
+
+.section-aside {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .section-note {
@@ -1373,6 +1345,13 @@ tbody tr:last-child td {
   border-bottom: 0;
 }
 
+/* v3.0.0 look2: number columns of the quality and statistics tables (app.js adds the class). */
+th.num,
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .two-column {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1499,10 +1478,37 @@ td .problem-view-button + .problem-view-button {
   font-size: 13px;
 }
 
-.problem-rows {
-  padding: 0;
-  border: 0;
-  background: transparent;
+/* v3.0.0 look2: the quality page is cards. Suspected totals, formula errors and the problem
+   rows are a card each; the seven note subsections share one, a line between two shown ones. */
+#suspectedTotalSection,
+#formulaErrorSection,
+#problemRowsSection {
+  margin: 0 0 22px;
+  padding: 18px 20px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+#problemRowsSection {
+  margin-top: 22px;
+}
+
+.quality-notes {
+  margin-top: 22px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.quality-notes > .module-subsection {
+  margin: 0;
+  padding: 18px 20px;
+  border-top: 0;
+}
+
+.quality-notes > .module-subsection:not(.hidden) ~ .module-subsection:not(.hidden) {
+  border-top: 1px solid var(--card-border);
 }
 
 .problem-rows-heading {
@@ -1754,7 +1760,7 @@ td.cell-problem {
 .filter-condition-heading h3 {
   margin: 0;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .filter-condition-heading span {
@@ -2165,6 +2171,7 @@ td.cell-problem {
 .frequency-card h3 {
   margin-bottom: 8px;
   font-size: 15px;
+  font-weight: 600;
 }
 
 .frequency-row {
@@ -2530,7 +2537,8 @@ select:hover {
 
 .export-module-heading h3 {
   margin: 2px 0 0;
-  font-size: 17px;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .data-export-option h3,
@@ -2568,6 +2576,7 @@ select:hover {
 .data-export-option h3 {
   margin-bottom: 5px;
   font-size: 15px;
+  font-weight: 600;
 }
 
 .data-export-option p {
@@ -2631,6 +2640,7 @@ select:hover {
 .report-export-copy h3 {
   margin-bottom: 6px;
   font-size: 15px;
+  font-weight: 600;
 }
 
 .report-export-copy p {
@@ -2674,20 +2684,16 @@ select:hover {
 
 .app-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   width: min(1320px, 100%);
   margin: 0 auto;
   padding: 0 24px 24px;
-  color: var(--muted);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
 .app-footer p {
   margin-bottom: 0;
-}
-
-.app-footer strong {
-  color: var(--text-secondary);
 }
 
 .app-footer a {
@@ -2795,14 +2801,6 @@ select:focus-visible,
   .brand-copy strong {
     font-size: 13px;
     white-space: nowrap;
-  }
-
-  .brand-copy small {
-    display: none;
-  }
-
-  .privacy-badge {
-    display: none;
   }
 
   .header-actions {
@@ -3071,11 +3069,6 @@ select:focus-visible,
     width: 100%;
   }
 
-  .app-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 4px;
-  }
 }
 
 @media (max-width: 390px) {

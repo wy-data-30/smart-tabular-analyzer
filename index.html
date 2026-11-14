@@ -21,16 +21,8 @@
         </svg>
       </button>
       <a class="brand" href="#mainContent" aria-label="Smart Tabular Analyzer 首页">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 40 40">
-            <rect x="10" y="9.5" width="20" height="21" rx="3" fill="none" stroke="currentColor" stroke-width="2.2"/>
-            <path d="M10 16.5h20M17 9.5v21M24 16.5v14" fill="none" stroke="currentColor" stroke-width="2.2"/>
-            <path d="m25.5 8 2.1 2.1L32 5.7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2"/>
-          </svg>
-        </span>
         <span class="brand-copy">
           <strong>Smart Tabular Analyzer</strong>
-          <small>表格数据体检工具</small>
         </span>
       </a>
       <p id="topbarFileName" class="topbar-file-name"></p>
@@ -47,13 +39,6 @@
       </nav>
 
       <div class="header-actions">
-        <span class="privacy-badge">
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <path d="M10 2.5 16 5v4.4c0 3.8-2.4 6.6-6 8.1-3.6-1.5-6-4.3-6-8.1V5l6-2.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"/>
-            <path d="m7.5 10 1.7 1.7 3.5-3.6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/>
-          </svg>
-          数据仅在浏览器本地处理
-        </span>
         <a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>
       </div>
     </div>
@@ -108,16 +93,9 @@
           <div class="upload-buttons">
             <input id="csvFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
             <label class="file-button" for="csvFile">
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M10 13.8V3.5m0 0L6.4 7.1M10 3.5l3.6 3.6M4 12.5v2.3a1.7 1.7 0 0 0 1.7 1.7h8.6a1.7 1.7 0 0 0 1.7-1.7v-2.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/>
-              </svg>
               选择数据文件
             </label>
             <button id="loadSample" class="secondary-button" type="button">
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M5.8 3.8h6.6l2.8 2.8v9.6H5.8a1.8 1.8 0 0 1-1.8-1.8V5.6a1.8 1.8 0 0 1 1.8-1.8Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"/>
-                <path d="M12.4 3.8v2.8h2.8M7 10h5.3M7 13h4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/>
-              </svg>
               使用示例数据
             </button>
           </div>
@@ -215,11 +193,11 @@
 
       <section id="schemaSection" class="section-block">
         <div class="section-heading">
-          <div>
+          <div class="section-title-line">
             <h2 id="schemaSectionTitle" tabindex="-1">确认字段类型</h2>
+            <p class="section-aside">识别不准时再改；应用后统一重新计算</p>
           </div>
         </div>
-        <p class="section-note">系统已自动推断字段类型。只有在识别不准确时才需要修改；应用后会统一重新计算统计、图表和分析结论。</p>
         <div id="schemaFilter" class="schema-filter hidden">
           <input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">
           <div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>
@@ -239,11 +217,11 @@
 
       <section id="qualitySection" class="section-block">
         <div class="section-heading">
-          <div>
+          <div class="section-title-line">
             <h2 id="qualitySectionTitle" tabindex="-1">空值、重复和其他问题</h2>
+            <p class="section-aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
-        <p class="section-note">本模块始终基于导入的原始数据计算，不受当前筛选条件影响。</p>
         <div id="qualitySummary" class="quality-summary"></div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
@@ -299,6 +277,7 @@
           </div>
           <p id="problemRowsExportStatus" class="inline-status" aria-live="polite"></p>
         </div>
+        <div class="quality-notes">
         <div id="numberConversionSection" class="module-subsection hidden">
           <h3 class="subsection-title">按单位读取的数字</h3>
           <div id="numberConversionDetails" class="number-note-details"></div>
@@ -335,15 +314,16 @@
           <h3 class="subsection-title">编号重复</h3>
           <div id="idDuplicateDetails" class="id-duplicate-details"></div>
         </div>
+        </div>
       </section>
 
       <section id="filterSection" class="section-block">
         <div class="section-heading">
-          <div>
+          <div class="section-title-line">
             <h2 id="filterSectionTitle" tabindex="-1">设置当前分析范围</h2>
+            <p class="section-aside">只影响分析结果，不改原始数据和数据质量</p>
           </div>
         </div>
-        <p class="section-note">分类、数值和日期条件可以同时应用。筛选只影响当前分析结果，不修改原始数据和数据质量报告。</p>
 
         <div class="filter-count-grid" aria-label="筛选记录统计">
           <div class="filter-count-item">
@@ -625,8 +605,7 @@
   </main>
 
   <footer class="app-footer">
-    <p><strong>Smart Tabular Analyzer</strong> · 表格数据体检工具</p>
-    <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span>GitHub 仓库</span></a> · 文件内容不会上传到服务器</p>
+    <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span>GitHub 仓库</span></a></p>
   </footer>
 
   <script src="parsing.js?v=3.0.0"></script>

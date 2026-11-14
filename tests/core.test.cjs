@@ -202,8 +202,13 @@ assert.match(htmlSource, /id="globalClearFilters"/);
 assert.match(htmlSource, /href="#exportSection"/);
 assert.doesNotMatch(htmlSource, /href="#(?:dataExportSection|reportSection)"/);
 assert.match(htmlSource, /<title>Smart Tabular Analyzer \| 表格数据体检工具<\/title>/);
-assert.match(htmlSource, /<strong>Smart Tabular Analyzer<\/strong>\s*<small>表格数据体检工具<\/small>/);
-assert.match(htmlSource, /<p><strong>Smart Tabular Analyzer<\/strong> · 表格数据体检工具<\/p>/);
+// v3.0.0 look2: the top bar shows the name only; the footer only the GitHub link.
+const coreHeaderHtml = htmlSource.slice(htmlSource.indexOf('<header class="app-header">'), htmlSource.indexOf("</header>"));
+assert.match(coreHeaderHtml, /<strong>Smart Tabular Analyzer<\/strong>/);
+assert.doesNotMatch(coreHeaderHtml, /<small>|brand-mark/);
+const coreFooterHtml = htmlSource.slice(htmlSource.indexOf('<footer class="app-footer">'), htmlSource.indexOf("</footer>"));
+assert.match(coreFooterHtml, /^<footer class="app-footer">\s*<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<\/a><\/p>\s*$/);
+assert.doesNotMatch(coreFooterHtml, /表格数据体检工具|不会上传到服务器/);
 assert.doesNotMatch(htmlSource, /智能表格数据分析工具/);
 const legacyProductNamePattern = new RegExp(["Smart", "CSV", "Analyzer"].join(" "));
 assert.doesNotMatch(htmlSource, legacyProductNamePattern);
