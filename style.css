@@ -1113,32 +1113,71 @@ body.has-results .app-sidebar {
   line-height: 1.7;
 }
 
-.metric-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
+/* v3.0.0: the overview's numbers are one line of text. */
+.metric-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
 }
 
-.metric-card {
-  min-height: 96px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
+.metric-item {
+  white-space: nowrap;
 }
 
 .metric-label {
-  margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 560;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .metric-value {
-  font-size: 27px;
-  font-weight: 740;
-  letter-spacing: -0.035em;
-  line-height: 1;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* The data preview in an open <details>: its summary is the old heading. */
+.preview-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.preview-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.preview-details > summary::after {
+  color: var(--text-secondary);
+  content: "收起";
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.preview-details:not([open]) > summary::after {
+  content: "展开";
+}
+
+.preview-details > summary .subsection-title {
+  margin: 0;
+}
+
+/* Quality subsection notes: the first line, then 展开 / 收起 (the whole text stays in the page). */
+/* Only notes of more than one sentence have the button; script.js marks them is-clamped. */
+#qualitySection .section-note.is-clamped:not(.is-expanded) {
+  overflow: hidden;
+  margin-bottom: 4px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-toggle {
+  min-height: 28px;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 13px;
 }
 
 .module-subsection {
@@ -1218,6 +1257,28 @@ table {
   min-width: 500px;
 }
 
+#previewTable td,
+#problemRowsTable td {
+  max-width: 30em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table-wrap :is(td, th):first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.table-wrap td:first-child {
+  background: #fff;
+}
+
+.table-wrap th:first-child {
+  z-index: 3;
+}
+
 th,
 td {
   padding: 11px 13px;
@@ -1250,6 +1311,13 @@ tbody tr:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+/* v3.0.0: in the 920 px column the quality page's two tables stack, each full width, so the
+   空值检查 table keeps its 查看 column in view. */
+#qualitySection .two-column {
+  grid-template-columns: 1fr;
+  gap: 24px;
 }
 
 .two-column > * {
@@ -1793,14 +1861,22 @@ td.cell-problem {
 
 .field-config-toolbar {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
+  margin-top: 12px;
+}
+
+.field-config-toolbar:not(.has-draft) .field-config-message {
+  font-size: 12px;
+}
+
+.field-config-toolbar.has-draft {
+  padding: 12px 14px;
+  border: 1px solid #b9d6f7;
+  border-radius: 12px;
+  background: #eaf3ff;
 }
 
 .field-config-message {
@@ -2024,7 +2100,7 @@ td.cell-problem {
 
 .frequency-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(40px, 30%) auto auto;
   gap: 10px;
   align-items: center;
   padding: 8px 0;
@@ -2041,6 +2117,35 @@ td.cell-problem {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.frequency-bar {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(28, 28, 30, 0.08);
+}
+
+.frequency-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: #8e8e93;
+}
+
+.frequency-card h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 二·9: long text without spaces may break anywhere. */
+.section-block p,
+.section-block li,
+.sidebar-status dd,
+.status-panel {
+  overflow-wrap: anywhere;
 }
 
 .chart-grid {
@@ -2063,14 +2168,17 @@ td.cell-problem {
 
 .chart-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   min-height: 38px;
   margin-bottom: 12px;
 }
 
 .chart-header h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin-bottom: 0;
   font-size: 14px;
   font-weight: 680;
@@ -2085,11 +2193,15 @@ td.cell-problem {
   font-weight: 620;
 }
 
+.chart-control select {
+  max-width: 16em;
+}
+
 .chart-control-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 8px 14px;
 }
 
@@ -2363,6 +2475,25 @@ select:hover {
 .export-module-heading h3 {
   margin: 2px 0 0;
   font-size: 17px;
+}
+
+.data-export-option h3,
+.export-count {
+  display: inline;
+}
+
+.export-count {
+  margin: 0 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.export-count strong {
+  color: var(--text);
+}
+
+.data-export-option h3 + .export-count + p {
+  margin-top: 4px;
 }
 
 .data-export-option {
@@ -2699,6 +2830,38 @@ select:focus-visible,
   /* The sheet choice stacks (in v2.12.0 it made a 390 px page scroll sideways by 54 px). */
   .sheet-selection-panel {
     grid-template-columns: 1fr;
+  }
+
+  .sample-preview-table,
+  .sample-preview-table thead,
+  .sample-preview-table tbody {
+    display: block;
+    min-width: 0;
+  }
+
+  .sample-preview-table tr {
+    display: grid;
+    grid-template-columns: 2.6em minmax(0, 1.2fr) minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 1fr);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sample-preview-table :is(td, th) {
+    overflow: hidden;
+    padding: 10px 6px;
+    border-bottom: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sample-preview-table td.mark-note,
+  .sample-preview-table th:last-child {
+    grid-column: 1 / -1;
+    padding-top: 0;
+    white-space: normal;
+  }
+
+  .sample-preview-table td.mark-note:empty {
+    display: none;
   }
 
   .sheet-selection-controls {

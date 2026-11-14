@@ -171,6 +171,13 @@ dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);
 
 dom.qualitySection.addEventListener("click", handleProblemViewClick);
 
+dom.qualitySection.addEventListener("click", toggleSectionNote);
+
+// The notes with a 展开 button (more than one sentence) show their first line until opened.
+document.querySelectorAll(".note-toggle").forEach((button) => button.previousElementSibling.classList.add("is-clamped"));
+
+dom.results.addEventListener("mouseover", showTruncatedCellTitle);
+
 dom.problemRowsCategory.addEventListener("change", () => selectProblemCategory(dom.problemRowsCategory.value));
 
 dom.problemRowsClose.addEventListener("click", closeProblemView);

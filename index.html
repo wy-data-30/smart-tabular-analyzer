@@ -195,19 +195,21 @@
         </div>
         <div id="overviewCards" class="metric-grid"></div>
         <div class="module-subsection">
-          <h3 class="subsection-title">数据预览</h3>
-          <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动">
-            <table id="previewTable" aria-label="数据预览"></table>
-          </div>
-          <div class="row-pager">
-            <p id="previewPageInfo" class="row-pager-info" aria-live="polite"></p>
-            <div class="row-pager-buttons">
-              <button id="previewFirstPage" class="secondary-button" type="button" disabled>首页</button>
-              <button id="previewPrevPage" class="secondary-button" type="button" disabled>上一页</button>
-              <button id="previewNextPage" class="secondary-button" type="button" disabled>下一页</button>
-              <button id="previewLastPage" class="secondary-button" type="button" disabled>末页</button>
+          <details class="preview-details" open>
+            <summary><h3 class="subsection-title">数据预览</h3></summary>
+            <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动">
+              <table id="previewTable" aria-label="数据预览"></table>
             </div>
-          </div>
+            <div class="row-pager">
+              <p id="previewPageInfo" class="row-pager-info" aria-live="polite"></p>
+              <div class="row-pager-buttons">
+                <button id="previewFirstPage" class="secondary-button" type="button" disabled>首页</button>
+                <button id="previewPrevPage" class="secondary-button" type="button" disabled>上一页</button>
+                <button id="previewNextPage" class="secondary-button" type="button" disabled>下一页</button>
+                <button id="previewLastPage" class="secondary-button" type="button" disabled>末页</button>
+              </div>
+            </div>
+          </details>
         </div>
       </section>
 
@@ -218,13 +220,6 @@
           </div>
         </div>
         <p class="section-note">系统已自动推断字段类型。只有在识别不准确时才需要修改；应用后会统一重新计算统计、图表和分析结论。</p>
-        <div class="field-config-toolbar">
-          <p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>
-          <div class="field-config-actions">
-            <button id="restoreAutoFieldTypes" class="secondary-button" type="button" disabled>恢复自动识别</button>
-            <button id="applyFieldConfig" type="button" disabled>应用字段配置</button>
-          </div>
-        </div>
         <div id="schemaFilter" class="schema-filter hidden">
           <input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">
           <div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>
@@ -232,6 +227,13 @@
         <p id="schemaFilterEmpty" class="empty-state hidden">没有符合条件的字段。</p>
         <div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">
           <table id="schemaTable" aria-label="字段类型配置" aria-describedby="fieldConfigMessage"></table>
+        </div>
+        <div id="fieldConfigToolbar" class="field-config-toolbar">
+          <p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>
+          <div class="field-config-actions">
+            <button id="restoreAutoFieldTypes" class="secondary-button" type="button" disabled>恢复自动识别</button>
+            <button id="applyFieldConfig" type="button" disabled>应用字段配置</button>
+          </div>
         </div>
       </section>
 
@@ -252,6 +254,7 @@
         <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">公式错误单元格</h3>
           <p class="section-note">这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
           <div id="formulaErrorDetails" class="number-note-details"></div>
         </div>
         <div class="two-column">
@@ -312,16 +315,19 @@
         <div id="constantFieldSection" class="module-subsection hidden">
           <h3 class="subsection-title">整列只有一个值</h3>
           <p class="section-note">这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
           <div id="constantFieldDetails" class="number-note-details"></div>
         </div>
         <div id="lookAlikeSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">同一个值，写法不一样</h3>
           <p class="section-note">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
           <div id="lookAlikeDetails" class="number-note-details"></div>
         </div>
-        <div class="module-subsection">
+        <div id="placeholderSection" class="module-subsection">
           <h3 class="subsection-title">像是空值的写法</h3>
           <p class="section-note">这些写法常被用来表示“没有数据”。按空值处理后：不再算作认不出的数字或日期，也不参与统计、Top 10、分组、筛选选项和编号重复检查。原始数据、数据预览和导出的 CSV 不变。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
           <div id="placeholderDetails" class="placeholder-details"></div>
           <p id="placeholderMessage" class="placeholder-message" role="status" tabindex="-1"></p>
         </div>
@@ -558,25 +564,11 @@
           </div>
           <p class="section-note">导出过程仅在浏览器本地完成。下载文件使用 UTF-8 BOM，并保留原始字段顺序；不会修改或覆盖原始文件。</p>
 
-          <div class="filter-count-grid" aria-label="数据导出记录统计">
-            <div class="filter-count-item">
-              <span>原始行数</span>
-              <strong id="dataExportOriginalCount">0</strong>
-            </div>
-            <div class="filter-count-item current">
-              <span>筛选后行数</span>
-              <strong id="dataExportFilteredCount">0</strong>
-            </div>
-            <div class="filter-count-item">
-              <span>去重后行数</span>
-              <strong id="dataExportDeduplicatedCount">0</strong>
-            </div>
-          </div>
-
           <div class="data-export-options">
             <div class="data-export-option">
               <div>
                 <h3>当前筛选结果</h3>
+                <p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0</strong></p>
                 <p>导出当前分析范围内的全部记录；没有筛选条件时导出全部原始记录。</p>
               </div>
               <button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV</button>
@@ -584,6 +576,7 @@
             <div class="data-export-option">
               <div>
                 <h3>原始数据去重结果</h3>
+                <p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0</strong></p>
                 <p>按全部原始字段识别完全重复行，保留每组重复记录中首次出现的一行。</p>
               </div>
               <button id="exportDeduplicatedCsv" class="secondary-button" type="button" disabled>导出去重后 CSV</button>
@@ -591,6 +584,7 @@
             <div class="data-export-option">
               <div>
                 <h3>写法统一的表</h3>
+                <p class="export-count">原始行数 <strong id="dataExportOriginalCount">0</strong></p>
                 <p>全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已按空值处理的写法，去掉文本首尾空格。先检查会改哪些单元格。</p>
                 <p id="standardizedExportGate" class="standardize-gate"></p>
               </div>

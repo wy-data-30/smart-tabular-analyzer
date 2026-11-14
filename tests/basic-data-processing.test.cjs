@@ -8065,3 +8065,128 @@ test("v3.0.0 F3: empty tables and lists get the shared empty-state look by a cla
     .forEach((selector) => assert.ok(shared[1].includes(selector), selector));
   assert.match(css, /\.is-empty-table td \{/);
 });
+
+// v3.0.0 commit 7a: module structure (section 二·6, 二·7, 二·9).
+const metricItems = (scope) => [...scope.elements.get("overviewCards").innerHTML.matchAll(/<span class="metric-item"><span class="metric-label">([^<]*)<\/span> <strong class="metric-value">([^<]*)<\/strong><\/span>/g)].map((match) => [match[1], match[2]]);
+
+test("v3.0.0 overview: the five numbers are one line of text with their old labels; a filter keeps the 总记录 → 当前分析 form", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const counts = JSON.parse(orders.evaluate('JSON.stringify([state.rows.length, state.fields.length, getProfilesByType("numeric").length, getProfilesByType("category").length])'));
+  assert.deepEqual(counts, [42, 9, 2, 5]);
+  assert.match(orders.elements.get("overviewCards").innerHTML, /^\s*<p class="metric-line">/);
+  assert.doesNotMatch(orders.elements.get("overviewCards").innerHTML, /metric-card/);
+  assert.deepEqual(metricItems(orders), [["总记录数", "42"], ["字段数", "9"], ["数值字段数", "2"], ["分类字段数", "5"], ["空值概览", "6"]]);
+  orders.evaluate(GUARD_EAST_FILTER);
+  assert.deepEqual(metricItems(orders)[0], ["总记录 → 当前分析", "42 → 10"]);
+});
+
+test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
+  const html = repoFile("index.html");
+  const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assertInOrder(overview, [
+    '<details class="preview-details" open>',
+    '<summary><h3 class="subsection-title">数据预览</h3></summary>',
+    '<table id="previewTable" aria-label="数据预览"></table>',
+    '<p id="previewPageInfo"',
+    "</details>"
+  ]);
+});
+
+test("v3.0.0 field configuration: the message and both buttons sit under the table, marked has-draft while drafts wait", async () => {
+  const html = repoFile("index.html");
+  const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
+  assertInOrder(schema, ['<table id="schemaTable"', '<div id="fieldConfigToolbar" class="field-config-toolbar">', '<p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>', '<button id="restoreAutoFieldTypes"', '<button id="applyFieldConfig"']);
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const toolbar = orders.elements.get("fieldConfigToolbar");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+  orders.evaluate('stageFieldTypeChange("客户类型", "id")');
+  assert.equal(toolbar.classList.contains("has-draft"), true);
+  orders.evaluate("applyFieldConfiguration()");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(toolbar.classList.contains("has-draft"), false);
+});
+
+test("v3.0.0 quality: only notes of more than one sentence keep their paragraph and get a 展开 button after it", () => {
+  const html = repoFile("index.html");
+  const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
+  const notes = [...quality.matchAll(/<p class="section-note">([^<]*)<\/p>(\s*<button type="button" class="text-button note-toggle" aria-expanded="false">展开<\/button>)?/g)];
+  const sentences = notes.map((match) => (match[1].match(/。/g) || []).length);
+  assert.deepEqual(sentences, [1, 1, 2, 1, 2, 3, 3]);
+  // A single sentence shows whole and has no button.
+  assert.deepEqual(notes.map((match) => Boolean(match[2])), sentences.map((count) => count > 1));
+  assert.equal((quality.match(/class="text-button note-toggle"/g) || []).length, 4);
+  // script.js marks the notes before a button; only those are cut to one line.
+  assert.match(repoFile("script.js"), /document\.querySelectorAll\("\.note-toggle"\)\.forEach\(\(button\) => button\.previousElementSibling\.classList\.add\("is-clamped"\)\)/);
+  assert.match(repoFile("style.css"), /#qualitySection \.section-note\.is-clamped:not\(\.is-expanded\) \{[^}]*white-space: nowrap;/);
+  assert.match(quality, /<div id="placeholderSection" class="module-subsection">\s*<h3 class="subsection-title">像是空值的写法<\/h3>/);
+  assert.equal((repoFile("script.js").match(/dom\.qualitySection\.addEventListener\("click", toggleSectionNote\)/g) || []).length, 1);
+});
+
+test("v3.0.0 quality: 展开 / 收起 opens the note before it and says so", () => {
+  const scope = createScriptContext();
+  const classes = new Set();
+  const note = { classList: { toggle(name, force) { if (force) classes.add(name); else classes.delete(name); }, contains: (name) => classes.has(name) } };
+  const attributes = { "aria-expanded": "false" };
+  const button = { textContent: "展开", previousElementSibling: note, getAttribute: (name) => attributes[name], setAttribute: (name, value) => { attributes[name] = String(value); } };
+  put(scope.context, "__noteEvent", { target: { closest: (selector) => (selector === ".note-toggle" ? button : null) } });
+  scope.evaluate("toggleSectionNote(__noteEvent)");
+  assert.deepEqual([classes.has("is-expanded"), attributes["aria-expanded"], button.textContent], [true, "true", "收起"]);
+  scope.evaluate("toggleSectionNote(__noteEvent)");
+  assert.deepEqual([classes.has("is-expanded"), attributes["aria-expanded"], button.textContent], [false, "false", "展开"]);
+  // Clicks elsewhere do nothing.
+  put(scope.context, "__otherEvent", { target: { closest: () => null } });
+  scope.evaluate("toggleSectionNote(__otherEvent)");
+});
+
+test("v3.0.0 statistics: each frequency row has a bar as long as its share, and each card title a tooltip", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const html = orders.elements.get("categoryStats").innerHTML;
+  const rows = [...html.matchAll(/<span class="category-name" title="([^"]*)">[^<]*<\/span>\s*<span class="frequency-bar" aria-hidden="true"><span style="width: ([\d.]+)%"><\/span><\/span>\s*<strong>([^<]*)<\/strong>\s*<span>([^<]*)<\/span>/g)];
+  assert.ok(rows.length > 0);
+  rows.forEach(([, , width, , percent]) => assert.equal(`${Number(width).toFixed(1)}%`, percent, width));
+  assert.match(html, /<h3 title="地区">地区<\/h3>/);
+});
+
+test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
+  const html = repoFile("index.html");
+  const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
+  assert.match(options, /<h3>当前筛选结果<\/h3>\s*<p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>原始数据去重结果<\/h3>\s*<p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
+  assert.doesNotMatch(html, /数据导出记录统计/);
+});
+
+test("v3.0.0 dirty data: a truncated table cell shows its full text on hover; chart titles carry their text as a tooltip", async () => {
+  const scope = createScriptContext();
+  const cell = (scrollWidth, text) => ({ tagName: "TD", textContent: text, scrollWidth, clientWidth: 100, title: "" });
+  const long = cell(300, "很长的一格内容");
+  const short = cell(80, "短");
+  put(scope.context, "__cells", [long, short]);
+  scope.evaluate("__cells.forEach((td) => showTruncatedCellTitle({ target: { closest: (selector) => (selector === \".table-wrap td, .table-wrap th\" ? td : null) } }))");
+  assert.equal(long.title, "很长的一格内容");
+  assert.equal(short.title, "");
+  assert.equal((repoFile("script.js").match(/dom\.results\.addEventListener\("mouseover", showTruncatedCellTitle\)/g) || []).length, 1);
+
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  withCapturableCharts(orders);
+  orders.evaluate(`dom.numericChartField.value = "数量"; renderCharts(); ${GUARD_CUSTOM_ANALYSIS}`);
+  ["numericChartTitle", "categoryChartTitle", "dateChartTitle", "v2TopGroupTitle", "v2TrendTitle", "v2PrimaryTableTitle"].forEach((id) => {
+    const element = orders.elements.get(id);
+    assert.ok(element.textContent.length > 0, id);
+    assert.equal(element.title, element.textContent, id);
+  });
+});
+
+test("v3.0.0 dirty data and phones: table cells are capped and cut; the upload sample rows wrap their reason below on phones", () => {
+  const css = repoFile("style.css");
+  // The tables of raw cell values: the data preview and the problem rows.
+  assert.match(css, /#previewTable td,\s*#problemRowsTable td \{[^}]*max-width: 30em;[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(css, /\.table-wrap :is\(td, th\):first-child \{[^}]*position: sticky;[^}]*left: 0;/);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
+  assert.match(phone, /\.sample-preview-table tr \{[^}]*display: grid;/);
+  assert.match(phone, /\.sample-preview-table td\.mark-note,\s*\.sample-preview-table th:last-child \{[^}]*grid-column: 1 \/ -1;/);
+  // The quality page's two tables stack (only there: the charts stay side by side).
+  assert.match(css, /#qualitySection \.two-column \{\s*grid-template-columns: 1fr;/);
+  assert.match(css, /\n\.chart-grid \{\s*display: grid;\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+});

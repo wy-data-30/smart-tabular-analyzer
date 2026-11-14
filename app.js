@@ -147,6 +147,7 @@ const dom = {
   schemaKinds: document.getElementById("schemaKinds"),
   schemaFilterEmpty: document.getElementById("schemaFilterEmpty"),
   fieldConfigMessage: document.getElementById("fieldConfigMessage"),
+  fieldConfigToolbar: document.getElementById("fieldConfigToolbar"),
   applyFieldConfig: document.getElementById("applyFieldConfig"),
   restoreAutoFieldTypes: document.getElementById("restoreAutoFieldTypes"),
   categoryFilterField: document.getElementById("categoryFilterField"),
@@ -580,12 +581,29 @@ function renderOverview() {
     ["空值概览", activeMissing]
   ];
 
-  dom.overviewCards.innerHTML = cards.map(([label, value]) => `
-    <div class="metric-card">
-      <div class="metric-label">${escapeHtml(label)}</div>
-      <div class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</div>
-    </div>
-  `).join("");
+  // v3.0.0: one line of text, same labels and numbers as the old cards.
+  dom.overviewCards.innerHTML = `<p class="metric-line">${cards.map(([label, value]) => (
+    `<span class="metric-item"><span class="metric-label">${escapeHtml(label)}</span> <strong class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</strong></span>`
+  )).join("")}</p>`;
+}
+
+// v3.0.0: a quality subsection's note shows its first line; 展开 / 收起 shows the rest. The text
+// is all in the page either way.
+function toggleSectionNote(event) {
+  const button = event.target.closest(".note-toggle");
+  if (!button) return;
+  const expand = button.getAttribute("aria-expanded") !== "true";
+  button.previousElementSibling.classList.toggle("is-expanded", expand);
+  button.setAttribute("aria-expanded", String(expand));
+  button.textContent = expand ? "收起" : "展开";
+}
+
+// v3.0.0 dirty data: table cells are capped and cut (style.css); hovering one that is cut shows
+// its full text. Added on hover, so the tables' HTML stays as it was.
+function showTruncatedCellTitle(event) {
+  const cell = event.target.closest(".table-wrap td, .table-wrap th");
+  if (!cell || cell.title || cell.scrollWidth <= cell.clientWidth) return;
+  cell.title = cell.textContent;
 }
 
 // A category field's values are concentrated enough to summarise when there are at most
@@ -965,6 +983,8 @@ function hasAutomaticTypeDifferences() {
 
 function updateFieldConfigActions() {
   dom.applyFieldConfig.disabled = !hasFieldConfigDraftChanges();
+  // v3.0.0: a light blue banner while drafts wait; otherwise a grey line under the table.
+  dom.fieldConfigToolbar.classList.toggle("has-draft", hasFieldConfigDraftChanges());
   dom.restoreAutoFieldTypes.disabled = !hasAutomaticTypeDifferences();
   // The problem rows follow the applied configuration; say so while drafts wait.
   dom.problemRowsDraftNote.classList.toggle("hidden", !state.problemView || !hasFieldConfigDraftChanges());
@@ -1848,12 +1868,14 @@ function renderCategoryStats() {
     return;
   }
 
+  // v3.0.0: a bar as long as the share in each row; the card title carries a tooltip.
   dom.categoryStats.innerHTML = state.categoryStats.map((category) => `
     <div class="frequency-card">
-      <h3>${escapeHtml(category.field)}</h3>
+      <h3 title="${escapeHtml(category.field)}">${escapeHtml(category.field)}</h3>
       ${category.top.length ? category.top.map((item) => `
         <div class="frequency-row">
           <span class="category-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+          <span class="frequency-bar" aria-hidden="true"><span style="width: ${(absorbFloatNoise(item.ratio) * 100).toFixed(1)}%"></span></span>
           <strong>${formatInteger(item.count)}</strong>
           <span>${formatPercent(item.ratio)}</span>
         </div>
@@ -1914,6 +1936,7 @@ function renderNumericDistributionChart() {
   destroyChart("numericDistributionChart");
   dom.numericChartTitle.textContent = field ? `${formatFieldLabel(field)} 数值分布（记录频数）` : "数值字段分布（记录频数）";
   canvas.setAttribute("aria-label", dom.numericChartTitle.textContent);
+  dom.numericChartTitle.title = dom.numericChartTitle.textContent;
   if (!field) return drawEmptyChart(canvas, "没有可用的数值字段");
 
   const values = getNumericValues(field);
@@ -1939,6 +1962,7 @@ function renderCategoryTopChart() {
   destroyChart("categoryTopChart");
   dom.categoryChartTitle.textContent = field ? `${field} Top 10（记录数）` : "分类字段 Top 10（记录数）";
   canvas.setAttribute("aria-label", dom.categoryChartTitle.textContent);
+  dom.categoryChartTitle.title = dom.categoryChartTitle.textContent;
   if (!field) return drawEmptyChart(canvas, "没有可用的分类字段");
 
   const counts = Array.from(countValues(field).entries())
@@ -1965,6 +1989,7 @@ function renderDateTrendChart() {
   destroyChart("dateTrendChart");
   dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   const { metricField: numericField, aggregate } = getDateChartSelection();
   dom.dateChartAggregate.disabled = !numericField;
   if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
@@ -1980,6 +2005,7 @@ function renderDateTrendChart() {
     ? `${formatFieldLabel(numericField)} 按${timeUnit}趋势（${aggregationLabel}）`
     : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
+  dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   state.charts.dateTrendChart = new Chart(canvas, {
     type: "line",
     data: {
@@ -2133,6 +2159,7 @@ function renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod)
   ));
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   dom.v2PrimaryTableTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`;
+  dom.v2PrimaryTableTitle.title = dom.v2PrimaryTableTitle.textContent;
   dom.v2PrimaryTable.innerHTML = buildV2AggregationTableHtml(groupField, metricField, sorted, aggregateMethod);
 }
 
@@ -2167,6 +2194,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
     .slice(0, 10);
   dom.v2TopGroupTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TopGroupTitle.textContent);
+  dom.v2TopGroupTitle.title = dom.v2TopGroupTitle.textContent;
   state.charts.v2TopGroupChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -2195,6 +2223,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   dom.v2TrendTitle.textContent = `${formatFieldLabel(metricField)} 按${timeUnit}趋势（${aggregateLabel}）`;
   canvas.setAttribute("aria-label", dom.v2TrendTitle.textContent);
+  dom.v2TrendTitle.title = dom.v2TrendTitle.textContent;
   state.charts.v2SelectedTrendChart = new Chart(canvas, {
     type: "line",
     data: {
@@ -2371,6 +2400,7 @@ function resetAnalysisState() {
   dom.fieldConfigMessage.className = "field-config-message";
   dom.applyFieldConfig.disabled = true;
   dom.restoreAutoFieldTypes.disabled = true;
+  dom.fieldConfigToolbar.classList.remove("has-draft");
   dom.categoryFilterField.innerHTML = "";
   dom.categoryFilterSearch.value = "";
   dom.categoryFilterValues.innerHTML = "";
