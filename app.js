@@ -258,13 +258,13 @@ const dom = {
 const INSIGHT_CATEGORY_MAX_DISTINCT = 20;
 
 const CHART_THEME = {
-  primary: "#625bde",
-  primaryFill: "rgba(98, 91, 222, 0.12)",
-  secondary: "#0f9f8f",
-  secondaryFill: "rgba(15, 159, 143, 0.12)",
-  warning: "#e09a32",
-  text: "#697084",
-  grid: "rgba(211, 215, 227, 0.72)"
+  primary: "#0068e0",
+  primaryFill: "rgba(0, 104, 224, 0.12)",
+  secondary: "#4792e9",
+  secondaryFill: "rgba(71, 146, 233, 0.14)",
+  warning: "#b54708",
+  text: "#636366",
+  grid: "rgba(28, 28, 30, 0.08)"
 };
 
 function setImportBusy(isBusy) {

@@ -1,23 +1,28 @@
 :root {
-  --bg: #f5f6f8;
+  --bg: #f2f2f7;
   --panel: #ffffff;
-  --panel-subtle: #f9fafb;
-  --text: #171a24;
-  --text-secondary: #475467;
-  --muted: #667085;
-  --border: #e4e7ec;
-  --border-strong: #d0d5dd;
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-soft: #f3f2ff;
+  --panel-subtle: #fafafb;
+  --sidebar-bg: #f9f9fb;
+  --text: #1c1c1e;
+  --text-secondary: #636366;
+  --muted: #636366;
+  --border: rgba(28, 28, 30, 0.08);
+  --border-strong: rgba(28, 28, 30, 0.18);
+  --card-border: rgba(28, 28, 30, 0.07);
+  --fill: rgba(28, 28, 30, 0.06);
+  --primary: #0068e0;
+  --primary-hover: #0058be;
+  --primary-soft: #eaf3ff;
   --success: #067647;
   --success-soft: #ecfdf3;
   --warning: #b54708;
   --warning-soft: #fffaeb;
+  --warning-border: #fedf89;
   --danger: #b42318;
   --danger-soft: #fef3f2;
-  --radius-sm: 8px;
+  --radius-sm: 10px;
   --radius: 12px;
+  --radius-card: 16px;
   --header-height: 56px;
   --sidebar-width: 256px;
 }
@@ -39,8 +44,8 @@ body {
   flex-direction: column;
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
@@ -83,7 +88,7 @@ svg {
 }
 
 ::selection {
-  background: #dddafe;
+  background: rgba(0, 104, 224, 0.18);
 }
 
 .skip-link {
@@ -108,7 +113,7 @@ svg {
   top: 0;
   z-index: 50;
   min-height: var(--header-height);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--card-border);
   background: rgba(255, 255, 255, 0.96);
 }
 
@@ -162,7 +167,7 @@ body.has-results .privacy-badge {
 }
 
 .icon-button:hover {
-  background: #f2f4f7;
+  background: var(--fill);
 }
 
 .icon-button svg {
@@ -181,36 +186,40 @@ body.has-results .privacy-badge {
 }
 
 .module-nav {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   gap: 2px;
-  justify-content: center;
   min-width: 0;
+  margin: 0 auto;
+  padding: 2px;
   overflow-x: auto;
-  scrollbar-width: thin;
+  border-radius: 11px;
+  background: rgba(28, 28, 30, 0.06);
+  scrollbar-width: none;
 }
 
 .module-nav a {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
-  min-height: 34px;
-  padding: 0 11px;
-  border-radius: 8px;
-  color: var(--text-secondary);
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--text);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   text-decoration: none;
   white-space: nowrap;
 }
 
 .module-nav a:hover {
-  background: #f2f4f7;
+  background: rgba(255, 255, 255, 0.6);
 }
 
 .module-nav a.active,
 .module-nav a[aria-current="page"] {
-  background: var(--primary-soft);
-  color: var(--primary);
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(28, 28, 30, 0.08);
+  font-weight: 600;
 }
 
 .visually-hidden {
@@ -252,7 +261,7 @@ body.has-results .privacy-badge {
 
 .brand-copy strong {
   font-size: 15px;
-  font-weight: 720;
+  font-weight: 700;
 }
 
 .brand-copy small {
@@ -273,9 +282,9 @@ body.has-results .privacy-badge {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--success);
+  color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .privacy-badge svg {
@@ -351,8 +360,8 @@ body.has-results .sample-preview {
 }
 
 .upload-panel {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
   background: var(--panel);
 }
 
@@ -377,7 +386,7 @@ body.has-results .sample-preview {
   gap: 8px;
   padding: 28px 16px;
   border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   text-align: center;
 }
 
@@ -435,14 +444,15 @@ button,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 42px;
-  padding: 0 16px;
+  min-height: 34px;
+  padding: 0 14px;
   border: 1px solid var(--primary);
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: var(--primary);
   color: #fff;
   cursor: pointer;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
   text-decoration: none;
   white-space: nowrap;
   transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
@@ -462,46 +472,66 @@ button:hover,
 }
 
 .secondary-button {
-  border-color: var(--border-strong);
+  border-color: rgba(28, 28, 30, 0.14);
   background: #fff;
-  color: var(--text-secondary);
+  color: var(--text);
 }
 
 .secondary-button:hover {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-  color: var(--primary);
+  border-color: rgba(28, 28, 30, 0.24);
+  background: #f6f6f9;
+  color: var(--text);
+}
+
+/* One blue button per group (二·7), by id only: the markup and its classes stay. 导出筛选后 CSV
+   looks secondary (the data group's blue button is 导出写法统一的表, in the check panel), and so
+   does 按空值处理 on each line (常见写法全部按空值处理 stays blue). */
+#exportFilteredCsv:not(:disabled) {
+  border-color: rgba(28, 28, 30, 0.14);
+  background: #fff;
+  color: var(--text);
+}
+
+#placeholderDetails .placeholder-item > .placeholder-button:not(.secondary-button, :disabled) {
+  border-color: rgba(28, 28, 30, 0.14);
+  background: #fff;
+  color: var(--text);
+}
+
+#exportFilteredCsv:not(:disabled):hover,
+#placeholderDetails .placeholder-item > .placeholder-button:not(.secondary-button, :disabled):hover {
+  border-color: rgba(28, 28, 30, 0.24);
+  background: #f6f6f9;
 }
 
 button:disabled,
 select:disabled {
-  border-color: var(--border);
-  background: #f2f4f7;
-  color: #98a2b3;
+  border-color: transparent;
+  background: var(--fill);
+  color: #8e8e93;
   cursor: not-allowed;
 }
 
 button:disabled:hover {
-  border-color: var(--border);
-  background: #f2f4f7;
-  color: #98a2b3;
+  border-color: transparent;
+  background: var(--fill);
+  color: #8e8e93;
 }
 
 .file-button {
-  min-height: 42px;
-  font-size: 15px;
+  min-height: 34px;
 }
 
 body.is-loading .file-button {
-  border-color: var(--border);
-  background: #f2f4f7;
-  color: #98a2b3;
+  border-color: transparent;
+  background: var(--fill);
+  color: #8e8e93;
   cursor: wait;
   pointer-events: none;
 }
 
 #csvFile:focus-visible + .file-button {
-  outline: 3px solid rgba(79, 70, 229, 0.22);
+  outline: 3px solid rgba(0, 104, 224, 0.45);
   outline-offset: 2px;
 }
 
@@ -510,19 +540,19 @@ body.is-loading .file-button {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
   align-items: center;
-  min-height: 42px;
-  padding: 0 8px 0 12px;
+  min-height: 34px;
+  padding: 0 4px 0 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: #fff;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .encoding-control select {
   width: 100%;
-  min-height: 32px;
+  min-height: 28px;
   border: 0;
   background-color: var(--panel-subtle);
 }
@@ -549,7 +579,7 @@ body.is-loading .file-button {
 .upload-footer a {
   flex: 0 0 auto;
   color: var(--primary);
-  font-weight: 620;
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -617,12 +647,12 @@ body.is-loading .file-button {
   position: relative;
   margin-top: 18px;
   padding: 13px 16px 13px 44px;
-  border: 1px solid #c7d7fe;
-  border-radius: var(--radius-sm);
-  background: #f5f8ff;
-  color: #344054;
+  border: 1px solid rgba(0, 104, 224, 0.2);
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--text);
   font-size: 13px;
-  font-weight: 580;
+  font-weight: 600;
 }
 
 .status-panel::before {
@@ -631,7 +661,7 @@ body.is-loading .file-button {
   left: 17px;
   width: 14px;
   height: 14px;
-  border: 2px solid #c7d7fe;
+  border: 2px solid rgba(0, 104, 224, 0.2);
   border-top-color: var(--primary);
   border-radius: 50%;
   content: "";
@@ -646,7 +676,7 @@ body.is-loading .file-button {
 }
 
 .status-panel.warning {
-  border-color: #fedf89;
+  border-color: var(--warning-border);
   background: var(--warning-soft);
   color: var(--warning);
 }
@@ -669,7 +699,7 @@ body.is-loading .file-button {
   animation: none;
   content: "✓";
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .status-panel.warning::before,
@@ -688,14 +718,14 @@ body.is-loading .file-button {
   align-items: end;
   margin-top: 18px;
   padding: 22px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
   background: var(--panel);
 }
 
 .sheet-selection-panel h2 {
   margin-bottom: 5px;
-  font-size: 20px;
+  font-size: 17px;
 }
 
 .muted-text {
@@ -716,7 +746,7 @@ body.is-loading .file-button {
   min-width: 220px;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .sheet-selection-controls select {
@@ -736,7 +766,7 @@ body.is-loading .file-button {
 
 .sheet-selection-message.error {
   color: var(--danger);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .results {
@@ -765,7 +795,7 @@ body.has-results #statusPanel.success:not(.has-note) {
   border: 1px solid rgba(28, 28, 30, 0.07);
   border-bottom: 0;
   border-radius: 12px 12px 0 0;
-  background: #f2f2f7;
+  background: rgba(28, 28, 30, 0.05);
 }
 
 .status-note.can-collapse.is-collapsed .status-note-bar {
@@ -793,8 +823,9 @@ body.has-results #statusPanel.success:not(.has-note) {
   border-color: rgba(28, 28, 30, 0.07);
   border-top: 0;
   border-radius: 0 0 12px 12px;
-  background: #f2f2f7;
+  background: rgba(28, 28, 30, 0.05);
   color: var(--text);
+  font-weight: 400;
 }
 
 .status-note.can-collapse #statusPanel::before {
@@ -836,8 +867,8 @@ body.has-results .app-sidebar {
   width: var(--sidebar-width);
   overflow-y: auto;
   padding: 16px;
-  border-right: 1px solid rgba(28, 28, 30, 0.07);
-  background: #f9f9fb;
+  border-right: 1px solid var(--card-border);
+  background: var(--sidebar-bg);
 }
 
 .sidebar-head {
@@ -886,7 +917,8 @@ body.has-results .app-sidebar {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 4px 0;
+  min-height: 28px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--text-secondary);
@@ -895,6 +927,28 @@ body.has-results .app-sidebar {
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+}
+
+/* 字段 K lines up with 当前状态 below it; the chevron shows whether the list is open. */
+.sidebar-section-toggle:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+
+.sidebar-section-toggle::after {
+  width: 6px;
+  height: 6px;
+  margin: 0 4px 2px auto;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.sidebar-section-toggle[aria-expanded="false"]::after {
+  margin-bottom: 0;
+  transform: rotate(-45deg);
 }
 
 .sidebar-field-list {
@@ -1063,13 +1117,27 @@ body.has-results .app-sidebar {
   font-size: 13px;
 }
 
+/* v3.0.0: a module is not a card: its title and notes sit on the grey page, and the blocks of
+   content inside it (tables, frequency cards, the export lists, the filter cards, the charts)
+   are the white cards. Containers that hold such cards are not cards themselves. */
 .section-block {
   margin-bottom: 14px;
-  padding: 24px;
+  padding: 0;
   scroll-margin-top: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
+  border: 0;
+  background: transparent;
+}
+
+.table-wrap,
+.frequency-card,
+.data-export-options,
+.report-export-layout,
+.filter-condition,
+.filter-toolbar,
+.chart-card {
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
 }
 
 /* v3.0.0: one module at a time. A hidden module stays laid out at the stage's width, so a
@@ -1101,8 +1169,8 @@ body.has-results .app-sidebar {
 
 .section-heading h2 {
   margin-bottom: 0;
-  font-size: 21px;
-  font-weight: 720;
+  font-size: 22px;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
 
@@ -1195,16 +1263,13 @@ body.has-results .app-sidebar {
 .subsection-title {
   margin-bottom: 10px;
   font-size: 15px;
-  font-weight: 680;
+  font-weight: 600;
 }
 
 .table-wrap {
   position: relative;
   width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -1230,18 +1295,20 @@ body.has-results .app-sidebar {
 }
 
 .row-pager-buttons button {
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 12px;
 }
 
+/* About ten rows show whole (a header and ten 42 px rows); longer tables scroll inside. */
 .table-wrap.compact {
-  max-height: 390px;
+  max-height: 480px;
   overflow: auto;
 }
 
 .table-wrap:focus-visible {
-  outline: 3px solid rgba(79, 70, 229, 0.18);
+  outline: 3px solid rgba(0, 104, 224, 0.45);
   outline-offset: 2px;
 }
 
@@ -1281,30 +1348,29 @@ table {
 
 th,
 td {
-  padding: 11px 13px;
+  height: 42px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 20px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 th {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: #f8fafc;
-  color: #344054;
-  font-weight: 700;
+  background: #fafafb;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
 tbody tr:last-child td {
   border-bottom: 0;
-}
-
-tbody tr:hover {
-  background: #fafafa;
 }
 
 .two-column {
@@ -1331,28 +1397,49 @@ tbody tr:hover {
   margin-bottom: 16px;
 }
 
+/* Small neutral tags: white, grey line, semibold text; a tag whose count is 0 (success) is
+   grey and regular. No amber and no dots. The number sits inside the tag's text, so it cannot be
+   bolded on its own without changing the markup. */
 .quality-pill {
   display: inline-flex;
-  min-height: 30px;
+  min-height: 24px;
   align-items: center;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-subtle);
-  color: var(--text-secondary);
+  padding: 0 8px;
+  border: 1px solid rgba(28, 28, 30, 0.14);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
-.quality-pill.warning {
-  border-color: #fedf89;
-  background: var(--warning-soft);
-  color: var(--warning);
+.quality-pill.success {
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* The category colours (二·11) mark these subsection titles; the others have no dot. */
+#suspectedTotalSection { --dot: #5856d6; }
+#formulaErrorSection { --dot: #c93400; }
+#dateStyleSection { --dot: #a86400; }
+#lookAlikeSection { --dot: #22973f; }
+#placeholderSection { --dot: #148a9e; }
+
+:is(#suspectedTotalSection, #formulaErrorSection, #dateStyleSection, #lookAlikeSection, #placeholderSection) > .subsection-title::before {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--dot);
+  content: "";
+  vertical-align: 0.1em;
 }
 
 .problem-view-button {
-  min-height: 26px;
-  padding: 0 8px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 12px;
   vertical-align: middle;
 }
@@ -1362,7 +1449,8 @@ td .problem-view-button + .problem-view-button {
 }
 
 .quality-summary .problem-view-button {
-  min-height: 30px;
+  min-height: 24px;
+  border-radius: 6px;
 }
 
 .placeholder-item .problem-view-button {
@@ -1398,7 +1486,7 @@ td .problem-view-button + .problem-view-button {
   margin: -6px 0 16px;
   color: var(--warning);
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .problem-rows-message:empty {
@@ -1412,10 +1500,9 @@ td .problem-view-button + .problem-view-button {
 }
 
 .problem-rows {
-  padding: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--panel-subtle);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .problem-rows-heading {
@@ -1437,7 +1524,8 @@ td .problem-view-button + .problem-view-button {
 }
 
 .problem-rows-heading button {
-  min-height: 34px;
+  min-height: 28px;
+  border-radius: 8px;
   font-size: 12px;
 }
 
@@ -1452,7 +1540,7 @@ td .problem-view-button + .problem-view-button {
 .problem-rows-category {
   color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .problem-rows-toolbar select {
@@ -1471,10 +1559,9 @@ td .problem-view-button + .problem-view-button {
 }
 
 td.cell-problem {
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-weight: 650;
-  box-shadow: inset 0 0 0 1px #fedf89;
+  background: rgba(28, 28, 30, 0.06);
+  color: var(--text);
+  font-weight: 600;
 }
 
 .id-duplicate-field + .id-duplicate-field,
@@ -1488,7 +1575,7 @@ td.cell-problem {
   margin-bottom: 8px;
   color: var(--text);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .id-duplicate-field table {
@@ -1508,7 +1595,7 @@ td.cell-problem {
 
 .id-duplicate-note.warning {
   padding: 10px 12px;
-  border: 1px solid #fedf89;
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   background: var(--warning-soft);
   color: var(--warning);
@@ -1582,7 +1669,7 @@ td.cell-problem {
 
 .placeholder-note.warning {
   padding: 8px 10px;
-  border: 1px solid #fedf89;
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   background: var(--warning-soft);
   color: var(--warning);
@@ -1593,8 +1680,9 @@ td.cell-problem {
 }
 
 .placeholder-button {
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 12px;
 }
 
@@ -1610,49 +1698,37 @@ td.cell-problem {
 
 .placeholder-message.warning {
   color: var(--warning);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .placeholder-message.success {
   color: var(--success);
-  font-weight: 620;
+  font-weight: 600;
 }
 
+/* v3.0.0: the three counts are one line of text with their labels. */
 .filter-count-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
   margin-bottom: 16px;
 }
 
 .filter-count-item {
-  display: flex;
-  min-width: 0;
-  min-height: 74px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
-}
-
-.filter-count-item.current {
-  border-color: #c7d7fe;
-  background: #f5f8ff;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
 }
 
 .filter-count-item span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 620;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .filter-count-item strong {
-  flex: 0 0 auto;
-  font-size: 24px;
-  font-weight: 740;
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .filter-builder-grid {
@@ -1664,9 +1740,6 @@ td.cell-problem {
 .filter-condition {
   min-width: 0;
   padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
 }
 
 .filter-condition-heading {
@@ -1680,14 +1753,14 @@ td.cell-problem {
 
 .filter-condition-heading h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
 }
 
 .filter-condition-heading span {
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1700,17 +1773,30 @@ td.cell-problem {
   gap: 6px;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .filter-field-label select,
 .filter-condition input {
   width: 100%;
+  min-width: 0;
   max-width: none;
 }
 
+/* The controls keep the normal weight of their (semibold) labels; a date input may shrink with
+   its column instead of sticking out of the card (it did at 1280 px since 7a). */
+.filter-condition :is(select, input),
+.field-selector-panel select,
+.chart-control select {
+  font-weight: 400;
+}
+
+.filter-range-grid label {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .filter-condition input {
-  min-height: 38px;
+  min-height: 34px;
   padding: 0 11px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -1721,7 +1807,7 @@ td.cell-problem {
 }
 
 .filter-condition input:disabled {
-  background: #f2f4f7;
+  background: #f2f2f7;
   color: var(--muted);
   cursor: not-allowed;
 }
@@ -1743,8 +1829,8 @@ td.cell-problem {
   border: 0;
   background: transparent;
   color: var(--primary);
-  font-size: 12px;
-  font-weight: 680;
+  font-size: 13px;
+  font-weight: 600;
   box-shadow: none;
 }
 
@@ -1770,8 +1856,8 @@ td.cell-problem {
   min-height: 36px;
   padding: 7px 9px;
   border-bottom: 1px solid var(--border);
-  color: var(--text-secondary);
-  font-size: 12px;
+  color: var(--text);
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -1780,7 +1866,7 @@ td.cell-problem {
 }
 
 .filter-value-option:hover {
-  background: #fafafa;
+  background: rgba(28, 28, 30, 0.04);
 }
 
 .filter-value-option input {
@@ -1826,10 +1912,7 @@ td.cell-problem {
   justify-content: space-between;
   gap: 16px;
   margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
+  padding: 12px 16px;
 }
 
 .filter-message {
@@ -1840,12 +1923,12 @@ td.cell-problem {
 
 .filter-message.warning {
   color: var(--warning);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .filter-message.success {
   color: var(--success);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .filter-toolbar-actions {
@@ -1855,8 +1938,7 @@ td.cell-problem {
 }
 
 .filter-toolbar-actions button {
-  min-height: 38px;
-  font-size: 12px;
+  min-height: 34px;
 }
 
 .field-config-toolbar {
@@ -1874,9 +1956,9 @@ td.cell-problem {
 
 .field-config-toolbar.has-draft {
   padding: 12px 14px;
-  border: 1px solid #b9d6f7;
-  border-radius: 12px;
-  background: #eaf3ff;
+  border: 1px solid rgba(0, 104, 224, 0.25);
+  border-radius: var(--radius);
+  background: var(--primary-soft);
 }
 
 .field-config-message {
@@ -1887,12 +1969,12 @@ td.cell-problem {
 
 .field-config-message.warning {
   color: var(--warning);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .field-config-message.success {
   color: var(--success);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .field-config-actions {
@@ -1902,8 +1984,7 @@ td.cell-problem {
 }
 
 .field-config-actions button {
-  min-height: 38px;
-  font-size: 12px;
+  min-height: 34px;
 }
 
 .schema-type-select {
@@ -1924,8 +2005,8 @@ td.cell-problem {
 
 /* v3.0.0 F1: a select whose draft differs from the applied type has a blue outline. */
 .schema-type-select.is-changed {
-  border-color: #0068e0;
-  box-shadow: 0 0 0 1px #0068e0;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
 }
 
 .field-name {
@@ -2036,47 +2117,38 @@ td.cell-problem {
   }
 }
 
+/* 认不出 above 0 in the quality and statistics tables: the field table's pink dot. */
 .cell-warning {
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-weight: 620;
+  color: var(--text);
+  font-weight: 600;
 }
 
+.cell-warning::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #ff2d55;
+  content: "";
+  vertical-align: 0.1em;
+}
+
+/* The automatic type: one grey tag for every type (the colours are kept for categories). */
 .type-badge {
   display: inline-flex;
-  min-height: 24px;
+  min-height: 22px;
   align-items: center;
   padding: 0 8px;
-  border-radius: 999px;
-  background: #f2f4f7;
-  color: #344054;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.type-badge.numeric {
-  background: #eff8ff;
-  color: #175cd3;
-}
-
-.type-badge.category {
-  background: #f4f3ff;
-  color: #5925dc;
-}
-
-.type-badge.date {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.type-badge.id {
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .type-badge.ignore {
-  background: #f2f4f7;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 
 .category-grid {
@@ -2087,15 +2159,12 @@ td.cell-problem {
 
 .frequency-card {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
+  padding: 16px;
 }
 
 .frequency-card h3 {
   margin-bottom: 8px;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .frequency-row {
@@ -2106,7 +2175,7 @@ td.cell-problem {
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .frequency-row:last-child {
@@ -2115,6 +2184,7 @@ td.cell-problem {
 
 .category-name {
   overflow: hidden;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2157,9 +2227,6 @@ td.cell-problem {
 .chart-card {
   min-width: 0;
   padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
 }
 
 .chart-card.wide {
@@ -2180,8 +2247,8 @@ td.cell-problem {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-bottom: 0;
-  font-size: 14px;
-  font-weight: 680;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .chart-control {
@@ -2190,7 +2257,7 @@ td.cell-problem {
   gap: 8px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .chart-control select {
@@ -2206,14 +2273,14 @@ td.cell-problem {
 }
 
 select {
-  min-height: 38px;
+  min-height: 34px;
   max-width: 280px;
-  padding: 0 34px 0 11px;
+  padding: 0 32px 0 11px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   outline: 0;
   background-color: #fff;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 20 20'%3E%3Cpath d='m6 8 4 4 4-4' fill='none' stroke='%23667085' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.7'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 20 20'%3E%3Cpath d='m6 8 4 4 4-4' fill='none' stroke='%23636366' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.7'/%3E%3C/svg%3E");
   background-position: right 9px center;
   background-repeat: no-repeat;
   color: var(--text);
@@ -2222,7 +2289,7 @@ select {
 }
 
 select:hover {
-  border-color: #98a2b3;
+  border-color: rgba(28, 28, 30, 0.32);
 }
 
 .chart-frame {
@@ -2233,9 +2300,8 @@ select:hover {
 .chart-insight {
   margin: 12px 0 0;
   padding: 10px 12px;
-  border-left: 3px solid var(--primary);
-  border-radius: 0 7px 7px 0;
-  background: var(--primary-soft);
+  border-radius: 10px;
+  background: #f6f6f9;
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -2246,14 +2312,9 @@ select:hover {
 
 .analysis-panel {
   margin-top: 14px;
-  padding: 18px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
-}
-
-.primary-analysis-panel {
-  background: #fff;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .analysis-panel:first-of-type {
@@ -2298,7 +2359,7 @@ select:hover {
   gap: 6px;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .field-selector-panel select {
@@ -2315,11 +2376,11 @@ select:hover {
 
 .analysis-prompt.warning {
   padding: 10px 12px;
-  border: 1px solid #fedf89;
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
   background: var(--warning-soft);
   color: var(--warning);
-  font-weight: 620;
+  font-weight: 600;
 }
 
 .v2-analysis-results {
@@ -2329,10 +2390,9 @@ select:hover {
 
 .custom-result-summary {
   margin: 0;
-  padding: 11px 13px;
-  border-left: 3px solid var(--primary);
-  border-radius: 0 7px 7px 0;
-  background: var(--primary-soft);
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f6f6f9;
   color: var(--text-secondary);
   font-size: 13px;
 }
@@ -2354,17 +2414,17 @@ select:hover {
 
 .analysis-details {
   margin-top: 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .analysis-details > summary {
-  padding: 13px 16px;
+  padding: 8px 0;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 13px;
-  font-weight: 680;
+  font-weight: 600;
   list-style-position: inside;
 }
 
@@ -2373,44 +2433,44 @@ select:hover {
 }
 
 .analysis-details[open] > summary {
-  border-bottom: 1px solid var(--border);
-  background: #fff;
+  margin-bottom: 4px;
 }
 
 .analysis-details-content {
-  padding: 16px;
+  padding: 0;
 }
 
 .result-details {
   margin-top: 0;
-  background: #fff;
 }
 
+/* v3.0.0: the four summary cards are one line of text with their labels. */
 .analysis-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
 }
 
 .analysis-summary-card {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: #fff;
+  max-width: 100%;
 }
 
 .analysis-summary-label {
-  margin-bottom: 7px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 620;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .analysis-summary-value {
+  min-width: 0;
   overflow: hidden;
-  font-size: 18px;
-  font-weight: 720;
+  font-size: 15px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2458,10 +2518,6 @@ select:hover {
   display: none;
 }
 
-.data-export-options {
-  border-top: 1px solid var(--border);
-}
-
 .export-module + .export-module {
   margin-top: 24px;
   padding-top: 24px;
@@ -2501,13 +2557,17 @@ select:hover {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 24px;
   align-items: center;
-  padding: 16px 0;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.data-export-option:last-child {
+  border-bottom: 0;
 }
 
 .data-export-option h3 {
   margin-bottom: 5px;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .data-export-option p {
@@ -2530,8 +2590,7 @@ select:hover {
 }
 
 .standardized-export {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
+  padding: 16px 0 0;
 }
 
 .standardized-export > p:first-child {
@@ -2551,7 +2610,7 @@ select:hover {
 }
 
 .standardize-total td {
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .standardized-export-actions {
@@ -2566,6 +2625,7 @@ select:hover {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 24px;
   align-items: center;
+  padding: 14px 16px;
 }
 
 .report-export-copy h3 {
@@ -2663,7 +2723,7 @@ a:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex="0"]:focus-visible {
-  outline: 3px solid rgba(79, 70, 229, 0.22);
+  outline: 3px solid rgba(0, 104, 224, 0.45);
   outline-offset: 2px;
 }
 
@@ -2672,10 +2732,6 @@ select:focus-visible,
 }
 
 @media (max-width: 1100px) {
-  .metric-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .field-selector-panel {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
@@ -2718,10 +2774,6 @@ select:focus-visible,
     height: 310px;
   }
 
-  .analysis-summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .custom-result-grid {
     grid-template-columns: 1fr;
   }
@@ -2741,7 +2793,7 @@ select:focus-visible,
   }
 
   .brand-copy strong {
-    font-size: 14px;
+    font-size: 13px;
     white-space: nowrap;
   }
 
@@ -2813,13 +2865,45 @@ select:focus-visible,
     padding-bottom: 32px;
   }
 
-  .upload-panel,
-  .section-block {
+  /* Tap targets: at least 44 px on phones, the small buttons too. */
+  button,
+  .file-button,
+  .secondary-button,
+  select,
+  input:not([type="checkbox"], [type="radio"], [type="file"]) {
+    min-height: 44px;
+  }
+
+  .icon-button,
+  .text-button,
+  .note-toggle,
+  .problem-view-button,
+  .quality-summary .problem-view-button,
+  .placeholder-button,
+  .row-pager-buttons button,
+  .problem-rows-heading button,
+  .schema-kind,
+  .sidebar-section-toggle,
+  .encoding-control select,
+  .filter-value-option {
+    min-height: 44px;
+  }
+
+  .icon-button {
+    width: 44px;
+  }
+
+  /* Below 640 px no table box limits its height; it only scrolls sideways (二·9). */
+  .table-wrap.compact {
+    max-height: none;
+  }
+
+  .upload-panel {
     padding: 18px;
   }
 
   .product-description {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .upload-buttons > * {
@@ -2900,21 +2984,7 @@ select:focus-visible,
   }
 
   .section-heading h2 {
-    font-size: 19px;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .metric-card {
-    min-height: 88px;
-    padding: 13px;
-  }
-
-  .metric-value {
-    font-size: 24px;
+    font-size: 17px;
   }
 
   .field-config-toolbar,
@@ -2955,18 +3025,6 @@ select:focus-visible,
     min-width: 0;
   }
 
-  .filter-count-item {
-    min-height: 68px;
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-    padding: 12px;
-  }
-
-  .filter-count-item strong {
-    font-size: 21px;
-  }
-
   table {
     min-width: 640px;
   }
@@ -2996,16 +3054,8 @@ select:focus-visible,
     height: 270px;
   }
 
-  .analysis-panel {
-    padding: 14px;
-  }
-
   .field-selector-panel {
     grid-template-columns: 1fr;
-  }
-
-  .analysis-details-content {
-    padding: 13px;
   }
 
   .field-selector-panel button {
@@ -3030,16 +3080,9 @@ select:focus-visible,
 
 @media (max-width: 390px) {
   .upload-hero h1 {
-    font-size: 27px;
+    font-size: 28px;
   }
 
-  .filter-count-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .analysis-summary-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media print {
@@ -3082,6 +3125,7 @@ select:focus-visible,
 
   /* The field table prints whole: no height limit, and every field even while a search or a
      type filter (not printed) hides some on screen. */
+  .table-wrap.compact,
   .schema-table-wrap {
     max-height: none !important;
     overflow: visible !important;
@@ -3104,8 +3148,7 @@ select:focus-visible,
   }
 
   .section-block,
-  .chart-card,
-  .metric-card {
+  .chart-card {
     break-inside: avoid;
   }
 }

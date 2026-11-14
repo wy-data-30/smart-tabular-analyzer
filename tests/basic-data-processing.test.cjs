@@ -8190,3 +8190,188 @@ test("v3.0.0 dirty data and phones: table cells are capped and cut; the upload s
   assert.match(css, /#qualitySection \.two-column \{\s*grid-template-columns: 1fr;/);
   assert.match(css, /\n\.chart-grid \{\s*display: grid;\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
 });
+
+// v3.0.0 commit 7b: the look (section 二·7, 二·11). Styles only: these read style.css.
+const cssRule = (css, selector) => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // A rule of its own: not the last selector of a list ("a,\n b {").
+  const match = css.match(new RegExp(`(?:^|\\n)(?<!,\\r?\\n)${escaped} \\{([^}]*)\\}`));
+  assert.ok(match, selector);
+  return match[1];
+};
+
+test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights", () => {
+  const css = repoFile("style.css");
+  const root = cssRule(css, ":root");
+  [["--bg", "#f2f2f7"], ["--panel", "#ffffff"], ["--text", "#1c1c1e"], ["--text-secondary", "#636366"], ["--muted", "#636366"], ["--primary", "#0068e0"], ["--sidebar-bg", "#f9f9fb"], ["--card-border", "rgba(28, 28, 30, 0.07)"], ["--radius-card", "16px"]]
+    .forEach(([name, value]) => assert.ok(root.includes(`${name}: ${value};`), name));
+  const body = cssRule(css, "body");
+  assert.match(body, /background: var\(--bg\);/);
+  const family = body.match(/font-family: ([^;]+);/)[1];
+  assert.doesNotMatch(family, /Inter/);
+  assert.ok(family.indexOf('"Segoe UI"') >= 0 && family.indexOf('"Segoe UI"') < family.indexOf('"Microsoft YaHei"'), family);
+  const sizes = new Set([...css.matchAll(/font-size: ([^;]+);/g)].map((match) => match[1]));
+  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)"].includes(size), size));
+  const weights = new Set([...css.matchAll(/font-weight: ([^;]+);/g)].map((match) => match[1]));
+  weights.forEach((weight) => assert.ok(["400", "600", "700"].includes(weight), weight));
+  // The old purple is gone, the focus ring is the new blue.
+  assert.doesNotMatch(css, /#4f46e5|#4338ca|rgba\(79, 70, 229/i);
+  assert.match(css, /\[tabindex="0"\]:focus-visible \{\s*outline: 3px solid rgba\(0, 104, 224, 0\.45\);/);
+});
+
+test("v3.0.0 look: modules sit on the grey page; their content blocks are white cards with a hairline and no shadow", () => {
+  const css = repoFile("style.css");
+  // The module itself: no card (no fill, border or padding), so its title is on the grey.
+  const block = cssRule(css, ".section-block");
+  assert.match(block, /padding: 0;/);
+  assert.match(block, /border: 0;/);
+  assert.match(block, /background: transparent;/);
+  assert.doesNotMatch(block, /box-shadow/);
+  // The content blocks inside it are the cards.
+  const cards = css.match(/\n(\.table-wrap,\s*\.frequency-card,[^{]*)\{([^}]*)\}/);
+  assert.ok(cards, "one card rule");
+  const cardSelectors = cards[1].split(",").map((part) => part.trim());
+  assert.deepEqual(cardSelectors, [".table-wrap", ".frequency-card", ".data-export-options", ".report-export-layout", ".filter-condition", ".filter-toolbar", ".chart-card"]);
+  assert.match(cards[2], /border: 1px solid var\(--card-border\);/);
+  assert.match(cards[2], /border-radius: var\(--radius-card\);/);
+  assert.match(cards[2], /background: #fff;/);
+  // Those blocks set no other fill, border or radius of their own.
+  cardSelectors.forEach((selector) => {
+    const own = css.match(new RegExp(`(?:^|\\n)(?<!,\\r?\\n)${selector.replace(".", "\\.")} \\{([^}]*)\\}`));
+    if (own) assert.doesNotMatch(own[1], /background:|border:|border-radius:/, selector);
+  });
+  // The containers that hold such cards (custom analysis, its details, the problem rows) are not
+  // cards themselves: no card inside a card.
+  [".analysis-panel", ".analysis-details", ".problem-rows"].forEach((selector) => {
+    const own = cssRule(css, selector);
+    assert.match(own, /padding: 0;/, selector);
+    assert.match(own, /border: 0;/, selector);
+    assert.match(own, /background: transparent;/, selector);
+  });
+  // Every box-shadow is none, an inset line, a 1 px outline ring, or the sidebar over the content.
+  const shadows = [...css.matchAll(/\n\s*([^{}\n][^{}]*?)\s*\{([^{}]*box-shadow: ([^;]+);[^{}]*)\}/g)].map((match) => [match[1].trim(), match[3]]);
+  assert.ok(shadows.length > 0);
+  shadows.forEach(([selector, value]) => {
+    const ok = value === "none" || /^inset /.test(value) || /^0 0 0 1px /.test(value) || selector === "body.has-results.sidebar-open .app-sidebar";
+    assert.ok(ok, `${selector}: ${value}`);
+  });
+});
+
+test("v3.0.0 look: buttons 34 high (small 28), 44 on phones; the navigation is a segmented control; no hover on plain rows", () => {
+  const css = repoFile("style.css");
+  const base = css.match(/\nbutton,\r?\n\.file-button,\r?\n\.secondary-button \{([^}]*)\}/)[1];
+  assert.match(base, /min-height: 34px;/);
+  assert.match(base, /border-radius: 10px;/);
+  // Secondary buttons are white with a grey line and body-coloured text; text buttons stay blue.
+  const secondary = cssRule(css, ".secondary-button");
+  assert.match(secondary, /border-color: rgba\(28, 28, 30, 0\.14\);/);
+  assert.match(secondary, /background: #fff;/);
+  assert.match(secondary, /color: var\(--text\);/);
+  assert.match(cssRule(css, ".text-button"), /border: 0;[\s\S]*background: transparent;[\s\S]*color: var\(--primary\);/);
+  assert.match(cssRule(css, ".problem-view-button"), /min-height: 28px;[\s\S]*border-radius: 8px;/);
+  const nav = cssRule(css, ".module-nav");
+  assert.match(nav, /background: rgba\(28, 28, 30, 0\.06\);/);
+  assert.match(nav, /border-radius: 11px;/);
+  assert.match(css, /\.module-nav a\[aria-current="page"\] \{[^}]*background: #fff;[^}]*font-weight: 600;/);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\s+button,\s+\.file-button,\s+\.secondary-button,\s+select,\s+input:not\(\[type="checkbox"\], \[type="radio"\], \[type="file"\]\) \{\s*min-height: 44px;/);
+  assert.match(phone, /\.problem-view-button,[^{]*\.placeholder-button,[^{]*\{\s*min-height: 44px;/);
+  assert.doesNotMatch(css, /tbody tr:hover/);
+  // The date inputs shrink with their column instead of sticking out of the filter card.
+  assert.match(cssRule(css, ".filter-range-grid label"), /grid-template-columns: minmax\(0, 1fr\);/);
+  const th = cssRule(css, "th");
+  assert.match(th, /background: #fafafb;/);
+  assert.match(th, /font-size: 12px;/);
+});
+
+test("v3.0.0 look: quality tags are neutral (white, grey line, grey at 0), no amber, no dots; five subsection titles carry their category colour", () => {
+  const css = repoFile("style.css");
+  const pill = cssRule(css, ".quality-pill");
+  assert.match(pill, /min-height: 24px;/);
+  assert.match(pill, /border: 1px solid rgba\(28, 28, 30, 0\.14\);/);
+  assert.match(pill, /border-radius: 6px;/);
+  assert.match(pill, /background: #fff;/);
+  assert.match(pill, /color: var\(--text\);/);
+  assert.match(pill, /font-weight: 600;/);
+  assert.match(cssRule(css, ".quality-pill.success"), /color: var\(--text-secondary\);[\s\S]*font-weight: 400;/);
+  assert.doesNotMatch(css, /\.quality-pill\.(?:warning|danger)/);
+  assert.doesNotMatch(css, /\.quality-pill[^{]*::before/);
+  // 认不出 above 0 (quality and statistics tables): the pink dot of the field table, no amber.
+  const warningCell = cssRule(css, ".cell-warning");
+  assert.doesNotMatch(warningCell, /--warning/);
+  assert.match(css, /\.cell-warning::before \{[^}]*background: #ff2d55;/);
+  // A problem cell in the problem rows: neutral grey and semibold.
+  const problemCell = cssRule(css, "td.cell-problem");
+  assert.doesNotMatch(problemCell, /--warning/);
+  assert.match(problemCell, /background: rgba\(28, 28, 30, 0\.06\);/);
+  assert.match(problemCell, /font-weight: 600;/);
+  // The import message keeps its amber warning.
+  assert.match(cssRule(css, ".status-panel.warning"), /background: var\(--warning-soft\);/);
+  // The upload page's privacy note is secondary grey.
+  assert.match(cssRule(css, ".privacy-badge"), /color: var\(--text-secondary\);/);
+  [["suspectedTotalSection", "#5856d6"], ["formulaErrorSection", "#c93400"], ["dateStyleSection", "#a86400"], ["lookAlikeSection", "#22973f"], ["placeholderSection", "#148a9e"]].forEach(([id, colour]) => {
+    assert.match(css, new RegExp(`#${id} \\{ --dot: ${colour}; \\}`), id);
+  });
+  assert.match(css, /:is\(#suspectedTotalSection, #formulaErrorSection, #dateStyleSection, #lookAlikeSection, #placeholderSection\) > \.subsection-title::before \{[^}]*background: var\(--dot\);/);
+  // The sections without a category colour have no dot.
+  ["numberConversionSection", "numericLookingSection", "constantFieldSection", "problemRowsSection"].forEach((id) => assert.doesNotMatch(css, new RegExp(`#${id} \\{ --dot`), id));
+});
+
+test("v3.0.0 look: one blue button per group, by id only; the class names stay", () => {
+  const css = repoFile("style.css");
+  // 导出筛选后 CSV keeps its markup (no secondary-button) but looks secondary: the data group's
+  // blue button is 导出写法统一的表 (in the check panel).
+  assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
+  // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
+  assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
+  const html = repoFile("index.html");
+  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV<\/button>/);
+});
+
+test("v3.0.0 look: the 空值检查 box shows about ten fields without scrolling; print lifts every height limit", () => {
+  const css = repoFile("style.css");
+  const compact = cssRule(css, ".table-wrap.compact");
+  const height = Number(compact.match(/max-height: (\d+)px;/)[1]);
+  // A header and ten rows of 42 px, and the two border pixels.
+  assert.ok(height >= 42 * 11 + 2, String(height));
+  assert.ok(height <= 600, String(height));
+  // Below 640 px no table box limits its height (二·9).
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.table-wrap\.compact \{\s*max-height: none;/);
+  const print = css.match(/@media print \{([\s\S]*?)\n\}/)[1];
+  assert.match(print, /\.table-wrap\.compact,\s*\.schema-table-wrap \{\s*max-height: none !important;/);
+});
+
+test("v3.0.0 look: charts take the new blue and the page's font", () => {
+  const scope = createChartContext();
+  const theme = JSON.parse(scope.evaluate("JSON.stringify(CHART_THEME)"));
+  assert.deepEqual(Object.keys(theme), ["primary", "primaryFill", "secondary", "secondaryFill", "warning", "text", "grid"]);
+  assert.equal(theme.primary, "#0068e0");
+  assert.equal(theme.text, "#636366");
+  // The second series is a lighter blue that still has 3:1 against the white card.
+  const luminance = (hex) => {
+    const [r, g, b] = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255)
+      .map((value) => (value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  assert.match(theme.secondary, /^#[0-9a-f]{6}$/);
+  const [red, green, blue] = [1, 3, 5].map((index) => parseInt(theme.secondary.slice(index, index + 2), 16));
+  assert.ok(blue > red && blue > green, theme.secondary);
+  assert.ok(luminance(theme.secondary) > luminance(theme.primary), "lighter than the primary");
+  assert.ok(1.05 / (luminance(theme.secondary) + 0.05) >= 3, "3:1 on white");
+  assert.equal(theme.secondaryFill, `rgba(${red}, ${green}, ${blue}, 0.14)`);
+  // The insight under a chart: a light grey box, no side line.
+  const insight = cssRule(repoFile("style.css"), ".chart-insight");
+  assert.doesNotMatch(insight, /border-left/);
+  assert.match(insight, /background: #f6f6f9;/);
+  assert.match(insight, /border-radius: 10px;/);
+  assert.match(insight, /color: var\(--text-secondary\);/);
+  // The custom analysis's result sentence looks the same.
+  const summary = cssRule(repoFile("style.css"), ".custom-result-summary");
+  assert.doesNotMatch(summary, /border-left|--primary-soft/);
+  ["background: #f6f6f9;", "border-radius: 10px;", "color: var(--text-secondary);"].forEach((line) => assert.ok(summary.includes(line), line));
+  const script = repoFile("script.js");
+  const family = script.match(/Chart\.defaults\.font\.family = '([^']+)';/)[1];
+  assert.equal(family, cssRule(repoFile("style.css"), "body").match(/font-family: ([^;]+);/)[1]);
+  assert.match(script, /Chart\.defaults\.font\.size = 12;/);
+});

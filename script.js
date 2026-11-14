@@ -46,8 +46,8 @@ function ensureDomElementsPresent() {
 
 if (window.Chart) {
   Chart.defaults.color = CHART_THEME.text;
-  Chart.defaults.font.family = 'Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
-  Chart.defaults.font.size = 11;
+  Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  Chart.defaults.font.size = 12;
   Chart.defaults.elements.bar.borderRadius = 6;
   Chart.defaults.elements.bar.borderSkipped = false;
   Chart.defaults.elements.line.borderWidth = 2.25;
