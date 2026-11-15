@@ -1447,6 +1447,50 @@ td .problem-view-button + .problem-view-button {
   line-height: 1.7;
 }
 
+/* v3.1.0: 不计入分析 / 撤销, the size of 查看, with a gap after it. */
+.row-exclusion-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.problem-view-button + .row-exclusion-button {
+  margin-left: 8px;
+}
+
+/* Once the totals are left out, the static note gives way to #suspectedTotalExcludedNote. */
+#suspectedTotalSection.is-excluded > p.section-note:not([id]) {
+  display: none;
+}
+
+.quality-scope-note,
+.duplicate-exclusion-line {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* The same 16 px below the line as below the pills, so the totals card does not touch it. */
+.duplicate-exclusion {
+  margin-bottom: 16px;
+}
+
+.exclusion-message {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.exclusion-message:empty {
+  display: none;
+}
+
+.exclusion-message.warning {
+  color: var(--warning);
+}
+
 /* These subsections sit above the two tables, which have no top margin of their own. */
 .row-note-section {
   margin-bottom: 24px;
@@ -2876,6 +2920,7 @@ select:focus-visible,
   .text-button,
   .note-toggle,
   .problem-view-button,
+  .row-exclusion-button,
   .quality-summary .problem-view-button,
   .placeholder-button,
   .row-pager-buttons button,

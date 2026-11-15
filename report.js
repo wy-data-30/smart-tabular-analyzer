@@ -147,9 +147,11 @@ function buildProblemRowsCsvHeaders(fields) {
 // its file row, its note and the original value of every field ("" for a parse
 // warning without an imported row).
 function buildProblemRowsCsvContent(list, fields) {
+  // v3.1.0: a left-out row's note ends in （不计入分析）, as in the viewer.
+  const excluded = getExcludedIndexSet();
   return buildCsvTableContent(buildProblemRowsCsvHeaders(fields), list.items.map((item) => {
     const row = item.index === null ? null : state.rows[item.index];
-    return [item.line ?? "", item.note || "", ...fields.map((field) => readCsvExportCell(row, field))];
+    return [item.line ?? "", markExcludedNote(item, excluded) || "", ...fields.map((field) => readCsvExportCell(row, field))];
   }));
 }
 

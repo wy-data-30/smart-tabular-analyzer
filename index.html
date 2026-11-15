@@ -222,12 +222,19 @@
             <p class="section-aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
+        <p id="qualityScopeNote" class="quality-scope-note hidden"></p>
         <div id="qualitySummary" class="quality-summary"></div>
+        <div id="duplicateExclusion" class="duplicate-exclusion hidden">
+          <p class="duplicate-exclusion-line"><span id="duplicateExclusionText"></span> <span id="duplicateExclusionAction"></span></p>
+          <p id="duplicateExclusionMessage" class="exclusion-message" role="status"></p>
+        </div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">疑似合计 / 小计行</h3>
           <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
+          <p id="suspectedTotalExcludedNote" class="section-note hidden"></p>
           <div id="suspectedTotalDetails" class="number-note-details"></div>
+          <p id="suspectedTotalMessage" class="exclusion-message" role="status"></p>
         </div>
         <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">公式错误单元格</h3>
@@ -337,6 +344,10 @@
           <div class="filter-count-item">
             <span>已筛除记录数</span>
             <strong id="filterExcludedCount">0</strong>
+          </div>
+          <div id="filterNotCountedItem" class="filter-count-item hidden">
+            <span>不计入分析</span>
+            <strong id="filterNotCountedCount">0</strong>
           </div>
         </div>
 

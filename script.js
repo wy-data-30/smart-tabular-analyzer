@@ -171,6 +171,8 @@ dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);
 
 dom.qualitySection.addEventListener("click", handleProblemViewClick);
 
+dom.qualitySection.addEventListener("click", handleExclusionClick);
+
 dom.qualitySection.addEventListener("click", toggleSectionNote);
 
 // The notes with a 展开 button (more than one sentence) show their first line until opened.

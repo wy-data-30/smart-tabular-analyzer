@@ -185,6 +185,15 @@ const dom = {
   filterOriginalCount: document.getElementById("filterOriginalCount"),
   filterCurrentCount: document.getElementById("filterCurrentCount"),
   filterExcludedCount: document.getElementById("filterExcludedCount"),
+  filterNotCountedItem: document.getElementById("filterNotCountedItem"),
+  filterNotCountedCount: document.getElementById("filterNotCountedCount"),
+  qualityScopeNote: document.getElementById("qualityScopeNote"),
+  duplicateExclusion: document.getElementById("duplicateExclusion"),
+  duplicateExclusionText: document.getElementById("duplicateExclusionText"),
+  duplicateExclusionAction: document.getElementById("duplicateExclusionAction"),
+  duplicateExclusionMessage: document.getElementById("duplicateExclusionMessage"),
+  suspectedTotalExcludedNote: document.getElementById("suspectedTotalExcludedNote"),
+  suspectedTotalMessage: document.getElementById("suspectedTotalMessage"),
   filterMessage: document.getElementById("filterMessage"),
   applyFilters: document.getElementById("applyFilters"),
   clearAllFilters: document.getElementById("clearAllFilters"),
@@ -421,6 +430,8 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.repeatedRowSource = null;
   state.restoredTotalRows = new Set();
   state.lastExclusion = null;
+  setExclusionMessage("suspectedTotal", "");
+  setExclusionMessage("duplicateRows", "");
   state.filteredRows = rows.slice();
   state.filterSourceRows = state.rows;
   state.fields = fields;
@@ -593,11 +604,13 @@ function renderOverview() {
   const activeMissing = analysisRows.reduce((total, row) => (
     total + activeProfiles.filter((profile, index) => isMissingOrConfirmed(row[profile.field], activeKeys[index])).length
   ), 0);
-  const rowValue = hasActiveFilters()
+  // v3.1.0: rows left out narrow the analysis too.
+  const narrowed = analysisRows.length !== state.rows.length;
+  const rowValue = narrowed
     ? `${formatInteger(state.rows.length)} → ${formatInteger(analysisRows.length)}`
     : state.rows.length;
   const cards = [
-    [hasActiveFilters() ? "总记录 → 当前分析" : "总记录数", rowValue],
+    [narrowed ? "总记录 → 当前分析" : "总记录数", rowValue],
     ["字段数", state.fields.length],
     ["数值字段数", numericCount],
     ["分类字段数", categoryCount],
@@ -736,7 +749,7 @@ function renderPreview() {
   const rows = getAnalysisRows();
   const { page, pageCount, start, end } = getRowPage(rows.length, state.previewPage);
   state.previewPage = page;
-  dom.previewPageInfo.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rows.length)} 行`;
+  dom.previewPageInfo.textContent = formatPreviewPageInfo(page, pageCount, rows.length, countExcludedRows(), hasActiveFilters());
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
     dom.previewTable.classList.add("is-empty-table");
@@ -1227,7 +1240,7 @@ function initializeFilterControls() {
   updateNumericFilterField();
   updateDateFilterField();
   renderFilterCounts();
-  setFilterMessage("尚未应用筛选，当前分析使用全部记录。", "");
+  setFilterMessage(formatNoFilterMessage(getIncludedRows().length, countExcludedRows()), "");
 }
 
 function getCategoryFilterOptions(field) {
@@ -1433,11 +1446,9 @@ function applyFilters() {
   const activeCount = [filters.category, filters.numeric, filters.date].filter(Boolean).length;
   const filteredOutCount = getIncludedRows().length - state.filteredRows.length;
   if (!activeCount) {
-    setFilterMessage("未选择筛选字段，当前分析继续使用全部记录。", "");
-  } else if (!state.filteredRows.length) {
-    setFilterMessage(`已应用 ${formatInteger(activeCount)} 个筛选条件，但没有记录符合条件。`, "warning");
+    setFilterMessage(`未选择筛选字段，当前分析继续使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "");
   } else {
-    setFilterMessage(`已应用 ${formatInteger(activeCount)} 个筛选条件，保留 ${formatInteger(state.filteredRows.length)} 行，筛除 ${formatInteger(filteredOutCount)} 行。`, "success");
+    setFilterMessage(formatFiltersApplied(activeCount, state.filteredRows.length, filteredOutCount), state.filteredRows.length ? "success" : "warning");
   }
 }
 
@@ -1446,7 +1457,7 @@ function clearAllFilters() {
   resetFilterState();
   initializeFilterControls();
   refreshFilteredAnalysis();
-  setFilterMessage("已清除全部筛选，当前分析恢复使用全部记录。", "success");
+  setFilterMessage(`已清除全部筛选，当前分析恢复使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "success");
 }
 
 function renderFilterCounts() {
@@ -1454,17 +1465,16 @@ function renderFilterCounts() {
   dom.filterOriginalCount.textContent = formatInteger(state.rows.length);
   dom.filterCurrentCount.textContent = formatInteger(currentCount);
   dom.filterExcludedCount.textContent = formatInteger(Math.max(0, getIncludedRows().length - currentCount));
+  const excludedCount = countExcludedRows();
+  dom.filterNotCountedItem.classList.toggle("hidden", excludedCount === 0);
+  dom.filterNotCountedCount.textContent = formatInteger(excludedCount);
   updateGlobalFilterStatus();
 }
 
 function updateGlobalFilterStatus() {
   if (!dom.globalFilterSummary) return;
   const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
-  const currentCount = getAnalysisRows().length;
-  const totalCount = state.rows.length;
-  dom.globalFilterSummary.textContent = activeCount
-    ? `已筛选 ${formatInteger(activeCount)} 项 · ${formatInteger(currentCount)} / ${formatInteger(totalCount)} 行`
-    : `全部 ${formatInteger(totalCount)} 行`;
+  dom.globalFilterSummary.textContent = formatAnalysisScope(activeCount, getAnalysisRows().length, getIncludedRows().length, countExcludedRows());
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
   // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
@@ -1553,6 +1563,8 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
     formatExclusionRestored(exclusionChanges.restored),
     formatTotalsFlaggedAgain(exclusionChanges.flaggedAgain)
   ].filter(Boolean);
+  setExclusionMessage("suspectedTotal", "");
+  setExclusionMessage("duplicateRows", "");
   setMessage([message, ...notes].join(" "), "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
@@ -1583,7 +1595,10 @@ function listExclusionCandidates(kind) {
 // whether anything changed; state.lastExclusion says what for the messages.
 function setRowExclusion(kind, on) {
   if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
-  if (!ensureFieldConfigurationApplied("设置不计入分析")) return false;
+  if (hasFieldConfigDraftChanges()) {
+    setExclusionMessage(kind, EXCLUSION_DRAFT_REFUSAL, "warning");
+    return false;
+  }
   const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
   const indexes = on ? listExclusionCandidates(kind) : current;
   if (!indexes.length) return false;
@@ -1614,6 +1629,13 @@ function refreshAfterExclusion() {
   state.filterSourceRows = included;
   refreshFilterPanelForIncludedRows();
   refreshFilteredAnalysis();
+  const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
+  setFilterMessage(activeCount
+    ? formatFiltersApplied(activeCount, state.filteredRows.length, included.length - state.filteredRows.length)
+    : formatNoFilterMessage(included.length, countExcludedRows()), activeCount && !state.filteredRows.length ? "warning" : "");
+  renderExclusionControls();
+  if (state.problemView) renderProblemView();
+  renderSidebar();
 }
 
 // The filter panel after the counted rows changed. The category options and the range hints
@@ -1689,7 +1711,7 @@ function renderQuality() {
     ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
   renderParseWarningSummary();
-  renderSuspectedTotalDetails();
+  renderExclusionControls();
   renderFormulaErrorDetails();
   // Before the outlier table, which returns early when there is no numeric field.
   refreshProblemView();
@@ -1799,15 +1821,88 @@ function renderRowNoteSection(section, details, lines, footer = "") {
 }
 
 // At most SUSPECTED_TOTAL_LIST_LIMIT lines and one 查看 button: they are one category.
+// v3.1.0: the static note gives way to the left-out note (CSS hides it on .is-excluded); the
+// button sits next to 查看; the totals that only equal the row above and the labelled rows that
+// do not add up are named under it.
 function renderSuspectedTotalDetails() {
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
   const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
+  const excludedCount = state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0;
+  dom.suspectedTotalSection.classList.toggle("is-excluded", excludedCount > 0);
+  dom.suspectedTotalExcludedNote.classList.toggle("hidden", excludedCount === 0);
+  dom.suspectedTotalExcludedNote.textContent = excludedCount ? formatSuspectedTotalExcludedNote(excludedCount) : "";
+  const exclusionButton = state.suspectedTotals.length ? exclusionToggleButton("suspectedTotal", excludedCount > 0) : "";
+  const singleRow = state.suspectedTotals.filter((item) => item.matches.every((match) => match.rowCount === 1)).length;
+  const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
+  const notes = [formatSingleRowTotals(singleRow), formatUnmatchedTotalLabels(state.totalLabelRows.length, state.suspectedTotals.length, checked)].filter(Boolean);
   renderRowNoteSection(
     dom.suspectedTotalSection,
     dom.suspectedTotalDetails,
     state.suspectedTotals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => escapeHtml(formatSuspectedTotal(item))),
-    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}</p>`
+    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}${exclusionButton}</p>${notes.map((note) => `<p class="row-note-footer">${escapeHtml(note)}</p>`).join("")}`
   );
+}
+
+// "不计入分析" or "撤销" for a kind; it carries no data-problem-index or data-placeholder-index.
+function exclusionToggleButton(kind, excluded) {
+  const label = EXCLUSION_KIND_LABELS[kind];
+  const ariaLabel = excluded ? `撤销：让${label}重新计入分析` : `把${label}设为不计入分析`;
+  return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? "撤销" : "不计入分析"}</button>`;
+}
+
+// An applied ID field that is not mostly repeated (state.idDuplicates lists the applied ID fields).
+function hasCleanIdField() {
+  return state.idDuplicates.some((item) => !item.mostlyRepeated);
+}
+
+// Missing values in the left-out rows, counted as state.totalMissing counts them: every field
+// (ignored ones too), with the placeholder keys each profile was built with.
+function countExcludedMissing() {
+  let count = 0;
+  getExcludedIndexSet().forEach((index) => {
+    const row = state.rows[index];
+    state.profiles.forEach((profile) => {
+      if (isMissingOrConfirmed(row[profile.field], profile.confirmedKeys)) count += 1;
+    });
+  });
+  return count;
+}
+
+// The quality page's parts that follow the rows left out; its counts never change.
+function renderExclusionControls() {
+  const excludedCount = countExcludedRows();
+  const note = formatQualityScopeNote(state.rows.length, excludedCount, excludedCount ? countExcludedMissing() : 0);
+  dom.qualityScopeNote.textContent = note;
+  dom.qualityScopeNote.classList.toggle("hidden", !note);
+  renderSuspectedTotalDetails();
+  const duplicateExcluded = state.exclusionSourceRows === state.rows ? state.excludedRows.duplicateRows.length : 0;
+  dom.duplicateExclusion.classList.toggle("hidden", !state.duplicateRows);
+  dom.duplicateExclusionText.textContent = !state.duplicateRows ? ""
+    : duplicateExcluded ? formatDuplicateExcludedNote(duplicateExcluded)
+      : hasCleanIdField() ? formatDuplicateIncludedNote(state.duplicateRows) : NO_ID_DUPLICATE_NOTE;
+  dom.duplicateExclusionAction.innerHTML = state.duplicateRows ? exclusionToggleButton("duplicateRows", duplicateExcluded > 0) : "";
+}
+
+function getExclusionMessageElement(kind) {
+  return kind === "duplicateRows" ? dom.duplicateExclusionMessage : dom.suspectedTotalMessage;
+}
+
+function setExclusionMessage(kind, message, tone = "") {
+  const element = getExclusionMessageElement(kind);
+  element.className = `exclusion-message${tone ? ` ${tone}` : ""}`;
+  element.textContent = message;
+}
+
+// Delegated click of #qualitySection for 不计入分析 / 撤销, bound in script.js. The message goes
+// to the section that was clicked; the focus to the button that took the clicked one's place.
+function handleExclusionClick(event) {
+  const button = event.target.closest("button[data-exclusion-kind]");
+  if (!button) return;
+  const kind = button.dataset.exclusionKind;
+  if (!setRowExclusion(kind, button.dataset.exclusionOn === "true")) return;
+  setExclusionMessage(kind, formatExclusionMessage(state.lastExclusion), "success");
+  const container = kind === "duplicateRows" ? dom.duplicateExclusionAction : dom.suspectedTotalDetails;
+  container.querySelector?.("button[data-exclusion-kind]")?.focus?.();
 }
 
 // One line and one 查看 button per field: each field is a category.
@@ -1875,10 +1970,11 @@ function renderProblemView() {
   dom.problemRowsSummary.textContent = formatProblemRowsSummary(category, view.list, page, pageCount);
   dom.problemRowsDraftNote.classList.toggle("hidden", !hasFieldConfigDraftChanges());
   const highlightField = HIGHLIGHTED_PROBLEM_KINDS.has(category.kind) ? category.field : null;
+  const excluded = getExcludedIndexSet();
   dom.problemRowsTable.innerHTML = buildRowTableHtml(state.fields, view.list.items.slice(start, end).map((item) => ({
     row: item.index === null ? null : state.rows[item.index],
     line: item.line,
-    note: item.note,
+    note: markExcludedNote(item, excluded),
     highlightField: item.highlightField ?? highlightField
   })), { withNote: true });
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], page, pageCount);
@@ -1899,6 +1995,11 @@ function findProblemViewButton(category) {
   if (!category || typeof dom.qualitySection.querySelector !== "function") return null;
   const index = state.problemCategories.findIndex((item) => isSameProblemCategory(item, category));
   return index < 0 ? null : dom.qualitySection.querySelector(`button[data-problem-index="${index}"]`);
+}
+
+// v3.1.0: "（不计入分析）" after the note of a left-out row, in the viewer and in 导出这一类.
+function markExcludedNote(item, excluded) {
+  return item.index !== null && excluded.has(item.index) ? `${item.note || ""}（不计入分析）` : item.note;
 }
 
 function hideProblemView() {
@@ -2090,7 +2191,7 @@ function renderCategoryStats() {
           <strong>${formatInteger(item.count)}</strong>
           <span>${formatPercent(item.ratio)}</span>
         </div>
-      `).join("") : `<div class="empty-note">当前筛选结果中没有非空类别值。</div>`}
+      `).join("") : `<div class="empty-note">${escapeHtml(CATEGORY_STATS_EMPTY_NOTE)}</div>`}
     </div>
   `).join("");
 }
@@ -2179,7 +2280,7 @@ function renderCategoryTopChart() {
   const counts = Array.from(countValues(field).entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
-  if (!counts.length) return drawEmptyChart(canvas, "当前筛选结果中没有可统计的分类值");
+  if (!counts.length) return drawEmptyChart(canvas, CATEGORY_CHART_EMPTY_NOTE);
   state.charts.categoryTopChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -2307,9 +2408,10 @@ function renderV2Analysis() {
   const invalidMetricText = metricInvalidCount
     ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值认不出是数字，已从计算中排除。`
     : "";
-  dom.v2ResultSummary.textContent = (hasActiveFilters()
-    ? `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于当前筛选数据 ${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行。`
-    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`) + invalidMetricText;
+  dom.v2ResultSummary.textContent = formatCustomAnalysisScope({
+    groupField, metricField, aggregateLabel, filtered: hasActiveFilters(), currentCount: getAnalysisRows().length,
+    includedCount: getIncludedRows().length, totalCount: state.rows.length, excludedCount: countExcludedRows()
+  }) + invalidMetricText;
 
   if (dateField) {
     dom.v2TrendCard.classList.remove("hidden");
@@ -2651,6 +2753,18 @@ function resetAnalysisState() {
   dom.parseWarningSummary.innerHTML = "";
   dom.parseWarningSummary.classList.add("hidden");
   renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
+  dom.suspectedTotalSection.classList.remove("is-excluded");
+  dom.suspectedTotalExcludedNote.textContent = "";
+  dom.suspectedTotalExcludedNote.classList.add("hidden");
+  setExclusionMessage("suspectedTotal", "");
+  dom.qualityScopeNote.textContent = "";
+  dom.qualityScopeNote.classList.add("hidden");
+  dom.duplicateExclusion.classList.add("hidden");
+  dom.duplicateExclusionText.textContent = "";
+  dom.duplicateExclusionAction.innerHTML = "";
+  setExclusionMessage("duplicateRows", "");
+  dom.filterNotCountedItem.classList.add("hidden");
+  dom.filterNotCountedCount.textContent = "0";
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
   renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, []);
   renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, []);

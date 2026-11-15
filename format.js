@@ -132,7 +132,7 @@ function formatSuspectedTotalOverflow(count) {
 // The status bar's sentence after an import, or "".
 function formatSuspectedTotalStatus(items) {
   if (!items.length) return "";
-  const ending = "，目前仍计入统计，详情见“数据质量”。";
+  const ending = "，可以在“数据质量”里设为不计入分析。";
   if (items.length === 1) {
     const [{ line, label }] = items;
     return `${line === null ? "有一行" : `第 ${line} 行`}「${formatSkippedRowPreview([label])}」疑似合计行${ending}`;
@@ -165,6 +165,109 @@ function formatTotalsFlaggedAgain(lines) {
   if (!lines.length) return "";
   const named = formatExclusionLines(lines);
   return `${named || `有 ${formatInteger(lines.length)} 行`}又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。`;
+}
+
+// ---- v3.1.0: the page around rows left out of the analysis ----
+const EXCLUSION_KIND_LABELS = Object.freeze({ suspectedTotal: "疑似合计行", duplicateRows: "重复的行" });
+const EXCLUSION_DRAFT_REFUSAL = "字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。";
+const NO_ID_DUPLICATE_NOTE = "这张表没有能区分每一行的编号列，内容相同的行也可能是不同的记录，先点“查看重复行”确认。";
+// Empty states that also show without a filter (they said 当前筛选 before v3.1.0).
+const CATEGORY_STATS_EMPTY_NOTE = "当前分析的行里没有非空类别值。";
+const CATEGORY_CHART_EMPTY_NOTE = "当前分析的行里没有可统计的分类值";
+
+// "（另有 2 行不计入分析）", or "" when nothing is left out.
+function formatExcludedTail(excludedCount) {
+  return excludedCount ? `（另有 ${formatInteger(excludedCount)} 行不计入分析）` : "";
+}
+
+// The scope sentence of #globalFilterSummary, the three .filter-scope-text and the sidebar.
+// Nothing left out: the v3.0.1 sentence.
+function formatAnalysisScope(activeCount, currentCount, includedCount, excludedCount) {
+  const tail = formatExcludedTail(excludedCount);
+  if (activeCount) return `已筛选 ${formatInteger(activeCount)} 项 · ${formatInteger(currentCount)} / ${formatInteger(includedCount)} 行${tail}`;
+  return excludedCount ? `${formatInteger(includedCount)} 行${tail}` : `全部 ${formatInteger(includedCount)} 行`;
+}
+
+// "全部记录", or "全部 40 行（不含不计入分析的 2 行）".
+function formatAllIncludedRows(includedCount, excludedCount) {
+  return excludedCount ? `全部 ${formatInteger(includedCount)} 行（不含不计入分析的 ${formatInteger(excludedCount)} 行）` : "全部记录";
+}
+
+// The filter panel's message while no filter is applied.
+function formatNoFilterMessage(includedCount, excludedCount) {
+  return excludedCount
+    ? `当前分析使用${formatAllIncludedRows(includedCount, excludedCount)}。`
+    : "尚未应用筛选，当前分析使用全部记录。";
+}
+
+// After a filter is applied: filteredOutCount counts from the rows counted in the analysis.
+function formatFiltersApplied(activeCount, keptCount, filteredOutCount) {
+  return keptCount
+    ? `已应用 ${formatInteger(activeCount)} 个筛选条件，保留 ${formatInteger(keptCount)} 行，筛除 ${formatInteger(filteredOutCount)} 行。`
+    : `已应用 ${formatInteger(activeCount)} 个筛选条件，但没有记录符合条件。`;
+}
+
+// The data preview's page line: the rows left out are named only without a filter.
+function formatPreviewPageInfo(page, pageCount, rowCount, excludedCount, filtered) {
+  return `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rowCount)} 行${excludedCount && !filtered ? `（不含不计入分析的 ${formatInteger(excludedCount)} 行）` : ""}`;
+}
+
+// The custom analysis's first sentence; nothing left out: the v3.0.1 sentences.
+function formatCustomAnalysisScope({ groupField, metricField, aggregateLabel, filtered, currentCount, includedCount, totalCount, excludedCount }) {
+  const head = `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，`;
+  if (filtered) return `${head}结果基于当前筛选数据 ${formatInteger(currentCount)} / ${formatInteger(includedCount)} 行${formatExcludedTail(excludedCount)}。`;
+  return excludedCount
+    ? `${head}结果基于 ${formatInteger(includedCount)} 行${formatExcludedTail(excludedCount)}。`
+    : `${head}结果基于完整数据 ${formatInteger(totalCount)} 行。`;
+}
+
+// On top of the quality page while rows are left out; missing counts as state.totalMissing does.
+function formatQualityScopeNote(totalCount, excludedCount, excludedMissing) {
+  if (!excludedCount) return "";
+  const total = formatInteger(totalCount);
+  const missing = excludedMissing ? `（其中有 ${formatInteger(excludedMissing)} 个空值）` : "";
+  return `质量页检查的是文件里的全部 ${total} 行，包括不计入分析的 ${formatInteger(excludedCount)} 行${missing}；偏大或偏小的值也按这 ${total} 行算。`;
+}
+
+// The totals subsection's note once they are left out (SUSPECTED_TOTAL_NOTE before).
+function formatSuspectedTotalExcludedNote(count) {
+  return `这 ${formatInteger(count)} 行已不计入分析：统计、图表、自定义分析和筛选不再包含${count > 1 ? "它们" : "它"}。`;
+}
+
+// Suspected totals whose every match covers one row only (they may be ordinary rows).
+function formatSingleRowTotals(count) {
+  return count ? `其中 ${formatInteger(count)} 行只等于上面一行，可能不是合计行，先点“查看”确认。` : "";
+}
+
+// Labelled rows that are not suspected totals; only when a numeric column was checked.
+function formatUnmatchedTotalLabels(labelCount, totalCount, checked) {
+  return checked && labelCount > totalCount ? `另有 ${formatInteger(labelCount - totalCount)} 行也带这类字样，但数字对不上，没有列出。` : "";
+}
+
+// The repeated-rows line before they are left out, when a clean ID column tells the records apart.
+function formatDuplicateIncludedNote(count) {
+  return `重复行里多出来的 ${formatInteger(count)} 行目前仍计入分析。`;
+}
+
+function formatDuplicateExcludedNote(count) {
+  return `多出来的 ${formatInteger(count)} 行已不计入分析。`;
+}
+
+// The message of a click: { kind, on, rows, changed, before, after } (state.lastExclusion).
+// "N 行" counts only the rows this click left out or brought back.
+function formatExclusionMessage({ kind, on, rows, changed, before, after }) {
+  const label = EXCLUSION_KIND_LABELS[kind];
+  const other = kind === "duplicateRows" ? EXCLUSION_KIND_LABELS.suspectedTotal : EXCLUSION_KIND_LABELS.duplicateRows;
+  const counted = `参与分析的行 ${formatInteger(before)} → ${formatInteger(after)}`;
+  const still = `参与分析的行仍是 ${formatInteger(after)}`;
+  if (on) {
+    if (changed) return `已把 ${formatInteger(changed)} 行${label}设为不计入分析，${counted}。`;
+    return kind === "duplicateRows"
+      ? `多出来的 ${formatInteger(rows)} 行已经作为${other}不计入分析，${still}。`
+      : `这 ${formatInteger(rows)} 行${label}已经作为${other}不计入分析，${still}。`;
+  }
+  if (changed) return `已撤销：${formatInteger(changed)} 行${label}重新计入分析，${counted}。`;
+  return `已撤销：这 ${formatInteger(rows)} 行仍作为${other}不计入分析，${still}。`;
 }
 
 function formatFormulaErrorCount(items) {

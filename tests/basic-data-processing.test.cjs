@@ -1479,7 +1479,7 @@ const GRADE_HEADER_NOTE = "表头在第 2 行，已跳过上方 1 行：「初�
 
 test("the status bar names the header row and the skipped title rows", async () => {
   const store = await importStage3Fixture("门店报表.xlsx");
-  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}第 33 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。`);
+  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}第 33 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。`);
   assert.deepEqual(JSON.parse(store.evaluate("JSON.stringify(state.headerDetection)")), {
     headerRowNumber: 4,
     skippedRows: [
@@ -4827,22 +4827,22 @@ test("v2.8.0 page: both subsections are static, after the warnings and before th
 
 test("v2.8.0 status: the sentences follow the header note, on the warning branch too, one row or many", async () => {
   const region = await importStage3Fixture("分区小计表.csv");
-  assert.equal(region.elements.get("statusPanel").textContent, "分区小计表.csv 已成功载入，分析结果已生成。发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），目前仍计入统计，详情见“数据质量”。");
+  assert.equal(region.elements.get("statusPanel").textContent, "分区小计表.csv 已成功载入，分析结果已生成。发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），可以在“数据质量”里设为不计入分析。");
   const errors = await importStage3Fixture("公式错误.xlsx");
   assert.equal(errors.elements.get("statusPanel").textContent, "公式错误.xlsx · 公式错误 已成功载入，分析结果已生成。发现 7 个公式错误单元格，已按空值处理，详情见“数据质量”。");
   const warned = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n合计,30\r\n");
-  assert.equal(warned.elements.get("statusPanel").textContent, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 5 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+  assert.equal(warned.elements.get("statusPanel").textContent, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 5 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   const many = await importCsvFile(subtotalsCsv(7));
-  assert.match(many.elements.get("statusPanel").textContent, /发现 7 行疑似合计 \/ 小计（第 3、5、7、9、11 行等），目前仍计入统计/);
+  assert.match(many.elements.get("statusPanel").textContent, /发现 7 行疑似合计 \/ 小计（第 3、5、7、9、11 行等），可以在“数据质量”里设为不计入分析/);
   const five = await importCsvFile(subtotalsCsv(5));
-  assert.match(five.elements.get("statusPanel").textContent, /发现 5 行疑似合计 \/ 小计（第 3、5、7、9、11 行），目前仍计入统计/);
+  assert.match(five.elements.get("statusPanel").textContent, /发现 5 行疑似合计 \/ 小计（第 3、5、7、9、11 行），可以在“数据质量”里设为不计入分析/);
   const { context, evaluate, elements } = createScriptContext();
   put(context, "__rows", [{ 名: "A", 额: "10" }, { 名: "合计", 额: "10" }]);
   evaluate('commitTabularData(["名", "额"], __rows, "x.csv", beginImport())');
   assert.match(elements.get("statusPanel").textContent, /有一行「合计」疑似合计行/);
   put(context, "__manyRows", [{ 名: "A", 额: "10" }, { 名: "A小计", 额: "10" }, { 名: "B", 额: "20" }, { 名: "B小计", 额: "20" }]);
   evaluate('commitTabularData(["名", "额"], __manyRows, "x.csv", beginImport())');
-  assert.match(elements.get("statusPanel").textContent, /发现 2 行疑似合计 \/ 小计，目前仍计入统计/);
+  assert.match(elements.get("statusPanel").textContent, /发现 2 行疑似合计 \/ 小计，可以在“数据质量”里设为不计入分析/);
   const clean = await importCsvFile("名,额\r\nA,10\r\nB,20\r\n");
   assert.doesNotMatch(clean.elements.get("statusPanel").textContent, /疑似合计|公式错误/);
 });
@@ -6818,7 +6818,7 @@ test("v2.11.0 sample: the status line, the six pills and every hint with its row
   const scope = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
   assert.equal(scope.elements.get("statusPanel").className, "status-panel success has-note");
   assert.equal(scope.elements.get("statusPanel").textContent,
-    "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+    "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))")), [
     ["订单编号", "id"], ["下单日期", "date"], ["地区", "category"], ["品类", "category"], ["产品", "category"],
     ["客户类型", "category"], ["数量", "numeric"], ["金额", "numeric"], ["销售代表", "category"]
@@ -6829,7 +6829,7 @@ test("v2.11.0 sample: the status line, the six pills and every hint with its row
   assert.equal(scope.elements.get("categoryChartInsight").textContent, "分类字段「地区」中占比最高的类别是「华东」，出现 10 次，占比 24.4%。");
   assert.equal(scope.elements.get("dateChartInsight").textContent, "基于日期字段「下单日期」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 66.7%。");
   assert.equal(sampleOrdersHidden(scope, "parseWarningSummary"), true);
-  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "第 44 行「合计」：数量、金额等于第 3\u201343 行之和（41 行）。 查看");
+  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "第 44 行「合计」：数量、金额等于第 3\u201343 行之和（41 行）。 查看 不计入分析");
   assert.equal(sampleOrdersText(scope, "numberConversionDetails"), "「金额」：按\"元\"读取了 3 个值（5400元、900元、1050元）");
   assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
     "「下单日期」：主写法是 文本 年-月-日 36 个（如 2025-01-03）；另有 5 行是别的写法：文本 年/月/日 3 个（如 2025/2/18）、文本 中文年月日 2 个（如 2025年4月16日）。 查看");
@@ -6932,7 +6932,9 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
   "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
-const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE"];
+const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE",
+  // v3.1.0: the totals note once they are left out, one row and several.
+  "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)"];
 const HAN_SPACE_HAN = /\p{Script=Han} +\p{Script=Han}/u;
 
 function findOldInterfaceWords(where, text, hits) {
@@ -7173,11 +7175,11 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
   rangeTexts();
   filterGuardRows(range, "组", ["B"]);
   assert.equal(range.evaluate("getAnalysisRows().length"), 5);
-  assert.match(html(range, "categoryStats"), />当前筛选结果中没有非空类别值。</);
+  assert.match(html(range, "categoryStats"), />当前分析的行里没有非空类别值。</);
   range.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart(); dom.numericChartField.value = "金额"; renderNumericDistributionChart()');
   const filtered = rangeTexts();
   assert.ok(filtered.some(([id, sentence]) => id === "dateTrendChart" && sentence === "该字段没有认得出的日期"), JSON.stringify(filtered));
-  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前筛选结果中没有可统计的分类值"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前分析的行里没有可统计的分类值"), JSON.stringify(filtered));
   assert.ok(filtered.some(([id, sentence]) => id === "numericDistributionChart" && sentence === "该字段没有认得出的数字"), JSON.stringify(filtered));
   filterGuardRows(range, "组", ["C"]);
   assert.equal(range.evaluate("getAnalysisRows().length"), 0);
@@ -8992,4 +8994,250 @@ test("v3.1.0 counted rows: the numeric filter inputs follow the counted rows unl
   })()`);
   orders.evaluate('setRowExclusion("suspectedTotal", true)');
   assert.deepEqual(inputs(), ["100", "200000", "480 至 7,200"]);
+});
+
+// ---- v3.1.0 commit 3: the buttons and what the page says about rows left out ----
+
+const exclusionClick = (scope, kind, on) => scope.evaluate(`handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: "${kind}", exclusionOn: "${on}" } }) } })`);
+const textOf = (scope, id) => scope.elements.get(id).textContent;
+const htmlText = (scope, id) => scope.elements.get(id).innerHTML.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+const isHidden = (scope, id) => scope.elements.get(id).classList.contains("hidden");
+
+// A normal task table: names sometimes end in 汇总, hours are 2, 4 or 8 (review section 5).
+function taskTableCsv() {
+  let seed = 20261115;
+  const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const names = ["整理需求", "评审方案", "编写代码", "测试", "部署", "周报汇总", "数据汇总", "月度汇总", "客户回访", "资料归档"];
+  const people = ["张敏", "李强", "王芳", "赵磊", "陈静"];
+  const lines = ["任务名,负责人,工时,完成日期"];
+  for (let i = 0; i < 300; i += 1) {
+    const day = String(1 + Math.floor(random() * 28)).padStart(2, "0");
+    lines.push(`${pick(names)},${pick(people)},${pick([2, 4, 8])},2026-0${1 + Math.floor(random() * 9)}-${day}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+test("v3.1.0 quality page: every count stays when rows are left out; problem rows only add （不计入分析）", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const snapshot = () => JSON.stringify({
+    pills: sampleOrdersPills(orders),
+    tables: ["qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails", "formulaErrorDetails", "dateStyleDetails", "lookAlikeDetails", "constantFieldDetails"].map((id) => orders.elements.get(id).innerHTML),
+    totalMissing: orders.evaluate("state.totalMissing"),
+    lists: JSON.parse(orders.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))"))
+  });
+  const before = snapshot();
+  exclusionClick(orders, "suspectedTotal", true);
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(snapshot(), before);
+  orders.evaluate('openProblemView({ kind: "duplicateRows" })');
+  const notes = [...orders.elements.get("problemRowsTable").innerHTML.matchAll(/<tr><td>(\d+)<\/td><td>([^<]*)<\/td>/g)].map((match) => [match[1], match[2]]);
+  assert.deepEqual(notes, [["20", "第 1 组（保留）"], ["21", "第 1 组（不计入分析）"]]);
+  const csv = orders.evaluate('buildProblemRowsCsvContent(listProblemRows({ kind: "suspectedTotal" }), state.fields)');
+  assert.match(csv, /^44,数量、金额等于第 3–43 行之和（41 行）（不计入分析）,合计,/m);
+});
+
+test("v3.1.0 quality page: the two buttons, their sentences and their own messages", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const totalsFooter = () => orders.elements.get("suspectedTotalDetails").innerHTML;
+  assert.match(totalsFooter(), /data-exclusion-kind="suspectedTotal" data-exclusion-on="true"[^>]*>不计入分析<\/button>/);
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), true);
+  assert.equal(orders.elements.get("suspectedTotalSection").classList.contains("is-excluded"), false);
+  assert.equal(isHidden(orders, "qualityScopeNote"), true);
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "不计入分析");
+  assert.equal(textOf(orders, "duplicateExclusionText"), "重复行里多出来的 1 行目前仍计入分析。");
+  assert.equal(orders.evaluate("formatDuplicateIncludedNote(1234)"), "重复行里多出来的 1,234 行目前仍计入分析。");
+
+  exclusionClick(orders, "suspectedTotal", true);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "已把 1 行疑似合计行设为不计入分析，参与分析的行 42 → 41。");
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "");
+  assert.equal(orders.elements.get("suspectedTotalSection").classList.contains("is-excluded"), true);
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), false);
+  assert.equal(textOf(orders, "suspectedTotalExcludedNote"), "这 1 行已不计入分析：统计、图表、自定义分析和筛选不再包含它。");
+  assert.match(totalsFooter(), /data-exclusion-on="false"[^>]*>撤销<\/button>/);
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。");
+
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "已把 1 行重复的行设为不计入分析，参与分析的行 41 → 40。");
+  assert.equal(textOf(orders, "duplicateExclusionText"), "多出来的 1 行已不计入分析。");
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "撤销");
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 2 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。");
+
+  exclusionClick(orders, "duplicateRows", false);
+  assert.equal(textOf(orders, "duplicateExclusionText"), "重复行里多出来的 1 行目前仍计入分析。");
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "不计入分析");
+  exclusionClick(orders, "duplicateRows", true);
+
+  exclusionClick(orders, "suspectedTotal", false);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "已撤销：1 行疑似合计行重新计入分析，参与分析的行 40 → 41。");
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), true);
+
+  // Drafts: refused in the section that was clicked, nothing changes.
+  orders.evaluate('stageFieldTypeChange("销售代表", "id")');
+  exclusionClick(orders, "suspectedTotal", true);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。");
+  assert.equal(orders.evaluate("state.excludedRows.suspectedTotal.length"), 0);
+  // A rebuild clears both messages.
+  orders.evaluate("applyFieldConfiguration()");
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "");
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "");
+});
+
+test("v3.1.0 quality page: the totals section of 分区小计表 names the totals that only equal the row above", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  const single = "其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。";
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  region.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  assert.equal(textOf(region, "suspectedTotalExcludedNote"), "这 5 行已不计入分析：统计、图表、自定义分析和筛选不再包含它们。");
+  for (const scope of [await clickSampleButton(sampleOrdersFetchedText()), await importStage3Fixture("门店报表.xlsx")]) {
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /只等于上面一行/);
+  }
+});
+
+test("v3.1.0 quality page: 另有 N 行 names the labelled rows whose numbers do not add up, only where something was checked", async () => {
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  assert.equal(tasks.evaluate("state.totalLabelRows.length"), 95);
+  assert.equal(tasks.evaluate("state.suspectedTotals.length"), 6);
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("另有 89 行也带这类字样，但数字对不上，没有列出。"));
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
+  tasks.evaluate('stageFieldTypeChange("工时", "ignore"); applyFieldConfiguration()');
+  assert.equal(isHidden(tasks, "suspectedTotalSection"), true);
+  assert.equal(tasks.evaluate("formatUnmatchedTotalLabels(95, 0, false)"), "");
+  for (const scope of [await clickSampleButton(sampleOrdersFetchedText()), await importStage3Fixture("分区小计表.csv"), await importStage3Fixture("门店报表.xlsx")]) {
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /另有 \d+ 行也带这类字样/);
+  }
+});
+
+test("v3.1.0 quality page: a message counts only the rows this click left out or brought back", () => {
+  const scope = createScriptContext();
+  const rows = [["甲", "10"], ["乙", "20"], ["丙", "30"], ["合计", "60"], ["合计", "60"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "twice.csv");
+  assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 1);
+  // No column tells the records apart: the long note stays, before and after.
+  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE"));
+  exclusionClick(scope, "suspectedTotal", true);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 5 → 3。");
+  exclusionClick(scope, "duplicateRows", true);
+  assert.equal(textOf(scope, "duplicateExclusionMessage"), "多出来的 1 行已经作为疑似合计行不计入分析，参与分析的行仍是 3。");
+  exclusionClick(scope, "suspectedTotal", false);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已撤销：1 行疑似合计行重新计入分析，参与分析的行 3 → 4。");
+});
+
+test("v3.1.0 page: scope sentence, filter panel, overview, preview, sidebar and custom analysis count the rows left out", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "品类"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis(); dom.v2AnalysisResults.classList.remove("hidden")');
+  const view = () => ({
+    scope: textOf(orders, "globalFilterSummary"),
+    counts: ["filterOriginalCount", "filterCurrentCount", "filterExcludedCount", "filterNotCountedCount"].map((id) => textOf(orders, id)),
+    notCountedHidden: isHidden(orders, "filterNotCountedItem"),
+    filterMessage: textOf(orders, "filterMessage"),
+    overview: htmlText(orders, "overviewCards"),
+    preview: textOf(orders, "previewPageInfo"),
+    // The sidebar says it once, in its 筛选 line; it has no row of its own for the rows left out.
+    sidebar: textOf(orders, "sidebarFilterSummary"),
+    custom: textOf(orders, "v2ResultSummary")
+  });
+  assert.deepEqual(view(), {
+    scope: "全部 42 行", counts: ["42", "42", "0", "0"], notCountedHidden: true, filterMessage: "尚未应用筛选，当前分析使用全部记录。",
+    overview: "总记录数 42 字段数 9 数值字段数 2 分类字段数 5 空值概览 6", preview: "第 1 / 1 页，共 42 行", sidebar: "全部 42 行",
+    custom: "已按 品类 对 金额 进行求和，结果基于完整数据 42 行。指标字段「金额」有 1 个值认不出是数字，已从计算中排除。"
+  });
+  exclusionClick(orders, "suspectedTotal", true);
+  exclusionClick(orders, "duplicateRows", true);
+  assert.deepEqual(view(), {
+    scope: "40 行（另有 2 行不计入分析）", counts: ["42", "40", "0", "2"], notCountedHidden: false, filterMessage: "当前分析使用全部 40 行（不含不计入分析的 2 行）。",
+    overview: "总记录 → 当前分析 42 → 40 字段数 9 数值字段数 2 分类字段数 5 空值概览 0", preview: "第 1 / 1 页，共 40 行（不含不计入分析的 2 行）", sidebar: "40 行（另有 2 行不计入分析）",
+    custom: "已按 品类 对 金额 进行求和，结果基于 40 行（另有 2 行不计入分析）。指标字段「金额」有 1 个值认不出是数字，已从计算中排除。"
+  });
+  orders.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["华东", "华南"]); applyFilters()');
+  assert.deepEqual(view(), {
+    scope: "已筛选 1 项 · 17 / 40 行（另有 2 行不计入分析）", counts: ["42", "17", "23", "2"], notCountedHidden: false, filterMessage: "已应用 1 个筛选条件，保留 17 行，筛除 23 行。",
+    overview: "总记录 → 当前分析 42 → 17 字段数 9 数值字段数 2 分类字段数 5 空值概览 0", preview: "第 1 / 1 页，共 17 行", sidebar: "已筛选 1 项 · 17 / 40 行（另有 2 行不计入分析）",
+    custom: "已按 品类 对 金额 进行求和，结果基于当前筛选数据 17 / 40 行（另有 2 行不计入分析）。"
+  });
+  // A click while filtered writes the filter message again with the new numbers.
+  exclusionClick(orders, "duplicateRows", false);
+  const kept = orders.evaluate("getAnalysisRows().length");
+  assert.equal(textOf(orders, "filterMessage"), `已应用 1 个筛选条件，保留 ${kept} 行，筛除 ${41 - kept} 行。`);
+  assert.equal(textOf(orders, "filterExcludedCount"), String(41 - kept));
+  orders.evaluate("clearAllFilters()");
+  assert.equal(textOf(orders, "filterMessage"), "已清除全部筛选，当前分析恢复使用全部 41 行（不含不计入分析的 1 行）。");
+  // 当前状态 keeps its three rows: 筛选, 表头, 已按空值处理.
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const status = html.slice(html.indexOf('<dl class="sidebar-status">'), html.indexOf("</dl>", html.indexOf('<dl class="sidebar-status">')));
+  assert.deepEqual([...status.matchAll(/<dt>([^<]*)<\/dt>/g)].map((match) => match[1]), ["筛选", "表头", "已按空值处理"]);
+});
+
+test("v3.1.0 filters: 筛除 counts from the rows counted in the analysis, in the message and in the panel", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["华东", "华南"]); applyFilters()');
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 17);
+  assert.equal(textOf(orders, "filterMessage"), "已应用 1 个筛选条件，保留 17 行，筛除 23 行。");
+  assert.equal(textOf(orders, "filterExcludedCount"), "23");
+});
+
+test("v3.1.0 filters: a filter result made from other rows falls back to the 40 counted rows, never all 42", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("state.filterSourceRows = state.rows.slice(0, 3); state.filteredRows = state.rows.slice(0, 3)");
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+  assert.equal(orders.evaluate("getAnalysisRows() === getIncludedRows()"), true);
+  orders.evaluate("state.filterSourceRows = state.rows");
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+});
+
+test("v3.1.0 status bar: the totals sentence offers to leave them out and never says 仍计入统计 again", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(textOf(orders, "statusPanel"), "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  const oldEnding = "目前仍计入统计，详情见“数据质量”";
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  const { html, markdown } = reportOf(orders);
+  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html, markdown]) {
+    assert.ok(!text.includes(oldEnding));
+  }
+  const region = await importStage3Fixture("分区小计表.csv");
+  assert.ok(!textOf(region, "statusPanel").includes(oldEnding));
+  assert.ok(textOf(region, "statusPanel").endsWith("发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），可以在“数据质量”里设为不计入分析。"));
+});
+
+test("v3.1.0 empty states: without a filter they no longer say 当前筛选", () => {
+  const scope = createScriptContext();
+  withFakeCharts(scope);
+  const emptyTexts = collectEmptyChartTexts(scope);
+  const rows = [...Array.from({ length: 6 }, (_, i) => ({ 名称: `商品${i + 1}`, 金额: String((i + 1) * 10), 备注: "" })), { 名称: "合计", 金额: "210", 备注: "手工合计" }];
+  commitRows(scope, ["名称", "金额", "备注"], rows, "only-total-note.csv");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  emptyTexts();
+  scope.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart()');
+  assert.ok(scope.elements.get("categoryStats").innerHTML.includes("当前分析的行里没有非空类别值。"));
+  assert.deepEqual(emptyTexts(), [["categoryTopChart", "当前分析的行里没有可统计的分类值"]]);
+  assert.doesNotMatch(scope.elements.get("categoryStats").innerHTML, /当前筛选/);
+});
+
+test("v3.1.0 wording: the new sentences use no old interface word and no space between two Chinese characters", async () => {
+  const hits = [];
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const region = await importStage3Fixture("分区小计表.csv");
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  for (const [name, scope] of [["sample", orders], ["region", region], ["tasks", tasks]]) {
+    scope.evaluate('setRowExclusion("suspectedTotal", true); if (state.duplicateRows) setRowExclusion("duplicateRows", true)');
+    for (const id of ["qualityScopeNote", "suspectedTotalExcludedNote", "suspectedTotalMessage", "duplicateExclusionText", "duplicateExclusionMessage", "globalFilterSummary", "filterMessage", "previewPageInfo", "statusPanel"]) {
+      findOldInterfaceWords(`${name} #${id}`, textOf(scope, id), hits);
+      if (HAN_SPACE_HAN.test(textOf(scope, id).replace(/「[^」]*」/g, ""))) hits.push(`${name} #${id}: a space between two Chinese characters`);
+    }
+    findOldInterfaceWords(`${name} #suspectedTotalDetails`, htmlText(scope, "suspectedTotalDetails"), hits);
+  }
+  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
+    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
+    formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2)])`));
+  for (const text of fixed) {
+    findOldInterfaceWords("format.js", text, hits);
+    if (HAN_SPACE_HAN.test(text)) hits.push(`format.js: a space between two Chinese characters: ${text}`);
+  }
+  assert.deepEqual(hits, []);
+  // 不计入分析 is part of several sentences and the button: the button is matched with its markup.
+  assert.match(orders.elements.get("suspectedTotalDetails").innerHTML, /data-exclusion-kind="suspectedTotal" data-exclusion-on="false"[^>]*>撤销<\/button>/);
+  assert.doesNotMatch(orders.elements.get("suspectedTotalDetails").innerHTML, />不计入分析<\/button>/);
 });
