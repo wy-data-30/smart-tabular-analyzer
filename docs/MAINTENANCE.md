@@ -1,4 +1,4 @@
-# Smart Tabular Analyzer 维护指南
+# 表格体检维护指南
 
 ## 1. 新增功能的推荐步骤
 

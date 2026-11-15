@@ -1,6 +1,8 @@
-# Smart Tabular Analyzer
+# Sheet Checkup (表格体检)
 
-> A browser-based CSV and Excel analysis tool for fast, privacy-friendly exploration of structured data.
+> A privacy-first checkup for spreadsheet data: CSV and Excel files are checked in your browser, nothing is uploaded, and you see what is wrong and which rows it is in.
+
+Formerly Smart Tabular Analyzer. The repository name and URLs are unchanged.
 
 **Current release:** v3.0.0
 
@@ -10,7 +12,7 @@ English | [中文](./README.zh-CN.md)
 
 ## Live Demo
 
-- **Live Demo:** [Open Smart Tabular Analyzer](https://wy-data-30.github.io/smart-tabular-analyzer/)
+- **Live Demo:** [Open Sheet Checkup](https://wy-data-30.github.io/smart-tabular-analyzer/)
 - **Repository:** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
 
 Open the demo and choose **使用示例数据** ("Use Sample Data") to complete an analysis without preparing a file.
@@ -19,7 +21,7 @@ The sample is a fictional order list for the first half of 2025 with a few commo
 
 ## About
 
-Smart Tabular Analyzer helps users understand structured files with unfamiliar or inconsistent schemas. After a CSV or Excel file is selected, the application previews the data, infers field types, checks common data quality issues, calculates statistics, renders charts, supports filtered and grouped analysis, produces data-grounded observations, and exports results.
+Sheet Checkup helps users understand structured files with unfamiliar or inconsistent schemas. After a CSV or Excel file is selected, the application previews the data, infers field types, checks common data quality issues, calculates statistics, renders charts, supports filtered and grouped analysis, produces data-grounded observations, and exports results.
 
 The project is a static website with no backend service, database, account system, or build step. It does not require fixed column names.
 
@@ -53,7 +55,7 @@ Detailed processing rules and data flows are documented in [Architecture](./docs
 
 Upload CSV or Excel files, or start immediately with the built-in sample data.
 
-![Smart Tabular Analyzer home and file upload](./assets/homepage.png)
+![Sheet Checkup home and file upload](./assets/homepage.png)
 
 *Screenshot of the previous interface.*
 
@@ -61,7 +63,7 @@ Upload CSV or Excel files, or start immediately with the built-in sample data.
 
 Review missing values, duplicate rows, format problems, IQR-based numeric outliers, and duplicate ID values in one view.
 
-![Smart Tabular Analyzer data quality checks](./assets/data-quality.png)
+![Sheet Checkup data quality checks](./assets/data-quality.png)
 
 *Screenshot of the previous interface.*
 
@@ -69,7 +71,7 @@ Review missing values, duplicate rows, format problems, IQR-based numeric outlie
 
 Compare numeric distributions, categorical Top 10 results, and date trends through interactive charts.
 
-![Smart Tabular Analyzer analysis charts](./assets/analysis-results.png)
+![Sheet Checkup analysis charts](./assets/analysis-results.png)
 
 *Screenshot of the previous interface.*
 

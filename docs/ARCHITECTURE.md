@@ -1,10 +1,10 @@
-# Smart Tabular Analyzer v3.0.0 架构说明
+# 表格体检 v3.0.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
 ## 架构概览
 
-Smart Tabular Analyzer 是一个无后端、无数据库、无构建步骤的静态浏览器应用：
+表格体检是一个无后端、无数据库、无构建步骤的静态浏览器应用：
 
 - `index.html` 定义页面结构，并从仓库内的 `vendor/` 目录加载 PapaParse、Chart.js 和 SheetJS。
 - `style.css` 提供桌面端与移动端样式。
@@ -952,7 +952,9 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 - **侧栏**（`#appSidebar`）：文件名和“N 行 × K 列”、按文件顺序列出全部字段和已应用类型的小标、当前状态（筛选、表头所在行、已按空值处理的条数），由 `renderSidebar()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里刷新；“筛选”一行和 `#globalFilterSummary` 同文，由 `updateGlobalFilterStatus()` 写，所以筛选路径也会更新它。宽度不小于 1100 px 默认展开、在内容旁边；小于 1100 px 默认收起，打开时盖在内容上（遮罩、Esc 关闭、焦点关在面板里、关闭后回到按钮）。用户点过开合以后按用户的来（`body.sidebar-open` / `sidebar-closed`），刷新回到默认。
 - **上传页与回到分析**：“换一个文件”回到上传页（`showUploadPage()`），不清除当前分析；这时上传页给出“回到〈文件名〉的分析”（`#returnToAnalysis`，`formatReturnToAnalysis()`），点了回到原来的模块（`state.returnModule`）。新导入开始、导入失败或工作簿还在等选工作表时不给这个入口。
 - **字段配置表（F1、F2）**：列是字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值。字段多于 20 个（`SCHEMA_FILTER_MIN_FIELDS`）时出现搜索框和按确认类型的切换（`SCHEMA_KINDS`），状态在 `state.schemaFilter = { query, kind }`；只给表格行加 `hidden`，不重画表格，应用、恢复和“有未应用的修改”都按全部字段算。新导入清空，应用后保留（所选类型没有字段了回到“全部”）。
+- **问题行“查看”（v3.0.0 修复）**：`handleProblemViewClick()` 打开查看区后，把 `#problemRowsSection` 用 `scrollIntoView({ block: "start" })` 滚到顶栏下面（靠 `html` 的 `scroll-padding-top`），标题 `focus({ preventScroll: true })`；换类别、翻页和 `refreshProblemView()` 都不滚动。`prefers-reduced-motion` 下 `scroll-behavior: auto`。
 - **外观**：颜色、字号（12 / 13 / 15 / 17 / 22 / 28 / 40）、字重（400 / 600 / 700）在 `style.css` 的 `:root` 和各规则里；模块本身不是卡片，模块里的表格框、频数卡、导出列表、筛选卡和图表卡是白卡，投影只给盖在内容上的侧栏。“一组一个蓝色主按钮”只用 id 选择器调整（`#exportFilteredCsv`、`#placeholderDetails` 下每条的“按空值处理”显示成次按钮），按钮的类名没有改。类别色只用在上传页示例小表、质量页 5 个小节标题前的圆点和字段配置表“认不出”前的粉点。图表配色在 `app.js` 的 `CHART_THEME`，字体在 `script.js` 的 `Chart.defaults`，报告自己的样式没有动。
+- **外观（第二次样式提交）**：顶栏只有产品名，没有图标、副标题和隐私徽章，页脚只有 GitHub 链接；隐私句只在上传页标题下、侧栏底部和导出模块自己的说明里。模块标题 17 px / 600，模块里的小标题 15 px / 600；字段配置、数据质量、筛选的说明是标题旁一行短句（`.section-aside`）。质量页疑似合计、公式错误、问题行各是一张白卡，“按单位读取”到“编号重复”7 个小节包在 `.quality-notes` 一张卡里，细线只加在可见小节之间。空值检查、偏大或偏小、数值统计、字段配置四张表的数字列带 `num` 类右对齐（报告里没有）。趋势线用 `trendLineStyle()`：直线、显示数据点、不填色；y 轴最多 5 个刻度，x 轴 `autoSkipPadding: 16`。上传图标没有底色方块，两个上传按钮没有图标。
 - **假 DOM 测不到的**：元素是否看得见、隐藏模块里图表的尺寸、吸顶表头、焦点和 `inert` 的实际效果、侧栏在各宽度下的开合、横向滚动和打印，都要在浏览器里看（`docs/RELEASE_CHECKLIST.md` 第 7 节）。
 
 **与其他模块的关系**
