@@ -7210,9 +7210,11 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
 });
 
 // The report text of the sample (custom analysis, then filtered to 华东), times and version
-// blanked, is the v2.12.0 text: a new shell changes no word of the report.
-const GUARD_REPORT_SHA256 = "a0238e0947b3924235966b011aeb32a353f9d1d23378241865733e6e33fdfbef";
-test("v3.0.0 guard: the sample's report text is the v2.12.0 text", async () => {
+// blanked, is the v2.12.0 text with only the name changed: neither the v3.0.0 shell nor the
+// v3.0.1 rename touches any other word. v3.0.1 renamed the product and the report title; the
+// new hash was taken by replacing just those words in the old text and comparing byte for byte.
+const GUARD_REPORT_SHA256 = "593ed289f311170989fb8976d1cb21680d4116c1cbe331faa3710153b9886204";
+test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the name changed", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const version = orders.evaluate("buildReportData().version");
   const texts = [];
@@ -7362,7 +7364,7 @@ test("v3.0.0 modules: field configuration, placeholder confirmations and filters
 test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 换一个文件; no section labels", () => {
   const html = repoFile("index.html");
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
-  assertInOrder(header, ['<button id="sidebarToggle"', "<strong>Smart Tabular Analyzer</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
+  assertInOrder(header, ['<button id="sidebarToggle"', "<strong>表格体检</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
   assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
   // v3.0.0 look2: no privacy badge in the top bar. Outside the export module (whose notes say how
   // exporting works) the page states it twice: under the upload title and at the foot of the sidebar.
@@ -8425,15 +8427,15 @@ test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no priv
   const html = repoFile("index.html");
   const css = repoFile("style.css");
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
-  assert.match(header, /<strong>Smart Tabular Analyzer<\/strong>/);
+  assert.match(header, /<strong>表格体检<\/strong>/);
   assert.doesNotMatch(header, /<small>|brand-mark|privacy-badge|数据仅在浏览器本地处理/);
   assert.doesNotMatch(html, /brand-mark|privacy-badge/);
   assert.doesNotMatch(css, /\.brand-mark|\.privacy-badge|\.brand-copy small/);
-  assert.match(html, /<title>Smart Tabular Analyzer \| 表格数据体检工具<\/title>/);
+  assert.match(html, /<title>表格体检 \| 检查 CSV、Excel 表格的数据问题<\/title>/);
   const footer = html.slice(html.indexOf('<footer class="app-footer">'), html.indexOf("</footer>"));
   assert.equal((footer.match(/<p>/g) || []).length, 1);
   assert.match(footer, /<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<span>GitHub 仓库<\/span><\/a><\/p>/);
-  assert.doesNotMatch(footer, /表格数据体检工具|不会上传到服务器|<strong>/);
+  assert.doesNotMatch(footer, /表格数据体检工具|表格体检|检查 CSV、Excel 表格的数据问题|不会上传到服务器|<strong>/);
   // The privacy sentences that stay: under the upload title and at the foot of the sidebar.
   assert.match(html, /<p class="product-description">不用安装，表格不会离开这台电脑。<\/p>/);
   assert.match(html, /<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。<\/p>/);
@@ -8597,4 +8599,75 @@ test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons
   const icon = cssRule(repoFile("style.css"), ".upload-icon");
   assert.doesNotMatch(icon, /background|border-radius/);
   assert.match(icon, /color: var\(--primary\);/);
+});
+
+// v3.0.1: the product is called 表格体检. The old name, the old subtitle and the old report title
+// never come back on the page (source without comments, title, aria labels, every element after
+// importing the sample), in either report, or in an export file name; the new texts are exact.
+// The old words are joined from parts so that this file is not a hit when the repository is
+// searched for them. The repository URL (smart-tabular-analyzer) is lowercase with hyphens and
+// stays; the Latin words are matched without case but with a space, so it is never a hit.
+const OLD_PRODUCT_WORDS = [["Smart", "Tabular", "Analyzer"].join(" "), ["Tabular", "Analyzer"].join(" "), ["表格数据", "体检工具"].join(""), ["数据分析", "报告"].join("")];
+const RENAME_REPO_URL = "https://github.com/wy-data-30/smart-tabular-analyzer";
+
+function findOldProductWords(where, text, hits) {
+  const lower = String(text).toLowerCase();
+  for (const word of OLD_PRODUCT_WORDS) {
+    const at = lower.indexOf(word.toLowerCase());
+    if (at >= 0) hits.push(`${where}: 「${word}」 in …${String(text).slice(Math.max(0, at - 20), at + word.length + 20)}…`);
+  }
+}
+
+function findOldWordsInProductScope(scope, hits) {
+  for (const [id, element] of scope.elements) {
+    findOldProductWords(`#${id}.textContent`, element.textContent, hits);
+    findOldProductWords(`#${id}.innerHTML`, element.innerHTML, hits);
+  }
+}
+
+test("v3.0.1 rename: the old product name and report title never appear; the new name is exact", async () => {
+  const hits = [];
+  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  findOldProductWords("index.html", html, hits);
+  assert.equal((html.match(/<title>([^<]*)<\/title>/) || [])[1], "表格体检 | 检查 CSV、Excel 表格的数据问题");
+  assert.equal((html.match(/<a class="brand" href="#mainContent" aria-label="([^"]*)">/) || [])[1], "表格体检首页");
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>"));
+  assert.deepEqual(header.match(/<strong>[^<]*<\/strong>/g), ["<strong>表格体检</strong>"]);
+  for (const label of html.match(/aria-label="[^"]*"/g) || []) findOldProductWords("index.html aria-label", label, hits);
+
+  // The four-character name must not break across lines (642-790 px): nowrap is on the base rule
+  // now, not only on phones.
+  const css = repoFile("style.css");
+  assert.match(cssRule(css, ".brand-copy strong"), /white-space: nowrap;/);
+  const phoneBrand = (css.slice(css.indexOf("@media (max-width: 640px)")).match(/\.brand-copy strong \{([^}]*)\}/) || [])[1];
+  assert.match(phoneBrand, /font-size: 13px;/);
+  assert.doesNotMatch(phoneBrand, /white-space/);
+
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  findOldWordsInProductScope(orders, hits);
+  orders.evaluate(GUARD_CUSTOM_ANALYSIS);
+  orders.evaluate(GUARD_EAST_FILTER);
+  const { html: reportHtml, markdown } = reportOf(orders);
+  findOldProductWords("html report", reportHtml, hits);
+  findOldProductWords("markdown report", markdown, hits);
+  assert.equal((reportHtml.match(/<title>([^<]*)<\/title>/) || [])[1], "sample-orders.csv - 表格体检报告");
+  assert.deepEqual(reportHtml.match(/<h1>[^<]*<\/h1>/g), ["<h1>表格体检报告</h1>"]);
+  assert.equal(markdown.split("\n")[0], "# 表格体检报告");
+  assert.equal((reportHtml.match(/<footer>由<a href="([^"]*)">([^<]*)<\/a> /) || []).slice(1).join(" "), `${RENAME_REPO_URL} 表格体检`);
+  assert.equal((markdown.match(/^> 由\[([^\]]*)\]\(([^)]*)\) /m) || []).slice(1).join(" "), `表格体检 ${RENAME_REPO_URL}`);
+  for (const text of [html, reportHtml, markdown]) assert.ok(text.includes(RENAME_REPO_URL));
+
+  const names = [
+    orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`), orders.evaluate(`buildReportFileName("md", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`), orders.evaluate(`buildDataExportFileName("deduplicated", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildStandardizedFileName("data", new Date(2026, 10, 15))`), orders.evaluate(`buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)`),
+    ...JSON.parse(orders.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
+  ];
+  assert.ok(names.length > 6);
+  for (const name of names) {
+    assert.ok(name.startsWith("sample-orders"), name);
+    findOldProductWords("file name", name, hits);
+    assert.ok(!name.includes("表格体检"), name);
+  }
+  assert.deepEqual(hits.slice(0, 20), [], `${hits.length} hits`);
 });

@@ -339,7 +339,7 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes(evaluate("escapeMarkdownCell(__value)")));
   assert.ok(!report.includes(context.__field));
   assert.ok(!report.includes(context.__value));
-  assert.ok(report.includes("[Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)"));
+  assert.ok(report.includes("由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
 test("public current version markers agree on v3.0.0", () => {
