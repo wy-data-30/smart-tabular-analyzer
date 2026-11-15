@@ -1030,18 +1030,41 @@ function previewAllCommonPlaceholders() {
   });
 }
 
+// v3.1.0: the figures a placeholder message compares, before and after a confirmation or an
+// undo: the field's missing count, values it cannot read, type, and whether its ID duplicates
+// list the key.
+function getPlaceholderFieldFigures(field, key) {
+  const profile = getFieldProfile(field);
+  return {
+    missing: profile.missingCount,
+    failures: profile.conversionFailureCount || 0,
+    typeKey: profile.typeKey,
+    listed: state.idDuplicates.some((item) => item.field === field && item.values.some((value) => placeholderKey(value.value) === key))
+  };
+}
+
 function confirmPlaceholder(field, key) {
-  const pending = state.placeholders.some((entry) => entry.field === field && entry.key === key && !entry.confirmed && !entry.fieldIgnored);
+  const entry = state.placeholders.find((item) => item.field === field && item.key === key && !item.confirmed && !item.fieldIgnored);
   const keysByField = Object.create(null);
-  if (pending) keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
-  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按空值处理，统计、图表和分析结论已重新计算。`);
+  if (!entry) return updatePlaceholderConfirmations(keysByField, "");
+  keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
+  const before = getPlaceholderFieldFigures(field, key);
+  return updatePlaceholderConfirmations(keysByField, () => formatPlaceholderConfirmMessage({
+    field, key, count: entry.count, before, after: getPlaceholderFieldFigures(field, key), rowCount: state.rows.length
+  }));
 }
 
 function undoPlaceholderConfirmation(field, key) {
   const keys = getConfirmedPlaceholderKeys(field);
   const keysByField = Object.create(null);
-  if (keys.includes(key)) keysByField[field] = keys.filter((item) => item !== key);
-  return updatePlaceholderConfirmations(keysByField, `已撤销「${field}」的「${key}」，统计、图表和分析结论已重新计算。`);
+  if (!keys.includes(key)) return updatePlaceholderConfirmations(keysByField, "");
+  keysByField[field] = keys.filter((item) => item !== key);
+  const entry = state.placeholders.find((item) => item.field === field && item.key === key);
+  const before = getPlaceholderFieldFigures(field, key);
+  return updatePlaceholderConfirmations(keysByField, () => formatPlaceholderUndoMessage({
+    field, key, count: entry ? entry.count : 0, before, after: getPlaceholderFieldFigures(field, key), rowCount: state.rows.length,
+    ignored: before.typeKey === "ignore"
+  }));
 }
 
 function confirmAllCommonPlaceholders() {
@@ -1051,11 +1074,20 @@ function confirmAllCommonPlaceholders() {
     keysByField[entry.field] ??= [...getConfirmedPlaceholderKeys(entry.field)];
     keysByField[entry.field].push(entry.key);
   });
-  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按空值处理，统计、图表和分析结论已重新计算。`);
+  const typesBefore = Object.fromEntries(entries.map((entry) => [entry.field, getFieldProfile(entry.field).typeKey]));
+  return updatePlaceholderConfirmations(keysByField, () => {
+    // Fields whose type changed first, as the confirm-all note names them first.
+    const changed = (entry) => getFieldProfile(entry.field).typeKey !== typesBefore[entry.field];
+    const ordered = [...entries.filter(changed), ...entries.filter((entry) => !changed(entry))];
+    const typeChanges = [...new Set(ordered.filter(changed).map((entry) => entry.field))]
+      .map((field) => ({ field, typeKey: getFieldProfile(field).typeKey, previousTypeKey: typesBefore[field] }));
+    return formatAllPlaceholdersMessage(ordered, typeChanges, state.rows.length);
+  });
 }
 
 // The fourth refresh path. keysByField replaces the confirmed keys of each listed
-// field; refused while the field configuration has unapplied drafts.
+// field; refused while the field configuration has unapplied drafts. message is a text, or
+// a function that writes it once the analysis is rebuilt (v3.1.0: it compares the counts).
 function updatePlaceholderConfirmations(keysByField, message) {
   if (!state.rows.length) return false;
   if (!ensureFieldConfigurationApplied("处理像是空值的写法")) {
@@ -1426,8 +1458,11 @@ function refreshFilteredAnalysis() {
 }
 
 // setMessage shows the outcome: the field configuration area by default, the
-// placeholder subsection for placeholder confirmations.
+// placeholder subsection for placeholder confirmations. fieldConfigMessage is a text or a
+// function called once everything is rebuilt. "已清除现有筛选条件。" only when a filter was
+// applied before (v3.1.0).
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
+  const hadFilters = hasActiveFilters();
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
@@ -1456,7 +1491,8 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderCharts();
   renderChartInsights();
   resetV2AnalysisState();
-  setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
+  const message = typeof fieldConfigMessage === "function" ? fieldConfigMessage() : fieldConfigMessage;
+  setMessage(hadFilters ? `${message} 已清除现有筛选条件。` : message, "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
 }

@@ -2255,7 +2255,7 @@ test("confirming a placeholder re-profiles its field: 4 of 5 amounts make it num
   assert.equal(scope.evaluate("hasFieldConfigDraftChanges()"), false);
   assert.equal(scope.evaluate("state.totalMissing"), 1);
   assert.equal(scope.evaluate("state.placeholders[0].confirmed"), true);
-  assert.equal(placeholderMessage(scope), "已把「金额」的「N/A」按空值处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(scope), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 0 → 1。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 6。「金额」现在识别为数值（原来是分类）。");
 });
 
 test("the order fixture goes from 26 to 27 missing values with one confirmation and to 31 with all five", async () => {
@@ -2294,7 +2294,7 @@ test("confirming all common placeholders skips maybe-valid keys and ignored fiel
   scope.evaluate("confirmAllCommonPlaceholders()");
   assert.deepEqual(placeholderConfirmations(scope.evaluate), { 金额: ["N/A"], 年份: ["—"] });
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["numeric", "date", "category", "ignore"]);
-  assert.equal(placeholderMessage(scope), "已把 2 处常见写法按空值处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(scope), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「年份」的「—」）。「金额」现在识别为数值（原来是分类）；「年份」现在识别为日期（原来是分类）。只是把这些格当作空，行都没有删，所以行数还是 7。");
 });
 
 test("confirmed placeholders leave Top 10, filter options, filter matches and groups as empty values", () => {
@@ -2352,7 +2352,7 @@ test("undoing confirmations restores profiles, missing totals, ID duplicates and
   assert.notEqual(snapshot(), before);
   orders.evaluate('undoPlaceholderConfirmation("备注", "N/A"); undoPlaceholderConfirmation("金额", "N/A"); undoPlaceholderConfirmation("备注", "—")');
   assert.equal(snapshot(), before);
-  assert.equal(placeholderMessage(orders), "已撤销「备注」的「—」，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(orders), "已撤销「备注」的「—」：空值 27 → 26，分类里重新有「—」这一类。这 1 格重新按原来的文字处理，行数还是 30。");
 });
 
 test("manual field types survive confirmations; a type equal to the automatic one is not manual", () => {
@@ -8670,4 +8670,89 @@ test("v3.0.1 rename: the old product name and report title never appear; the new
     assert.ok(!name.includes("表格体检"), name);
   }
   assert.deepEqual(hits.slice(0, 20), [], `${hits.length} hits`);
+});
+
+// ---- v3.1.0 commit 1: what treating a value as empty changed ----
+// The messages say the counts before and after, that no row went, and why the statistics
+// stay; "已清除现有筛选条件。" only when a filter was applied before.
+
+const ID_WITH_NA = ["N/A", "N/A", "N/A", ...Array.from({ length: 11 }, (_, index) => `D${100 + index}`)];
+
+test("v3.1.0 empty values: a numeric field says the counts, that no row went and that the statistics stay", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 42。平均值等统计不变，因为「N/A」本来就没有算进去。");
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 0 → 1。这 1 格重新按原来的文字处理，行数还是 42。");
+});
+
+test("v3.1.0 empty values: a date field says the trend by date stays, not the average", async () => {
+  const dates = await importStage3Fixture("订单表.csv");
+  dates.evaluate('confirmPlaceholder("下单日期", "—")');
+  assert.equal(placeholderMessage(dates), "已把「下单日期」的 1 个「—」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 30。按日期的趋势不变，因为「—」本来就没有算进去。");
+  assert.doesNotMatch(placeholderMessage(dates), /平均值/);
+});
+
+test("v3.1.0 empty values: a category field loses the class, and the count is every cell the spelling covers", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('confirmPlaceholder("销售代表", "—")');
+  assert.equal(placeholderMessage(orders), "已把「销售代表」的 1 个「—」按空值处理：空值 1 → 2，分类里不再有「—」这一类。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 42。");
+  orders.evaluate('undoPlaceholderConfirmation("销售代表", "—")');
+  assert.equal(placeholderMessage(orders), "已撤销「销售代表」的「—」：空值 2 → 1，分类里重新有「—」这一类。这 1 格重新按原来的文字处理，行数还是 42。");
+  const mixed = await importStage3Fixture("写法不一致.csv");
+  mixed.evaluate('confirmPlaceholder("客户", "N/A")');
+  assert.equal(placeholderMessage(mixed), "已把「客户」的 2 个「N/A」按空值处理：空值 1 → 3，分类里不再有「N/A」这一类。只是把这 2 格当作空，这些行没有删，其他字段照常参与分析，所以行数还是 24。");
+});
+
+test("v3.1.0 empty values: an ID field says the duplicate list, a changed type says the type, an ignored field says why", () => {
+  const ids = commitColumns({ 订单ID: ID_WITH_NA, 金额: ID_WITH_NA.map((_, index) => String(10 + index)) });
+  ids.evaluate('confirmPlaceholder("订单ID", "N/A")');
+  assert.equal(placeholderMessage(ids), "已把「订单ID」的 3 个「N/A」按空值处理：空值 0 → 3，编号重复里不再列出「N/A」。只是把这 3 格当作空，这些行没有删，其他字段照常参与分析，所以行数还是 14。");
+  ids.evaluate('undoPlaceholderConfirmation("订单ID", "N/A")');
+  assert.equal(placeholderMessage(ids), "已撤销「订单ID」的「N/A」：空值 3 → 0，编号重复里重新列出「N/A」。这 3 格重新按原来的文字处理，行数还是 14。");
+
+  const amounts = commitColumns({ 金额: AMOUNT_WITH_NA });
+  amounts.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(amounts), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 0 → 1。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 6。「金额」现在识别为数值（原来是分类）。");
+  amounts.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(amounts), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 1 → 0。这 1 格重新按原来的文字处理，行数还是 6。「金额」现在识别为分类（原来是数值）。");
+
+  const notes = commitColumns({ 备注: ["N/A", "N/A", "甲", "乙", "丙", "丁"], 金额: ["1", "2", "3", "4", "5", "6"] });
+  notes.evaluate('confirmPlaceholder("备注", "N/A"); stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.equal(notes.evaluate('undoPlaceholderConfirmation("备注", "N/A")'), true);
+  assert.equal(placeholderMessage(notes), "已撤销「备注」的「N/A」。「备注」已忽略，撤销只影响以后改回其他类型时的结果。");
+});
+
+test("v3.1.0 empty values: treating every common spelling as empty names them, type changes first", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(orders), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「销售代表」的「—」）。只是把这些格当作空，行都没有删，所以行数还是 42。");
+  // 说明 comes first in the table but keeps its type, so it is named after the two that change.
+  const scope = commitColumns({
+    说明: ["N/A", "甲", "乙", "丙", "丁", "戊", "己"],
+    年份: YEARS_WITH_DASHES,
+    金额: ["100", "200", "N/A", "约500", "300", "400", "500"]
+  });
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(scope), "已把 3 处常见写法按空值处理（「年份」的「—」、「金额」的「N/A」、「说明」的「N/A」）。「年份」现在识别为日期（原来是分类）；「金额」现在识别为数值（原来是分类）。只是把这些格当作空，行都没有删，所以行数还是 7。");
+});
+
+test("v3.1.0 已清除现有筛选条件 only follows a rebuild that had a filter applied", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const fieldMessage = () => orders.elements.get("fieldConfigMessage").textContent;
+  orders.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。");
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(fieldMessage(), "已恢复自动识别，统计、图表和分析结论已重新计算。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。 已清除现有筛选条件。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(fieldMessage(), "已恢复自动识别，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.match(placeholderMessage(orders), /所以行数还是 42。平均值等统计不变，因为「N\/A」本来就没有算进去。 已清除现有筛选条件。$/);
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.doesNotMatch(placeholderMessage(orders), /已清除现有筛选条件/);
 });
