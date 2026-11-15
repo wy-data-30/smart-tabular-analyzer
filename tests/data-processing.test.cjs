@@ -723,8 +723,9 @@ test("duplicate row detection compares every original field value exactly", () =
   installDataset(context, evaluate, rows, ["name", "score"]);
 
   assert.equal(evaluate('countDuplicateRows(state.rows, state.fields)'), 1);
-  assert.equal(evaluate('deduplicateRows(state.rows, state.fields).length'), 4);
-  assert.equal(evaluate('deduplicateRows(state.rows, state.fields)[0] === state.rows[0]'), true);
+  // v3.1.0: the repeated rows past the first of each group, by index; the first one stays.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(findRepeatedRowIndexes(state.rows, state.fields))')), [1]);
+  assert.equal(evaluate('findRepeatedRowIndexes(state.rows, state.fields).includes(0)'), false);
   assert.equal(evaluate('state.rows.length'), 5);
 });
 

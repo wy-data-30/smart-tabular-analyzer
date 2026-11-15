@@ -97,7 +97,11 @@ function exportProcessedCsv(mode) {
 
 function getProcessedExportRows(mode) {
   if (mode === "filtered") return getAnalysisRows();
-  if (mode === "deduplicated") return deduplicateRows(state.rows, state.fields);
+  if (mode === "deduplicated") {
+    // Until v3.1.0 commit 6 removes this export: every row but the repeated ones.
+    const repeated = new Set(findRepeatedRowIndexes(state.rows, state.fields));
+    return state.rows.filter((row, index) => !repeated.has(index));
+  }
   throw new Error("不支持的数据导出类型。");
 }
 
@@ -585,7 +589,7 @@ function buildReportData(now = new Date()) {
     dataScale: {
       rows: analysisRows.length,
       originalRows: state.rows.length,
-      filteredOutRows: Math.max(0, state.rows.length - analysisRows.length),
+      filteredOutRows: Math.max(0, getIncludedRows().length - analysisRows.length),
       fields: state.fields.length,
       activeFields: activeProfiles.length,
       numericFields: getProfilesByType("numeric").length,

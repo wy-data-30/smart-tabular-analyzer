@@ -144,6 +144,29 @@ function formatSuspectedTotalStatus(items) {
   return `发现 ${formatInteger(items.length)} 行疑似合计 / 小计${shown}${ending}`;
 }
 
+// ---- v3.1.0: rows left out of the analysis, the sentences of the rebuild path ----
+// How many file rows a sentence names before 等.
+const EXCLUSION_LINE_LIMIT = 5;
+
+// "第 44 行", "第 5、8 行", "第 1、2、3、4、5 行等"; null without row numbers.
+function formatExclusionLines(lines) {
+  if (!lines.length || lines.some((line) => line === null)) return null;
+  return `第 ${lines.slice(0, EXCLUSION_LINE_LIMIT).join("、")} 行${lines.length > EXCLUSION_LINE_LIMIT ? "等" : ""}`;
+}
+
+// After a rebuild: excluded totals that are no longer suspected totals came back.
+function formatExclusionRestored(count) {
+  return count ? `有 ${formatInteger(count)} 行不再是疑似合计行，已恢复计入分析。` : "";
+}
+
+// After a rebuild: totals that came back earlier in this import are suspected totals again
+// (they stay counted until the user leaves them out again).
+function formatTotalsFlaggedAgain(lines) {
+  if (!lines.length) return "";
+  const named = formatExclusionLines(lines);
+  return `${named || `有 ${formatInteger(lines.length)} 行`}又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。`;
+}
+
 function formatFormulaErrorCount(items) {
   return items.reduce((sum, item) => sum + item.count, 0);
 }
@@ -355,31 +378,37 @@ function formatPlaceholderTypeChange(field, typeKeyBefore, typeKeyAfter) {
   return `「${field}」现在识别为${FIELD_TYPE_LABELS[typeKeyAfter]}（原来是${FIELD_TYPE_LABELS[typeKeyBefore]}）`;
 }
 
+// "行数还是 42", or "参与分析的行还是 40" when rows are left out of the analysis (v3.1.0):
+// rowCount is the rows counted in the analysis.
+function formatPlaceholderRowCount(rowCount, rowsLeftOut) {
+  return `${rowsLeftOut ? "参与分析的行" : "行数"}还是 ${formatInteger(rowCount)}`;
+}
+
 // count: the cells the key covers; rowCount: the rows of the analysis, which do not change.
-function formatPlaceholderConfirmMessage({ field, key, count, before, after, rowCount }) {
+function formatPlaceholderConfirmMessage({ field, key, count, before, after, rowCount, rowsLeftOut = false }) {
   const cells = formatInteger(count);
   const typeChanged = before.typeKey !== after.typeKey;
   const tail = typeChanged
     ? `${formatPlaceholderTypeChange(field, before.typeKey, after.typeKey)}。`
     : after.typeKey === "numeric" ? `平均值等统计不变，因为「${key}」本来就没有算进去。`
       : after.typeKey === "date" ? `按日期的趋势不变，因为「${key}」本来就没有算进去。` : "";
-  return `已把「${field}」的 ${cells} 个「${key}」按空值处理：${formatPlaceholderCounts(key, before, after, true)}。只是把这 ${cells} 格当作空，${count === 1 ? "这一行" : "这些行"}没有删，其他字段照常参与分析，所以行数还是 ${formatInteger(rowCount)}。${tail}`;
+  return `已把「${field}」的 ${cells} 个「${key}」按空值处理：${formatPlaceholderCounts(key, before, after, true)}。只是把这 ${cells} 格当作空，${count === 1 ? "这一行" : "这些行"}没有删，其他字段照常参与分析，所以${formatPlaceholderRowCount(rowCount, rowsLeftOut)}。${tail}`;
 }
 
-function formatPlaceholderUndoMessage({ field, key, count, before, after, rowCount, ignored }) {
+function formatPlaceholderUndoMessage({ field, key, count, before, after, rowCount, rowsLeftOut = false, ignored }) {
   if (ignored) return `已撤销「${field}」的「${key}」。「${field}」已忽略，撤销只影响以后改回其他类型时的结果。`;
   const typeChanged = before.typeKey !== after.typeKey;
-  return `已撤销「${field}」的「${key}」：${formatPlaceholderCounts(key, before, after, false)}。这 ${formatInteger(count)} 格重新按原来的文字处理，行数还是 ${formatInteger(rowCount)}。${typeChanged ? `${formatPlaceholderTypeChange(field, before.typeKey, after.typeKey)}。` : ""}`;
+  return `已撤销「${field}」的「${key}」：${formatPlaceholderCounts(key, before, after, false)}。这 ${formatInteger(count)} 格重新按原来的文字处理，${formatPlaceholderRowCount(rowCount, rowsLeftOut)}。${typeChanged ? `${formatPlaceholderTypeChange(field, before.typeKey, after.typeKey)}。` : ""}`;
 }
 
 // entries: [{ field, key }] with the fields whose type changed first; typeChanges: [{ field,
 // typeKey, previousTypeKey }] in the same order.
-function formatAllPlaceholdersMessage(entries, typeChanges, rowCount) {
+function formatAllPlaceholdersMessage(entries, typeChanges, rowCount, rowsLeftOut = false) {
   const list = entries.map((entry) => `「${entry.field}」的「${entry.key}」`).join("、");
   const types = typeChanges.length
     ? `${typeChanges.map((change) => formatPlaceholderTypeChange(change.field, change.previousTypeKey, change.typeKey)).join("；")}。`
     : "";
-  return `已把 ${formatInteger(entries.length)} 处常见写法按空值处理（${list}）。${types}只是把这些格当作空，行都没有删，所以行数还是 ${formatInteger(rowCount)}。`;
+  return `已把 ${formatInteger(entries.length)} 处常见写法按空值处理（${list}）。${types}只是把这些格当作空，行都没有删，所以${formatPlaceholderRowCount(rowCount, rowsLeftOut)}。`;
 }
 
 // The notes of "日期写法混用", "常量列" and "写法细节不同的值" in reports; index.html has the same

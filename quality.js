@@ -1,4 +1,4 @@
-// 数据质量：类型转换失败计数与样例、精确重复行判断与去重、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
+// 数据质量：类型转换失败计数与样例、精确重复行判断和多出来的行、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。
 
 function countConversionFailuresForValues(values, typeKey, field) {
   if (typeKey !== "numeric" && typeKey !== "date") return 0;
@@ -37,8 +37,10 @@ function getFieldConversionFailureSamples(field, typeKey) {
   return samples;
 }
 
+// state.qualityNumericStats is built from every row on commit and rebuild. Rows left out of
+// the analysis or a filter do not make it stale (v3.1.0); another data set does.
 function getQualityNumericStats() {
-  return state.filterSourceRows === state.rows
+  return state.filterSourceRows === state.rows || state.exclusionSourceRows === state.rows
     ? state.qualityNumericStats
     : buildNumericStats(state.rows);
 }
@@ -54,14 +56,18 @@ function countDuplicateRows(rows, fields) {
   return duplicates;
 }
 
-function deduplicateRows(rows, fields) {
+// The repeated rows past the first of each group (buildExactRowKey() over every field), as
+// indexes into rows in row order: what "不计入分析" leaves out for repeated rows and what the
+// problem rows list without （保留）. countDuplicateRows() counts the same rows.
+function findRepeatedRowIndexes(rows, fields) {
   const seen = new Set();
-  return rows.filter((row) => {
+  const repeated = [];
+  rows.forEach((row, index) => {
     const key = buildExactRowKey(row, fields);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    if (seen.has(key)) repeated.push(index);
+    else seen.add(key);
   });
+  return repeated;
 }
 
 function buildExactRowKey(row, fields) {
@@ -667,8 +673,9 @@ function listOutlierRows(field) {
 }
 
 // Exactly repeated rows (buildExactRowKey() over every field), grouped, groups by
-// first appearance. The first row of a group is kept by the deduplicated export, so
-// the quality count (state.duplicateRows) leaves it out: items = count + groupCount.
+// first appearance. The first row of a group stays in the analysis when the repeated rows
+// are left out (findRepeatedRowIndexes()), so the quality count (state.duplicateRows) leaves
+// it out: items = count + groupCount.
 function listDuplicateRowGroups() {
   if (!state.duplicateRows) return null;
   const groups = new Map();

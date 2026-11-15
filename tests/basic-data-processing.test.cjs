@@ -5328,7 +5328,7 @@ const V281_GUARD_KINDS = ["missing", "formulaError", "conversion", "outlier", "d
 const v281GuardDigest = (scope) => crypto.createHash("sha256").update(scope.evaluate(`JSON.stringify({
   rows: state.rows, profiles: state.profiles, numericStats: state.numericStats, qualityNumericStats: state.qualityNumericStats, categoryStats: state.categoryStats,
   duplicateRows: state.duplicateRows, totalMissing: state.totalMissing, idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking,
-  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: deduplicateRows(state.rows, state.fields).length,
+  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: state.rows.length - state.duplicateRows,
   problems: listProblemCategories().filter((category) => ${JSON.stringify(V281_GUARD_KINDS)}.includes(category.kind)).map((category) => [category, listProblemRows(category).items])
 })`)).digest("hex").slice(0, 32);
 
@@ -8755,4 +8755,241 @@ test("v3.1.0 已清除现有筛选条件 only follows a rebuild that had a filte
   assert.match(placeholderMessage(orders), /所以行数还是 42。平均值等统计不变，因为「N\/A」本来就没有算进去。 已清除现有筛选条件。$/);
   orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
   assert.doesNotMatch(placeholderMessage(orders), /已清除现有筛选条件/);
+});
+
+// ---- v3.1.0 commit 2: the rows counted in the analysis ----
+// Three layers: every row of the file (state.rows) -> the rows counted in the analysis
+// (getIncludedRows()) -> the filtered rows (getAnalysisRows()). No button yet: the tests call
+// setRowExclusion() as the button will. The sample has its total on file row 44 and a
+// repeated row on file row 21.
+
+const SAMPLE_TOTAL_VALUES = ["123440", "123,440"];
+
+async function sampleWithExclusions({ totals = true, duplicates = true } = {}) {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  if (totals) orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  if (duplicates) orders.evaluate('setRowExclusion("duplicateRows", true)');
+  return orders;
+}
+
+// A rebuild that ends with every type as it was: 销售代表 to ID and back.
+function rebuildKeepingTypes(scope) {
+  scope.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration(); stageFieldTypeChange("销售代表", "category"); applyFieldConfiguration()');
+}
+
+const excludedLines = (scope) => JSON.parse(scope.evaluate(`JSON.stringify({
+  suspectedTotal: state.excludedRows.suspectedTotal.map((index) => getSourceRowNumber(state.rows[index])),
+  duplicateRows: state.excludedRows.duplicateRows.map((index) => getSourceRowNumber(state.rows[index]))
+})`));
+
+test("v3.1.0 counted rows: without a click nothing is left out and the arrays are the v3.0.1 ones", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  assert.equal(orders.evaluate("state.numericStats === state.qualityNumericStats"), true);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 42);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [] });
+  assert.equal(orders.evaluate("state.suspectedTotals.length"), 1);
+  rebuildKeepingTypes(orders);
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows && state.numericStats === state.qualityNumericStats"), true);
+});
+
+test("v3.1.0 counted rows: every exit counts 40 rows after both kinds are left out, through a rebuild too", async () => {
+  const orders = await sampleWithExclusions();
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  const exits = () => JSON.parse(orders.evaluate(`JSON.stringify((() => {
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "";
+    renderV2Analysis();
+    dom.categoryFilterField.value = "地区"; updateCategoryFilterField();
+    return {
+      included: getIncludedRows().length, analysis: getAnalysisRows().length,
+      quantity: state.numericStats.find((item) => item.field === "数量").count,
+      amount: state.numericStats.find((item) => item.field === "金额").count,
+      region: state.categoryStats.find((item) => item.field === "地区").total,
+      histogram: getNumericValues("数量").length,
+      trend: buildDateTrend("下单日期", "").values.reduce((sum, value) => sum + value, 0),
+      filterOptions: state.categoryFilterOptions.reduce((sum, option) => sum + option.count, 0),
+      exportRows: getProcessedExportRows("filtered").length,
+      report: buildReportData(new Date(2026, 10, 15)).dataScale,
+      custom: state.customAnalysis.grouped.reduce((sum, item) => sum + item.count, 0),
+      quality: getQualityNumericStats().find((item) => item.field === "数量").count
+    };
+  })())`));
+  const expected = {
+    included: 40, analysis: 40, quantity: 40, amount: 39, region: 40, histogram: 40, trend: 40, filterOptions: 40, exportRows: 40,
+    report: { rows: 40, originalRows: 42, filteredOutRows: 0, fields: 9, activeFields: 9, numericFields: 2, categoryFields: 5, dateFields: 1, idFields: 1, ignoredFields: 0 },
+    custom: 39, quality: 42
+  };
+  assert.deepEqual(exits(), expected);
+  rebuildKeepingTypes(orders);
+  assert.equal(orders.evaluate("state.numericStats === state.qualityNumericStats"), false);
+  assert.deepEqual(exits(), expected);
+});
+
+test("v3.1.0 counted rows: no analysis output shows the total row's 123440, before or after a rebuild", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const chartConfigs = withFakeCharts(orders);
+  orders.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField(); setRowExclusion("suspectedTotal", true)');
+  const outputs = () => orders.evaluate(`(() => {
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderCharts(); renderChartInsights(); renderV2Analysis(); renderNumericStats(); renderCategoryStats();
+    dom.numericFilterField.value = "金额"; updateNumericFilterField(); dom.categoryFilterField.value = "地区"; updateCategoryFilterField();
+    const report = buildReportData(new Date(2026, 10, 15));
+    return [dom.numericStatsTable.innerHTML, dom.categoryStats.innerHTML, dom.v2PrimaryTable.innerHTML, dom.v2SumTable.innerHTML, dom.v2AvgTable.innerHTML,
+      dom.v2ResultSummary.textContent, state.chartInsights.category, state.chartInsights.trend, JSON.stringify(report.numericStats),
+      JSON.stringify(report.categoryStats), JSON.stringify(report.dateTrends), JSON.stringify(report.customAnalysis), dom.numericFilterRange.textContent,
+      dom.numericFilterMax.value, JSON.stringify(state.categoryFilterOptions)].join("\\n");
+  })()`) + JSON.stringify(chartConfigs.map((config) => config.data));
+  const before = outputs();
+  for (const value of SAMPLE_TOTAL_VALUES) assert.ok(!before.includes(value), value);
+  assert.ok(chartConfigs.length >= 3, "charts were drawn");
+  assert.ok(before.includes("7,200"), "the largest counted amount is there");
+  rebuildKeepingTypes(orders);
+  const after = outputs();
+  for (const value of SAMPLE_TOTAL_VALUES) assert.ok(!after.includes(value), value);
+  // The quality page still reads every row.
+  assert.ok(orders.evaluate('getQualityNumericStats().find((item) => item.field === "金额").max') === 123440);
+});
+
+test("v3.1.0 counted rows: a rebuild keeps the totals still flagged, brings back the others once, and says when one is flagged again", async () => {
+  const orders = await sampleWithExclusions();
+  const fieldMessage = () => orders.elements.get("fieldConfigMessage").textContent;
+  orders.evaluate('stageFieldTypeChange("数量", "ignore"); stageFieldTypeChange("金额", "ignore"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用，统计、图表和分析结论已重新计算。 有 1 行不再是疑似合计行，已恢复计入分析。");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [21] });
+  assert.equal(orders.evaluate("getIncludedRows().length"), 41);
+  orders.evaluate('stageFieldTypeChange("数量", "numeric"); stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。 第 44 行又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [21] });
+  assert.equal(orders.evaluate("state.suspectedTotals.length"), 1);
+  assert.equal(orders.evaluate("getIncludedRows().length"), 41);
+  // Said once: the next rebuild is quiet.
+  rebuildKeepingTypes(orders);
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。");
+  // Excluding it again and losing it again restores it again; then it is not "flagged again"
+  // after the user clicked, until it is restored once more.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  orders.evaluate('stageFieldTypeChange("数量", "category"); stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.match(fieldMessage(), / 有 1 行不再是疑似合计行，已恢复计入分析。$/);
+  // A field configuration that keeps the total flagged keeps it out.
+  const other = await sampleWithExclusions();
+  other.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.deepEqual(excludedLines(other), { suspectedTotal: [44], duplicateRows: [21] });
+  assert.doesNotMatch(other.elements.get("fieldConfigMessage").textContent, /恢复计入|又被标为/);
+});
+
+test("v3.1.0 counted rows: the click keeps filters and the custom analysis, rebuilds nothing, and is refused while drafts wait", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华北", "华东", "华南", "西北", "西南"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(getIncludedRows(), state.filters);
+    state.filterSourceRows = getIncludedRows();
+    refreshFilteredAnalysis();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "品类"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "";
+    renderV2Analysis();
+    dom.v2AnalysisResults.classList.remove("hidden");
+    globalThis.__calls = {};
+    ["populateControls", "renderQuality", "rebuildAnalysisFromProfiles", "initializeFilterControls", "renderSchema", "refreshFilteredAnalysis"].forEach((name) => {
+      const original = globalThis[name];
+      __calls[name] = 0;
+      globalThis[name] = function (...args) { __calls[name] += 1; return original.apply(this, args); };
+    });
+  })()`);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 41);
+  assert.equal(orders.evaluate('setRowExclusion("suspectedTotal", true)'), true);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__calls)")), {
+    populateControls: 0, renderQuality: 0, rebuildAnalysisFromProfiles: 0, initializeFilterControls: 0, renderSchema: 0, refreshFilteredAnalysis: 1
+  });
+  assert.equal(orders.evaluate("hasActiveFilters()"), true);
+  // The total row is the only one with an empty 地区, so the filter keeps every counted row.
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 41);
+  assert.equal(orders.evaluate("Boolean(state.customAnalysis)"), true);
+  assert.equal(orders.evaluate("state.customAnalysis.grouped.reduce((sum, item) => sum + item.count, 0)"), 40);
+  orders.evaluate('stageFieldTypeChange("销售代表", "id")');
+  assert.equal(orders.evaluate('setRowExclusion("duplicateRows", true)'), false);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [] });
+});
+
+test("v3.1.0 counted rows: imports and resets clear the left-out rows; filters and the standardized check keep them", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("checkStandardizedExport()");
+  assert.equal(orders.evaluate("Boolean(state.standardizedExport)"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.equal(orders.evaluate("Boolean(state.standardizedExport)"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate("clearAllFilters()");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+  orders.evaluate(`commitTabularData(["名称", "金额"], [{ 名称: "甲", 金额: "1" }, { 名称: "乙", 金额: "2" }], "next.csv", beginImport())`);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [] });
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.evaluate("state.exclusionSourceRows === null && state.includedRows === null && state.excludedRows.suspectedTotal.length === 0"), true);
+});
+
+test("v3.1.0 counted rows: left-out rows of another data set never count", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("state.rows = state.rows.slice()");
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  assert.equal(orders.evaluate("getExcludedIndexSet().size"), 0);
+  assert.equal(orders.evaluate("getAnalysisRows() === state.rows"), true);
+});
+
+test("v3.1.0 counted rows: an import builds each row key as often as v3.0.1 did", async () => {
+  const counts = {};
+  for (const [name, file] of [["sample-orders.csv", path.join(REPO_ROOT, "examples", "sample-orders.csv")],
+    ["花名册.xlsx", path.join(STAGE3_FIXTURES, "花名册.xlsx")], ["sample-students.csv", path.join(__dirname, "fixtures", "examples", "sample-students.csv")]]) {
+    const scope = createExcelContext();
+    put(scope.context, "Papa", Papa);
+    scope.context.window.Papa = Papa;
+    let calls = 0;
+    const original = scope.evaluate("buildExactRowKey");
+    put(scope.context, "buildExactRowKey", (...args) => { calls += 1; return original(...args); });
+    const bytes = fs.readFileSync(file);
+    put(scope.context, "__countedFile", { name, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+    await scope.evaluate("parseDataFile(__countedFile)");
+    counts[name] = calls;
+  }
+  // v3.0.1: one key per row for the repeated rows, plus the identical-row check of duplicated IDs.
+  assert.deepEqual(counts, { "sample-orders.csv": 44, "花名册.xlsx": 33, "sample-students.csv": 120 });
+});
+
+test("v3.1.0 counted rows: findRepeatedRowIndexes() is what the repeated-row exclusion and the duplicate count share", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const repeated = JSON.parse(orders.evaluate("JSON.stringify(findRepeatedRowIndexes(state.rows, state.fields))"));
+  assert.equal(repeated.length, orders.evaluate("state.duplicateRows"));
+  assert.deepEqual(repeated.map((index) => orders.evaluate(`getSourceRowNumber(state.rows[${index}])`)), [21]);
+  assert.equal(orders.evaluate("typeof deduplicateRows"), "undefined");
+});
+
+test("v3.1.0 counted rows: with rows left out, a placeholder message counts the rows of the analysis", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以参与分析的行还是 40。平均值等统计不变，因为「N/A」本来就没有算进去。");
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 0 → 1。这 1 格重新按原来的文字处理，参与分析的行还是 40。");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(orders), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「销售代表」的「—」）。只是把这些格当作空，行都没有删，所以参与分析的行还是 40。");
+});
+
+test("v3.1.0 counted rows: the numeric filter inputs follow the counted rows unless that field is filtered", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const inputs = () => [orders.elements.get("numericFilterMin").value, orders.elements.get("numericFilterMax").value, orders.elements.get("numericFilterRange").textContent];
+  orders.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField()');
+  assert.deepEqual(inputs(), ["480", "123440", "480 至 123,440"]);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(inputs(), ["480", "7200", "480 至 7,200"]);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.deepEqual(inputs(), ["480", "123440", "480 至 123,440"]);
+  // Applied on 金额: the user's numbers stay, the hint follows.
+  orders.evaluate(`(() => {
+    dom.numericFilterMin.value = "100"; dom.numericFilterMax.value = "200000";
+    state.filters = { category: null, numeric: { field: "金额", min: 100, max: 200000 }, date: null };
+    state.filteredRows = filterRowsByConfig(getIncludedRows(), state.filters);
+    state.filterSourceRows = getIncludedRows();
+    refreshFilteredAnalysis();
+  })()`);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(inputs(), ["100", "200000", "480 至 7,200"]);
 });
