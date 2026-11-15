@@ -243,6 +243,7 @@ body.has-results .header-actions .nav-new-analysis {
 .brand-copy strong {
   font-size: 15px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .header-actions {
@@ -2800,7 +2801,6 @@ select:focus-visible,
 
   .brand-copy strong {
     font-size: 13px;
-    white-space: nowrap;
   }
 
   .header-actions {

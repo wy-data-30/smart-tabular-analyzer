@@ -569,7 +569,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v3.0.0",
+    version: "v3.0.1",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -809,7 +809,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v3.0.0",
+    version: reportData.version || "v3.0.1",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -1099,7 +1099,7 @@ function buildHtmlReport(reportData, chartImages = []) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(`${reportData.fileName} - 数据分析报告`)}</title>
+  <title>${escapeHtml(`${reportData.fileName} - 表格体检报告`)}</title>
   <style>
     :root { color-scheme: light; --ink: #23263a; --muted: #686f82; --line: #dfe2ea; --panel: #ffffff; --accent: #625bde; }
     * { box-sizing: border-box; }
@@ -1136,7 +1136,7 @@ function buildHtmlReport(reportData, chartImages = []) {
 <body>
 <main>
   <header>
-    <h1>数据分析报告</h1>
+    <h1>表格体检报告</h1>
     <dl class="meta">
       <div><dt>文件名称</dt><dd>${escapeHtml(reportData.fileName)}</dd></div>
       ${sheetMeta}
@@ -1237,7 +1237,7 @@ function buildHtmlReport(reportData, chartImages = []) {
       ? `<ol class="insights">${reportData.insights.map((insight) => `<li>${escapeHtml(insight)}</li>`).join("")}</ol>`
       : `<p class="empty">暂无自动分析结论。</p>`}
   </section>
-  <footer>由 <a href="https://github.com/wy-data-30/smart-tabular-analyzer">Smart Tabular Analyzer</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。</footer>
+  <footer>由<a href="https://github.com/wy-data-30/smart-tabular-analyzer">表格体检</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。</footer>
 </main>
 </body>
 </html>`;
@@ -1292,7 +1292,7 @@ function buildMarkdownReport(reportData) {
     ]
     : [];
   const lines = [
-    "# 数据分析报告",
+    "# 表格体检报告",
     "",
     `- 文件名称：${escapeMarkdownText(reportData.fileName)}`,
     ...(reportData.sheetName ? [`- 工作表名称：${escapeMarkdownText(reportData.sheetName)}`] : []),
@@ -1450,7 +1450,7 @@ function buildMarkdownReport(reportData) {
   } else {
     lines.push("暂无自动分析结论。");
   }
-  lines.push("", `> 由 [Smart Tabular Analyzer](https://github.com/wy-data-30/smart-tabular-analyzer) ${escapeMarkdownText(reportData.version)} 在浏览器本地生成；数据未上传。`, "");
+  lines.push("", `> 由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer) ${escapeMarkdownText(reportData.version)} 在浏览器本地生成；数据未上传。`, "");
   return lines.join("\n");
 }
 

@@ -1,8 +1,10 @@
-# Smart Tabular Analyzer
+# 表格体检（Sheet Checkup）
 
-> 一款在浏览器中完成 CSV 和 Excel 快速探索分析的隐私友好型工具。
+> 隐私优先的表格体检工具：CSV 和 Excel 表格在浏览器里检查，数据不上传，快速告诉你表格有什么问题、问题在哪几行。
 
-**当前版本：** v3.0.0
+原名 Smart Tabular Analyzer；仓库名和网址没有变。
+
+**当前版本：** v3.0.1
 
 ## 语言
 
@@ -10,7 +12,7 @@
 
 ## 在线演示
 
-- **在线演示：** [打开 Smart Tabular Analyzer](https://wy-data-30.github.io/smart-tabular-analyzer/)
+- **在线演示：** [打开表格体检](https://wy-data-30.github.io/smart-tabular-analyzer/)
 - **GitHub 仓库：** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
 
 打开在线演示并点击 **使用示例数据**，无需准备文件即可完成一次分析。
@@ -19,7 +21,7 @@
 
 ## 项目简介
 
-Smart Tabular Analyzer 用于帮助用户理解字段结构陌生或不一致的结构化数据文件。选择 CSV 或 Excel 文件后，应用会完成数据预览、字段类型识别、常见数据质量检查、统计计算、图表生成、筛选与分组分析、基于已有数据的基础结论生成以及结果导出。
+表格体检用于帮助用户理解字段结构陌生或不一致的结构化数据文件。选择 CSV 或 Excel 文件后，应用会完成数据预览、字段类型识别、常见数据质量检查、统计计算、图表生成、筛选与分组分析、基于已有数据的基础结论生成以及结果导出。
 
 该项目是静态网站，不依赖后端服务、数据库、账号系统或构建流程，也不要求固定字段名。
 
@@ -53,7 +55,7 @@ Smart Tabular Analyzer 用于帮助用户理解字段结构陌生或不一致的
 
 上传 CSV 或 Excel 文件，或直接使用内置示例数据开始分析。
 
-![Smart Tabular Analyzer 首页与文件上传](./assets/homepage.png)
+![表格体检的首页与文件上传](./assets/homepage.png)
 
 *截图为旧版界面。*
 
@@ -61,7 +63,7 @@ Smart Tabular Analyzer 用于帮助用户理解字段结构陌生或不一致的
 
 在同一视图中检查空值、重复行、认不出的数字或日期、基于 IQR 判断的偏大或偏小的值和编号重复。
 
-![Smart Tabular Analyzer 数据质量检查](./assets/data-quality.png)
+![表格体检的数据质量检查](./assets/data-quality.png)
 
 *截图为旧版界面。*
 
@@ -69,7 +71,7 @@ Smart Tabular Analyzer 用于帮助用户理解字段结构陌生或不一致的
 
 通过交互图表查看数值分布、分类 Top 10 和日期趋势。
 
-![Smart Tabular Analyzer 分析图表](./assets/analysis-results.png)
+![表格体检的分析图表](./assets/analysis-results.png)
 
 *截图为旧版界面。*
 
