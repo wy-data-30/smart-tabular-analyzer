@@ -28,7 +28,7 @@
 
 ### 原始数据与筛选数据
 
-- `state.rows` 不得因筛选、统计或去重被原地修改。
+- `state.rows` 不得因筛选、统计或不计入分析被原地修改。
 - `filteredRows` 只保存当前结果，`filterSourceRows` 用于确认它属于当前数据集。
 - 数据质量报告必须继续使用原始数据视角；不要把 `qualityNumericStats` 替换成筛选统计。
 
@@ -151,10 +151,11 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 ### 筛选后统计不一致
 
-1. 业务统计是否调用 `getAnalysisRows()`。
-2. 质量报告是否仍读取 `state.rows` / `qualityNumericStats`。
-3. 是否意外修改了行对象或 `state.rows` 数组。
-4. 字段类型修改后是否通过 `rebuildAnalysisFromProfiles()` 清除旧筛选。
+1. 先看有没有不计入分析的行（v3.1.0）：范围句是否带“（另有 N 行不计入分析）”、侧栏“筛选”一行、筛选面板的“不计入分析”一格。有的话，统计按计入的行算，质量页按全部行算，两边本来就不同。
+2. 业务统计是否调用 `getAnalysisRows()`；新加的分析代码不要直接读 `state.rows`（筛选从 `getIncludedRows()` 里筛）。
+3. 质量报告是否仍读取 `state.rows` / `qualityNumericStats`。
+4. 是否意外修改了行对象或 `state.rows` 数组。
+5. 字段类型修改后是否通过 `rebuildAnalysisFromProfiles()` 清除旧筛选。
 
 ### 图表重复、空白或内存增长
 
