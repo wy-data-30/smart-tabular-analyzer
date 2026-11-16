@@ -193,6 +193,12 @@ function formatAllIncludedRows(includedCount, excludedCount) {
   return excludedCount ? `全部 ${formatInteger(includedCount)} 行（不含不计入分析的 ${formatInteger(excludedCount)} 行）` : "全部记录";
 }
 
+// The report's 筛选条件 without a filter while rows are left out; "" otherwise, and the report
+// keeps its REPORT_NO_FILTER_TEXT (完整数据).
+function formatReportNoFilterText(includedCount, excludedCount) {
+  return excludedCount ? `未设置筛选，结果基于${formatAllIncludedRows(includedCount, excludedCount)}。` : "";
+}
+
 // The filter panel's message while no filter is applied.
 function formatNoFilterMessage(includedCount, excludedCount) {
   return excludedCount
@@ -242,6 +248,31 @@ function formatSingleRowTotals(count) {
 // Labelled rows that are not suspected totals; only when a numeric column was checked.
 function formatUnmatchedTotalLabels(labelCount, totalCount, checked) {
   return checked && labelCount > totalCount ? `另有 ${formatInteger(labelCount - totalCount)} 行也带这类字样，但数字对不上，没有列出。` : "";
+}
+
+// The two sentences under the suspected totals, page and report alike: extras is
+// { singleRow, labelRows, checked } (getSuspectedTotalExtras()), or null for an old snapshot.
+function formatSuspectedTotalExtras(extras, totalCount) {
+  if (!extras) return [];
+  return [formatSingleRowTotals(extras.singleRow), formatUnmatchedTotalLabels(extras.labelRows, totalCount, extras.checked)].filter(Boolean);
+}
+
+// The report's "筛选条件" line: { suspectedTotal: { count, lines }, duplicateRows: { count, lines } }
+// (buildReportExclusions()). At most REPORT_EXCLUSION_LINE_LIMIT file rows, then 等; lines is
+// null when a row has no file row number, and the brackets are left out.
+const REPORT_EXCLUSION_LINE_LIMIT = 20;
+
+function formatReportExclusions(exclusions) {
+  if (!exclusions) return "";
+  const parts = ["suspectedTotal", "duplicateRows"].map((kind) => {
+    const item = exclusions[kind];
+    if (!item?.count) return "";
+    const lines = Array.isArray(item.lines) && item.lines.length
+      ? `（第 ${item.lines.join("、")} 行${item.count > item.lines.length ? "等" : ""}）`
+      : "";
+    return `${EXCLUSION_KIND_LABELS[kind]} ${formatInteger(item.count)} 行${lines}`;
+  }).filter(Boolean);
+  return parts.length ? `不计入分析：${parts.join("、")}。` : "";
 }
 
 // The repeated-rows line before they are left out, when a clean ID column tells the records apart.

@@ -592,6 +592,7 @@ function buildReportData(now = new Date()) {
       rows: analysisRows.length,
       originalRows: state.rows.length,
       filteredOutRows: Math.max(0, getIncludedRows().length - analysisRows.length),
+      excludedRows: countExcludedRows(),
       fields: state.fields.length,
       activeFields: activeProfiles.length,
       numericFields: getProfilesByType("numeric").length,
@@ -601,6 +602,7 @@ function buildReportData(now = new Date()) {
       ignoredFields: getProfilesByType("ignore").length
     },
     filters: buildReportFilters(),
+    exclusions: buildReportExclusions(),
     fieldTypes,
     quality: {
       totalMissing: state.totalMissing,
@@ -630,6 +632,11 @@ function buildReportData(now = new Date()) {
       numberConversions: buildNumberConversionSummary(state.profiles),
       numericLooking: state.numericLooking.map((item) => ({ ...item, samples: [...item.samples] })),
       suspectedTotals: state.suspectedTotals.map((item) => ({ ...item, matches: item.matches.map((match) => ({ ...match, fields: [...match.fields] })) })),
+      suspectedTotalsExcluded: state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0,
+      suspectedTotalExtras: getSuspectedTotalExtras(),
+      excludedScope: countExcludedRows()
+        ? { totalRows: state.rows.length, excludedRows: countExcludedRows(), excludedMissing: countExcludedMissing() }
+        : null,
       formulaErrors: state.formulaErrors.map((item) => ({ ...item, byError: { ...item.byError }, lines: [...item.lines], fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" })),
       dateStyles: state.dateStyles.map((item) => ({ ...item, styles: item.styles.map((style) => ({ ...style })) })),
       constantFields: state.constantFields.map((item) => ({ ...item })),
@@ -641,6 +648,17 @@ function buildReportData(now = new Date()) {
     customAnalysis: buildReportCustomAnalysis(),
     insights: [state.chartInsights.category, state.chartInsights.trend].filter(Boolean)
   };
+}
+
+// v3.1.0: the rows left out of the analysis, by kind: how many and the file rows of the first
+// REPORT_EXCLUSION_LINE_LIMIT (null when one of them has no file row). null when none.
+function buildReportExclusions() {
+  if (!countExcludedRows()) return null;
+  const describe = (indexes) => {
+    const lines = indexes.slice(0, REPORT_EXCLUSION_LINE_LIMIT).map((index) => getSourceRowNumber(state.rows[index]));
+    return { count: indexes.length, lines: lines.some((line) => line === null) ? null : lines };
+  };
+  return { suspectedTotal: describe(state.excludedRows.suspectedTotal), duplicateRows: describe(state.excludedRows.duplicateRows) };
 }
 
 // Confirmed keys, and pending keys with the effect text of the quality page.
@@ -826,6 +844,8 @@ function normalizeReportSnapshot(reportData = {}) {
       rows: 0,
       originalRows: dataScale.rows ?? 0,
       filteredOutRows: 0,
+      // Snapshots from before v3.1.0 leave no rows out.
+      excludedRows: 0,
       fields: 0,
       activeFields: 0,
       numericFields: 0,
@@ -836,6 +856,7 @@ function normalizeReportSnapshot(reportData = {}) {
       ...dataScale
     },
     filters: Array.isArray(reportData.filters) ? reportData.filters : [],
+    exclusions: reportData.exclusions || null,
     fieldTypes: (reportData.fieldTypes || []).map((field) => ({
       ...field,
       inferredType: field.inferredType || field.type || "—",
@@ -871,6 +892,10 @@ function normalizeReportSnapshot(reportData = {}) {
       // Snapshots from before v2.8.0 have neither check: null leaves them out.
       suspectedTotals: Array.isArray(quality.suspectedTotals) ? quality.suspectedTotals : null,
       formulaErrors: Array.isArray(quality.formulaErrors) ? quality.formulaErrors : null,
+      // Snapshots from before v3.1.0: nothing left out, no sentences under the totals.
+      suspectedTotalsExcluded: quality.suspectedTotalsExcluded ?? 0,
+      suspectedTotalExtras: quality.suspectedTotalExtras || null,
+      excludedScope: quality.excludedScope || null,
       // Snapshots from before v2.9.0 have none of the three: null leaves them out.
       dateStyles: Array.isArray(quality.dateStyles) ? quality.dateStyles : null,
       constantFields: Array.isArray(quality.constantFields) ? quality.constantFields : null,
@@ -982,11 +1007,13 @@ function buildReportRowNoteSections(quality) {
     sections: [
       {
         title: "疑似合计 / 小计行",
-        note: SUSPECTED_TOTAL_NOTE,
+        // The page's note: another one once the totals are left out (v3.1.0).
+        note: quality.suspectedTotalsExcluded ? formatSuspectedTotalExcludedNote(quality.suspectedTotalsExcluded) : SUSPECTED_TOTAL_NOTE,
         lines: totals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => formatSuspectedTotal(item)),
-        overflow: formatSuspectedTotalOverflow(totals.length)
+        overflow: formatSuspectedTotalOverflow(totals.length),
+        extras: formatSuspectedTotalExtras(quality.suspectedTotalExtras, totals.length)
       },
-      { title: "公式错误单元格", note: FORMULA_ERROR_NOTE, lines: errors.map((item) => formatFormulaError(item)), overflow: "" }
+      { title: "公式错误单元格", note: FORMULA_ERROR_NOTE, lines: errors.map((item) => formatFormulaError(item)), overflow: "", extras: [] }
     ].filter((section) => section.lines.length)
   };
 }
@@ -1029,10 +1056,16 @@ function buildHtmlReport(reportData, chartImages = []) {
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const rowNotes = buildReportRowNoteSections(reportData.quality);
   const rowNoteSummary = `${rowNotes.suspectedTotalCount ? `；疑似合计 / 小计行：<strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong> 行` : ""}${rowNotes.formulaErrorCount ? `；公式错误：<strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> 个单元格` : ""}`;
-  const rowNoteSectionHtml = rowNotes.sections.map(({ title, note, lines, overflow }) => `<h3>${title}</h3>${note ? `
+  const rowNoteSectionHtml = rowNotes.sections.map(({ title, note, lines, overflow, extras }) => `<h3>${title}</h3>${note ? `
     <p>${escapeHtml(note)}</p>` : ""}
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${overflow ? `
-    <p>${escapeHtml(overflow)}</p>` : ""}`).join("\n    ");
+    <p>${escapeHtml(overflow)}</p>` : ""}${extras.map((extra) => `
+    <p>${escapeHtml(extra)}</p>`).join("")}`).join("\n    ");
+  // v3.1.0: the rows left out, each sentence only when there are any.
+  const exclusionsText = formatReportExclusions(reportData.exclusions);
+  const noFilterText = formatReportNoFilterText(reportData.dataScale.rows, reportData.dataScale.excludedRows) || REPORT_NO_FILTER_TEXT;
+  const excludedScope = reportData.quality.excludedScope;
+  const qualityScopeText = excludedScope ? formatQualityScopeNote(excludedScope.totalRows, excludedScope.excludedRows, excludedScope.excludedMissing) : "";
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
   const sheetMeta = reportData.sheetName
     ? `<div><dt>工作表名称</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
@@ -1158,6 +1191,7 @@ function buildHtmlReport(reportData, chartImages = []) {
         ["当前分析行数", reportData.dataScale.rows],
         ["原始数据行数", reportData.dataScale.originalRows],
         ["筛除行数", reportData.dataScale.filteredOutRows],
+        ...(reportData.dataScale.excludedRows ? [["不计入分析行数", reportData.dataScale.excludedRows]] : []),
         ["字段总数", reportData.dataScale.fields],
         ["参与分析字段", reportData.dataScale.activeFields],
         ["数值字段", reportData.dataScale.numericFields],
@@ -1172,7 +1206,8 @@ function buildHtmlReport(reportData, chartImages = []) {
     <h2>筛选条件</h2>
     ${reportData.filters.length
       ? buildHtmlReportTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]), REPORT_NO_FILTER_TEXT)
-      : `<p>${escapeHtml(REPORT_NO_FILTER_TEXT)}</p>`}
+      : `<p>${escapeHtml(noFilterText)}</p>`}${exclusionsText ? `
+    <p>${escapeHtml(exclusionsText)}</p>` : ""}
     <p>${escapeHtml(REPORT_QUALITY_SCOPE_TEXT)}</p>
   </section>
   <section>
@@ -1193,7 +1228,8 @@ function buildHtmlReport(reportData, chartImages = []) {
     )}
   </section>
   <section>
-    <h2>数据质量报告</h2>
+    <h2>数据质量报告</h2>${qualityScopeText ? `
+    <p>${escapeHtml(qualityScopeText)}</p>` : ""}
     <p>空值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；读取时有疑问：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong> 处${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}。</p>
     ${rowNoteSectionHtml}
     <h3>各字段空值情况</h3>
@@ -1268,14 +1304,19 @@ function buildMarkdownReport(reportData) {
   const formatSections = buildReportFormatSections(reportData.quality);
   const formatSectionLines = formatSections.sections.flatMap(({ title, note, lines }) => [`### ${title}`, "", escapeMarkdownText(note), "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
   const rowNotes = buildReportRowNoteSections(reportData.quality);
-  const rowNoteSectionLines = rowNotes.sections.flatMap(({ title, note, lines, overflow }) => [
+  const rowNoteSectionLines = rowNotes.sections.flatMap(({ title, note, lines, overflow, extras }) => [
     `### ${title}`,
     "",
     ...(note ? [escapeMarkdownText(note), ""] : []),
     ...lines.map((line) => `- ${escapeMarkdownText(line)}`),
     "",
-    ...(overflow ? [escapeMarkdownText(overflow), ""] : [])
+    ...(overflow ? [escapeMarkdownText(overflow), ""] : []),
+    ...extras.flatMap((extra) => [escapeMarkdownText(extra), ""])
   ]);
+  const exclusionsText = formatReportExclusions(reportData.exclusions);
+  const noFilterText = formatReportNoFilterText(reportData.dataScale.rows, reportData.dataScale.excludedRows) || REPORT_NO_FILTER_TEXT;
+  const excludedScope = reportData.quality.excludedScope;
+  const qualityScopeText = excludedScope ? formatQualityScopeNote(excludedScope.totalRows, excludedScope.excludedRows, excludedScope.excludedMissing) : "";
   const idDuplicates = reportData.quality.idDuplicates;
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const idSectionLines = idSection
@@ -1316,6 +1357,7 @@ function buildMarkdownReport(reportData) {
         ["当前分析行数", reportData.dataScale.rows],
         ["原始数据行数", reportData.dataScale.originalRows],
         ["筛除行数", reportData.dataScale.filteredOutRows],
+        ...(reportData.dataScale.excludedRows ? [["不计入分析行数", reportData.dataScale.excludedRows]] : []),
         ["字段总数", reportData.dataScale.fields],
         ["参与分析字段", reportData.dataScale.activeFields],
         ["数值字段", reportData.dataScale.numericFields],
@@ -1330,8 +1372,9 @@ function buildMarkdownReport(reportData) {
     "",
     reportData.filters.length
       ? buildMarkdownTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]))
-      : escapeMarkdownText(REPORT_NO_FILTER_TEXT),
+      : escapeMarkdownText(noFilterText),
     "",
+    ...(exclusionsText ? [escapeMarkdownText(exclusionsText), ""] : []),
     escapeMarkdownText(REPORT_QUALITY_SCOPE_TEXT),
     "",
     "## 字段类型结果",
@@ -1354,6 +1397,7 @@ function buildMarkdownReport(reportData) {
     "",
     "## 数据质量报告",
     "",
+    ...(qualityScopeText ? [escapeMarkdownText(qualityScopeText), ""] : []),
     `- 空值总数：${reportData.quality.totalMissing}`,
     `- 重复行：${reportData.quality.duplicateRows}`,
     `- 读取时有疑问：${reportData.quality.parseWarningCount} 处`,

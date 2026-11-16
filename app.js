@@ -198,7 +198,7 @@ const dom = {
   statisticsContainsNote: document.getElementById("statisticsContainsNote"),
   chartsContainsNote: document.getElementById("chartsContainsNote"),
   customContainsNote: document.getElementById("customContainsNote"),
-  filterMessage:document.getElementById("filterMessage"),
+  filterMessage: document.getElementById("filterMessage"),
   applyFilters: document.getElementById("applyFilters"),
   clearAllFilters: document.getElementById("clearAllFilters"),
   qualitySection: document.getElementById("qualitySection"),
@@ -1875,6 +1875,18 @@ function renderRowNoteSection(section, details, lines, footer = "") {
 // v3.1.0: the static note gives way to the left-out note (CSS hides it on .is-excluded); the
 // button sits next to 查看; the totals that only equal the row above and the labelled rows that
 // do not add up are named under it.
+// What the two sentences under the suspected totals need (page and report): the totals whose
+// every match covers only one row (R1), the labelled rows, and whether any numeric column was
+// checked at all. null without suspected totals.
+function getSuspectedTotalExtras() {
+  if (!state.suspectedTotals.length) return null;
+  return {
+    singleRow: state.suspectedTotals.filter((item) => item.matches.every((match) => match.rowCount === 1)).length,
+    labelRows: state.totalLabelRows.length,
+    checked: state.profiles.some((profile) => profile.typeKey === "numeric")
+  };
+}
+
 function renderSuspectedTotalDetails() {
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
   const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
@@ -1883,9 +1895,7 @@ function renderSuspectedTotalDetails() {
   dom.suspectedTotalExcludedNote.classList.toggle("hidden", excludedCount === 0);
   dom.suspectedTotalExcludedNote.textContent = excludedCount ? formatSuspectedTotalExcludedNote(excludedCount) : "";
   const exclusionButton = state.suspectedTotals.length ? exclusionToggleButton("suspectedTotal", excludedCount > 0) : "";
-  const singleRow = state.suspectedTotals.filter((item) => item.matches.every((match) => match.rowCount === 1)).length;
-  const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
-  const notes = [formatSingleRowTotals(singleRow), formatUnmatchedTotalLabels(state.totalLabelRows.length, state.suspectedTotals.length, checked)].filter(Boolean);
+  const notes = formatSuspectedTotalExtras(getSuspectedTotalExtras(), state.suspectedTotals.length);
   renderRowNoteSection(
     dom.suspectedTotalSection,
     dom.suspectedTotalDetails,

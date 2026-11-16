@@ -8818,7 +8818,7 @@ test("v3.1.0 counted rows: every exit counts 40 rows after both kinds are left o
   })())`));
   const expected = {
     included: 40, analysis: 40, quantity: 40, amount: 39, region: 40, histogram: 40, trend: 40, filterOptions: 40, exportRows: 40,
-    report: { rows: 40, originalRows: 42, filteredOutRows: 0, fields: 9, activeFields: 9, numericFields: 2, categoryFields: 5, dateFields: 1, idFields: 1, ignoredFields: 0 },
+    report: { rows: 40, originalRows: 42, filteredOutRows: 0, excludedRows: 2, fields: 9, activeFields: 9, numericFields: 2, categoryFields: 5, dateFields: 1, idFields: 1, ignoredFields: 0 },
     custom: 39, quality: 42
   };
   assert.deepEqual(exits(), expected);
@@ -9356,6 +9356,138 @@ test("v3.1.0 quality page: the repeated-rows message counts only the rows this c
   assert.equal(textOf(scope, "duplicateExclusionMessage"), "已把 1 行重复的行设为不计入分析，参与分析的行 4 → 3。");
 });
 
+const REPORT_EXCLUDED_KEYS = ["dataScale.excludedRows", "exclusions", "quality.excludedScope", "quality.suspectedTotalsExcluded", "quality.suspectedTotalExtras"];
+const scaleCard = (label, value) => `<div class="scale-card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+
+test("v3.1.0 report: the rows left out are named in the data scale, the filters, the quality part and the totals section", async () => {
+  const orders = await sampleWithExclusions();
+  const { report, html, markdown } = reportOf(orders);
+  assert.deepEqual([report.dataScale.rows, report.dataScale.originalRows, report.dataScale.filteredOutRows, report.dataScale.excludedRows], [40, 42, 0, 2]);
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] } });
+  assert.deepEqual(report.quality.excludedScope, { totalRows: 42, excludedRows: 2, excludedMissing: 6 });
+  assert.equal(report.quality.suspectedTotalsExcluded, 1);
+
+  const left = "不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。";
+  const scope = "质量页检查的是文件里的全部 42 行，包括不计入分析的 2 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。";
+  const excludedNote = "这 1 行已不计入分析：统计、图表、自定义分析和筛选不再包含它。";
+  // HTML: a card after 筛除行数; the sentence between the filter text and the quality scope text;
+  // the page's sentence under the quality heading; the totals note as on the page.
+  assert.ok(html.includes(`${scaleCard("筛除行数", 0)}${scaleCard("不计入分析行数", 2)}${scaleCard("字段总数", 9)}`));
+  const noFilter = "未设置筛选，结果基于全部 40 行（不含不计入分析的 2 行）。";
+  assert.match(html, new RegExp(`<p>${noFilter}<\\/p>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据，不受筛选影响。<\\/p>`));
+  assert.match(html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${scope}<\\/p>\\s*<p>空值总数：`));
+  assert.match(html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${excludedNote}<\\/p>`));
+  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  // Markdown: the same four places.
+  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 不计入分析行数 | 2 |\n| 字段总数 | 9 |"));
+  assert.ok(markdown.includes(`${noFilter}\n\n${left}\n\n数据质量部分始终基于原始数据，不受筛选影响。`));
+  assert.ok(markdown.includes(`## 数据质量报告\n\n${scope}\n\n- 空值总数：`));
+  assert.ok(markdown.includes(`### 疑似合计 / 小计行\n\n${excludedNote}\n\n- 第 44 行`));
+  assert.ok(!markdown.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  // The page shows the same sentences.
+  assert.equal(textOf(orders, "qualityScopeNote"), scope);
+  assert.equal(textOf(orders, "suspectedTotalExcludedNote"), excludedNote);
+
+  // Filtered as well: 筛除 counts from the 40 counted rows.
+  filterRegion(orders, "华东", "华南");
+  const filtered = reportOf(orders);
+  assert.deepEqual([filtered.report.dataScale.rows, filtered.report.dataScale.filteredOutRows, filtered.report.dataScale.excludedRows], [17, 23, 2]);
+  assert.ok(filtered.html.includes(`${scaleCard("筛除行数", 23)}${scaleCard("不计入分析行数", 2)}`));
+  assert.match(filtered.html, new RegExp(`<\\/table><\\/div>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据`));
+
+  // One kind only: only that kind; the totals section keeps its usual note.
+  const repeats = await sampleWithExclusions({ totals: false });
+  const one = reportOf(repeats);
+  assert.ok(one.markdown.includes("\n不计入分析：重复的行 1 行（第 21 行）。\n"));
+  assert.ok(one.markdown.includes(`### 疑似合计 / 小计行\n\n${repeats.evaluate("SUSPECTED_TOTAL_NOTE")}\n`));
+  assert.ok(one.markdown.includes(`## 数据质量报告\n\n${textOf(repeats, "qualityScopeNote")}\n\n`));
+  assert.equal(textOf(repeats, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
+  // The same words as the filter panel without a filter.
+  assert.ok(one.markdown.includes("\n未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。\n"));
+  assert.equal(textOf(repeats, "filterMessage"), "当前分析使用全部 41 行（不含不计入分析的 1 行）。");
+  assert.ok(!one.markdown.includes("完整数据") && !one.html.includes("完整数据"));
+});
+
+test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const plain = reportOf(orders);
+  assert.equal(plain.report.dataScale.excludedRows, 0);
+  assert.equal(plain.report.exclusions, null);
+  assert.equal(plain.report.quality.excludedScope, null);
+  assert.equal(plain.report.quality.suspectedTotalsExcluded, 0);
+  for (const text of [plain.html, plain.markdown]) {
+    assert.ok(!text.includes("不计入分析"), text.slice(0, 80));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+  }
+  assert.equal(orders.evaluate("formatReportNoFilterText(42, 0)"), "");
+  assert.equal(orders.evaluate("formatReportNoFilterText(12345, 1234)"), "未设置筛选，结果基于全部 12,345 行（不含不计入分析的 1,234 行）。");
+
+  // A snapshot from before v3.1.0 has none of the new keys: 0 / null, and no sentence.
+  const excluded = await sampleWithExclusions();
+  const report = JSON.parse(excluded.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  for (const key of REPORT_EXCLUDED_KEYS) {
+    const [head, tail] = key.split(".");
+    if (tail) delete report[head][tail];
+    else delete report[head];
+  }
+  put(excluded.context, "__oldReport", report);
+  const normalized = JSON.parse(excluded.evaluate("JSON.stringify(normalizeReportSnapshot(__oldReport))"));
+  assert.deepEqual([normalized.dataScale.excludedRows, normalized.exclusions, normalized.quality.excludedScope, normalized.quality.suspectedTotalsExcluded, normalized.quality.suspectedTotalExtras], [0, null, null, 0, null]);
+  const html = excluded.evaluate("buildHtmlReport(__oldReport, [])");
+  const markdown = excluded.evaluate("buildMarkdownReport(__oldReport)");
+  for (const text of [html, markdown]) {
+    assert.ok(!text.includes("不计入分析"));
+    assert.ok(!text.includes("质量页检查的是"));
+    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE")));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+  }
+  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 字段总数 | 9 |"));
+});
+
+test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no line number", () => {
+  const scope = createScriptContext();
+  const lines = (count, from = 5) => Array.from({ length: count }, (_, i) => from + i);
+  const sentence = (exclusions) => scope.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
+  assert.equal(sentence(null), "");
+  assert.equal(sentence({ suspectedTotal: { count: 5, lines: [5, 8, 10, 14, 15] }, duplicateRows: { count: 0, lines: [] } }), "不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。");
+  assert.equal(sentence({ suspectedTotal: { count: 0, lines: [] }, duplicateRows: { count: 20, lines: lines(20) } }), `不计入分析：重复的行 20 行（第 ${lines(20).join("、")} 行）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 0, lines: [] }, duplicateRows: { count: 1234, lines: lines(20) } }), `不计入分析：重复的行 1,234 行（第 ${lines(20).join("、")} 行等）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] } }), "不计入分析：疑似合计行 2 行。");
+  // From the state: at most 20 numbers kept, and none at all when a row has no line number.
+  const rows = [["甲", "10"], ["乙", "20"], ["丙", "30"], ["合计", "60"], ["合计", "60"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "no-lines.csv");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  const report = JSON.parse(scope.evaluate("JSON.stringify(buildReportData())"));
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] } });
+  assert.ok(scope.evaluate("buildMarkdownReport(buildReportData())").includes("\n不计入分析：疑似合计行 2 行。\n"));
+});
+
+test("v3.1.0 report: the totals section has the page's 只等于上面一行 and 另有 N 行 sentences", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  const single = "其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。";
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  const regionReport = reportOf(region);
+  assert.ok(regionReport.html.includes(`<p>${single}</p>`));
+  assert.ok(regionReport.markdown.includes(`\n${single}\n`));
+  // Left out: the excluded note and still the same sentence.
+  region.evaluate('setRowExclusion("suspectedTotal", true)');
+  const excludedReport = reportOf(region);
+  assert.ok(excludedReport.markdown.includes(`### 疑似合计 / 小计行\n\n${textOf(region, "suspectedTotalExcludedNote")}\n`));
+  assert.ok(excludedReport.markdown.includes("不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。"));
+  assert.ok(excludedReport.markdown.includes(`\n${single}\n`));
+
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  const tasksReport = reportOf(tasks);
+  for (const sentence of ["另有 89 行也带这类字样，但数字对不上，没有列出。", "其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
+    assert.ok(htmlText(tasks, "suspectedTotalDetails").includes(sentence));
+    assert.ok(tasksReport.html.includes(`<p>${sentence}</p>`), sentence);
+    assert.ok(tasksReport.markdown.includes(`\n${sentence}\n`), sentence);
+  }
+  // The sample has neither.
+  const { html, markdown } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
+  for (const text of [html, markdown]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
+});
+
 test("v3.1.0 wording: the new sentences use no old interface word and no space between two Chinese characters", async () => {
   const hits = [];
   const orders = await clickSampleButton(sampleOrdersFetchedText());
@@ -9372,7 +9504,8 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
   const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
     formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
     formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
-    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL])`));
+    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL,
+    formatReportNoFilterText(40, 2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
   for (const text of fixed) {
     findOldInterfaceWords("format.js", text, hits);
     if (HAN_SPACE_HAN.test(text)) hits.push(`format.js: a space between two Chinese characters: ${text}`);
