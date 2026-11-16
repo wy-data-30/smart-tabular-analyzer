@@ -658,7 +658,14 @@ function buildReportExclusions() {
     const lines = indexes.slice(0, REPORT_EXCLUSION_LINE_LIMIT).map((index) => getSourceRowNumber(state.rows[index]));
     return { count: indexes.length, lines: lines.some((line) => line === null) ? null : lines };
   };
-  return { suspectedTotal: describe(state.excludedRows.suspectedTotal), duplicateRows: describe(state.excludedRows.duplicateRows) };
+  // Rows of both kinds, in row order; null when there are none.
+  const totals = new Set(state.excludedRows.suspectedTotal);
+  const overlap = state.excludedRows.duplicateRows.filter((index) => totals.has(index));
+  return {
+    suspectedTotal: describe(state.excludedRows.suspectedTotal),
+    duplicateRows: describe(state.excludedRows.duplicateRows),
+    overlap: overlap.length ? describe(overlap) : null
+  };
 }
 
 // Confirmed keys, and pending keys with the effect text of the quality page.
@@ -856,7 +863,8 @@ function normalizeReportSnapshot(reportData = {}) {
       ...dataScale
     },
     filters: Array.isArray(reportData.filters) ? reportData.filters : [],
-    exclusions: reportData.exclusions || null,
+    // Snapshots of v3.1.0 before the fix have no overlap: null leaves the 共 N 行 part out.
+    exclusions: reportData.exclusions ? { ...reportData.exclusions, overlap: reportData.exclusions.overlap || null } : null,
     fieldTypes: (reportData.fieldTypes || []).map((field) => ({
       ...field,
       inferredType: field.inferredType || field.type || "—",

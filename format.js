@@ -264,15 +264,28 @@ const REPORT_EXCLUSION_LINE_LIMIT = 20;
 
 function formatReportExclusions(exclusions) {
   if (!exclusions) return "";
+  const lineList = (item) => (Array.isArray(item.lines) && item.lines.length
+    ? `第 ${item.lines.join("、")} 行${item.count > item.lines.length ? "等" : ""}`
+    : "");
   const parts = ["suspectedTotal", "duplicateRows"].map((kind) => {
     const item = exclusions[kind];
     if (!item?.count) return "";
-    const lines = Array.isArray(item.lines) && item.lines.length
-      ? `（第 ${item.lines.join("、")} 行${item.count > item.lines.length ? "等" : ""}）`
-      : "";
-    return `${EXCLUSION_KIND_LABELS[kind]} ${formatInteger(item.count)} 行${lines}`;
+    const lines = lineList(item);
+    return `${EXCLUSION_KIND_LABELS[kind]} ${formatInteger(item.count)} 行${lines ? `（${lines}）` : ""}`;
   }).filter(Boolean);
-  return parts.length ? `不计入分析：${parts.join("、")}。` : "";
+  if (!parts.length) return "";
+  return `不计入分析：${parts.join("、")}${formatReportExclusionOverlap(exclusions)}。`;
+}
+
+// Rows of both kinds are counted in each: then "，共 N 行（第 7 行两类都是）", N the rows left out.
+// exclusions.overlap is { count, lines } (lines null without file rows), or null without overlap.
+function formatReportExclusionOverlap({ suspectedTotal, duplicateRows, overlap }) {
+  if (!overlap?.count) return "";
+  const total = (suspectedTotal?.count || 0) + (duplicateRows?.count || 0) - overlap.count;
+  const lines = Array.isArray(overlap.lines) && overlap.lines.length
+    ? `（第 ${overlap.lines.join("、")} 行${overlap.count > overlap.lines.length ? "等" : ""}两类都是）`
+    : "";
+  return `，共 ${formatInteger(total)} 行${lines}`;
 }
 
 // The repeated-rows line before they are left out, when a clean ID column tells the records apart.

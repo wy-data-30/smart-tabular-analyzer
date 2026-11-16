@@ -9363,7 +9363,7 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   const orders = await sampleWithExclusions();
   const { report, html, markdown } = reportOf(orders);
   assert.deepEqual([report.dataScale.rows, report.dataScale.originalRows, report.dataScale.filteredOutRows, report.dataScale.excludedRows], [40, 42, 0, 2]);
-  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] } });
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] }, overlap: null });
   assert.deepEqual(report.quality.excludedScope, { totalRows: 42, excludedRows: 2, excludedMissing: 6 });
   assert.equal(report.quality.suspectedTotalsExcluded, 1);
 
@@ -9458,8 +9458,41 @@ test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no lin
   commitRows(scope, ["名称", "金额"], rows, "no-lines.csv");
   scope.evaluate('setRowExclusion("suspectedTotal", true)');
   const report = JSON.parse(scope.evaluate("JSON.stringify(buildReportData())"));
-  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] } });
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] }, overlap: null });
   assert.ok(scope.evaluate("buildMarkdownReport(buildReportData())").includes("\n不计入分析：疑似合计行 2 行。\n"));
+});
+
+test("v3.1.0 report: a row of both kinds is counted once, and named, in the 不计入分析 line", async () => {
+  const both = await importCsvFile("编号,名称,金额\n1,甲,10\n2,乙,20\n2,乙,20\n3,丙,30\n,合计,80\n,合计,80\n", "totals-and-repeats.csv");
+  both.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  const { report, html, markdown } = reportOf(both);
+  assert.equal(report.dataScale.excludedRows, 3);
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } });
+  const line = "不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行），共 3 行（第 7 行两类都是）。";
+  assert.ok(html.includes(`<p>${line}</p>`));
+  assert.ok(markdown.includes(`\n${line}\n`));
+  assert.ok(html.includes(`${scaleCard("不计入分析行数", 3)}`));
+
+  // Without overlap the sentence is unchanged, and the snapshot says null.
+  const sample = reportOf(await sampleWithExclusions());
+  assert.equal(sample.report.exclusions.overlap, null);
+  assert.ok(sample.markdown.includes("\n不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。\n"));
+  // An old snapshot (no overlap key) gets null and the sentence without 共.
+  const old = JSON.parse(both.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  delete old.exclusions.overlap;
+  put(both.context, "__oldOverlap", old);
+  assert.equal(both.evaluate("normalizeReportSnapshot(__oldOverlap).exclusions.overlap"), null);
+  assert.ok(both.evaluate("buildMarkdownReport(__oldOverlap)").includes("\n不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。\n"));
+
+  // More than 20 rows of both kinds end in 等; without line numbers only 共 N 行.
+  const sentence = (exclusions) => both.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
+  const lines = Array.from({ length: 20 }, (_, i) => i + 2);
+  assert.equal(sentence({ suspectedTotal: { count: 30, lines }, duplicateRows: { count: 40, lines }, overlap: { count: 25, lines } }),
+    `不计入分析：疑似合计行 30 行（第 ${lines.join("、")} 行等）、重复的行 40 行（第 ${lines.join("、")} 行等），共 45 行（第 ${lines.join("、")} 行等两类都是）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 2, lines: null }, overlap: { count: 1, lines: null } }),
+    "不计入分析：疑似合计行 2 行、重复的行 2 行，共 3 行。");
+  assert.equal(sentence({ suspectedTotal: { count: 1234, lines: null }, duplicateRows: { count: 1000, lines: null }, overlap: { count: 1, lines: null } }),
+    "不计入分析：疑似合计行 1,234 行、重复的行 1,000 行，共 2,233 行。");
 });
 
 test("v3.1.0 report: the totals section has the page's 只等于上面一行 and 另有 N 行 sentences", async () => {
