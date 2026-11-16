@@ -193,6 +193,11 @@ function formatAllIncludedRows(includedCount, excludedCount) {
   return excludedCount ? `全部 ${formatInteger(includedCount)} 行（不含不计入分析的 ${formatInteger(excludedCount)} 行）` : "全部记录";
 }
 
+// After the export's static note while rows are left out (v3.1.0).
+function formatDataExportExcludedNote(excludedCount) {
+  return `不含不计入分析的 ${formatInteger(excludedCount)} 行。`;
+}
+
 // The report's 筛选条件 without a filter while rows are left out; "" otherwise, and the report
 // keeps its REPORT_NO_FILTER_TEXT (完整数据).
 function formatReportNoFilterText(includedCount, excludedCount) {

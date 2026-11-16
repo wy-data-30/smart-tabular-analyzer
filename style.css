@@ -443,7 +443,7 @@ button:hover,
   color: var(--text);
 }
 
-/* One blue button per group (二·7), by id only: the markup and its classes stay. 导出筛选后 CSV
+/* One blue button per group (二·7), by id only: the markup and its classes stay. 导出当前分析的行
    looks secondary (the data group's blue button is 导出写法统一的表, in the check panel), and so
    does 按空值处理 on each line (常见写法全部按空值处理 stays blue). */
 #exportFilteredCsv:not(:disabled) {

@@ -561,19 +561,11 @@
           <div class="data-export-options">
             <div class="data-export-option">
               <div>
-                <h3>当前筛选结果</h3>
-                <p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0</strong></p>
-                <p>导出当前分析范围内的全部记录；没有筛选条件时导出全部原始记录。</p>
+                <h3>当前分析的行</h3>
+                <p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0</strong></p>
+                <p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"></span></p>
               </div>
-              <button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV</button>
-            </div>
-            <div class="data-export-option">
-              <div>
-                <h3>原始数据去重结果</h3>
-                <p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0</strong></p>
-                <p>按全部原始字段识别完全重复行，保留每组重复记录中首次出现的一行。</p>
-              </div>
-              <button id="exportDeduplicatedCsv" class="secondary-button" type="button" disabled>导出去重后 CSV</button>
+              <button id="exportFilteredCsv" type="button" disabled>导出当前分析的行</button>
             </div>
             <div class="data-export-option">
               <div>

@@ -43,10 +43,10 @@ function updateExportButtons() {
     button.setAttribute("aria-disabled", String(disabled));
   });
   const dataExportDisabled = !canExportProcessedData();
-  [dom.exportFilteredCsv, dom.exportDeduplicatedCsv].filter(Boolean).forEach((button) => {
-    button.disabled = dataExportDisabled;
-    button.setAttribute("aria-disabled", String(dataExportDisabled));
-  });
+  if (dom.exportFilteredCsv) {
+    dom.exportFilteredCsv.disabled = dataExportDisabled;
+    dom.exportFilteredCsv.setAttribute("aria-disabled", String(dataExportDisabled));
+  }
   // 检查标准化改动 has the report gate; its exports also need a check, and the change list a cell.
   const checkDisabled = !canCheckStandardizedExport();
   const result = state.standardizedExport;
@@ -70,10 +70,11 @@ function updateExportButtons() {
 function renderDataExportSummary() {
   const originalCount = state.rows.length;
   const filteredCount = getAnalysisRows().length;
-  const deduplicatedCount = Math.max(0, originalCount - state.duplicateRows);
   dom.dataExportOriginalCount.textContent = formatInteger(originalCount);
   dom.dataExportFilteredCount.textContent = formatInteger(filteredCount);
-  dom.dataExportDeduplicatedCount.textContent = formatInteger(deduplicatedCount);
+  // v3.1.0: the rows left out are not in this export either.
+  const excludedCount = state.rows.length ? countExcludedRows() : 0;
+  dom.dataExportExcludedNote.textContent = excludedCount ? formatDataExportExcludedNote(excludedCount) : "";
 }
 
 function exportProcessedCsv(mode) {
@@ -88,20 +89,15 @@ function exportProcessedCsv(mode) {
     const content = buildCsvExportContent(rows, state.fields);
     const fileName = buildDataExportFileName(mode, exportedAt);
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-    const exportLabel = mode === "deduplicated" ? "去重后数据" : "筛选后数据";
-    setDataExportStatus(`已导出${exportLabel} ${formatInteger(rows.length)} 行：${fileName}`, "success");
+    setDataExportStatus(`已导出当前分析的 ${formatInteger(rows.length)} 行：${fileName}`, "success");
   } catch (error) {
     setDataExportStatus(`数据导出失败：${error.message}`, "error");
   }
 }
 
 function getProcessedExportRows(mode) {
+  // v3.1.0: one data export, the rows of the current analysis (the one without repeats is gone).
   if (mode === "filtered") return getAnalysisRows();
-  if (mode === "deduplicated") {
-    // Until v3.1.0 commit 6 removes this export: every row but the repeated ones.
-    const repeated = new Set(findRepeatedRowIndexes(state.rows, state.fields));
-    return state.rows.filter((row, index) => !repeated.has(index));
-  }
   throw new Error("不支持的数据导出类型。");
 }
 
@@ -111,8 +107,8 @@ function buildCsvExportContent(rows, fields) {
 }
 
 // CSV text of a header array and rows of cell arrays: every header and cell goes
-// through sanitizeCsvExportValue(), lines end with CRLF. Both data exports and the
-// problem-row export write through here.
+// through sanitizeCsvExportValue(), lines end with CRLF. The data export (the rows of the
+// current analysis), the problem-row export and both standardized exports write through here.
 function buildCsvTableContent(headers, cellRows) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
     throw new Error("CSV 导出组件未加载，请刷新页面重试。");
@@ -1553,7 +1549,7 @@ function buildReportFileName(extension, now = new Date()) {
 }
 
 function buildDataExportFileName(mode, now = new Date()) {
-  const suffix = mode === "deduplicated" ? "deduplicated" : "filtered";
+  const suffix = "当前分析";
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   return `${sanitizeFileName(stem)}_${suffix}_${formatReportFileDate(now)}.csv`;

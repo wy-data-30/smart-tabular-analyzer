@@ -1196,28 +1196,23 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
   })()`);
 
   assert.equal(evaluate('getProcessedExportRows("filtered").length'), 1);
-  assert.equal(evaluate('getProcessedExportRows("deduplicated").length'), 2);
   assert.equal(JSON.stringify(rows), originalSnapshot);
 
-  const csv = evaluate('buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)');
+  const csv = evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)');
   assert.equal(
     csv,
-    '姓名,备注\r\n张三,"上海,重点客户"\r\n李四,"包含""引号"""'
+    '姓名,备注\r\n李四,"包含""引号"""'
   );
   assert.deepEqual(Array.from(context.__unparseInput.fields), ["姓名", "备注"]);
   assert.deepEqual(
     Array.from(context.__unparseInput.data, (row) => Array.from(row)),
-    [["张三", "上海,重点客户"], ["李四", '包含"引号"']]
+    [["李四", '包含"引号"']]
   );
   assert.equal(context.__unparseOptions.newline, "\r\n");
 
   assert.equal(
     evaluate('buildDataExportFileName("filtered", new Date(2026, 6, 18))'),
-    "中文销售_filtered_20260718.csv"
-  );
-  assert.equal(
-    evaluate('buildDataExportFileName("deduplicated", new Date(2026, 6, 18))'),
-    "中文销售_deduplicated_20260718.csv"
+    "中文销售_当前分析_20260718.csv"
   );
 
   const blob = evaluate('createUtf8BomBlob("姓名,城市\\r\\n张三,上海", "text/csv;charset=utf-8")');
@@ -1227,15 +1222,27 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
   evaluate("updateExportButtons()");
   assert.equal(elements.get("dataExportOriginalCount").textContent, "3");
   assert.equal(elements.get("dataExportFilteredCount").textContent, "1");
-  assert.equal(elements.get("dataExportDeduplicatedCount").textContent, "2");
   assert.equal(elements.get("exportFilteredCsv").disabled, false);
-  assert.equal(elements.get("exportDeduplicatedCsv").disabled, false);
 
   evaluate("state.filteredRows = []");
   assert.equal(
     evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'),
     "姓名,备注"
   );
+
+  // v3.1.0: without a filter, every counted row in order, the repeated row kept (the
+  // deduplicated export is gone): a comma in a cell, quotes, rows joined by CRLF.
+  evaluate("state.filteredRows = null; state.filterSourceRows = null");
+  assert.equal(evaluate('getProcessedExportRows("filtered").length'), 3);
+  assert.equal(
+    evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'),
+    '姓名,备注\r\n张三,"上海,重点客户"\r\n张三,"上海,重点客户"\r\n李四,"包含""引号"""'
+  );
+  assert.deepEqual(
+    Array.from(context.__unparseInput.data, (row) => Array.from(row)),
+    [["张三", "上海,重点客户"], ["张三", "上海,重点客户"], ["李四", '包含"引号"']]
+  );
+  assert.equal(JSON.stringify(rows), originalSnapshot);
 });
 
 // Stage 3 acceptance fixtures (tests/fixtures/stage3/, see known-issues.json)
@@ -2521,8 +2528,7 @@ test("confirmations never change the original rows, the data preview, CSV export
     rows: state.rows,
     duplicateRows: state.duplicateRows,
     csv: buildCsvExportContent(state.rows, state.fields),
-    filtered: buildCsvExportContent(getProcessedExportRows("filtered"), state.fields),
-    deduplicated: buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)
+    filtered: buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)
   })`);
   const before = snapshot();
   evaluate("confirmAllCommonPlaceholders()");
@@ -3996,9 +4002,12 @@ test("problem-row export headers number the extra columns past every clashing fi
 test("guard: the data exports keep their exact output through the shared CSV builder", async () => {
   const orders = await importStage3Fixture("订单表.csv");
   const expected = (rows) => orders.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: ${rows}.map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
-  for (const mode of ["filtered", "deduplicated"]) {
-    assert.equal(orders.evaluate(`buildCsvExportContent(getProcessedExportRows("${mode}"), state.fields)`), expected(`getProcessedExportRows("${mode}")`), mode);
-  }
+  assert.equal(orders.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'), expected('getProcessedExportRows("filtered")'));
+  // v3.1.0: with rows left out, the 40 counted rows, still byte for byte the old way.
+  const sample = await sampleWithExclusions();
+  assert.equal(sample.evaluate('getProcessedExportRows("filtered").length'), 40);
+  const sampleExpected = sample.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: getProcessedExportRows("filtered").map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
+  assert.equal(sample.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'), sampleExpected);
 });
 
 test("the export button needs an open category and its status clears with the viewer", async () => {
@@ -6386,7 +6395,7 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
   for (const [kind, name] of files) {
     const scope = kind === "stage3" ? await importStage3Fixture(name) : await importCsvFile(readExampleCsv(name), name);
     const before = scope.evaluate("JSON.stringify(state.rows)");
-    const exports = () => scope.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields) + "|" + buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)');
+    const exports = () => scope.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)');
     const existing = exports();
     scope.evaluate("checkStandardizedExport()");
     assert.equal(scope.evaluate("JSON.stringify(state.rows)"), before, name);
@@ -6536,7 +6545,7 @@ test("v2.10.0 gate: no data or an unapplied field draft disables the buttons and
 test("v2.10.0 the page: a third export option, a static hidden panel, print hides its buttons, one binding", () => {
   const html = repoFile("index.html");
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 3);
+  assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 2);
   assert.match(options, /<h3>写法统一的表<\/h3>[\s\S]*<p id="standardizedExportGate" class="standardize-gate"><\/p>[\s\S]*<button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格<\/button>/);
   const panel = html.slice(html.indexOf('<div id="standardizedExportPanel"'), html.indexOf('<p id="dataExportStatus"'));
   assert.match(panel, /^<div id="standardizedExportPanel" class="standardized-export hidden">/);
@@ -8199,8 +8208,8 @@ test("v3.0.0 statistics: each frequency row has a bar as long as its share, and 
 test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
   const html = repoFile("index.html");
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /<h3>当前筛选结果<\/h3>\s*<p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
-  assert.match(options, /<h3>原始数据去重结果<\/h3>\s*<p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  assert.doesNotMatch(options, /去重/);
   assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
   assert.doesNotMatch(html, /数据导出记录统计/);
 });
@@ -8367,13 +8376,13 @@ test("v3.0.0 look: quality tags are neutral (white, grey line, grey at 0), no am
 
 test("v3.0.0 look: one blue button per group, by id only; the class names stay", () => {
   const css = repoFile("style.css");
-  // 导出筛选后 CSV keeps its markup (no secondary-button) but looks secondary: the data group's
+  // 导出当前分析的行 keeps its markup (no secondary-button) but looks secondary: the data group's
   // blue button is 导出写法统一的表 (in the check panel).
   assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
   // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
   assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
   const html = repoFile("index.html");
-  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV<\/button>/);
+  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>/);
 });
 
 test("v3.0.0 look: the 空值检查 box shows about ten fields without scrolling; print lifts every height limit", () => {
@@ -8661,11 +8670,13 @@ test("v3.0.1 rename: the old product name and report title never appear; the new
 
   const names = [
     orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`), orders.evaluate(`buildReportFileName("md", new Date(2026, 10, 15))`),
-    orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`), orders.evaluate(`buildDataExportFileName("deduplicated", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`),
     orders.evaluate(`buildStandardizedFileName("data", new Date(2026, 10, 15))`), orders.evaluate(`buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)`),
     ...JSON.parse(orders.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
   ];
   assert.ok(names.length > 6);
+  // v3.1.0: 21 names, the deduplicated export is gone.
+  assert.equal(names.length, 21);
   for (const name of names) {
     assert.ok(name.startsWith("sample-orders"), name);
     findOldProductWords("file name", name, hits);
@@ -9521,6 +9532,48 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
   for (const text of [html, markdown]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
 });
 
+test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
+  const html = repoFile("index.html");
+  const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
+  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
+
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const downloads = captureDownloads(orders);
+  const note = () => textOf(orders, "dataExportExcludedNote");
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["42", ""]);
+  orders.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["40", "不含不计入分析的 2 行。"]);
+  assert.equal(orders.evaluate("formatDataExportExcludedNote(1234)"), "不含不计入分析的 1,234 行。");
+  orders.evaluate('exportProcessedCsv("filtered")');
+  const [file] = await downloads();
+  assert.match(file.fileName, /^sample-orders_当前分析_\d{8}\.csv$/);
+  assert.equal(textOf(orders, "dataExportStatus"), `已导出当前分析的 40 行：${file.fileName}`);
+  assert.deepEqual(file.bom, [0xef, 0xbb, 0xbf]);
+  assert.equal(file.text.split("\r\n").length, 41);
+  // Filtered as well: still the rows of the statistics, and the note stays.
+  filterRegion(orders, "华东", "华南");
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["17", "不含不计入分析的 2 行。"]);
+  // Nothing left out: no note.
+  orders.evaluate('clearAllFilters(); setRowExclusion("suspectedTotal", false); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["42", ""]);
+  // The deduplicated export is gone, code and page.
+  assert.throws(() => orders.evaluate('getProcessedExportRows("deduplicated")'), /不支持的数据导出类型/);
+  for (const source of ["app.js", "report.js", "script.js"]) assert.doesNotMatch(repoFile(source), /deduplicated|Deduplicated/, source);
+});
+
+test("v3.1.0 export: the page never says 去重后 or 导出筛选后 CSV again", async () => {
+  const words = ["去重后", "导出筛选后 CSV", "筛选后数据", "_filtered"];
+  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  for (const word of words) assert.ok(!html.includes(word), word);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('setRowExclusion("suspectedTotal", true); exportProcessedCsv("filtered")');
+  for (const [id, element] of orders.elements) {
+    for (const word of words) {
+      assert.ok(!String(element.textContent).includes(word) && !String(element.innerHTML).includes(word), `${id}: ${word}`);
+    }
+  }
+});
+
 test("v3.1.0 wording: the new sentences use no old interface word and no space between two Chinese characters", async () => {
   const hits = [];
   const orders = await clickSampleButton(sampleOrdersFetchedText());
@@ -9538,7 +9591,7 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
     formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
     formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
     formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL,
-    formatReportNoFilterText(40, 2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
+    formatReportNoFilterText(40, 2), formatDataExportExcludedNote(2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
   for (const text of fixed) {
     findOldInterfaceWords("format.js", text, hits);
     if (HAN_SPACE_HAN.test(text)) hits.push(`format.js: a space between two Chinese characters: ${text}`);
