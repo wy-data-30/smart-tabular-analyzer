@@ -194,7 +194,11 @@ const dom = {
   duplicateExclusionMessage: document.getElementById("duplicateExclusionMessage"),
   suspectedTotalExcludedNote: document.getElementById("suspectedTotalExcludedNote"),
   suspectedTotalMessage: document.getElementById("suspectedTotalMessage"),
-  filterMessage: document.getElementById("filterMessage"),
+  suspectedTotalTitle: document.getElementById("suspectedTotalTitle"),
+  statisticsContainsNote: document.getElementById("statisticsContainsNote"),
+  chartsContainsNote: document.getElementById("chartsContainsNote"),
+  customContainsNote: document.getElementById("customContainsNote"),
+  filterMessage:document.getElementById("filterMessage"),
   applyFilters: document.getElementById("applyFilters"),
   clearAllFilters: document.getElementById("clearAllFilters"),
   qualitySection: document.getElementById("qualitySection"),
@@ -1469,6 +1473,53 @@ function renderFilterCounts() {
   dom.filterNotCountedItem.classList.toggle("hidden", excludedCount === 0);
   dom.filterNotCountedCount.textContent = formatInteger(excludedCount);
   updateGlobalFilterStatus();
+  renderAnalysisContainsNotes();
+}
+
+// v3.1.0: the rows of the current analysis (the filtered rows) that are still suspected totals,
+// and, with a clean ID column, still extra repeated rows. Without filters or left-out rows the
+// repeated rows are state.duplicateRows, so an import builds no list; otherwise the list is
+// made once and kept until the next import (listRepeatedRowIndexes()).
+function countAnalysisContains() {
+  const excluded = getExcludedIndexSet();
+  const filtered = hasActiveFilters();
+  let analysisRows = null;
+  const stillCounted = (indexes) => {
+    if (!filtered) return indexes.filter((index) => !excluded.has(index)).length;
+    analysisRows = analysisRows || new Set(getAnalysisRows());
+    return indexes.filter((index) => analysisRows.has(state.rows[index])).length;
+  };
+  const totals = state.suspectedTotals.length ? stillCounted(state.suspectedTotals.map((item) => item.index)) : 0;
+  let duplicates = 0;
+  if (state.duplicateRows && hasCleanIdField()) {
+    duplicates = !filtered && !excluded.size ? state.duplicateRows : stillCounted(listRepeatedRowIndexes());
+  }
+  return { totals, duplicates };
+}
+
+function renderAnalysisContainsNotes() {
+  const { totals, duplicates } = state.rows.length ? countAnalysisContains() : { totals: 0, duplicates: 0 };
+  const text = formatAnalysisContainsNote(totals, duplicates);
+  const html = text
+    ? `${escapeHtml(text)} <button type="button" class="text-button" data-quality-target="${totals ? "suspectedTotal" : "duplicateRows"}" aria-label="${escapeHtml(formatGoToQualityAriaLabel(totals, duplicates))}">${GO_TO_QUALITY_LABEL}</button>`
+    : "";
+  [dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((element) => {
+    element.innerHTML = html;
+    element.classList.toggle("hidden", !text);
+  });
+}
+
+// 去数据质量处理: the quality module, then its subsection at the top (as 查看 does) and the
+// focus on the subsection title; showModule() itself scrolls up and focuses the module title,
+// so this comes after it. The repeated rows have no title: their button takes the focus.
+function handleAnalysisNoteClick(event) {
+  const button = event.target.closest("button[data-quality-target]");
+  if (!button) return;
+  showModule("qualitySection");
+  const totals = button.dataset.qualityTarget === "suspectedTotal";
+  (totals ? dom.suspectedTotalSection : dom.duplicateExclusion).scrollIntoView({ block: "start" });
+  const target = totals ? dom.suspectedTotalTitle : dom.duplicateExclusionAction.querySelector?.("button[data-exclusion-kind]");
+  target?.focus?.({ preventScroll: true });
 }
 
 function updateGlobalFilterStatus() {
@@ -2765,6 +2816,10 @@ function resetAnalysisState() {
   setExclusionMessage("duplicateRows", "");
   dom.filterNotCountedItem.classList.add("hidden");
   dom.filterNotCountedCount.textContent = "0";
+  [dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((element) => {
+    element.innerHTML = "";
+    element.classList.add("hidden");
+  });
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
   renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, []);
   renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, []);

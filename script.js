@@ -173,6 +173,8 @@ dom.qualitySection.addEventListener("click", handleProblemViewClick);
 
 dom.qualitySection.addEventListener("click", handleExclusionClick);
 
+[dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((note) => note.addEventListener("click", handleAnalysisNoteClick));
+
 dom.qualitySection.addEventListener("click", toggleSectionNote);
 
 // The notes with a 展开 button (more than one sentence) show their first line until opened.

@@ -230,7 +230,7 @@
         </div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">疑似合计 / 小计行</h3>
+          <h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 / 小计行</h3>
           <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
           <p id="suspectedTotalExcludedNote" class="section-note hidden"></p>
           <div id="suspectedTotalDetails" class="number-note-details"></div>
@@ -425,6 +425,7 @@
             <h2 id="statisticsSectionTitle" tabindex="-1">数值与分类统计</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <div class="module-subsection first">
           <h3 class="subsection-title">数值字段统计指标</h3>
@@ -444,6 +445,7 @@
             <h2 id="chartsSectionTitle" tabindex="-1">字段分布与趋势</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <div class="chart-grid">
           <div class="chart-card">
@@ -487,6 +489,7 @@
             <h2 id="customSectionTitle" tabindex="-1">按业务需要组合字段</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="customContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 

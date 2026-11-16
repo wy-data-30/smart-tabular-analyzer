@@ -9216,6 +9216,146 @@ test("v3.1.0 empty states: without a filter they no longer say 当前筛选", ()
   assert.doesNotMatch(scope.elements.get("categoryStats").innerHTML, /当前筛选/);
 });
 
+const CONTAINS_NOTE_IDS = ["statisticsContainsNote", "chartsContainsNote", "customContainsNote"];
+const containsNotes = (scope) => CONTAINS_NOTE_IDS.map((id) => (isHidden(scope, id) ? null : htmlText(scope, id)));
+const containsTarget = (scope) => (scope.elements.get("statisticsContainsNote").innerHTML.match(/data-quality-target="(\w+)" aria-label="([^"]*)"/) || []).slice(1);
+const filterRegion = (scope, ...regions) => scope.evaluate(`dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(${JSON.stringify(regions)}); applyFilters()`);
+
+test("v3.1.0 modules: statistics, charts and custom analysis say what the filtered rows still contain", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const both = "这些结果包含 1 行疑似合计行、1 行重复的行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [both, both, both]);
+  assert.deepEqual(containsTarget(orders), ["suspectedTotal", "去数据质量处理疑似合计行和重复的行"]);
+  // The import built no list of repeated rows for it: state.duplicateRows says how many.
+  assert.equal(orders.evaluate("state.repeatedRowSource === state.rows"), false);
+
+  // By the filtered rows: 华东 has neither the total (no region) nor the repeated row (华南).
+  filterRegion(orders, "华东");
+  assert.deepEqual(containsNotes(orders), [null, null, null]);
+  assert.equal(orders.elements.get("statisticsContainsNote").innerHTML, "");
+  filterRegion(orders, "华南");
+  const repeated = "这些结果包含 1 行重复的行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [repeated, repeated, repeated]);
+  assert.deepEqual(containsTarget(orders), ["duplicateRows", "去数据质量处理重复的行"]);
+  orders.evaluate("clearAllFilters()");
+  assert.deepEqual(containsNotes(orders), [both, both, both]);
+
+  // Rows left out are no longer contained; both kinds out, no note.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(containsNotes(orders), [repeated, repeated, repeated]);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.deepEqual(containsNotes(orders), [null, null, null]);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  const total = "这些结果包含 1 行疑似合计行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [total, total, total]);
+  assert.deepEqual(containsTarget(orders), ["suspectedTotal", "去数据质量处理疑似合计行"]);
+
+  // Without a clean ID column the repeated rows are not named (they may be different records).
+  const noId = await clickSampleButton(sampleOrdersFetchedText());
+  noId.evaluate('stageFieldTypeChange("订单编号", "category"); applyFieldConfiguration()');
+  assert.deepEqual(containsNotes(noId), [total, total, total]);
+  noId.evaluate("resetAnalysisState()");
+  assert.deepEqual(containsNotes(noId), [null, null, null]);
+  assert.equal(noId.elements.get("customContainsNote").innerHTML, "");
+  assert.equal(formatAnalysisContainsNoteOf(noId, 0, 0), "");
+  assert.equal(formatAnalysisContainsNoteOf(noId, 1234, 5678), "这些结果包含 1,234 行疑似合计行、5,678 行重复的行。");
+});
+
+test("v3.1.0 modules: the repeated-row list is built once per import, however often the filters change", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("globalThis.__repeatedListCalls = 0; const __find = findRepeatedRowIndexes; findRepeatedRowIndexes = (...args) => { globalThis.__repeatedListCalls += 1; return __find(...args); }");
+  const calls = () => orders.evaluate("globalThis.__repeatedListCalls");
+  assert.equal(calls(), 0);
+  filterRegion(orders, "华南");
+  assert.equal(calls(), 1);
+  filterRegion(orders, "华东");
+  orders.evaluate("clearAllFilters()");
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(orders.evaluate("state.excludedRows.duplicateRows.length"), 1);
+  assert.equal(calls(), 1);
+  // Another file: built again, once.
+  const rows = [["A-1", "甲", "10"], ["A-2", "乙", "20"], ["A-2", "乙", "20"], ...Array.from({ length: 12 }, (_, i) => [`A-${i + 3}`, "丙", String(30 + i)])].map(([订单ID, 名称, 金额]) => ({ 订单ID, 名称, 金额 }));
+  commitRows(orders, ["订单ID", "名称", "金额"], rows, "another.csv");
+  assert.equal(orders.evaluate("state.duplicateRows"), 1);
+  // A clean ID column: the notes need the list once a filter applies.
+  assert.equal(orders.evaluate("hasCleanIdField()"), true);
+  assert.equal(calls(), 1);
+  orders.evaluate('dom.categoryFilterField.value = "名称"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["乙"]); applyFilters()');
+  assert.equal(calls(), 2);
+  assert.deepEqual(containsNotes(orders), Array(3).fill("这些结果包含 1 行重复的行。 去数据质量处理"));
+  orders.evaluate('state.categoryFilterDraftValues = new Set(["乙", "丙"]); applyFilters()');
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(calls(), 2);
+});
+
+function formatAnalysisContainsNoteOf(scope, totals, duplicates) {
+  return scope.evaluate(`formatAnalysisContainsNote(${totals}, ${duplicates})`);
+}
+
+test("v3.1.0 modules: 去数据质量处理 opens the quality module at the subsection and focuses it", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const calls = [];
+  const record = (id, name) => { orders.elements.get(id)[name] = (options) => calls.push(`${id}.${name}${options ? ` ${JSON.stringify(options)}` : ""}`); };
+  record("suspectedTotalSection", "scrollIntoView");
+  record("suspectedTotalTitle", "focus");
+  record("duplicateExclusion", "scrollIntoView");
+  const duplicateButton = { focus: (options) => calls.push(`duplicate button.focus ${JSON.stringify(options)}`) };
+  orders.elements.get("duplicateExclusionAction").querySelector = (selector) => (selector === "button[data-exclusion-kind]" ? duplicateButton : null);
+  const click = (target) => orders.evaluate(`showModule("statisticsSection"); handleAnalysisNoteClick({ target: { closest: () => ({ dataset: { qualityTarget: "${target}" } }) } })`);
+
+  click("suspectedTotal");
+  assert.equal(orders.evaluate("document.body.dataset.module"), "qualitySection");
+  assert.deepEqual(calls, ['suspectedTotalSection.scrollIntoView {"block":"start"}', 'suspectedTotalTitle.focus {"preventScroll":true}']);
+  calls.length = 0;
+  click("duplicateRows");
+  assert.equal(orders.evaluate("document.body.dataset.module"), "qualitySection");
+  assert.deepEqual(calls, ['duplicateExclusion.scrollIntoView {"block":"start"}', 'duplicate button.focus {"preventScroll":true}']);
+  // A click beside the button does nothing.
+  calls.length = 0;
+  orders.evaluate('showModule("chartsSection"); handleAnalysisNoteClick({ target: { closest: () => null } })');
+  assert.equal(orders.evaluate("document.body.dataset.module"), "chartsSection");
+  assert.deepEqual(calls, []);
+
+  const html = repoFile("index.html");
+  assert.match(html, /<h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 \/ 小计行<\/h3>/);
+  for (const [section, id] of [["statisticsSection", "statisticsContainsNote"], ["chartsSection", "chartsContainsNote"], ["customSection", "customContainsNote"]]) {
+    const start = html.indexOf(`<section id="${section}"`);
+    const heading = html.slice(html.indexOf('<div class="section-heading">', start), html.indexOf(`id="${id}"`, start));
+    // Inside the heading, right under the range sentence, and the heading's last child.
+    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<p $/, section);
+    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<\/div>\s*<(div|p) class=/, section);
+  }
+  assert.match(repoFile("script.js"), /\[dom\.statisticsContainsNote, dom\.chartsContainsNote, dom\.customContainsNote\]\.forEach\(\(note\) => note\.addEventListener\("click", handleAnalysisNoteClick\)\)/);
+});
+
+test("v3.1.0 quality page: a total whose columns match different ranges is not one that only equals the row above", () => {
+  const totalsOf = (rows) => {
+    const scope = createScriptContext();
+    commitRows(scope, ["名称", "数量", "金额"], rows.map(([名称, 数量, 金额]) => ({ 名称, 数量, 金额 })), "two-ranges.csv");
+    return scope;
+  };
+  // 合计: 数量 40 is only 丙 above it (the segment after 小计); 金额 15 is 甲 + 乙 + 丙 (5 + 7 + 3).
+  const mixed = totalsOf([["甲", "10", "5"], ["乙", "20", "7"], ["小计", "30", "12"], ["丙", "40", "3"], ["合计", "40", "15"]]);
+  const matches = JSON.parse(mixed.evaluate("JSON.stringify(state.suspectedTotals.map((item) => item.matches.map((match) => [match.scope, match.fields.join(), match.rowCount])))"));
+  assert.deepEqual(matches, [[["segment", "数量,金额", 2]], [["segment", "数量", 1], ["above", "金额", 3]]]);
+  assert.doesNotMatch(htmlText(mixed, "suspectedTotalDetails"), /只等于上面一行/);
+  // Control: with 金额 3, both columns of 合计 only equal 丙, and the sentence names it.
+  const single = totalsOf([["甲", "10", "5"], ["乙", "20", "7"], ["小计", "30", "12"], ["丙", "40", "3"], ["合计", "40", "3"]]);
+  assert.ok(htmlText(single, "suspectedTotalDetails").includes("其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
+});
+
+test("v3.1.0 quality page: the repeated-rows message counts only the rows this click adds, not the total rows already out", () => {
+  const scope = createScriptContext();
+  const rows = [["甲", "10"], ["乙", "20"], ["乙", "20"], ["丙", "30"], ["合计", "80"], ["合计", "80"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "totals-and-repeats.csv");
+  assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 2);
+  exclusionClick(scope, "suspectedTotal", true);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 6 → 4。");
+  exclusionClick(scope, "duplicateRows", true);
+  assert.equal(textOf(scope, "duplicateExclusionMessage"), "已把 1 行重复的行设为不计入分析，参与分析的行 4 → 3。");
+});
+
 test("v3.1.0 wording: the new sentences use no old interface word and no space between two Chinese characters", async () => {
   const hits = [];
   const orders = await clickSampleButton(sampleOrdersFetchedText());
@@ -9223,7 +9363,7 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
   const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
   for (const [name, scope] of [["sample", orders], ["region", region], ["tasks", tasks]]) {
     scope.evaluate('setRowExclusion("suspectedTotal", true); if (state.duplicateRows) setRowExclusion("duplicateRows", true)');
-    for (const id of ["qualityScopeNote", "suspectedTotalExcludedNote", "suspectedTotalMessage", "duplicateExclusionText", "duplicateExclusionMessage", "globalFilterSummary", "filterMessage", "previewPageInfo", "statusPanel"]) {
+    for (const id of ["qualityScopeNote", "suspectedTotalExcludedNote", "suspectedTotalMessage", "duplicateExclusionText", "duplicateExclusionMessage", "globalFilterSummary", "filterMessage", "previewPageInfo", "statusPanel", ...CONTAINS_NOTE_IDS]) {
       findOldInterfaceWords(`${name} #${id}`, textOf(scope, id), hits);
       if (HAN_SPACE_HAN.test(textOf(scope, id).replace(/「[^」]*」/g, ""))) hits.push(`${name} #${id}: a space between two Chinese characters`);
     }
@@ -9231,7 +9371,8 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
   }
   const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
     formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
-    formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2)])`));
+    formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
+    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL])`));
   for (const text of fixed) {
     findOldInterfaceWords("format.js", text, hits);
     if (HAN_SPACE_HAN.test(text)) hits.push(`format.js: a space between two Chinese characters: ${text}`);

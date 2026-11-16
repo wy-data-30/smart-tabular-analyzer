@@ -253,6 +253,23 @@ function formatDuplicateExcludedNote(count) {
   return `多出来的 ${formatInteger(count)} 行已不计入分析。`;
 }
 
+// The note on top of the statistics, charts and custom analysis: the rows of the current
+// analysis that are still suspected totals or extra repeated rows. Empty when there are none.
+const GO_TO_QUALITY_LABEL = "去数据质量处理";
+
+function formatAnalysisContainsNote(totalCount, duplicateCount) {
+  const parts = [
+    totalCount ? `${formatInteger(totalCount)} 行疑似合计行` : "",
+    duplicateCount ? `${formatInteger(duplicateCount)} 行重复的行` : ""
+  ].filter(Boolean);
+  return parts.length ? `这些结果包含 ${parts.join("、")}。` : "";
+}
+
+function formatGoToQualityAriaLabel(totalCount, duplicateCount) {
+  const kinds = [totalCount ? "疑似合计行" : "", duplicateCount ? "重复的行" : ""].filter(Boolean);
+  return `${GO_TO_QUALITY_LABEL}${kinds.join("和")}`;
+}
+
 // The message of a click: { kind, on, rows, changed, before, after } (state.lastExclusion).
 // "N 行" counts only the rows this click left out or brought back.
 function formatExclusionMessage({ kind, on, rows, changed, before, after }) {
