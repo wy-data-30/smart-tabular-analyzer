@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>表格体检 | 检查 CSV、Excel 表格的数据问题</title>
-  <link rel="stylesheet" href="style.css?v=3.0.1">
+  <link rel="stylesheet" href="style.css?v=3.1.0">
   <script src="vendor/papaparse-5.4.1.min.js" integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"></script>
   <script src="vendor/chart-4.4.1.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"></script>
   <script src="vendor/xlsx-0.20.3.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"></script>
@@ -222,12 +222,19 @@
             <p class="section-aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
+        <p id="qualityScopeNote" class="quality-scope-note hidden"></p>
         <div id="qualitySummary" class="quality-summary"></div>
+        <div id="duplicateExclusion" class="duplicate-exclusion hidden">
+          <p class="duplicate-exclusion-line"><span id="duplicateExclusionText"></span> <span id="duplicateExclusionAction"></span></p>
+          <p id="duplicateExclusionMessage" class="exclusion-message" role="status"></p>
+        </div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">疑似合计 / 小计行</h3>
+          <h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 / 小计行</h3>
           <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
+          <p id="suspectedTotalExcludedNote" class="section-note hidden"></p>
           <div id="suspectedTotalDetails" class="number-note-details"></div>
+          <p id="suspectedTotalMessage" class="exclusion-message" role="status"></p>
         </div>
         <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
           <h3 class="subsection-title">公式错误单元格</h3>
@@ -338,6 +345,10 @@
             <span>已筛除记录数</span>
             <strong id="filterExcludedCount">0</strong>
           </div>
+          <div id="filterNotCountedItem" class="filter-count-item hidden">
+            <span>不计入分析</span>
+            <strong id="filterNotCountedCount">0</strong>
+          </div>
         </div>
 
         <div class="filter-builder-grid">
@@ -414,6 +425,7 @@
             <h2 id="statisticsSectionTitle" tabindex="-1">数值与分类统计</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <div class="module-subsection first">
           <h3 class="subsection-title">数值字段统计指标</h3>
@@ -433,6 +445,7 @@
             <h2 id="chartsSectionTitle" tabindex="-1">字段分布与趋势</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <div class="chart-grid">
           <div class="chart-card">
@@ -476,6 +489,7 @@
             <h2 id="customSectionTitle" tabindex="-1">按业务需要组合字段</h2>
           </div>
           <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
+          <p id="customContainsNote" class="analysis-contains-note hidden"></p>
         </div>
         <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
@@ -547,19 +561,11 @@
           <div class="data-export-options">
             <div class="data-export-option">
               <div>
-                <h3>当前筛选结果</h3>
-                <p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0</strong></p>
-                <p>导出当前分析范围内的全部记录；没有筛选条件时导出全部原始记录。</p>
+                <h3>当前分析的行</h3>
+                <p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0</strong></p>
+                <p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"></span></p>
               </div>
-              <button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV</button>
-            </div>
-            <div class="data-export-option">
-              <div>
-                <h3>原始数据去重结果</h3>
-                <p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0</strong></p>
-                <p>按全部原始字段识别完全重复行，保留每组重复记录中首次出现的一行。</p>
-              </div>
-              <button id="exportDeduplicatedCsv" class="secondary-button" type="button" disabled>导出去重后 CSV</button>
+              <button id="exportFilteredCsv" type="button" disabled>导出当前分析的行</button>
             </div>
             <div class="data-export-option">
               <div>
@@ -608,14 +614,14 @@
     <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span>GitHub 仓库</span></a></p>
   </footer>
 
-  <script src="parsing.js?v=3.0.1"></script>
-  <script src="profiling.js?v=3.0.1"></script>
-  <script src="format.js?v=3.0.1"></script>
-  <script src="stats.js?v=3.0.1"></script>
-  <script src="quality.js?v=3.0.1"></script>
-  <script src="app.js?v=3.0.1"></script>
-  <script src="importer.js?v=3.0.1"></script>
-  <script src="report.js?v=3.0.1"></script>
-  <script src="script.js?v=3.0.1"></script>
+  <script src="parsing.js?v=3.1.0"></script>
+  <script src="profiling.js?v=3.1.0"></script>
+  <script src="format.js?v=3.1.0"></script>
+  <script src="stats.js?v=3.1.0"></script>
+  <script src="quality.js?v=3.1.0"></script>
+  <script src="app.js?v=3.1.0"></script>
+  <script src="importer.js?v=3.1.0"></script>
+  <script src="report.js?v=3.1.0"></script>
+  <script src="script.js?v=3.1.0"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-# 表格体检 v3.0.1 架构说明
+# 表格体检 v3.1.0 架构说明
 
 本文描述当前发布版本的实际实现，而不是未来目标架构。它面向维护者，用于理解状态、导入、分析、渲染和导出之间的关系。
 
@@ -23,7 +23,7 @@
 | 2 | `profiling.js` | 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。 |
 | 3 | `format.js` | 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，编号重复的行号列表和说明文字，像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法、整列只有一个值和“同一个值，写法不一样”的说明文字，CSV 读取时有疑问的中文消息，问题行的按钮、类别和摘要文字，写法统一的表的处理文字、检查表说明和状态行，以及 HTML 转义。 |
 | 4 | `stats.js` | 统计计算：描述统计、IQR 异常值、分类频数、分组聚合、日期趋势、趋势结论和直方图分箱。 |
-| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断与去重、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
+| 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断和多出来的行（`findRepeatedRowIndexes()`）、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染，还有写法统一的表的检查表显示和作废。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，记下日期单元格，最后交给 commitTabularData() 提交。 |
 | 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。 |
@@ -96,8 +96,8 @@ flowchart LR
 
 当前实现依赖以下不变量：
 
-1. `state.rows` 是导入后原始数据的事实来源；筛选和去重不得改写它。
-2. 普通分析统一通过 `getAnalysisRows()` 读取当前范围。
+1. `state.rows` 是导入后原始数据的事实来源；筛选和不计入分析都不得改写它。
+2. 普通分析统一通过 `getAnalysisRows()` 读取当前范围；筛选从计入分析的行（`getIncludedRows()`，v3.1.0）里筛。
 3. 质量页始终基于原始 `state.rows`；筛选不会改变缺失、重复、ID 重复值、疑似缺失值和异常值口径。
 4. 字段类型修正只更新 profile，不改写原始单元格；转换发生在统计时。
 5. 每次新导入必须通过 `beginImport()` 生成新的导入 ID，旧异步结果不得提交。
@@ -118,18 +118,19 @@ flowchart LR
 | 状态分组 | 字段 | 含义 |
 | --- | --- | --- |
 | 原始数据 | `rows`, `fields` | 完整原始记录和固定字段顺序 |
-| 当前分析范围 | `filteredRows`, `filterSourceRows`, `filters` | 当前筛选结果、来源身份保护和已应用条件 |
+| 当前分析范围 | `filteredRows`, `filterSourceRows`, `filters` | 当前筛选结果（从计入分析的行里筛，v3.1.0）、来源身份保护和已应用条件 |
+| 不计入分析的行（v3.1.0） | `excludedRows`, `exclusionSourceRows`, `includedRows`, `repeatedRowIndexes`, `repeatedRowSource`, `restoredTotalRows`, `lastExclusion` | 两类不计入分析的行（`state.rows` 的下标）、它们属于哪份数据、计入分析的行、重复行列表的缓存、重建时恢复计入过的合计行、最近一次点按钮的结果。`commitTabularData()` 整体替换，`resetAnalysisState()` 清空，见“不计入分析的行（v3.1.0）” |
 | 字段配置 | `profiles`, `fieldTypeDrafts`, `manualFieldTypes` | 自动识别结果、已应用类型、未应用草稿，以及用户应用的、和自动识别不同的类型（见“疑似缺失值”的手动类型记录） |
 | 疑似缺失值 | `placeholderConfirmations`, `placeholders` | 字段 → 已确认按缺失处理的写法；`buildPlaceholderSummary()` 的结果。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它们（见“疑似缺失值”） |
 | 疑似数值列 | `numericLooking` | `buildNumericLookingSummary(state.profiles)` 的结果。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 整体替换，`resetAnalysisState()` 清成 `[]`，筛选不改它（见“数字策略”） |
 | 疑似合计 / 小计行 | `totalLabelRows`, `suspectedTotals` | `findTotalLabelRows()` 找到的标签行（只有导入替换）；`buildSuspectedTotalSummary()` 的结果（导入和 `rebuildAnalysisFromProfiles()` 替换）。`resetAnalysisState()` 清成 `[]`，筛选不改它们（见“疑似合计 / 小计行”） |
 | 公式错误单元格 | `sourceFormulaErrors`, `formulaErrors` | `WeakMap<行对象, { 字段: 错误文字 }>`；`buildFormulaErrorSummary()` 的结果。都只在导入时写入，字段配置、确认和筛选不改它们，`resetAnalysisState()` 清空（见“公式错误单元格”） |
 | 格式一致性（v2.9.0） | `sourceDateCells`, `dateStyles`, `constantFields`, `lookAlikes`, `formatScans` | `WeakMap<行对象, { 字段: true }>`，记下哪些格是 Excel 日期单元格，只在导入时写入；三个汇总由 `refreshFormatConsistency()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里整体替换，筛选不碰；`formatScans`（`createFormatScans()`）缓存这次导入里每个字段的日期写法和写法收集，只在导入时替换。`resetAnalysisState()` 全部清空（见“格式一致性”） |
-| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `chartInsights`, `customAnalysis` | 当前统计、原始质量统计、图表下的两句结论（`{ category, trend }`，空字符串表示不显示，见“Statistics”）和自定义分析快照。没有筛选掉任何行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
+| 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `chartInsights`, `customAnalysis` | 当前统计、原始质量统计、图表下的两句结论（`{ category, trend }`，空字符串表示不显示，见“Statistics”）和自定义分析快照。没有筛选掉任何行、也没有不计入分析的行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告（全部保存，每条 `{ row, code, message }`，`row` 是精确的文件行号或 `null`，见“数据行的文件行号”） |
 | 数据预览 | `previewPage` | 预览的页码（从 1 开始），`renderPreview()` 把它夹到有效范围；导入、筛选变化和字段配置（含疑似缺失值确认）回到 1，`resetAnalysisState()` 也设为 1（见“问题行”） |
 | 问题行 | `problemCategories`, `problemView`, `problemViewOpener` | `renderQuality()` 时的 `listProblemCategories()`（“查看”按钮带它的下标）；打开的查看区 `{ category: { kind, field, key }, page, list }` 或 `null`；打开查看区的那个“查看”按钮，关闭时把焦点还给它。导入时关闭，`resetAnalysisState()` 清空，筛选不改（见“问题行”） |
-| 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选和去重结果与 `rows` 共享行对象，所以同样能查到 |
+| 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选结果和计入分析的行与 `rows` 共享行对象，所以同样能查到 |
 | 表头检测 | `headerDetection` | `null`，或 `{ headerRowNumber, skippedRows: [{ rowNumber, preview }] }`：导入时跳过了表头上方的标题行才有值。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 清空；筛选和字段配置两条刷新路径不改它 |
 | 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待状态、当前读取器和导入版本号 |
 | 标准化导出（v2.10.0） | `standardizedExport` | `null`，或 `buildStandardizedExport()` 的结果（每列计数、按行再按字段排的四个平行数组、合计）。只由“检查会改哪些格”（`checkStandardizedExport()`）写入；`commitTabularData()`、`rebuildAnalysisFromProfiles()`、`resetAnalysisState()` 经 `clearStandardizedExport()` 清成 `null` 并收起面板，筛选不改它（见“标准化导出（v2.10.0）”） |
@@ -143,10 +144,12 @@ flowchart LR
 - `abortActiveFileRead()`：中止仍在运行的 `FileReader`。
 - `commitTabularData(...)`：成功导入的统一提交点；写入状态、生成派生数据并触发首轮渲染。第 9 个参数 `rowNumbers`（默认 `null`）与 `rows` 一一对应，长度一致时才写入 `sourceRowNumbers`；第 10 个参数 `formulaErrors`（默认 `null`）同样与 `rows` 一一对应，长度一致时才写入 `sourceFormulaErrors`，只有 Excel 导入传它；第 11 个参数 `dateCells`（v2.9.0，默认 `null`）也与 `rows` 一一对应，每项是这一行来自 Excel 日期单元格的字段集合 `{ 字段: true }` 或 `null`，长度一致时才写入 `sourceDateCells`，只有 Excel 导入传它。
 - `getSourceRowNumber(row)`：返回行对象的文件行号；没经过 `commitTabularData()`（例如测试直接给 `state.rows` 赋值）或导入没给行号时返回 `null`。
-- `getAnalysisRows()`：只有 `filterSourceRows === state.rows` 时才返回 `filteredRows`，否则回退到原始行。
+- `getAnalysisRows()`：只有 `filterSourceRows === getIncludedRows()` 时才返回 `filteredRows`，否则回退到计入分析的行（没有不计入分析的行时就是原始行；v3.1.0 前是 `filterSourceRows === state.rows`、回退到原始行）。
+- `getIncludedRows()`（v3.1.0）：计入分析的行；只有 `exclusionSourceRows === state.rows` 时才返回 `includedRows`，否则返回 `state.rows`。
 - `refreshFilteredAnalysis()`：筛选后重算当前范围的统计、结论、图表和导出状态。
 - `rebuildAnalysisFromProfiles(message, setMessage)`：字段类型提交或疑似缺失值确认后清除筛选，并重建依赖字段类型的全部结果；`setMessage` 决定结果消息写到哪里，默认是字段配置区。
 - `updatePlaceholderConfirmations()`：第 4 条刷新路径，疑似缺失值的确认、撤销和全部确认都经过它（见“疑似缺失值”）。
+- `setRowExclusion(kind, on)`（v3.1.0）：第 5 个触发点，点“不计入分析”/“撤销”；走筛选那条路径，不走重建（见“不计入分析的行（v3.1.0）”）。
 - `clearStandardizedExport()`（v2.10.0）：作废上一次“检查会改哪些格”并收起面板。`commitTabularData()`、`rebuildAnalysisFromProfiles()`（含疑似缺失值的确认 / 撤销）和 `resetAnalysisState()` 调用它，`refreshFilteredAnalysis()` 不调用；刷新路径都不计算标准化导出（见“标准化导出（v2.10.0）”）。
 - `resetAnalysisState()`：销毁图表，同时清空领域状态和结果 DOM；不会把 `activeImportId` 重置为旧值。
 
@@ -483,7 +486,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - `isMissing(value)`：`null`、`undefined` 或 trim 后空字符串均视为缺失。字符串的首字符明确不是 `trim()` 会去掉的字符时直接判为非缺失，不再调用 `trim()`（v2.6.1）：`trim()` 只去掉 U+0009–U+000D、U+0020、U+00A0、U+1680、U+2000–U+200A、U+2028、U+2029、U+202F、U+205F、U+3000、U+FEFF 这 25 个字符，所以码元大于 32、不是 U+00A0，且小于 U+1680 或大于 U+3000（U+FEFF 除外）的首字符都能保证结果非空；其余首字符照旧走 `trim()`；`toPlainNumber()` 对 15 位以内的纯 ASCII 数字串同样直接返回 `Number(raw)`，位数上限保证结果有限。两处结果与原逻辑逐值相同。分析和质量口径改用 `isMissingOrConfirmed(value, keys)`，已确认的疑似缺失值写法也算缺失；`importer.js` 仍用 `isMissing()`。
 - `countDuplicateRows(rows, fields)`：统计每组首次出现之后的重复记录数。
 - `buildExactRowKey(row, fields)`：区分 absent、undefined、null、值类型和值字符串。
-- `deduplicateRows(rows, fields)`：保留每个精确重复组的首行，不改写原数组。
+- `findRepeatedRowIndexes(rows, fields)`（v3.1.0，取代 `deduplicateRows()`）：返回每个精确重复组第一行之外的那些行的下标（升序），不改写原数组。
 - `buildNumericStats(rows)`：同时生成 Q1、Q3、IQR 边界和异常值数量。
 - `getQualityNumericStats()`：返回基于原始 `state.rows` 的数值质量统计。
 - `buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations)`：ID 字段重复值，见下文“ID 字段重复值”。
@@ -526,7 +529,7 @@ upper = Q3 + 1.5 × IQR
 
 ### ID 字段重复值（v2.3.0）
 
-`buildIdDuplicateSummary()` 检查当前已应用类型为 ID（`typeKey === "id"`）的每个字段，和整行重复互相独立，去重导出不变：
+`buildIdDuplicateSummary()` 检查当前已应用类型为 ID（`typeKey === "id"`）的每个字段，和整行重复互相独立：
 
 - **范围**：原始 `state.rows`，不随筛选变化。`commitTabularData()` 在算完 profile 和重复行之后计算，`rebuildAnalysisFromProfiles()` 开头重算（“应用字段配置”和“恢复自动识别”都会经过它），所以手动改成 ID 的字段也查，改成其他类型或忽略的不查。`resetAnalysisState()` 把 `state.idDuplicates` 清成 `[]`，每次提交整体替换。
 - **比较**：值经 `normalizeValue()` 归一（去首尾空格，区分大小写，不做全角半角归一），归一后为空的缺失值不参与。显示用归一后的值。Excel 单元格在导入时已转成字符串，数字 1012 和文本 "1012" 是同一个值；用数字格式显示成 001012 的数字仍按原始值 1012 比较和显示。N/A、— 这类疑似缺失值没确认时不算缺失，重复出现时会被列为重复值；确认按缺失处理后不再参与比较（第 5 个参数 `confirmations`，默认没有确认）。
@@ -548,7 +551,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **匹配**：`placeholderKey(value)` 只看字符串单元格：去首尾空格 → NFKC → 再去首尾空格，整格等于清单里的某个写法才算，不做子串匹配；得到的写法就是 key，确认的粒度是“字段 × key”。全角的「Ｎ／Ａ」「－－」、康熙部首「⽆」、小号的「﹘」「﹣」等经 NFKC 变成清单写法，和半角写法是同一个 key。去首尾空格后超过 8 个 UTF-16 单位的单元格直接判为不匹配，不做 NFKC（清单最长 4 个字符；NFKC 不会把字符映射成空，清单字符也不是组合的结果）。零宽空格（U+200B）不是 JS 的空白字符，带它的写法匹配不上；BOM（U+FEFF）会被 `trim()` 去掉。
 - **检出**：`buildPlaceholderSummary(rows, fields, profiles, confirmations, getRowNumber)` 基于原始 `state.rows`，按字段顺序、同一字段内按 key 第一次出现的位置，每个“字段 × key”一项 `{ field, key, tier, count, rawValues, rowNumbers, confirmed, fieldIgnored }`。`rawValues` 是去首尾空格后的不同原文；`rowNumbers` 最多 `ID_DUPLICATE_ROW_NUMBER_LIMIT`（10）个，经 `getSourceRowNumber()` 取得，查不到为 `null`。被忽略的字段不检出新的疑似值，但已经确认的 key 仍列出（`fieldIgnored: true`），照样计入该字段的缺失数，仍可撤销。`commitTabularData()` 在算完 profile 之后、`renderQuality()` 之前计算，`rebuildAnalysisFromProfiles()` 开头重算（字段配置的变化会改变哪些字段被检查），筛选不重算。结果存在 `state.placeholders`。
 - **确认的状态**：`state.placeholderConfirmations` 是“字段 → 已确认的 key 数组”（`Object.create(null)`）。每次提交整体替换为空，`resetAnalysisState()` 清空，筛选不改它；确认和撤销时也整体替换。通过 `getConfirmedPlaceholderKeys(field)` 读取（用 `hasOwnProperty`，字段名叫 `constructor` 之类也安全）。
-- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 12 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、分组函数 `groupNumericFieldByCategory()`（显示为“（空值）”）、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径（v2.7.0 删去场景模板、快速分组图和“主要发现”后，原来的 17 处少了 5 处）。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复和去重导出（`buildExactRowKey()`，契约 7）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期（在任何数字策略下也不能，见“数字策略”），所以只做数值或日期转换的地方不用改。v2.12.0 起分组和筛选都显示“（空值）”。
+- **按缺失处理的范围**：`isMissingOrConfirmed(value, keys)` 和 `analysisValue(value, keys)`（已确认的 key 返回 `""`，其余同 `normalizeValue()`）替代分析和质量口径里的 `isMissing()` / `normalizeValue()` / `displayValue()`，共 12 处：`buildColumnProfile()`（第 4 个参数）、`buildNumericStats()`、`countInvalidNumericValues()`、`buildCategoryStats()`、`countValues()`、分组函数 `groupNumericFieldByCategory()`（显示为“（空值）”）、分类筛选的选项和匹配（`getCategoryFilterOptions()`、`filterRowsByConfig()`，并入“（空值）”）、概览里的缺失计数、`buildIdDuplicateSummary()`（第 5 个参数），以及转换失败的两个兜底路径（v2.7.0 删去场景模板、快速分组图和“主要发现”后，原来的 17 处少了 5 处）。不变的：`state.rows` 和行对象、数据预览（显示原值）、整行重复（`buildExactRowKey()`，契约 7；v3.1.0 前还有去重导出）、CSV 导出，以及 `importer.js` 里的全部缺失判断（表头检测等）。清单里的写法都不能转成数值或日期（在任何数字策略下也不能，见“数字策略”），所以只做数值或日期转换的地方不用改。v2.12.0 起分组和筛选都显示“（空值）”。
 - **第 4 条刷新路径**：`confirmPlaceholder(field, key)`、`undoPlaceholderConfirmation(field, key)` 和 `confirmAllCommonPlaceholders()`（只覆盖未忽略字段里待确认的常见写法）都经过 `updatePlaceholderConfirmations(keysByField, message)`，顺序是：
   1. 字段配置有未应用的草稿时拒绝，状态不变，在字段配置区和 `#placeholderMessage` 写“字段配置有未应用的修改。请先点击“应用字段配置”，再处理疑似缺失值。”。没有可做的事（key 不在待确认列表里，或要撤销的 key 没确认过）时也返回 `false`。
   2. 整体替换 `state.placeholderConfirmations`。
@@ -573,13 +576,14 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
   - 疑似合计 / 小计行：`state.suspectedTotals` 的每一行，说明写对上的列和行范围。这一类没有固定的字段，每行高亮自己的标签格：条目带 `highlightField`，`renderProblemView()` 优先用它（`item.highlightField ?? highlightField`）。条数 = `suspectedTotals.length`。
   - 认不出的数字或日期（`conversion`）：`getProfileConversionCheck(profile, profile.typeKey)`（`profiling.js`）对 profile 计为非缺失的值逐个判断：数值按 profile 的数字策略转换结果为 `null`，日期按 profile 的日期策略 `toDate()` 为假，和 `buildColumnProfile()` 循环里的两种写法同义，所以手动类型、确认后重建都同口径。说明“认不出是数字 / 日期”。条数 = `profile.conversionFailureCount`（按字段时一行最多一个值）。不使用 `countConversionFailuresForValues()` 那条兜底（日期不带策略）。
   - 偏大或偏小的值（`outlier`）：`getQualityNumericStats()` 的上下界、同一个数字解析函数、严格越界；转换失败的值不算。说明“高于上界 X / 低于下界 X”。条数 = `outlierCount`。
-  - 整行重复：`buildExactRowKey(row, state.fields)` 分组，组按首次出现，每组第一行标“（保留）”（`kept: true`），和去重导出一致。列出行数 = `duplicateRows` + 组数。
+  - 整行重复：`buildExactRowKey(row, state.fields)` 分组，组按首次出现，每组第一行标“（保留）”（`kept: true`）。列出行数 = `duplicateRows` + 组数。
   - 编号重复（`idDuplicate`）：`groupIdValueIndexes()` + `sortIdDuplicates()`，顺序和质量页表格相同（出现次数降序、同次数按首次出现），但列出全部重复值的全部行，不受 10 × 10 的上限；组内按文件顺序，说明“第 g 组：「值」出现 n 次”。
   - 像是空值的写法（`placeholder`）：`placeholderKey(value) === key`，说明“待确认”或“已按空值处理”。条数 = `entry.count`。
   - 日期写法（v2.9.0）：`forEachDateStyle()` 逐行分类（和汇总同一个函数），列出不是主写法的行，按文件顺序，说明“文本 年/月/日（主写法是 Excel 日期单元格）”。条数 = 汇总的 `otherCount`，按值计。
   - 同一个值，写法不一样（`lookAlike`，v2.9.0）：`readFieldWritings()` 的同一份收集（汇总用的缓存），列出带首尾空格的行、只有不可见字符的行和多写法组里的全部行（每行一次）。按组排（组内按文件顺序），之后是不在组里的行；说明写组号和原因、“首尾空格”“只有不可见字符”，再用 `formatVisibleText()` 写出这一格的可见形式，例如“第 1 组（不可见字符），首尾空格：「华东␣」”。条数 = 汇总的 `rowCount`。
   - 读取时有疑问（`parseWarnings`）：列的是警告而不是行，按警告顺序；行号在 `state.rows` 里找得到时带出整行，找不到的（只有空白、被丢掉的行）原始列留空，说明后加“（这一行没有可分析的数据，未导入）”，没有行号的加“（没有行号）”。
   - 其余类按文件顺序（“写法不一样”按组，见上）。
+  - 不计入分析的行（v3.1.0）：任何一类里，说明末尾加“（不计入分析）”（`markExcludedNote()`），查看区和“导出这一类”都一样。
 - **同一份判断的结构**：profile 记下构建时用的 `confirmedKeys` 副本（`rebuildConfirmedFieldProfile()` 重建时随之更新），空值、认不出的数字或日期、偏大或偏小的值、编号重复的列表只读 profile 里的 keys、`numberStrategy` 和 `dateStrategy`，不再调 `getConfirmedPlaceholderKeys()`。测试在 stage3 全部夹具和 `examples/` 全部 CSV 上逐类核对“列出的数量 = 质量页计数”，并对每个字段的数值、日期两种类型核对共用的失败判断。
 - **入口**：空值检查表、偏大或偏小的值表各加一列“查看”，每一行都有元素（没有问题时是 `<span class="problem-view-none">无</span>`），按钮不进现有的计数格；整行重复的按钮在 pill 的 `<span>` 之外，不新增 pill；读取时有疑问在摘要下方的 `#parseWarningSummary` 一行；编号重复在字段名旁；像是空值的写法在每个 `<li>` 里，用新的属性，不用 `data-placeholder-index`。所有“查看”按钮只带 `data-problem-index`（这次渲染时 `state.problemCategories` 的下标），不写字段名，`aria-label` 由 `formatProblemViewLabel()` 写清楚看什么；`script.js` 在 `#qualitySection` 上绑一个委托 click（`handleProblemViewClick()`）。
 - **查看区**：静态写在 `index.html` 的 `#problemRowsSection`，在两栏表格之后、“按单位读取的数字”之前，平时隐藏。点“查看”时 `openProblemView()` 打开，焦点移到标题 `#problemRowsTitle`（`tabindex="-1"`）。内容：类别下拉框（选项文字 `formatProblemCategoryLabel()`，如“空值 · 备注（26 行）”，value 是类别下标）、`aria-live` 摘要（`formatProblemRowsSummary()`：“共 N 行，第 X / Y 页”，认不出的数字或日期写“N 个值”，整行重复写“重复 N 行（K 组，共 M 行，每组第一行保留）”，读取时有疑问写“N 处”）、有未应用字段草稿时的一句“按已应用的字段配置列出”、表格（每页 50 行，可横向滚动，`buildRowTableHtml()` 加说明列）、首页 / 上一页 / 下一页 / 末页（到头时禁用）、“导出这一类”、关闭和一行导出状态。空值、认不出的数字或日期、日期写法、偏大或偏小的值、像是空值的写法、编号重复、同一个值，写法不一样高亮对应字段那一格（`class="cell-problem"`），整行重复、读取时有疑问不高亮；单元格用 `displayValue()` 显示（去掉首尾空格，零宽字符也看不出来，所以“写法不一样”在说明列写出可见形式），一律经 `escapeHtml()`；“导出这一类”的 CSV 保留原值（`readCsvExportCell()`，首尾空格和不可见字符都在）。
@@ -591,7 +595,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 
 ### 疑似合计 / 小计行（v2.8.0）
 
-有些表在数据中间或末尾写了合计、小计。它们会被当成普通数据，让求和、平均值和异常值偏大。这里**只提示、不排除**：`state.rows`、统计、图表、筛选、去重和导出都不变（测试 `v2.8.0 totals: the check changes nothing…` 固定）。
+有些表在数据中间或末尾写了合计、小计。它们会被当成普通数据，让求和、平均值和异常值偏大。这里**默认只提示**：不点“不计入分析”时，`state.rows`、统计、图表、筛选和导出都不变（测试 `v2.8.0 totals: the check changes nothing…` 固定；v2.8.0–v3.0.1 只提示、不排除）。v3.1.0 起可以把它们设为不计入分析，见“不计入分析的行（v3.1.0）”。
 
 - **标签**（`totalRowLabel()`，`parsing.js`）：只看字符串。规范化：NFKC → 去掉全部空白 → 去结尾冒号 → 去结尾一个不嵌套的括号注释 → 再去结尾冒号。之后整格是“最多 12 个字的前缀 + 合计 / 总计 / 小计 / 总和 / 汇总 / 累计（或繁体 合計 / 總計 / 小計 / 總和 / 匯總 / 彙總 / 累計）”，或不分大小写的 total / grandtotal / subtotal / sub-total / sum。前缀**整个等于**已、未、不、无、無、非、待、是否、尚未、暂未、暂不、暫未、暫不 时不算（“已汇总”不算，“南非小计”“无锡合计”算）。
 - **不算标签的写法**：共计、合共；`（合计）`、`合计（元）（含税）`、`合计[元]`、`合计【元】`（`合计：（元）` 算）；Sub-total 用 U+2010 连字符；中间带零宽空格的写法（U+200B 在开头时会被当成前缀的一个字，算标签）。
@@ -601,10 +605,10 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **两轮（只做一轮补救）**：第一轮全部标签行都不算明细。有没通过的行时做第二轮：没通过的行回到明细，第一轮通过的行保留为分隔，只核对没通过的行。这样一行恰好带标签的明细（备注写“合计”）不会让真合计漏掉。
 - **已知残留**：第二轮只做一次。第一条明细带标签 + 两段小计 + 总计的表，第一轮对上后面的小计，第二轮对上这条明细所在段的小计，总计仍可能漏掉。
 - **结果**：`[{ index, line, field, label, matches: [{ scope, fields, firstLine, lastLine, rowCount, contiguous }] }]`。不存加数的行号列表（5,000 个小计时内存上界太大），只存首尾行号和行数。`line` 或范围的行号为 `null` 时，文字写“有一行”“上方 N 行明细之和”“全表 N 行明细之和”。
-- **触发点**：`commitTabularData()` 算标签和结果；`rebuildAnalysisFromProfiles()` 复用标签重算结果（字段配置、疑似缺失值确认 / 撤销会改变数值列和读数）；筛选不碰，基于原始数据；`resetAnalysisState()` 清空。状态栏的句子只在导入时写。
+- **触发点**：`commitTabularData()` 算标签和结果；`rebuildAnalysisFromProfiles()` 复用标签重算结果（字段配置、疑似缺失值确认 / 撤销会改变数值列和读数）；筛选不碰，基于原始数据；`resetAnalysisState()` 清空。状态栏的句子只在导入时写。v3.1.0 起重建时和已不计入分析的合计行取交集（`intersectExcludedTotals()`）。
 - **开销**：只影响带标签行的文件。**有标签行时，每次重建都会按字段解析全部数值列**，不做缓存。10 万 × 20 列、1 格“合计”（不命中），字段配置重建的中位数从 4,218 ms 到 5,085 ms，多约 0.9 s（+20.6%），`buildSuspectedTotalSummary()` 单独约 0.93 s（Node 24，假 DOM，交替各 5 次；这次重建把一列改成了分类，读 9 个数值列）。没有标签行的文件 0 ms。
 - **质量页**：静态小节 `#suspectedTotalSection` 在读取时有疑问一行的下方、两栏表格之上，没有命中时隐藏，不新增 pill（`pillTexts()` 的断言固定恰好 6 项）。最多列 `SUSPECTED_TOTAL_LIST_LIMIT`（20）条，超出时写“共 N 行，只列出前 20 行。全部行请点「查看」。”。整节只有一个“查看”，因为整类是一个问题行类别。说明句见“报告与数据导出”。
-- **状态栏**：一行写“第 N 行「标签」疑似合计行，目前仍计入统计，详情见“数据质量”。”；多行写“发现 N 行疑似合计 / 小计（第 a、b… 行），……”，最多列 5 个行号。写在表头说明之后，警告分支也有。状态栏为什么看得见见“界面渲染”。
+- **状态栏**：一行写“第 N 行「标签」疑似合计行，可以在“数据质量”里设为不计入分析。”（v3.1.0 起；之前结尾是“目前仍计入统计，详情见“数据质量”。”，这句不随排除变化）；多行写“发现 N 行疑似合计 / 小计（第 a、b… 行），……”，最多列 5 个行号。写在表头说明之后，警告分支也有。状态栏为什么看得见见“界面渲染”。
 
 ### 公式错误单元格（v2.8.0）
 
@@ -636,6 +640,27 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 - **问题行**：`dateStyle` 在“认不出的数字或日期”之后，`lookAlike` 在“编号重复”之后，见“问题行”。文件名片段“日期写法”“写法不一样”。
 - **开销**（Node 24，假 DOM，和 v2.8.1 交替各 9 次取中位数）：10 万 × 20 列、没有这些问题的 CSV，导入 13,453 → 13,737 ms（+2.1%），字段配置重建 3,222 → 3,267 ms（+1.4%）；同样大小的最坏情况（每个分类 / ID 格都带首尾空格或全角字符、日期列四种写法交替）导入 +2.4%、重建 −0.2%；10 万 × 5 列 xlsx（一列日期单元格）导入 6,627 → 6,830 ms（+3.1%，日期字段相同的行共用一个日期单元格记录之后；每行新建记录时是 +5.0%）、重建 −1.0%。三项检查自身的首次扫描（中位数）：干净 CSV 上日期写法约 61 ms、常量列不到 0.1 ms（只读 profile）、写法不同约 175 ms；最坏情况分别约 127 ms、不到 0.1 ms、264 ms；xlsx 分别约 12 ms、不到 0.1 ms、118 ms。重建时都复用扫描缓存，不再扫。
 
+### 不计入分析的行（v3.1.0）
+
+用户可以把疑似合计 / 小计行和整行重复里多出来的行设为不计入分析。不点按钮时一切和 v3.0.1 逐字段相同（`v2.8.1-guard.json` 和报告哈希护栏照常通过）。新词只用“不计入分析”，不用“排除”“剔除”“移除”；新句子都在 `format.js` 的函数里，带数量参数。
+
+- **三层数据**：`state.rows`（文件里的全部行）→ `getIncludedRows()`（计入分析的行）→ `getAnalysisRows()`（筛选后的行）。
+  - 全部行：质量页全部内容（数字都不变）、字段类型和字段配置表、写法统一的表和改动清单、问题行列表和“导出这一类”、报告的质量部分。
+  - 计入的行：筛选从这里筛；筛选面板的分类选项、数值和日期范围；报告“筛选条件”里“共 M 个类别”的 M。
+  - 筛选后的行：概览、数据预览、统计、分类、图表、两句结论、自定义分析、“导出当前分析的行”、三个模块顶上的提示。
+- **state**（`commitTabularData()` 整体替换，`resetAnalysisState()` 清空）：`excludedRows = { suspectedTotal: [], duplicateRows: [] }`（两类各一个升序的 `state.rows` 下标数组；记的是行，不是开关；按下时记下当时标出的行；一行可以两类都在）；`exclusionSourceRows`（这些下标属于哪一份 `state.rows`）；`includedRows`（没有不计入的行时就是 `state.rows` 本身，同一个数组，所以默认路径的数组和 v3.0.1 一样）；`repeatedRowIndexes` / `repeatedRowSource`（重复行列表的缓存）；`restoredTotalRows`（这次导入里因重建恢复计入过的合计行，`Set`）；`lastExclusion`（最近一次点按钮的结果，给消息用）。
+- **守卫**：`getIncludedRows()` 只在 `exclusionSourceRows === state.rows` 时用 `includedRows`；`getAnalysisRows()` 只在 `filterSourceRows === getIncludedRows()` 时用 `filteredRows`，否则退回计入的行，不会退回全部行；`getQualityNumericStats()` 的复用守卫同时认 `filterSourceRows` 和 `exclusionSourceRows`。
+- **第 5 个触发点** `setRowExclusion(kind, on)`（按钮由 `#qualitySection` 上的委托 click `handleExclusionClick()` 调用，按钮只带 `data-exclusion-kind` / `data-exclusion-on`）：有未应用的字段草稿时拒绝，提示写在点的那一节；按下时记下 `listExclusionCandidates()`（全部 `state.suspectedTotals`，或 `listRepeatedRowIndexes()`）；`rebuildIncludedRows()`；`refreshAfterExclusion()` 走筛选路径：已应用的筛选在新的计入行上重算，筛选面板跟着计入的行（`refreshFilterPanelForIncludedRows()`：分类选项和范围提示；没有应用数值 / 日期筛选的字段，输入框也换成新范围，已应用的保持用户的值），`refreshFilteredAnalysis()`，筛选消息按新数字重写，`renderExclusionControls()`（质量页只刷新按钮和说明，不重跑 `renderQuality()`），查看区开着时重画当前页，侧栏。现有筛选和自定义分析保留。消息（`formatExclusionMessage()`）里的“N 行”只数这次新加或恢复的行，箭头前后是计入的行数；焦点移到换出来的按钮上。
+- **重建路径取交集**（`intersectExcludedTotals()`，`rebuildAnalysisFromProfiles()` 算完新的疑似合计之后）：已不计入的合计行里仍被标出的留下；不再被标出的恢复计入，消息末尾写“有 N 行不再是疑似合计行，已恢复计入分析。”并记进 `restoredTotalRows`；恢复过的行又被标出时说一次“第 44 行又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。”（最多 5 个行号）；新标出的行不自动不计入，第一次被标出的行也不提醒（只有 `restoredTotalRows` 里的行才提醒）。重复那一类不随重建变（只取决于行和字段）。重建时两处消息清空。`numericStats` 与 `qualityNumericStats` 只在没有不计入的行时共用一个数组，有时对计入的行另算。
+- **重复行列表**：`findRepeatedRowIndexes(rows, fields)`（`quality.js`，取代 v3.0.1 的 `deduplicateRows()`）返回每组第一行之外的那些行的下标，用 `buildExactRowKey()`。`listRepeatedRowIndexes()` 第一次需要时建，缓存到下一次导入；导入不建（护栏：导入时 `buildExactRowKey()` 的调用次数和 v3.0.1 相同）。需要它的是点重复行的按钮，以及三个模块的提示在有筛选或有不计入的行时数筛选后的重复行（没有筛选也没有不计入的行时直接用 `state.duplicateRows`）。
+- **开销**（Node 24，假 DOM，10 万行 × 20 列、495 行重复多出来、1 行疑似合计、有干净编号列，和上一个提交交替各 5 次取中位数）：第一次筛选 2,027 → 2,719 ms（+692 ms，约 0.69 s），多出的是建重复行列表（每行一个精确键）；之后再筛选、点按钮都不再建，所以点重复行的“不计入分析”反而从 3,012 降到 2,341 ms。没有重复行或没有干净编号列的表不建这份列表。导入 −0.1%、清除筛选 +0.6%、字段配置重建 +2.0%；点“不计入分析”（合计）约 2.3 s，有不计入的行时重建约 4.7 s。
+- **干净编号列**（`hasCleanIdField()`）：已应用类型为 ID、且 `state.idDuplicates` 里不是 `mostlyRepeated`（唯一率 < 50%）的字段，至少一个。有时重复行那一行写“重复行里多出来的 N 行目前仍计入分析。”；没有时写“这张表没有能区分每一行的编号列，内容相同的行也可能是不同的记录，先点“查看重复行”确认。”，三个模块的提示也不提重复行。**已知限制**：这个判断比较宽。唯一率不低于 50%、但编号本身有不少重复的列也算干净；非空值不足 `ID_MOSTLY_REPEATED_MIN_VALUES`（12）个的 ID 列不判断“大部分都重复”，不管重复多少都算干净（仓库夹具里没有这两种表）。
+- **质量页**：顶上 `#qualityScopeNote`（“质量页检查的是文件里的全部 42 行，包括不计入分析的 2 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。”，空值口径和 `state.totalMissing` 相同：每个 profile 用自己的 `confirmedKeys`，含被忽略的字段，`countExcludedMissing()`）。疑似合计一节：静态说明句一字不改，排除后由 CSS（`.is-excluded`）藏起，换 `#suspectedTotalExcludedNote`（“这 1 行已不计入分析：……不再包含它。”，多行“它们”）；“查看”旁边是“不计入分析”/“撤销”；R1（每个 match 都只覆盖 1 行的合计行，“其中 N 行只等于上面一行，可能不是合计行，先点“查看”确认。”）和“另有 N 行也带这类字样，但数字对不上，没有列出。”（只在有数值列可核对时）两句由 `getSuspectedTotalExtras()` + `formatSuspectedTotalExtras()` 生成，页面和报告共用。重复行在 pill 下面单独一行 `#duplicateExclusion`（pill 仍是 6 项）。两处消息各有元素（`role="status"`）。
+- **别的模块**：范围句 `formatAnalysisScope()`（`#globalFilterSummary`、三处 `.filter-scope-text`、侧栏筛选一行共用，“40 行（另有 2 行不计入分析）”）；筛选面板多一格“不计入分析 N”，“已筛除记录数”= 计入的行 − 筛选后的行；概览“总记录 → 当前分析”；预览页码只在没有筛选时加“（不含不计入分析的 2 行）”；自定义分析范围句；状态栏导入时那句以“可以在“数据质量”里设为不计入分析。”结尾，不随排除变。统计、图表、自定义分析三个模块 `.section-heading` 里、范围句下面的提示（`#statisticsContainsNote`、`#chartsContainsNote`、`#customContainsNote`）：`countAnalysisContains()` 按筛选后的行数还在的疑似合计行和（有干净编号列时）重复多出来的行，`renderAnalysisContainsNotes()` 在 `renderFilterCounts()` 末尾调用，所以导入、筛选、清除筛选、重建、点按钮都会刷新；“去数据质量处理”（`handleAnalysisNoteClick()`）先 `showModule("qualitySection")`，再 `scrollIntoView({ block: "start" })` 和 `focus({ preventScroll: true })`：合计到 `#suspectedTotalTitle`，重复行那一行没有标题，焦点到它的按钮。
+- **报告**：快照 `dataScale.excludedRows`；顶层 `exclusions`（`{ suspectedTotal, duplicateRows, overlap }`，每项 `{ count, lines }`，行号最多 `REPORT_EXCLUSION_LINE_LIMIT`（20）个，有一行查不到行号时 `lines` 为 `null`；`overlap` 是两类都是的行，没有时为 `null`；没有不计入的行时 `exclusions` 为 `null`）；`quality.excludedScope`、`quality.suspectedTotalsExcluded`、`quality.suspectedTotalExtras`。`normalizeReportSnapshot()` 给旧快照补 0 / `null`。输出都只在 N > 0 时：数据规模“不计入分析行数”；筛选条件“不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。”（有重叠时句末“，共 3 行（第 7 行两类都是）”，超过 20 个行号写“等”）；没有筛选时“未设置筛选，结果基于全部 40 行（不含不计入分析的 2 行）。”（没有不计入的行时仍是“结果基于完整数据”）；数据质量部分开头和页面同文的那句；疑似合计说明句跟状态换；R1 和“另有 N 行”两句。不排除时示例报告和 v3.0.1 逐字节相同（有 R1 / “另有 N 行”的表多出那两句）。“筛除行数”= 计入的行 − 筛选后的行。
+- **导出**：只剩一个数据导出“当前分析的行”，见“报告与数据导出”。
+- **已知限制**：R1 那种只等于上面一行的合计行可能不是合计行，按钮会把它们一起设为不计入分析（页面和报告都写了那句，请先查看）；质量页按全部行算，统计表的偏大或偏小上下界在有不计入的行时和质量页不同（有意）；干净编号列见上；按钮记下的是当时的行，新标出的合计行不自动不计入。
+
 ## 7. Statistics（统计分析）
 
 **主要职责**
@@ -665,7 +690,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 中位数用 `buildNumericStats()` 已排好序的数组直接取（`medianOfSorted()`）；`median()` 仍是"先排序再取"，供分组、趋势和自定义分析使用。
 
-**统计复用（v2.6.1）**：`commitTabularData()` 和 `rebuildAnalysisFromProfiles()`（刚执行过 `resetFilterState()`）只算一次 `qualityNumericStats`，`numericStats` 指向同一个数组；`refreshFilteredAnalysis()` 在分析行数等于原始行数时也复用它，否则重算。筛选只删行、不重排（`filterRowsByConfig()` 是 `rows.filter()`），所以行数相同就是同一批行、同一顺序；这个判断不依赖 `hasActiveFilters()`，也覆盖“设了筛选但所有行都符合”。**两份统计可能是同一个数组，任何代码都不能原地修改其中的数组或对象**（`sort()`、`push()`、改属性），读取方（统计表、质量页、报告、问题行）都只读。
+**统计复用（v2.6.1）**：`commitTabularData()` 和 `rebuildAnalysisFromProfiles()`（刚执行过 `resetFilterState()`）只算一次 `qualityNumericStats`，`numericStats` 指向同一个数组；`refreshFilteredAnalysis()` 在分析行数等于原始行数时也复用它，否则重算。v3.1.0：有不计入分析的行时，`rebuildAnalysisFromProfiles()` 对计入的行另算 `numericStats`，不共用；`refreshFilteredAnalysis()` 的行数比较仍按原始行数，所以有不计入的行时总是重算。筛选只删行、不重排（`filterRowsByConfig()` 是 `rows.filter()`），所以行数相同就是同一批行、同一顺序；这个判断不依赖 `hasActiveFilters()`，也覆盖“设了筛选但所有行都符合”。**两份统计可能是同一个数组，任何代码都不能原地修改其中的数组或对象**（`sort()`、`push()`、改属性），读取方（统计表、质量页、报告、问题行）都只读。
 
 `buildCategoryStats()` 忽略缺失值，以非缺失值为分母计算占比，并只保留频数 Top 10。每项是 `{ field, total, distinctCount, top }`：`distinctCount` 是当前分析行中该字段的不同值个数（与 `countValues()` 口径相同，不受 Top 10 截断影响），也写入报告快照的 `categoryStats`。
 
@@ -699,19 +724,19 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 - 支持一个分类字段、一个数值字段和一个日期字段同时筛选。
 - 三类条件使用 AND 组合。
-- 每次都从原始 `state.rows` 重新计算，不在旧筛选结果上叠加。
+- 每次都从计入分析的行（`getIncludedRows()`，v3.1.0；没有不计入的行时就是原始 `state.rows`）重新计算，不在旧筛选结果上叠加。
 - 筛选后刷新当前分析，但不改变原始质量页。
 
 **主要函数**
 
 - `createEmptyFilterConfig()`：创建 `{ category: null, numeric: null, date: null }`。
 - `initializeFilterControls()`：根据当前字段类型和原始数据建立可用控件。
-- `getCategoryFilterOptions()`：从原始行建立分类值、空值和计数。
-- `updateNumericFilterField()` / `updateDateFilterField()`：设置原始有效范围。
+- `getCategoryFilterOptions()`：从计入分析的行建立分类值、空值和计数（v3.1.0 前是原始行）。
+- `updateNumericFilterField()` / `updateDateFilterField()`：按计入分析的行设置有效范围。
 - `readFilterConfig()`：把 DOM 输入验证并转换为筛选配置。
 - `filterRowsByConfig(rows, filters)`：不改写输入的筛选核心，返回新的数组。
 - `applyFilters()`：阻止未应用字段草稿，提交筛选并刷新分析。
-- `clearAllFilters()` / `resetFilterState()`：恢复 `rows.slice()`。
+- `clearAllFilters()` / `resetFilterState()`：恢复全部计入分析的行。
 - `refreshFilteredAnalysis()`：重算当前统计、预览、结论、图表、自定义分析和导出状态。
 
 筛选规则：
@@ -723,14 +748,14 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 **输入 / 输出**
 
-- 输入：原始 rows 和 `{ category, numeric, date }`；日期分支还会通过 `parseFieldDate()` 隐式读取当前 profile 的 `dateStrategy`，因此它不是严格纯函数。
+- 输入：计入分析的行和 `{ category, numeric, date }`；日期分支还会通过 `parseFieldDate()` 隐式读取当前 profile 的 `dateStrategy`，因此它不是严格纯函数。
 - 输出：新的 `filteredRows` 数组和已应用的 `state.filters`。
 - 即使筛选结果为 0 行，也属于受支持状态。
 
 **与其他模块的关系**
 
 - Profiling 决定哪些字段可出现在各类筛选控件中。
-- Statistics、Visualization、当前预览、图表结论和筛选导出通过 `getAnalysisRows()` 使用筛选结果。
+- Statistics、Visualization、当前预览、图表结论和“导出当前分析的行”通过 `getAnalysisRows()` 使用筛选结果。
 - Data Quality 继续使用原始行。
 - 字段类型变化会清除筛选，避免旧条件与新类型不一致。
 - `refreshFilteredAnalysis()` 在重算期间临时清空 `analysisCompletedAt`，防止导出中间状态。
@@ -777,7 +802,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 **主要职责**
 
-- 导出当前筛选数据或原始数据去重结果。
+- 导出当前分析的行（筛选后的行，不含不计入分析的行；v3.1.0 删去了去重后的导出）。
 - 检查并导出写法统一的表和它的改动清单（v2.10.0 起）。
 - 生成 HTML 或 Markdown 分析报告。
 - 保持字段顺序、UTF-8 BOM、文件名安全和内容转义。
@@ -794,9 +819,8 @@ exportProcessedCsv(mode)
 → downloadUtf8TextFile()
 ```
 
-- `filtered` 使用 `getAnalysisRows()`。
-- `deduplicated` 对原始 `state.rows` 和完整 `state.fields` 调用 `deduplicateRows()`。
-- `buildCsvExportContent()` 保留原字段顺序，按 `readCsvExportCell()` 取值（行里没有这个字段或值为 `null` / `undefined` 时为空），交给 `buildCsvTableContent(headers, cellRows)`：表头和每个单元格都经 `sanitizeCsvExportValue()`，通过 PapaParse 生成 CRLF CSV。两种数据导出和问题行导出共用这一个函数。
+- 只有 `filtered` 一种（界面上叫“当前分析的行”），使用 `getAnalysisRows()`；文件名 `<原文件名>_当前分析_<yyyymmdd>.csv`（v3.1.0 前是 `_filtered`），状态行“已导出当前分析的 40 行：…”；有不计入分析的行时，导出区说明后加“不含不计入分析的 2 行。”（`formatDataExportExcludedNote()`）。v3.1.0 删去了 `deduplicated`（去重后 CSV），别的 `mode` 抛错。
+- `buildCsvExportContent()` 保留原字段顺序，按 `readCsvExportCell()` 取值（行里没有这个字段或值为 `null` / `undefined` 时为空），交给 `buildCsvTableContent(headers, cellRows)`：表头和每个单元格都经 `sanitizeCsvExportValue()`，通过 PapaParse 生成 CRLF CSV。数据导出（当前分析的行）、问题行导出和写法统一的两个导出共用这一个函数（v3.1.0 前数据导出有两种）。
 - `sanitizeCsvExportValue()` 中和可能触发电子表格公式的前缀，同时保留合法负数。
 - `createUtf8BomBlob()` 添加 UTF-8 BOM。
 
@@ -817,7 +841,7 @@ exportProblemRows()
 
 ### 标准化导出（v2.10.0）
 
-导出区的第三个选项。先点“检查会改哪些格”，按已应用的字段配置把全部原始行逐格过一遍，页面列出每列会改写多少格、哪些格保持原值；再导出“写法统一的表”和“改动清单”。**只多一个导出，现有结果一律不变**：`state.rows`、profile、类型、缺失计数、统计、图表、筛选、质量页数字、问题行、报告、筛选后 / 去重后两种 CSV 都不变（护栏测试在 stage3 和全部示例上核对检查前后 `state.rows` 和两种导出逐字相同）。
+导出区的第二个选项（v3.1.0 删去去重后的导出之前是第三个）。先点“检查会改哪些格”，按已应用的字段配置把全部原始行逐格过一遍，页面列出每列会改写多少格、哪些格保持原值；再导出“写法统一的表”和“改动清单”。**只多一个导出，现有结果一律不变**：`state.rows`、profile、类型、缺失计数、统计、图表、筛选、质量页数字、问题行、报告、筛选后 / 去重后两种 CSV 都不变（护栏测试在 stage3 和全部示例上核对检查前后 `state.rows` 和两种导出逐字相同）。
 
 ```text
 checkStandardizedExport()                      # 只在点“检查会改哪些格”时
@@ -845,7 +869,7 @@ exportStandardizedData("changes") → buildStandardizedChangesCsvContent(…, li
 - **整表汇总**：外层按行、内层按字段，清单天然按行、再按字段排好。`state.standardizedExport = { counts, cells, totals, cellCount }`：`counts` 每字段一项 `{ field, typeKey, kind, currencyMode, unit, date, number, placeholder, trim, kept, keptByAction, keptSamples, orderHint }`；`cells` 是四个平行数组（行下标、字段下标、动作码 `STANDARDIZE_ACTIONS`、导出值，保持原值的格存 `undefined`），不存行对象副本，原值和文件行号在导出时现取。
 - **日月顺序提示**（`orderHint`）：已应用 `dateStrategy.order` 是 dmy / mdy 的日期字段，用 `buildDateStrategy()` 对导出后的非缺失值重算；顺序变了、并且有导出值原来读得出、按重算后的策略读不出时提示——典型是唯一的顺序证据格被改写，剩下的带时间的写法保持原值，再导入时读不成日期。普通的 dmy / mdy 列全部改写后不提示（它们再导入仍是日期）。
 - **时机和作废**：三条刷新路径都不计算；导入、字段配置应用 / 恢复、疑似缺失值确认 / 撤销后作废（`clearStandardizedExport()`，面板收起、表格和状态行清空），筛选不影响（结果基于原始数据）。
-- **页面**：`#dataExportSection` 里 `.data-export-options` 的第三个 `.data-export-option`（`#checkStandardizedExport`、门禁说明 `#standardizedExportGate`），选项下方的静态面板 `#standardizedExportPanel`（摘要句、检查表 `#standardizedExportTable`、`#exportStandardizedCsv`、`#exportStandardizedChanges`、状态行 `#standardizedExportStatus`）。检查表只列有改动、保持原值、按年份读或有顺序提示的字段，字段名下面可有三条说明（按年份读取、单位不写进导出文件、顺序提示）；被忽略的字段只在摘要句里计数；没有任何改动时写“没有需要统一写法的单元格，导出的数据与原始数据相同。”。打印样式隐藏两个导出按钮。
+- **页面**：`#dataExportSection` 里 `.data-export-options` 的第二个 `.data-export-option`（v3.1.0 前是第三个）（`#checkStandardizedExport`、门禁说明 `#standardizedExportGate`），选项下方的静态面板 `#standardizedExportPanel`（摘要句、检查表 `#standardizedExportTable`、`#exportStandardizedCsv`、`#exportStandardizedChanges`、状态行 `#standardizedExportStatus`）。检查表只列有改动、保持原值、按年份读或有顺序提示的字段，字段名下面可有三条说明（按年份读取、单位不写进导出文件、顺序提示）；被忽略的字段只在摘要句里计数；没有任何改动时写“没有需要统一写法的单元格，导出的数据与原始数据相同。”。打印样式隐藏两个导出按钮。
 - **门禁**：检查按钮与报告同条件（`canCheckStandardizedExport()` = `canExportReport()`）；两个导出按钮还要求有检查结果；改动清单 0 条时“导出改动清单”禁用。检查后又出现未应用的字段草稿时三个按钮都禁用并写原因，检查结果不作废。
 - **两份导出**：都经过 `buildCsvTableContent()`（公式中和照旧，改动清单的“原值”列也中和），UTF-8 BOM、CRLF。改动清单列为“文件行号、字段、原值、导出值、处理”，行号查不到为空；最多 `STANDARDIZED_CHANGE_LIMIT`（1,048,575，Excel 一张表的行数减表头）条，超出时只导出前 N 条，文件名 `<原文件名>_写法统一改动清单_前1048575条_<yyyymmdd>.csv`、状态行“只导出了前 1,048,575 条，共 M 条”，检查表计数仍是全部。写法统一的表是 `<原文件名>_写法统一_<yyyymmdd>.csv`，全部原始行、原字段顺序、原表头（单位不写进表头）。
 - **性能**（本机 Node 24、假 DOM，10 万行 × 20 列）：刷新路径与 v2.9.0 交替各 5 次取中位数，导入 +0.4%、筛选 +1.1%、重建 −0.2%（不在刷新路径里）。检查约 1.6 s（干净数据：纯数字和标准日期）、约 3.9 s（最坏情况：每格都要改写或保持原值，200 万格）；最坏情况检查结果约占 108 MB，导出改动清单（到上限 1,048,575 条，约 60 MB）约 2.55 s，峰值 RSS 约 1.22 GB（不设上限时 200 万条约 5.5 s、1.89 GB）。
@@ -865,7 +889,7 @@ exportHtmlReport() / exportMarkdownReport()
 **主要函数**
 
 - `canExportReport()` / `canExportProcessedData()`：导出门禁。
-- `buildReportData()`：从当前状态建立两种报告共用的快照。
+- `buildReportData()`：从当前状态建立两种报告共用的快照。v3.1.0 的不计入分析字段见“不计入分析的行（v3.1.0）”。
 - `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>求和`），不再取 `numericStats[0]`。`buildReportCustomAnalysis()` 只读 `state.customAnalysis`：报告里的“自定义分组分析结果”一节只在生成过自定义分析之后才有，否则写“当前没有可导出的自定义分组分析结果。”（v2.7.0 起不再有从下拉框回推的默认值）。
 - 报告快照的 `insights` 是 `[state.chartInsights.category, state.chartInsights.trend].filter(Boolean)`，也就是导出时页面上显示的 0–2 句；一句都没有时 HTML / Markdown 的“自动分析结论”节写“暂无自动分析结论。”。`normalizeReportSnapshot()` 对旧快照不改：`insights` 不是数组时为 `[]`，是数组（例如 v2.6.1 的 6 句）就原样输出。
 - `normalizeReportSnapshot()`：为缺少可选部分的快照提供默认结构。
@@ -922,6 +946,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 | 分页表格与问题行 | `buildRowTableHtml()`, `getRowPage()`, `movePage()`, `setPagerButtons()`, `goToPreviewPage()`, `handleProblemViewClick()`, `openProblemView()`, `renderProblemView()`, `selectProblemCategory()`, `goToProblemRowsPage()`, `refreshProblemView()`, `closeProblemView()` / `hideProblemView()` |
 | 图表结论 | `renderChartInsights()`, `renderCategoryInsight()`, `renderTrendInsight()`, `buildCategoryInsight()`, `setChartInsight()` |
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
+| 不计入分析（v3.1.0） | `renderExclusionControls()`, `handleExclusionClick()`, `setRowExclusion()`, `refreshAfterExclusion()`, `renderAnalysisContainsNotes()`, `handleAnalysisNoteClick()` |
 | 自定义分析 | `renderV2Analysis()` 及其子 renderer |
 | 图表控件 | `populateControls()`, `renderCharts()` |
 | 导出 | `updateExportButtons()`, `renderDataExportSummary()`, `setReportExportStatus()`, `setDataExportStatus()`, `setProblemRowsExportStatus()`, `renderStandardizedExport()`, `clearStandardizedExport()`, `setStandardizedExportStatus()` |
@@ -934,6 +959,8 @@ commitTabularData()             # 新数据集
 refreshFilteredAnalysis()       # 筛选变化
 rebuildAnalysisFromProfiles()   # 字段类型变化
 ```
+
+疑似缺失值的确认 / 撤销（第 4 个触发点）最后经过 `rebuildAnalysisFromProfiles()`；点“不计入分析”/“撤销”（第 5 个触发点，v3.1.0）经 `refreshAfterExclusion()` 走 `refreshFilteredAnalysis()`。
 
 三者都按各自场景手工组合“重算 → render → 图表 → 图表结论 → 自定义分析 → 导出状态”。图表结论（`renderChartInsights()`）排在 `populateControls()` 和 `renderCharts()` 之后，因为它读图表下拉框的值；它不放在 `renderCharts()` 里面，因为 `window.Chart` 不存在时 `renderCharts()` 会提前返回，而结论和报告快照不依赖 Chart.js。分类 / 趋势下拉框变化时，`script.js` 只重算各自那一句（趋势句在 10 万行上约 0.7 s，不能挂到所有图表下拉框上）。执行顺序是当前行为契约的一部分。疑似缺失值的确认和撤销是第 4 个触发点：`updatePlaceholderConfirmations()` 先重建受影响字段的 profile 和 `totalMissing`，再调用 `rebuildAnalysisFromProfiles()`（见“疑似缺失值”）。三条路径都不计算标准化导出（v2.10.0）：`buildStandardizedExport()` 只在点“检查会改哪些格”时调用（有调用次数护栏）；`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 只调用 `clearStandardizedExport()` 作废上一次检查，`refreshFilteredAnalysis()` 不碰它。
 
@@ -983,11 +1010,13 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 | 整列只有一个值 | — | 常量列 | `state.constantFields` | `buildConstantFieldSummary()`、`formatConstantField()` |
 | 像是数字的文本列 | — | 疑似数值列 | `state.numericLooking` | `buildNumericLookingSummary()`、`formatNumericLookingHint()` |
 | 写法统一的表（导出区） | 写法统一；检查表列头“清空空值写法” | 标准化数据 | `state.standardizedExport` | `checkStandardizedExport()`、`buildStandardizedExport()`、`exportStandardizedData()` |
+| 不计入分析（v3.1.0） | — | （新说法；不用“排除”“剔除”“移除”） | `state.excludedRows`；`getIncludedRows()` | `setRowExclusion()`、`renderExclusionControls()` |
+| 当前分析的行（导出区，v3.1.0） | 文件名片段“当前分析” | 筛选后 CSV、当前筛选结果 | `exportProcessedCsv("filtered")` | `getProcessedExportRows()`、`buildDataExportFileName()` |
 
 - 当前范围里没有读得出的值时，空图和趋势结论写“认得出的”：“该字段没有认得出的数字”“该字段没有认得出的日期”“日期字段「X」里没有认得出的日期，因此未生成趋势结论。”，报告趋势节写“日期字段「X」里没有认得出的日期。”（之前是“可安全转换的有效……”）。
 - 像是空值的写法的影响一律写“按空值处理后”：每条详情（“……。按空值处理后，空值 0 → 1，类型仍为数值。”）、字段汇总（“全部按空值处理后：”）、类型变化提示（“按空值处理后类型会变：”）、`index.html` 的说明句、报告的“按空值处理后的影响”列和快照的 `effect`。按钮叫“按空值处理”；“待确认”“已撤销……”等其余用到“确认”的地方不变。
 - 写法统一的表的检查表列头用短称“清空空值写法”；`index.html` 的说明和改动清单的处理标签用全称“已按空值处理的写法，清空”。
-- 问题行 CSV 的“说明”列和改动清单的“处理”列就是这些文字本身，所以随说法变化；筛选后、去重后和写法统一的表三种数据 CSV 只有原值或改写值，不受影响。
+- 问题行 CSV 的“说明”列和改动清单的“处理”列就是这些文字本身，所以随说法变化；当前分析的行和写法统一的表两种数据 CSV（v3.1.0 前还有去重后的）只有原值或改写值，不受影响。
 - 没有改名的：疑似合计 / 小计行、整行重复 / 重复行、公式错误（单元格）、日期写法混用、按单位读取的数字；字段类型名“ID”和“未识别到 ID 字段。”；“下界 / 上界”；启动自检的“脚本文件缺失 / 页面元素缺失”；`importer.js` 的“格式异常”“CSV 行结构异常”。代码注释和本文的节标题仍用旧名字（如“疑似缺失值（v2.4.0）”）。
 - 旧说法不再出现由 `basic-data-processing.test.cjs` 末尾的 v2.12.0 护栏固定，见 `docs/TESTING.md` 第 12 节。
 

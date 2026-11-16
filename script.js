@@ -129,7 +129,6 @@ if (typeof window.matchMedia === "function") window.matchMedia(SIDEBAR_WIDE_QUER
 
 dom.exportFilteredCsv.addEventListener("click", () => exportProcessedCsv("filtered"));
 
-dom.exportDeduplicatedCsv.addEventListener("click", () => exportProcessedCsv("deduplicated"));
 dom.checkStandardizedExport.addEventListener("click", checkStandardizedExport);
 dom.exportStandardizedCsv.addEventListener("click", () => exportStandardizedData("data"));
 dom.exportStandardizedChanges.addEventListener("click", () => exportStandardizedData("changes"));
@@ -170,6 +169,10 @@ dom.restoreAutoFieldTypes.addEventListener("click", restoreAutomaticFieldTypes);
 dom.placeholderDetails.addEventListener("click", handlePlaceholderClick);
 
 dom.qualitySection.addEventListener("click", handleProblemViewClick);
+
+dom.qualitySection.addEventListener("click", handleExclusionClick);
+
+[dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((note) => note.addEventListener("click", handleAnalysisNoteClick));
 
 dom.qualitySection.addEventListener("click", toggleSectionNote);
 

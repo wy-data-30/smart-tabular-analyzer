@@ -2,6 +2,22 @@
 
 const state = {
   rows: [],
+  // v3.1.0: rows left out of the analysis, as indexes into state.rows, each kind sorted.
+  // exclusionSourceRows is the state.rows they belong to; includedRows the rows counted in the
+  // analysis (state.rows itself while nothing is left out). Every commit replaces them.
+  excludedRows: { suspectedTotal: [], duplicateRows: [] },
+  exclusionSourceRows: null,
+  includedRows: null,
+  // findRepeatedRowIndexes() of state.rows, made the first time it is needed (never on import),
+  // kept until the next import; repeatedRowSource is the state.rows it was made from.
+  repeatedRowIndexes: null,
+  repeatedRowSource: null,
+  // Suspected totals a rebuild brought back into the analysis in this import (indexes), so the
+  // next rebuild that flags one again can say so once.
+  restoredTotalRows: new Set(),
+  // What the last setRowExclusion() did, for its message: { kind, on, rows, changed, before,
+  // after }, or null.
+  lastExclusion: null,
   filteredRows: null,
   filterSourceRows: null,
   fields: [],
@@ -169,6 +185,19 @@ const dom = {
   filterOriginalCount: document.getElementById("filterOriginalCount"),
   filterCurrentCount: document.getElementById("filterCurrentCount"),
   filterExcludedCount: document.getElementById("filterExcludedCount"),
+  filterNotCountedItem: document.getElementById("filterNotCountedItem"),
+  filterNotCountedCount: document.getElementById("filterNotCountedCount"),
+  qualityScopeNote: document.getElementById("qualityScopeNote"),
+  duplicateExclusion: document.getElementById("duplicateExclusion"),
+  duplicateExclusionText: document.getElementById("duplicateExclusionText"),
+  duplicateExclusionAction: document.getElementById("duplicateExclusionAction"),
+  duplicateExclusionMessage: document.getElementById("duplicateExclusionMessage"),
+  suspectedTotalExcludedNote: document.getElementById("suspectedTotalExcludedNote"),
+  suspectedTotalMessage: document.getElementById("suspectedTotalMessage"),
+  suspectedTotalTitle: document.getElementById("suspectedTotalTitle"),
+  statisticsContainsNote: document.getElementById("statisticsContainsNote"),
+  chartsContainsNote: document.getElementById("chartsContainsNote"),
+  customContainsNote: document.getElementById("customContainsNote"),
   filterMessage: document.getElementById("filterMessage"),
   applyFilters: document.getElementById("applyFilters"),
   clearAllFilters: document.getElementById("clearAllFilters"),
@@ -236,9 +265,8 @@ const dom = {
   v2TrendCard: document.getElementById("v2TrendCard"),
   dataExportOriginalCount: document.getElementById("dataExportOriginalCount"),
   dataExportFilteredCount: document.getElementById("dataExportFilteredCount"),
-  dataExportDeduplicatedCount: document.getElementById("dataExportDeduplicatedCount"),
+  dataExportExcludedNote: document.getElementById("dataExportExcludedNote"),
   exportFilteredCsv: document.getElementById("exportFilteredCsv"),
-  exportDeduplicatedCsv: document.getElementById("exportDeduplicatedCsv"),
   dataExportStatus: document.getElementById("dataExportStatus"),
   checkStandardizedExport: document.getElementById("checkStandardizedExport"),
   standardizedExportGate: document.getElementById("standardizedExportGate"),
@@ -398,6 +426,15 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   }
 
   state.rows = rows;
+  state.excludedRows = { suspectedTotal: [], duplicateRows: [] };
+  state.exclusionSourceRows = rows;
+  state.includedRows = rows;
+  state.repeatedRowIndexes = null;
+  state.repeatedRowSource = null;
+  state.restoredTotalRows = new Set();
+  state.lastExclusion = null;
+  setExclusionMessage("suspectedTotal", "");
+  setExclusionMessage("duplicateRows", "");
   state.filteredRows = rows.slice();
   state.filterSourceRows = state.rows;
   state.fields = fields;
@@ -570,11 +607,13 @@ function renderOverview() {
   const activeMissing = analysisRows.reduce((total, row) => (
     total + activeProfiles.filter((profile, index) => isMissingOrConfirmed(row[profile.field], activeKeys[index])).length
   ), 0);
-  const rowValue = hasActiveFilters()
+  // v3.1.0: rows left out narrow the analysis too.
+  const narrowed = analysisRows.length !== state.rows.length;
+  const rowValue = narrowed
     ? `${formatInteger(state.rows.length)} → ${formatInteger(analysisRows.length)}`
     : state.rows.length;
   const cards = [
-    [hasActiveFilters() ? "总记录 → 当前分析" : "总记录数", rowValue],
+    [narrowed ? "总记录 → 当前分析" : "总记录数", rowValue],
     ["字段数", state.fields.length],
     ["数值字段数", numericCount],
     ["分类字段数", categoryCount],
@@ -713,7 +752,7 @@ function renderPreview() {
   const rows = getAnalysisRows();
   const { page, pageCount, start, end } = getRowPage(rows.length, state.previewPage);
   state.previewPage = page;
-  dom.previewPageInfo.textContent = `第 ${formatInteger(page)} / ${formatInteger(pageCount)} 页，共 ${formatInteger(rows.length)} 行`;
+  dom.previewPageInfo.textContent = formatPreviewPageInfo(page, pageCount, rows.length, countExcludedRows(), hasActiveFilters());
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
     dom.previewTable.classList.add("is-empty-table");
@@ -1030,18 +1069,43 @@ function previewAllCommonPlaceholders() {
   });
 }
 
+// v3.1.0: the figures a placeholder message compares, before and after a confirmation or an
+// undo: the field's missing count, values it cannot read, type, and whether its ID duplicates
+// list the key.
+function getPlaceholderFieldFigures(field, key) {
+  const profile = getFieldProfile(field);
+  return {
+    missing: profile.missingCount,
+    failures: profile.conversionFailureCount || 0,
+    typeKey: profile.typeKey,
+    listed: state.idDuplicates.some((item) => item.field === field && item.values.some((value) => placeholderKey(value.value) === key))
+  };
+}
+
 function confirmPlaceholder(field, key) {
-  const pending = state.placeholders.some((entry) => entry.field === field && entry.key === key && !entry.confirmed && !entry.fieldIgnored);
+  const entry = state.placeholders.find((item) => item.field === field && item.key === key && !item.confirmed && !item.fieldIgnored);
   const keysByField = Object.create(null);
-  if (pending) keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
-  return updatePlaceholderConfirmations(keysByField, `已把「${field}」的「${key}」按空值处理，统计、图表和分析结论已重新计算。`);
+  if (!entry) return updatePlaceholderConfirmations(keysByField, "");
+  keysByField[field] = [...getConfirmedPlaceholderKeys(field), key];
+  const before = getPlaceholderFieldFigures(field, key);
+  return updatePlaceholderConfirmations(keysByField, () => formatPlaceholderConfirmMessage({
+    field, key, count: entry.count, before, after: getPlaceholderFieldFigures(field, key),
+    rowCount: getIncludedRows().length, rowsLeftOut: countExcludedRows() > 0
+  }));
 }
 
 function undoPlaceholderConfirmation(field, key) {
   const keys = getConfirmedPlaceholderKeys(field);
   const keysByField = Object.create(null);
-  if (keys.includes(key)) keysByField[field] = keys.filter((item) => item !== key);
-  return updatePlaceholderConfirmations(keysByField, `已撤销「${field}」的「${key}」，统计、图表和分析结论已重新计算。`);
+  if (!keys.includes(key)) return updatePlaceholderConfirmations(keysByField, "");
+  keysByField[field] = keys.filter((item) => item !== key);
+  const entry = state.placeholders.find((item) => item.field === field && item.key === key);
+  const before = getPlaceholderFieldFigures(field, key);
+  return updatePlaceholderConfirmations(keysByField, () => formatPlaceholderUndoMessage({
+    field, key, count: entry ? entry.count : 0, before, after: getPlaceholderFieldFigures(field, key),
+    rowCount: getIncludedRows().length, rowsLeftOut: countExcludedRows() > 0,
+    ignored: before.typeKey === "ignore"
+  }));
 }
 
 function confirmAllCommonPlaceholders() {
@@ -1051,11 +1115,20 @@ function confirmAllCommonPlaceholders() {
     keysByField[entry.field] ??= [...getConfirmedPlaceholderKeys(entry.field)];
     keysByField[entry.field].push(entry.key);
   });
-  return updatePlaceholderConfirmations(keysByField, `已把 ${formatInteger(entries.length)} 处常见写法按空值处理，统计、图表和分析结论已重新计算。`);
+  const typesBefore = Object.fromEntries(entries.map((entry) => [entry.field, getFieldProfile(entry.field).typeKey]));
+  return updatePlaceholderConfirmations(keysByField, () => {
+    // Fields whose type changed first, as the confirm-all note names them first.
+    const changed = (entry) => getFieldProfile(entry.field).typeKey !== typesBefore[entry.field];
+    const ordered = [...entries.filter(changed), ...entries.filter((entry) => !changed(entry))];
+    const typeChanges = [...new Set(ordered.filter(changed).map((entry) => entry.field))]
+      .map((field) => ({ field, typeKey: getFieldProfile(field).typeKey, previousTypeKey: typesBefore[field] }));
+    return formatAllPlaceholdersMessage(ordered, typeChanges, getIncludedRows().length, countExcludedRows() > 0);
+  });
 }
 
 // The fourth refresh path. keysByField replaces the confirmed keys of each listed
-// field; refused while the field configuration has unapplied drafts.
+// field; refused while the field configuration has unapplied drafts. message is a text, or
+// a function that writes it once the analysis is rebuilt (v3.1.0: it compares the counts).
 function updatePlaceholderConfirmations(keysByField, message) {
   if (!state.rows.length) return false;
   if (!ensureFieldConfigurationApplied("处理像是空值的写法")) {
@@ -1101,10 +1174,39 @@ function createEmptyFilterConfig() {
   };
 }
 
-function getAnalysisRows() {
-  return state.filterSourceRows === state.rows && Array.isArray(state.filteredRows)
-    ? state.filteredRows
+// v3.1.0: three layers. state.rows (every row of the file) -> getIncludedRows() (the rows
+// counted in the analysis) -> getAnalysisRows() (the filtered rows). Filters start from the
+// counted rows. Rows left out of another data set never count (exclusionSourceRows).
+function getIncludedRows() {
+  return state.exclusionSourceRows === state.rows && Array.isArray(state.includedRows)
+    ? state.includedRows
     : state.rows;
+}
+
+// Every left-out row of the current rows, both kinds together (a row of both counts once).
+function getExcludedIndexSet() {
+  if (state.exclusionSourceRows !== state.rows) return new Set();
+  return new Set([...state.excludedRows.suspectedTotal, ...state.excludedRows.duplicateRows]);
+}
+
+function countExcludedRows() {
+  return state.rows.length - getIncludedRows().length;
+}
+
+// state.includedRows from state.excludedRows: state.rows itself (the same array) when nothing
+// is left out, so the default path keeps every array of v3.0.1.
+function rebuildIncludedRows() {
+  const excluded = getExcludedIndexSet();
+  state.exclusionSourceRows = state.rows;
+  state.includedRows = excluded.size ? state.rows.filter((row, index) => !excluded.has(index)) : state.rows;
+}
+
+// A filter result counts only while it was made from the current counted rows.
+function getAnalysisRows() {
+  const included = getIncludedRows();
+  return state.filterSourceRows === included && Array.isArray(state.filteredRows)
+    ? state.filteredRows
+    : included;
 }
 
 function hasActiveFilters(filters = state.filters) {
@@ -1112,8 +1214,8 @@ function hasActiveFilters(filters = state.filters) {
 }
 
 function resetFilterState() {
-  state.filteredRows = state.rows.slice();
-  state.filterSourceRows = state.rows;
+  state.filteredRows = getIncludedRows().slice();
+  state.filterSourceRows = getIncludedRows();
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
   state.categoryFilterDraftValues = new Set();
@@ -1122,10 +1224,10 @@ function resetFilterState() {
 function initializeFilterControls() {
   const categoryFields = getProfilesByType("category").map((profile) => profile.field);
   const numericFields = getProfilesByType("numeric")
-    .filter((profile) => fieldHasNumericData(profile.field, state.rows))
+    .filter((profile) => fieldHasNumericData(profile.field, getIncludedRows()))
     .map((profile) => profile.field);
   const dateFields = getProfilesByType("date")
-    .filter((profile) => fieldHasDateData(profile.field, state.rows))
+    .filter((profile) => fieldHasDateData(profile.field, getIncludedRows()))
     .map((profile) => profile.field);
 
   setSelectOptions(dom.categoryFilterField, categoryFields, "不筛选分类字段", true);
@@ -1141,7 +1243,7 @@ function initializeFilterControls() {
   updateNumericFilterField();
   updateDateFilterField();
   renderFilterCounts();
-  setFilterMessage("尚未应用筛选，当前分析使用全部记录。", "");
+  setFilterMessage(formatNoFilterMessage(getIncludedRows().length, countExcludedRows()), "");
 }
 
 function getCategoryFilterOptions(field) {
@@ -1149,7 +1251,7 @@ function getCategoryFilterOptions(field) {
   // Confirmed placeholders join the empty value, as in filterRowsByConfig().
   const confirmedKeys = getConfirmedPlaceholderKeys(field);
   const counts = new Map();
-  state.rows.forEach((row) => {
+  getIncludedRows().forEach((row) => {
     const value = analysisValue(row[field], confirmedKeys);
     counts.set(value, (counts.get(value) || 0) + 1);
   });
@@ -1223,7 +1325,7 @@ function setAllCategoryFilterValues(selected) {
 
 function updateNumericFilterField() {
   const field = dom.numericFilterField.value;
-  const values = field ? getNumericValues(field, state.rows) : [];
+  const values = field ? getNumericValues(field, getIncludedRows()) : [];
   const enabled = values.length > 0;
   dom.numericFilterMin.disabled = !enabled;
   dom.numericFilterMax.disabled = !enabled;
@@ -1242,7 +1344,7 @@ function updateNumericFilterField() {
 function updateDateFilterField() {
   const field = dom.dateFilterField.value;
   const dates = field
-    ? state.rows.map((row) => parseFieldDate(field, row[field])).filter(Boolean).sort((a, b) => a - b)
+    ? getIncludedRows().map((row) => parseFieldDate(field, row[field])).filter(Boolean).sort((a, b) => a - b)
     : [];
   const enabled = dates.length > 0;
   dom.dateFilterStart.disabled = !enabled;
@@ -1340,18 +1442,16 @@ function applyFilters() {
   }
 
   state.filters = filters;
-  state.filteredRows = filterRowsByConfig(state.rows, filters);
-  state.filterSourceRows = state.rows;
+  state.filteredRows = filterRowsByConfig(getIncludedRows(), filters);
+  state.filterSourceRows = getIncludedRows();
   refreshFilteredAnalysis();
 
   const activeCount = [filters.category, filters.numeric, filters.date].filter(Boolean).length;
-  const filteredOutCount = state.rows.length - state.filteredRows.length;
+  const filteredOutCount = getIncludedRows().length - state.filteredRows.length;
   if (!activeCount) {
-    setFilterMessage("未选择筛选字段，当前分析继续使用全部记录。", "");
-  } else if (!state.filteredRows.length) {
-    setFilterMessage(`已应用 ${formatInteger(activeCount)} 个筛选条件，但没有记录符合条件。`, "warning");
+    setFilterMessage(`未选择筛选字段，当前分析继续使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "");
   } else {
-    setFilterMessage(`已应用 ${formatInteger(activeCount)} 个筛选条件，保留 ${formatInteger(state.filteredRows.length)} 行，筛除 ${formatInteger(filteredOutCount)} 行。`, "success");
+    setFilterMessage(formatFiltersApplied(activeCount, state.filteredRows.length, filteredOutCount), state.filteredRows.length ? "success" : "warning");
   }
 }
 
@@ -1360,25 +1460,71 @@ function clearAllFilters() {
   resetFilterState();
   initializeFilterControls();
   refreshFilteredAnalysis();
-  setFilterMessage("已清除全部筛选，当前分析恢复使用全部记录。", "success");
+  setFilterMessage(`已清除全部筛选，当前分析恢复使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "success");
 }
 
 function renderFilterCounts() {
   const currentCount = getAnalysisRows().length;
   dom.filterOriginalCount.textContent = formatInteger(state.rows.length);
   dom.filterCurrentCount.textContent = formatInteger(currentCount);
-  dom.filterExcludedCount.textContent = formatInteger(Math.max(0, state.rows.length - currentCount));
+  dom.filterExcludedCount.textContent = formatInteger(Math.max(0, getIncludedRows().length - currentCount));
+  const excludedCount = countExcludedRows();
+  dom.filterNotCountedItem.classList.toggle("hidden", excludedCount === 0);
+  dom.filterNotCountedCount.textContent = formatInteger(excludedCount);
   updateGlobalFilterStatus();
+  renderAnalysisContainsNotes();
+}
+
+// v3.1.0: the rows of the current analysis (the filtered rows) that are still suspected totals,
+// and, with a clean ID column, still extra repeated rows. Without filters or left-out rows the
+// repeated rows are state.duplicateRows, so an import builds no list; otherwise the list is
+// made once and kept until the next import (listRepeatedRowIndexes()).
+function countAnalysisContains() {
+  const excluded = getExcludedIndexSet();
+  const filtered = hasActiveFilters();
+  let analysisRows = null;
+  const stillCounted = (indexes) => {
+    if (!filtered) return indexes.filter((index) => !excluded.has(index)).length;
+    analysisRows = analysisRows || new Set(getAnalysisRows());
+    return indexes.filter((index) => analysisRows.has(state.rows[index])).length;
+  };
+  const totals = state.suspectedTotals.length ? stillCounted(state.suspectedTotals.map((item) => item.index)) : 0;
+  let duplicates = 0;
+  if (state.duplicateRows && hasCleanIdField()) {
+    duplicates = !filtered && !excluded.size ? state.duplicateRows : stillCounted(listRepeatedRowIndexes());
+  }
+  return { totals, duplicates };
+}
+
+function renderAnalysisContainsNotes() {
+  const { totals, duplicates } = state.rows.length ? countAnalysisContains() : { totals: 0, duplicates: 0 };
+  const text = formatAnalysisContainsNote(totals, duplicates);
+  const html = text
+    ? `${escapeHtml(text)} <button type="button" class="text-button" data-quality-target="${totals ? "suspectedTotal" : "duplicateRows"}" aria-label="${escapeHtml(formatGoToQualityAriaLabel(totals, duplicates))}">${GO_TO_QUALITY_LABEL}</button>`
+    : "";
+  [dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((element) => {
+    element.innerHTML = html;
+    element.classList.toggle("hidden", !text);
+  });
+}
+
+// 去数据质量处理: the quality module, then its subsection at the top (as 查看 does) and the
+// focus on the subsection title; showModule() itself scrolls up and focuses the module title,
+// so this comes after it. The repeated rows have no title: their button takes the focus.
+function handleAnalysisNoteClick(event) {
+  const button = event.target.closest("button[data-quality-target]");
+  if (!button) return;
+  showModule("qualitySection");
+  const totals = button.dataset.qualityTarget === "suspectedTotal";
+  (totals ? dom.suspectedTotalSection : dom.duplicateExclusion).scrollIntoView({ block: "start" });
+  const target = totals ? dom.suspectedTotalTitle : dom.duplicateExclusionAction.querySelector?.("button[data-exclusion-kind]");
+  target?.focus?.({ preventScroll: true });
 }
 
 function updateGlobalFilterStatus() {
   if (!dom.globalFilterSummary) return;
   const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
-  const currentCount = getAnalysisRows().length;
-  const totalCount = state.rows.length;
-  dom.globalFilterSummary.textContent = activeCount
-    ? `已筛选 ${formatInteger(activeCount)} 项 · ${formatInteger(currentCount)} / ${formatInteger(totalCount)} 行`
-    : `全部 ${formatInteger(totalCount)} 行`;
+  dom.globalFilterSummary.textContent = formatAnalysisScope(activeCount, getAnalysisRows().length, getIncludedRows().length, countExcludedRows());
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
   // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
@@ -1426,22 +1572,27 @@ function refreshFilteredAnalysis() {
 }
 
 // setMessage shows the outcome: the field configuration area by default, the
-// placeholder subsection for placeholder confirmations.
+// placeholder subsection for placeholder confirmations. fieldConfigMessage is a text or a
+// function called once everything is rebuilt. "已清除现有筛选条件。" only when a filter was
+// applied before (v3.1.0).
 function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
+  const hadFilters = hasActiveFilters();
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  const exclusionChanges = intersectExcludedTotals();
   refreshFormatConsistency();
   clearStandardizedExport();
   state.analysisCompletedAt = null;
   updateExportButtons();
   resetFilterState();
   setDataExportStatus("");
-  // The filter was just reset, so the analysis rows are the original rows: one calculation
-  // serves both, shared as in commitTabularData().
+  // The filter was just reset, so the analysis rows are the counted rows: while nothing is left
+  // out they are the original rows and one calculation serves both, shared as in
+  // commitTabularData(); otherwise the analysis gets its own (v3.1.0).
   state.qualityNumericStats = buildNumericStats(state.rows);
-  state.numericStats = state.qualityNumericStats;
+  state.numericStats = getIncludedRows() === state.rows ? state.qualityNumericStats : buildNumericStats(getIncludedRows());
   state.categoryStats = buildCategoryStats(getAnalysisRows());
   state.previewPage = 1;
   renderOverview();
@@ -1456,9 +1607,138 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderCharts();
   renderChartInsights();
   resetV2AnalysisState();
-  setMessage(`${fieldConfigMessage} 已清除现有筛选条件。`, "success");
+  const message = typeof fieldConfigMessage === "function" ? fieldConfigMessage() : fieldConfigMessage;
+  const notes = [
+    hadFilters ? "已清除现有筛选条件。" : "",
+    formatExclusionRestored(exclusionChanges.restored),
+    formatTotalsFlaggedAgain(exclusionChanges.flaggedAgain)
+  ].filter(Boolean);
+  setExclusionMessage("suspectedTotal", "");
+  setExclusionMessage("duplicateRows", "");
+  setMessage([message, ...notes].join(" "), "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
+}
+
+// ---- v3.1.0: rows left out of the analysis ----
+
+// The repeated rows past the first of each group, made when first needed and kept until the
+// next import (they depend on the rows and fields only).
+function listRepeatedRowIndexes() {
+  if (!state.duplicateRows) return [];
+  if (state.repeatedRowSource !== state.rows) {
+    state.repeatedRowIndexes = findRepeatedRowIndexes(state.rows, state.fields);
+    state.repeatedRowSource = state.rows;
+  }
+  return state.repeatedRowIndexes;
+}
+
+// The rows a kind's button leaves out now: every suspected total, or every repeated row.
+function listExclusionCandidates(kind) {
+  if (kind === "suspectedTotal") return state.suspectedTotals.map((item) => item.index);
+  if (kind === "duplicateRows") return listRepeatedRowIndexes();
+  return [];
+}
+
+// The fifth trigger ("不计入分析" / "撤销"): the filter path, never the rebuild. Records the rows
+// marked now; the filters and the custom analysis stay. Refused while drafts wait. Returns
+// whether anything changed; state.lastExclusion says what for the messages.
+function setRowExclusion(kind, on) {
+  if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
+  if (hasFieldConfigDraftChanges()) {
+    setExclusionMessage(kind, EXCLUSION_DRAFT_REFUSAL, "warning");
+    return false;
+  }
+  const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
+  const indexes = on ? listExclusionCandidates(kind) : current;
+  if (!indexes.length) return false;
+  const excludedBefore = getExcludedIndexSet();
+  const countedBefore = getIncludedRows().length;
+  state.excludedRows = { ...state.excludedRows, [kind]: on ? [...indexes] : [] };
+  // Left out again by the user: no longer a total the rebuild brought back.
+  if (kind === "suspectedTotal" && on) indexes.forEach((index) => state.restoredTotalRows.delete(index));
+  rebuildIncludedRows();
+  const excludedAfter = getExcludedIndexSet();
+  state.lastExclusion = {
+    kind,
+    on,
+    rows: indexes.length,
+    // Only the rows this click left out or brought back (a row of both kinds counts once).
+    changed: on ? indexes.filter((index) => !excludedBefore.has(index)).length : indexes.filter((index) => !excludedAfter.has(index)).length,
+    before: countedBefore,
+    after: getIncludedRows().length
+  };
+  refreshAfterExclusion();
+  return true;
+}
+
+// The applied filters again from the new counted rows, the filter panel, then the analysis.
+function refreshAfterExclusion() {
+  const included = getIncludedRows();
+  state.filteredRows = hasActiveFilters() ? filterRowsByConfig(included, state.filters) : included.slice();
+  state.filterSourceRows = included;
+  refreshFilterPanelForIncludedRows();
+  refreshFilteredAnalysis();
+  const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
+  setFilterMessage(activeCount
+    ? formatFiltersApplied(activeCount, state.filteredRows.length, included.length - state.filteredRows.length)
+    : formatNoFilterMessage(included.length, countExcludedRows()), activeCount && !state.filteredRows.length ? "warning" : "");
+  renderExclusionControls();
+  if (state.problemView) renderProblemView();
+  renderSidebar();
+}
+
+// The filter panel after the counted rows changed. The category options and the range hints
+// follow them. A field without an applied filter also takes the new range in its inputs; an
+// applied one keeps the user's numbers. Drafts of the category options stay where they still
+// exist (all of them when all were chosen).
+function refreshFilterPanelForIncludedRows() {
+  const field = dom.categoryFilterField.value;
+  if (field) {
+    const wasAll = state.categoryFilterDraftValues.size === state.categoryFilterOptions.length;
+    state.categoryFilterOptions = getCategoryFilterOptions(field);
+    const values = state.categoryFilterOptions.map((option) => option.value);
+    state.categoryFilterDraftValues = wasAll ? new Set(values) : new Set(values.filter((value) => state.categoryFilterDraftValues.has(value)));
+    renderCategoryFilterValues();
+  }
+  const numericField = dom.numericFilterField.value;
+  const numbers = numericField ? getNumericValues(numericField, getIncludedRows()) : [];
+  if (numbers.length) {
+    const { min, max } = numericExtents(numbers);
+    dom.numericFilterRange.textContent = `${formatFieldNumber(numericField, min)} 至 ${formatFieldNumber(numericField, max)}`;
+    if (state.filters.numeric?.field !== numericField) {
+      dom.numericFilterMin.value = String(min);
+      dom.numericFilterMax.value = String(max);
+    }
+  }
+  const dateField = dom.dateFilterField.value;
+  const dates = dateField ? getIncludedRows().map((row) => parseFieldDate(dateField, row[dateField])).filter(Boolean).sort((a, b) => a - b) : [];
+  if (dates.length) {
+    const start = dates[0].toISOString().slice(0, 10);
+    const end = dates[dates.length - 1].toISOString().slice(0, 10);
+    dom.dateFilterRange.textContent = `${start} 至 ${end}`;
+    if (state.filters.date?.field !== dateField) {
+      dom.dateFilterStart.value = start;
+      dom.dateFilterEnd.value = end;
+    }
+  }
+}
+
+// Rebuild path (field configuration, placeholders): the left-out totals still suspected stay
+// out; the others come back (remembered in restoredTotalRows); a total that came back earlier
+// and is flagged again is named once. New suspected totals are not left out. Repeated rows
+// never change here: buildExactRowKey() reads every field and no rebuild changes a cell.
+function intersectExcludedTotals() {
+  if (state.exclusionSourceRows !== state.rows) return { restored: 0, flaggedAgain: [] };
+  const current = new Set(state.suspectedTotals.map((item) => item.index));
+  const kept = state.excludedRows.suspectedTotal.filter((index) => current.has(index));
+  const restored = state.excludedRows.suspectedTotal.filter((index) => !current.has(index));
+  const flaggedAgain = [...state.restoredTotalRows].filter((index) => current.has(index)).sort((a, b) => a - b);
+  flaggedAgain.forEach((index) => state.restoredTotalRows.delete(index));
+  restored.forEach((index) => state.restoredTotalRows.add(index));
+  state.excludedRows = { ...state.excludedRows, suspectedTotal: kept };
+  rebuildIncludedRows();
+  return { restored: restored.length, flaggedAgain: flaggedAgain.map((index) => getSourceRowNumber(state.rows[index])) };
 }
 
 function renderQuality() {
@@ -1481,7 +1761,7 @@ function renderQuality() {
     ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
   `;
   renderParseWarningSummary();
-  renderSuspectedTotalDetails();
+  renderExclusionControls();
   renderFormulaErrorDetails();
   // Before the outlier table, which returns early when there is no numeric field.
   refreshProblemView();
@@ -1591,15 +1871,98 @@ function renderRowNoteSection(section, details, lines, footer = "") {
 }
 
 // At most SUSPECTED_TOTAL_LIST_LIMIT lines and one 查看 button: they are one category.
+// v3.1.0: the static note gives way to the left-out note (CSS hides it on .is-excluded); the
+// button sits next to 查看; the totals that only equal the row above and the labelled rows that
+// do not add up are named under it.
+// What the two sentences under the suspected totals need (page and report): the totals whose
+// every match covers only one row (R1), the labelled rows, and whether any numeric column was
+// checked at all. null without suspected totals.
+function getSuspectedTotalExtras() {
+  if (!state.suspectedTotals.length) return null;
+  return {
+    singleRow: state.suspectedTotals.filter((item) => item.matches.every((match) => match.rowCount === 1)).length,
+    labelRows: state.totalLabelRows.length,
+    checked: state.profiles.some((profile) => profile.typeKey === "numeric")
+  };
+}
+
 function renderSuspectedTotalDetails() {
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
   const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
+  const excludedCount = state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0;
+  dom.suspectedTotalSection.classList.toggle("is-excluded", excludedCount > 0);
+  dom.suspectedTotalExcludedNote.classList.toggle("hidden", excludedCount === 0);
+  dom.suspectedTotalExcludedNote.textContent = excludedCount ? formatSuspectedTotalExcludedNote(excludedCount) : "";
+  const exclusionButton = state.suspectedTotals.length ? exclusionToggleButton("suspectedTotal", excludedCount > 0) : "";
+  const notes = formatSuspectedTotalExtras(getSuspectedTotalExtras(), state.suspectedTotals.length);
   renderRowNoteSection(
     dom.suspectedTotalSection,
     dom.suspectedTotalDetails,
     state.suspectedTotals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => escapeHtml(formatSuspectedTotal(item))),
-    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}</p>`
+    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}${exclusionButton}</p>${notes.map((note) => `<p class="row-note-footer">${escapeHtml(note)}</p>`).join("")}`
   );
+}
+
+// "不计入分析" or "撤销" for a kind; it carries no data-problem-index or data-placeholder-index.
+function exclusionToggleButton(kind, excluded) {
+  const label = EXCLUSION_KIND_LABELS[kind];
+  const ariaLabel = excluded ? `撤销：让${label}重新计入分析` : `把${label}设为不计入分析`;
+  return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? "撤销" : "不计入分析"}</button>`;
+}
+
+// An applied ID field that is not mostly repeated (state.idDuplicates lists the applied ID fields).
+function hasCleanIdField() {
+  return state.idDuplicates.some((item) => !item.mostlyRepeated);
+}
+
+// Missing values in the left-out rows, counted as state.totalMissing counts them: every field
+// (ignored ones too), with the placeholder keys each profile was built with.
+function countExcludedMissing() {
+  let count = 0;
+  getExcludedIndexSet().forEach((index) => {
+    const row = state.rows[index];
+    state.profiles.forEach((profile) => {
+      if (isMissingOrConfirmed(row[profile.field], profile.confirmedKeys)) count += 1;
+    });
+  });
+  return count;
+}
+
+// The quality page's parts that follow the rows left out; its counts never change.
+function renderExclusionControls() {
+  const excludedCount = countExcludedRows();
+  const note = formatQualityScopeNote(state.rows.length, excludedCount, excludedCount ? countExcludedMissing() : 0);
+  dom.qualityScopeNote.textContent = note;
+  dom.qualityScopeNote.classList.toggle("hidden", !note);
+  renderSuspectedTotalDetails();
+  const duplicateExcluded = state.exclusionSourceRows === state.rows ? state.excludedRows.duplicateRows.length : 0;
+  dom.duplicateExclusion.classList.toggle("hidden", !state.duplicateRows);
+  dom.duplicateExclusionText.textContent = !state.duplicateRows ? ""
+    : duplicateExcluded ? formatDuplicateExcludedNote(duplicateExcluded)
+      : hasCleanIdField() ? formatDuplicateIncludedNote(state.duplicateRows) : NO_ID_DUPLICATE_NOTE;
+  dom.duplicateExclusionAction.innerHTML = state.duplicateRows ? exclusionToggleButton("duplicateRows", duplicateExcluded > 0) : "";
+}
+
+function getExclusionMessageElement(kind) {
+  return kind === "duplicateRows" ? dom.duplicateExclusionMessage : dom.suspectedTotalMessage;
+}
+
+function setExclusionMessage(kind, message, tone = "") {
+  const element = getExclusionMessageElement(kind);
+  element.className = `exclusion-message${tone ? ` ${tone}` : ""}`;
+  element.textContent = message;
+}
+
+// Delegated click of #qualitySection for 不计入分析 / 撤销, bound in script.js. The message goes
+// to the section that was clicked; the focus to the button that took the clicked one's place.
+function handleExclusionClick(event) {
+  const button = event.target.closest("button[data-exclusion-kind]");
+  if (!button) return;
+  const kind = button.dataset.exclusionKind;
+  if (!setRowExclusion(kind, button.dataset.exclusionOn === "true")) return;
+  setExclusionMessage(kind, formatExclusionMessage(state.lastExclusion), "success");
+  const container = kind === "duplicateRows" ? dom.duplicateExclusionAction : dom.suspectedTotalDetails;
+  container.querySelector?.("button[data-exclusion-kind]")?.focus?.();
 }
 
 // One line and one 查看 button per field: each field is a category.
@@ -1667,10 +2030,11 @@ function renderProblemView() {
   dom.problemRowsSummary.textContent = formatProblemRowsSummary(category, view.list, page, pageCount);
   dom.problemRowsDraftNote.classList.toggle("hidden", !hasFieldConfigDraftChanges());
   const highlightField = HIGHLIGHTED_PROBLEM_KINDS.has(category.kind) ? category.field : null;
+  const excluded = getExcludedIndexSet();
   dom.problemRowsTable.innerHTML = buildRowTableHtml(state.fields, view.list.items.slice(start, end).map((item) => ({
     row: item.index === null ? null : state.rows[item.index],
     line: item.line,
-    note: item.note,
+    note: markExcludedNote(item, excluded),
     highlightField: item.highlightField ?? highlightField
   })), { withNote: true });
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], page, pageCount);
@@ -1691,6 +2055,11 @@ function findProblemViewButton(category) {
   if (!category || typeof dom.qualitySection.querySelector !== "function") return null;
   const index = state.problemCategories.findIndex((item) => isSameProblemCategory(item, category));
   return index < 0 ? null : dom.qualitySection.querySelector(`button[data-problem-index="${index}"]`);
+}
+
+// v3.1.0: "（不计入分析）" after the note of a left-out row, in the viewer and in 导出这一类.
+function markExcludedNote(item, excluded) {
+  return item.index !== null && excluded.has(item.index) ? `${item.note || ""}（不计入分析）` : item.note;
 }
 
 function hideProblemView() {
@@ -1882,7 +2251,7 @@ function renderCategoryStats() {
           <strong>${formatInteger(item.count)}</strong>
           <span>${formatPercent(item.ratio)}</span>
         </div>
-      `).join("") : `<div class="empty-note">当前筛选结果中没有非空类别值。</div>`}
+      `).join("") : `<div class="empty-note">${escapeHtml(CATEGORY_STATS_EMPTY_NOTE)}</div>`}
     </div>
   `).join("");
 }
@@ -1971,7 +2340,7 @@ function renderCategoryTopChart() {
   const counts = Array.from(countValues(field).entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
-  if (!counts.length) return drawEmptyChart(canvas, "当前筛选结果中没有可统计的分类值");
+  if (!counts.length) return drawEmptyChart(canvas, CATEGORY_CHART_EMPTY_NOTE);
   state.charts.categoryTopChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -2099,9 +2468,10 @@ function renderV2Analysis() {
   const invalidMetricText = metricInvalidCount
     ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值认不出是数字，已从计算中排除。`
     : "";
-  dom.v2ResultSummary.textContent = (hasActiveFilters()
-    ? `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于当前筛选数据 ${formatInteger(getAnalysisRows().length)} / ${formatInteger(state.rows.length)} 行。`
-    : `已按 ${groupField} 对 ${metricField} 进行${aggregateLabel}，结果基于完整数据 ${formatInteger(state.rows.length)} 行。`) + invalidMetricText;
+  dom.v2ResultSummary.textContent = formatCustomAnalysisScope({
+    groupField, metricField, aggregateLabel, filtered: hasActiveFilters(), currentCount: getAnalysisRows().length,
+    includedCount: getIncludedRows().length, totalCount: state.rows.length, excludedCount: countExcludedRows()
+  }) + invalidMetricText;
 
   if (dateField) {
     dom.v2TrendCard.classList.remove("hidden");
@@ -2328,6 +2698,13 @@ function resetAnalysisState() {
   ["numericDistributionChart", "categoryTopChart", "dateTrendChart", "v2TopGroupChart", "v2SelectedTrendChart"].forEach(clearChartEmpty);
   state.charts = {};
   state.rows = [];
+  state.excludedRows = { suspectedTotal: [], duplicateRows: [] };
+  state.exclusionSourceRows = null;
+  state.includedRows = null;
+  state.repeatedRowIndexes = null;
+  state.repeatedRowSource = null;
+  state.restoredTotalRows = new Set();
+  state.lastExclusion = null;
   state.filteredRows = null;
   state.filterSourceRows = null;
   state.fields = [];
@@ -2436,6 +2813,22 @@ function resetAnalysisState() {
   dom.parseWarningSummary.innerHTML = "";
   dom.parseWarningSummary.classList.add("hidden");
   renderRowNoteSection(dom.suspectedTotalSection, dom.suspectedTotalDetails, []);
+  dom.suspectedTotalSection.classList.remove("is-excluded");
+  dom.suspectedTotalExcludedNote.textContent = "";
+  dom.suspectedTotalExcludedNote.classList.add("hidden");
+  setExclusionMessage("suspectedTotal", "");
+  dom.qualityScopeNote.textContent = "";
+  dom.qualityScopeNote.classList.add("hidden");
+  dom.duplicateExclusion.classList.add("hidden");
+  dom.duplicateExclusionText.textContent = "";
+  dom.duplicateExclusionAction.innerHTML = "";
+  setExclusionMessage("duplicateRows", "");
+  dom.filterNotCountedItem.classList.add("hidden");
+  dom.filterNotCountedCount.textContent = "0";
+  [dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((element) => {
+    element.innerHTML = "";
+    element.classList.add("hidden");
+  });
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, []);
   renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, []);
   renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, []);

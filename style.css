@@ -443,7 +443,7 @@ button:hover,
   color: var(--text);
 }
 
-/* One blue button per group (二·7), by id only: the markup and its classes stay. 导出筛选后 CSV
+/* One blue button per group (二·7), by id only: the markup and its classes stay. 导出当前分析的行
    looks secondary (the data group's blue button is 导出写法统一的表, in the check panel), and so
    does 按空值处理 on each line (常见写法全部按空值处理 stays blue). */
 #exportFilteredCsv:not(:disabled) {
@@ -1077,6 +1077,27 @@ body.has-results .app-sidebar {
   font-size: 13px;
 }
 
+/* v3.1.0: under the range sentence, on a line of its own, what the current analysis still
+   contains. The heading wraps only while the note shows; no gap between the two lines. */
+.section-heading:has(> .analysis-contains-note:not(.hidden)) {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.analysis-contains-note {
+  flex: 1 0 100%;
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: right;
+}
+
+.analysis-contains-note .text-button {
+  min-height: 28px;
+  padding: 0 7px;
+  font-size: 13px;
+}
+
 /* v3.0.0: a module is not a card: its title and notes sit on the grey page, and the blocks of
    content inside it (tables, frequency cards, the export lists, the filter cards, the charts)
    are the white cards. Containers that hold such cards are not cards themselves. */
@@ -1445,6 +1466,55 @@ td .problem-view-button + .problem-view-button {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.7;
+}
+
+/* v3.1.0: 不计入分析 / 撤销, the size of 查看, with a gap after it. */
+.row-exclusion-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.problem-view-button + .row-exclusion-button {
+  margin-left: 8px;
+}
+
+/* Once the totals are left out, the static note gives way to #suspectedTotalExcludedNote. */
+#suspectedTotalSection.is-excluded > p.section-note:not([id]) {
+  display: none;
+}
+
+.quality-scope-note,
+.duplicate-exclusion-line {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 8 px above the pills, as above the note itself. */
+.quality-scope-note {
+  margin-bottom: 8px;
+}
+
+/* The same 16 px below the line as below the pills, so the totals card does not touch it. */
+.duplicate-exclusion {
+  margin-bottom: 16px;
+}
+
+.exclusion-message {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.exclusion-message:empty {
+  display: none;
+}
+
+.exclusion-message.warning {
+  color: var(--warning);
 }
 
 /* These subsections sit above the two tables, which have no top margin of their own. */
@@ -2876,6 +2946,8 @@ select:focus-visible,
   .text-button,
   .note-toggle,
   .problem-view-button,
+  .row-exclusion-button,
+  .analysis-contains-note .text-button,
   .quality-summary .problem-view-button,
   .placeholder-button,
   .row-pager-buttons button,
@@ -2969,8 +3041,14 @@ select:focus-visible,
     flex-direction: column;
   }
 
-  .filter-scope {
+  .filter-scope,
+  .analysis-contains-note {
     text-align: left;
+  }
+
+  /* The column keeps its 16 px between the title and the range sentence. */
+  .section-heading:has(> .analysis-contains-note:not(.hidden)) > .filter-scope {
+    margin-top: 20px;
   }
 
   .section-block {

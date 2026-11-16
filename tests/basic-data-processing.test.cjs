@@ -1196,28 +1196,23 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
   })()`);
 
   assert.equal(evaluate('getProcessedExportRows("filtered").length'), 1);
-  assert.equal(evaluate('getProcessedExportRows("deduplicated").length'), 2);
   assert.equal(JSON.stringify(rows), originalSnapshot);
 
-  const csv = evaluate('buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)');
+  const csv = evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)');
   assert.equal(
     csv,
-    '姓名,备注\r\n张三,"上海,重点客户"\r\n李四,"包含""引号"""'
+    '姓名,备注\r\n李四,"包含""引号"""'
   );
   assert.deepEqual(Array.from(context.__unparseInput.fields), ["姓名", "备注"]);
   assert.deepEqual(
     Array.from(context.__unparseInput.data, (row) => Array.from(row)),
-    [["张三", "上海,重点客户"], ["李四", '包含"引号"']]
+    [["李四", '包含"引号"']]
   );
   assert.equal(context.__unparseOptions.newline, "\r\n");
 
   assert.equal(
     evaluate('buildDataExportFileName("filtered", new Date(2026, 6, 18))'),
-    "中文销售_filtered_20260718.csv"
-  );
-  assert.equal(
-    evaluate('buildDataExportFileName("deduplicated", new Date(2026, 6, 18))'),
-    "中文销售_deduplicated_20260718.csv"
+    "中文销售_当前分析_20260718.csv"
   );
 
   const blob = evaluate('createUtf8BomBlob("姓名,城市\\r\\n张三,上海", "text/csv;charset=utf-8")');
@@ -1227,15 +1222,27 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
   evaluate("updateExportButtons()");
   assert.equal(elements.get("dataExportOriginalCount").textContent, "3");
   assert.equal(elements.get("dataExportFilteredCount").textContent, "1");
-  assert.equal(elements.get("dataExportDeduplicatedCount").textContent, "2");
   assert.equal(elements.get("exportFilteredCsv").disabled, false);
-  assert.equal(elements.get("exportDeduplicatedCsv").disabled, false);
 
   evaluate("state.filteredRows = []");
   assert.equal(
     evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'),
     "姓名,备注"
   );
+
+  // v3.1.0: without a filter, every counted row in order, the repeated row kept (the
+  // deduplicated export is gone): a comma in a cell, quotes, rows joined by CRLF.
+  evaluate("state.filteredRows = null; state.filterSourceRows = null");
+  assert.equal(evaluate('getProcessedExportRows("filtered").length'), 3);
+  assert.equal(
+    evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'),
+    '姓名,备注\r\n张三,"上海,重点客户"\r\n张三,"上海,重点客户"\r\n李四,"包含""引号"""'
+  );
+  assert.deepEqual(
+    Array.from(context.__unparseInput.data, (row) => Array.from(row)),
+    [["张三", "上海,重点客户"], ["张三", "上海,重点客户"], ["李四", '包含"引号"']]
+  );
+  assert.equal(JSON.stringify(rows), originalSnapshot);
 });
 
 // Stage 3 acceptance fixtures (tests/fixtures/stage3/, see known-issues.json)
@@ -1479,7 +1486,7 @@ const GRADE_HEADER_NOTE = "表头在第 2 行，已跳过上方 1 行：「初�
 
 test("the status bar names the header row and the skipped title rows", async () => {
   const store = await importStage3Fixture("门店报表.xlsx");
-  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}第 33 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。`);
+  assert.equal(store.elements.get("statusPanel").textContent, `门店报表.xlsx · 销售汇总 已成功载入，分析结果已生成。${STORE_HEADER_NOTE}第 33 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。`);
   assert.deepEqual(JSON.parse(store.evaluate("JSON.stringify(state.headerDetection)")), {
     headerRowNumber: 4,
     skippedRows: [
@@ -2255,7 +2262,7 @@ test("confirming a placeholder re-profiles its field: 4 of 5 amounts make it num
   assert.equal(scope.evaluate("hasFieldConfigDraftChanges()"), false);
   assert.equal(scope.evaluate("state.totalMissing"), 1);
   assert.equal(scope.evaluate("state.placeholders[0].confirmed"), true);
-  assert.equal(placeholderMessage(scope), "已把「金额」的「N/A」按空值处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(scope), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 0 → 1。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 6。「金额」现在识别为数值（原来是分类）。");
 });
 
 test("the order fixture goes from 26 to 27 missing values with one confirmation and to 31 with all five", async () => {
@@ -2294,7 +2301,7 @@ test("confirming all common placeholders skips maybe-valid keys and ignored fiel
   scope.evaluate("confirmAllCommonPlaceholders()");
   assert.deepEqual(placeholderConfirmations(scope.evaluate), { 金额: ["N/A"], 年份: ["—"] });
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), ["numeric", "date", "category", "ignore"]);
-  assert.equal(placeholderMessage(scope), "已把 2 处常见写法按空值处理，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(scope), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「年份」的「—」）。「金额」现在识别为数值（原来是分类）；「年份」现在识别为日期（原来是分类）。只是把这些格当作空，行都没有删，所以行数还是 7。");
 });
 
 test("confirmed placeholders leave Top 10, filter options, filter matches and groups as empty values", () => {
@@ -2352,7 +2359,7 @@ test("undoing confirmations restores profiles, missing totals, ID duplicates and
   assert.notEqual(snapshot(), before);
   orders.evaluate('undoPlaceholderConfirmation("备注", "N/A"); undoPlaceholderConfirmation("金额", "N/A"); undoPlaceholderConfirmation("备注", "—")');
   assert.equal(snapshot(), before);
-  assert.equal(placeholderMessage(orders), "已撤销「备注」的「—」，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  assert.equal(placeholderMessage(orders), "已撤销「备注」的「—」：空值 27 → 26，分类里重新有「—」这一类。这 1 格重新按原来的文字处理，行数还是 30。");
 });
 
 test("manual field types survive confirmations; a type equal to the automatic one is not manual", () => {
@@ -2521,8 +2528,7 @@ test("confirmations never change the original rows, the data preview, CSV export
     rows: state.rows,
     duplicateRows: state.duplicateRows,
     csv: buildCsvExportContent(state.rows, state.fields),
-    filtered: buildCsvExportContent(getProcessedExportRows("filtered"), state.fields),
-    deduplicated: buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)
+    filtered: buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)
   })`);
   const before = snapshot();
   evaluate("confirmAllCommonPlaceholders()");
@@ -3996,9 +4002,12 @@ test("problem-row export headers number the extra columns past every clashing fi
 test("guard: the data exports keep their exact output through the shared CSV builder", async () => {
   const orders = await importStage3Fixture("订单表.csv");
   const expected = (rows) => orders.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: ${rows}.map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
-  for (const mode of ["filtered", "deduplicated"]) {
-    assert.equal(orders.evaluate(`buildCsvExportContent(getProcessedExportRows("${mode}"), state.fields)`), expected(`getProcessedExportRows("${mode}")`), mode);
-  }
+  assert.equal(orders.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'), expected('getProcessedExportRows("filtered")'));
+  // v3.1.0: with rows left out, the 40 counted rows, still byte for byte the old way.
+  const sample = await sampleWithExclusions();
+  assert.equal(sample.evaluate('getProcessedExportRows("filtered").length'), 40);
+  const sampleExpected = sample.evaluate(`window.Papa.unparse({ fields: state.fields.map(sanitizeCsvExportValue), data: getProcessedExportRows("filtered").map((row) => state.fields.map((field) => (Object.prototype.hasOwnProperty.call(row, field) && row[field] !== null && row[field] !== undefined ? sanitizeCsvExportValue(row[field]) : ""))) }, { header: true, newline: "\\r\\n", skipEmptyLines: false })`);
+  assert.equal(sample.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)'), sampleExpected);
 });
 
 test("the export button needs an open category and its status clears with the viewer", async () => {
@@ -4827,22 +4836,22 @@ test("v2.8.0 page: both subsections are static, after the warnings and before th
 
 test("v2.8.0 status: the sentences follow the header note, on the warning branch too, one row or many", async () => {
   const region = await importStage3Fixture("分区小计表.csv");
-  assert.equal(region.elements.get("statusPanel").textContent, "分区小计表.csv 已成功载入，分析结果已生成。发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），目前仍计入统计，详情见“数据质量”。");
+  assert.equal(region.elements.get("statusPanel").textContent, "分区小计表.csv 已成功载入，分析结果已生成。发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），可以在“数据质量”里设为不计入分析。");
   const errors = await importStage3Fixture("公式错误.xlsx");
   assert.equal(errors.elements.get("statusPanel").textContent, "公式错误.xlsx · 公式错误 已成功载入，分析结果已生成。发现 7 个公式错误单元格，已按空值处理，详情见“数据质量”。");
   const warned = await importCsvFile("名,额\r\nA,10\r\nB\r\nC,20\r\n合计,30\r\n");
-  assert.equal(warned.elements.get("statusPanel").textContent, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 5 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+  assert.equal(warned.elements.get("statusPanel").textContent, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 5 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   const many = await importCsvFile(subtotalsCsv(7));
-  assert.match(many.elements.get("statusPanel").textContent, /发现 7 行疑似合计 \/ 小计（第 3、5、7、9、11 行等），目前仍计入统计/);
+  assert.match(many.elements.get("statusPanel").textContent, /发现 7 行疑似合计 \/ 小计（第 3、5、7、9、11 行等），可以在“数据质量”里设为不计入分析/);
   const five = await importCsvFile(subtotalsCsv(5));
-  assert.match(five.elements.get("statusPanel").textContent, /发现 5 行疑似合计 \/ 小计（第 3、5、7、9、11 行），目前仍计入统计/);
+  assert.match(five.elements.get("statusPanel").textContent, /发现 5 行疑似合计 \/ 小计（第 3、5、7、9、11 行），可以在“数据质量”里设为不计入分析/);
   const { context, evaluate, elements } = createScriptContext();
   put(context, "__rows", [{ 名: "A", 额: "10" }, { 名: "合计", 额: "10" }]);
   evaluate('commitTabularData(["名", "额"], __rows, "x.csv", beginImport())');
   assert.match(elements.get("statusPanel").textContent, /有一行「合计」疑似合计行/);
   put(context, "__manyRows", [{ 名: "A", 额: "10" }, { 名: "A小计", 额: "10" }, { 名: "B", 额: "20" }, { 名: "B小计", 额: "20" }]);
   evaluate('commitTabularData(["名", "额"], __manyRows, "x.csv", beginImport())');
-  assert.match(elements.get("statusPanel").textContent, /发现 2 行疑似合计 \/ 小计，目前仍计入统计/);
+  assert.match(elements.get("statusPanel").textContent, /发现 2 行疑似合计 \/ 小计，可以在“数据质量”里设为不计入分析/);
   const clean = await importCsvFile("名,额\r\nA,10\r\nB,20\r\n");
   assert.doesNotMatch(clean.elements.get("statusPanel").textContent, /疑似合计|公式错误/);
 });
@@ -5328,7 +5337,7 @@ const V281_GUARD_KINDS = ["missing", "formulaError", "conversion", "outlier", "d
 const v281GuardDigest = (scope) => crypto.createHash("sha256").update(scope.evaluate(`JSON.stringify({
   rows: state.rows, profiles: state.profiles, numericStats: state.numericStats, qualityNumericStats: state.qualityNumericStats, categoryStats: state.categoryStats,
   duplicateRows: state.duplicateRows, totalMissing: state.totalMissing, idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking,
-  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: deduplicateRows(state.rows, state.fields).length,
+  suspectedTotals: state.suspectedTotals, formulaErrors: state.formulaErrors, dedup: state.rows.length - state.duplicateRows,
   problems: listProblemCategories().filter((category) => ${JSON.stringify(V281_GUARD_KINDS)}.includes(category.kind)).map((category) => [category, listProblemRows(category).items])
 })`)).digest("hex").slice(0, 32);
 
@@ -6386,7 +6395,7 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
   for (const [kind, name] of files) {
     const scope = kind === "stage3" ? await importStage3Fixture(name) : await importCsvFile(readExampleCsv(name), name);
     const before = scope.evaluate("JSON.stringify(state.rows)");
-    const exports = () => scope.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields) + "|" + buildCsvExportContent(getProcessedExportRows("deduplicated"), state.fields)');
+    const exports = () => scope.evaluate('buildCsvExportContent(getProcessedExportRows("filtered"), state.fields)');
     const existing = exports();
     scope.evaluate("checkStandardizedExport()");
     assert.equal(scope.evaluate("JSON.stringify(state.rows)"), before, name);
@@ -6536,7 +6545,7 @@ test("v2.10.0 gate: no data or an unapplied field draft disables the buttons and
 test("v2.10.0 the page: a third export option, a static hidden panel, print hides its buttons, one binding", () => {
   const html = repoFile("index.html");
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 3);
+  assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 2);
   assert.match(options, /<h3>写法统一的表<\/h3>[\s\S]*<p id="standardizedExportGate" class="standardize-gate"><\/p>[\s\S]*<button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格<\/button>/);
   const panel = html.slice(html.indexOf('<div id="standardizedExportPanel"'), html.indexOf('<p id="dataExportStatus"'));
   assert.match(panel, /^<div id="standardizedExportPanel" class="standardized-export hidden">/);
@@ -6818,7 +6827,7 @@ test("v2.11.0 sample: the status line, the six pills and every hint with its row
   const scope = await importCsvFile(readExampleCsv(SAMPLE_ORDERS), SAMPLE_ORDERS);
   assert.equal(scope.elements.get("statusPanel").className, "status-panel success has-note");
   assert.equal(scope.elements.get("statusPanel").textContent,
-    "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，目前仍计入统计，详情见“数据质量”。");
+    "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))")), [
     ["订单编号", "id"], ["下单日期", "date"], ["地区", "category"], ["品类", "category"], ["产品", "category"],
     ["客户类型", "category"], ["数量", "numeric"], ["金额", "numeric"], ["销售代表", "category"]
@@ -6829,7 +6838,7 @@ test("v2.11.0 sample: the status line, the six pills and every hint with its row
   assert.equal(scope.elements.get("categoryChartInsight").textContent, "分类字段「地区」中占比最高的类别是「华东」，出现 10 次，占比 24.4%。");
   assert.equal(scope.elements.get("dateChartInsight").textContent, "基于日期字段「下单日期」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 66.7%。");
   assert.equal(sampleOrdersHidden(scope, "parseWarningSummary"), true);
-  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "第 44 行「合计」：数量、金额等于第 3\u201343 行之和（41 行）。 查看");
+  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "第 44 行「合计」：数量、金额等于第 3\u201343 行之和（41 行）。 查看 不计入分析");
   assert.equal(sampleOrdersText(scope, "numberConversionDetails"), "「金额」：按\"元\"读取了 3 个值（5400元、900元、1050元）");
   assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
     "「下单日期」：主写法是 文本 年-月-日 36 个（如 2025-01-03）；另有 5 行是别的写法：文本 年/月/日 3 个（如 2025/2/18）、文本 中文年月日 2 个（如 2025年4月16日）。 查看");
@@ -6932,7 +6941,9 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
   "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
-const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE"];
+const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE",
+  // v3.1.0: the totals note once they are left out, one row and several.
+  "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)"];
 const HAN_SPACE_HAN = /\p{Script=Han} +\p{Script=Han}/u;
 
 function findOldInterfaceWords(where, text, hits) {
@@ -7173,11 +7184,11 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
   rangeTexts();
   filterGuardRows(range, "组", ["B"]);
   assert.equal(range.evaluate("getAnalysisRows().length"), 5);
-  assert.match(html(range, "categoryStats"), />当前筛选结果中没有非空类别值。</);
+  assert.match(html(range, "categoryStats"), />当前分析的行里没有非空类别值。</);
   range.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart(); dom.numericChartField.value = "金额"; renderNumericDistributionChart()');
   const filtered = rangeTexts();
   assert.ok(filtered.some(([id, sentence]) => id === "dateTrendChart" && sentence === "该字段没有认得出的日期"), JSON.stringify(filtered));
-  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前筛选结果中没有可统计的分类值"), JSON.stringify(filtered));
+  assert.ok(filtered.some(([id, sentence]) => id === "categoryTopChart" && sentence === "当前分析的行里没有可统计的分类值"), JSON.stringify(filtered));
   assert.ok(filtered.some(([id, sentence]) => id === "numericDistributionChart" && sentence === "该字段没有认得出的数字"), JSON.stringify(filtered));
   filterGuardRows(range, "组", ["C"]);
   assert.equal(range.evaluate("getAnalysisRows().length"), 0);
@@ -8197,8 +8208,8 @@ test("v3.0.0 statistics: each frequency row has a bar as long as its share, and 
 test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
   const html = repoFile("index.html");
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /<h3>当前筛选结果<\/h3>\s*<p class="export-count">筛选后行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
-  assert.match(options, /<h3>原始数据去重结果<\/h3>\s*<p class="export-count">去重后行数 <strong id="dataExportDeduplicatedCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  assert.doesNotMatch(options, /去重/);
   assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
   assert.doesNotMatch(html, /数据导出记录统计/);
 });
@@ -8365,13 +8376,13 @@ test("v3.0.0 look: quality tags are neutral (white, grey line, grey at 0), no am
 
 test("v3.0.0 look: one blue button per group, by id only; the class names stay", () => {
   const css = repoFile("style.css");
-  // 导出筛选后 CSV keeps its markup (no secondary-button) but looks secondary: the data group's
+  // 导出当前分析的行 keeps its markup (no secondary-button) but looks secondary: the data group's
   // blue button is 导出写法统一的表 (in the check panel).
   assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
   // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
   assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
   const html = repoFile("index.html");
-  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出筛选后 CSV<\/button>/);
+  assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>/);
 });
 
 test("v3.0.0 look: the 空值检查 box shows about ten fields without scrolling; print lifts every height limit", () => {
@@ -8659,15 +8670,934 @@ test("v3.0.1 rename: the old product name and report title never appear; the new
 
   const names = [
     orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`), orders.evaluate(`buildReportFileName("md", new Date(2026, 10, 15))`),
-    orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`), orders.evaluate(`buildDataExportFileName("deduplicated", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`),
     orders.evaluate(`buildStandardizedFileName("data", new Date(2026, 10, 15))`), orders.evaluate(`buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)`),
     ...JSON.parse(orders.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
   ];
   assert.ok(names.length > 6);
+  // v3.1.0: 21 names, the deduplicated export is gone.
+  assert.equal(names.length, 21);
   for (const name of names) {
     assert.ok(name.startsWith("sample-orders"), name);
     findOldProductWords("file name", name, hits);
     assert.ok(!name.includes("表格体检"), name);
   }
   assert.deepEqual(hits.slice(0, 20), [], `${hits.length} hits`);
+});
+
+// ---- v3.1.0 commit 1: what treating a value as empty changed ----
+// The messages say the counts before and after, that no row went, and why the statistics
+// stay; "已清除现有筛选条件。" only when a filter was applied before.
+
+const ID_WITH_NA = ["N/A", "N/A", "N/A", ...Array.from({ length: 11 }, (_, index) => `D${100 + index}`)];
+
+test("v3.1.0 empty values: a numeric field says the counts, that no row went and that the statistics stay", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 42。平均值等统计不变，因为「N/A」本来就没有算进去。");
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 0 → 1。这 1 格重新按原来的文字处理，行数还是 42。");
+});
+
+test("v3.1.0 empty values: a date field says the trend by date stays, not the average", async () => {
+  const dates = await importStage3Fixture("订单表.csv");
+  dates.evaluate('confirmPlaceholder("下单日期", "—")');
+  assert.equal(placeholderMessage(dates), "已把「下单日期」的 1 个「—」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 30。按日期的趋势不变，因为「—」本来就没有算进去。");
+  assert.doesNotMatch(placeholderMessage(dates), /平均值/);
+});
+
+test("v3.1.0 empty values: a category field loses the class, and the count is every cell the spelling covers", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('confirmPlaceholder("销售代表", "—")');
+  assert.equal(placeholderMessage(orders), "已把「销售代表」的 1 个「—」按空值处理：空值 1 → 2，分类里不再有「—」这一类。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 42。");
+  orders.evaluate('undoPlaceholderConfirmation("销售代表", "—")');
+  assert.equal(placeholderMessage(orders), "已撤销「销售代表」的「—」：空值 2 → 1，分类里重新有「—」这一类。这 1 格重新按原来的文字处理，行数还是 42。");
+  const mixed = await importStage3Fixture("写法不一致.csv");
+  mixed.evaluate('confirmPlaceholder("客户", "N/A")');
+  assert.equal(placeholderMessage(mixed), "已把「客户」的 2 个「N/A」按空值处理：空值 1 → 3，分类里不再有「N/A」这一类。只是把这 2 格当作空，这些行没有删，其他字段照常参与分析，所以行数还是 24。");
+});
+
+test("v3.1.0 empty values: an ID field says the duplicate list, a changed type says the type, an ignored field says why", () => {
+  const ids = commitColumns({ 订单ID: ID_WITH_NA, 金额: ID_WITH_NA.map((_, index) => String(10 + index)) });
+  ids.evaluate('confirmPlaceholder("订单ID", "N/A")');
+  assert.equal(placeholderMessage(ids), "已把「订单ID」的 3 个「N/A」按空值处理：空值 0 → 3，编号重复里不再列出「N/A」。只是把这 3 格当作空，这些行没有删，其他字段照常参与分析，所以行数还是 14。");
+  ids.evaluate('undoPlaceholderConfirmation("订单ID", "N/A")');
+  assert.equal(placeholderMessage(ids), "已撤销「订单ID」的「N/A」：空值 3 → 0，编号重复里重新列出「N/A」。这 3 格重新按原来的文字处理，行数还是 14。");
+
+  const amounts = commitColumns({ 金额: AMOUNT_WITH_NA });
+  amounts.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(amounts), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 0 → 1。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以行数还是 6。「金额」现在识别为数值（原来是分类）。");
+  amounts.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(amounts), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 1 → 0。这 1 格重新按原来的文字处理，行数还是 6。「金额」现在识别为分类（原来是数值）。");
+
+  const notes = commitColumns({ 备注: ["N/A", "N/A", "甲", "乙", "丙", "丁"], 金额: ["1", "2", "3", "4", "5", "6"] });
+  notes.evaluate('confirmPlaceholder("备注", "N/A"); stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
+  assert.equal(notes.evaluate('undoPlaceholderConfirmation("备注", "N/A")'), true);
+  assert.equal(placeholderMessage(notes), "已撤销「备注」的「N/A」。「备注」已忽略，撤销只影响以后改回其他类型时的结果。");
+});
+
+test("v3.1.0 empty values: treating every common spelling as empty names them, type changes first", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(orders), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「销售代表」的「—」）。只是把这些格当作空，行都没有删，所以行数还是 42。");
+  // 说明 comes first in the table but keeps its type, so it is named after the two that change.
+  const scope = commitColumns({
+    说明: ["N/A", "甲", "乙", "丙", "丁", "戊", "己"],
+    年份: YEARS_WITH_DASHES,
+    金额: ["100", "200", "N/A", "约500", "300", "400", "500"]
+  });
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(scope), "已把 3 处常见写法按空值处理（「年份」的「—」、「金额」的「N/A」、「说明」的「N/A」）。「年份」现在识别为日期（原来是分类）；「金额」现在识别为数值（原来是分类）。只是把这些格当作空，行都没有删，所以行数还是 7。");
+});
+
+test("v3.1.0 已清除现有筛选条件 only follows a rebuild that had a filter applied", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const fieldMessage = () => orders.elements.get("fieldConfigMessage").textContent;
+  orders.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。");
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(fieldMessage(), "已恢复自动识别，统计、图表和分析结论已重新计算。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。 已清除现有筛选条件。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  assert.equal(fieldMessage(), "已恢复自动识别，统计、图表和分析结论已重新计算。 已清除现有筛选条件。");
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.match(placeholderMessage(orders), /所以行数还是 42。平均值等统计不变，因为「N\/A」本来就没有算进去。 已清除现有筛选条件。$/);
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.doesNotMatch(placeholderMessage(orders), /已清除现有筛选条件/);
+});
+
+// ---- v3.1.0 commit 2: the rows counted in the analysis ----
+// Three layers: every row of the file (state.rows) -> the rows counted in the analysis
+// (getIncludedRows()) -> the filtered rows (getAnalysisRows()). No button yet: the tests call
+// setRowExclusion() as the button will. The sample has its total on file row 44 and a
+// repeated row on file row 21.
+
+const SAMPLE_TOTAL_VALUES = ["123440", "123,440"];
+
+async function sampleWithExclusions({ totals = true, duplicates = true } = {}) {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  if (totals) orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  if (duplicates) orders.evaluate('setRowExclusion("duplicateRows", true)');
+  return orders;
+}
+
+// A rebuild that ends with every type as it was: 销售代表 to ID and back.
+function rebuildKeepingTypes(scope) {
+  scope.evaluate('stageFieldTypeChange("销售代表", "id"); applyFieldConfiguration(); stageFieldTypeChange("销售代表", "category"); applyFieldConfiguration()');
+}
+
+const excludedLines = (scope) => JSON.parse(scope.evaluate(`JSON.stringify({
+  suspectedTotal: state.excludedRows.suspectedTotal.map((index) => getSourceRowNumber(state.rows[index])),
+  duplicateRows: state.excludedRows.duplicateRows.map((index) => getSourceRowNumber(state.rows[index]))
+})`));
+
+test("v3.1.0 counted rows: without a click nothing is left out and the arrays are the v3.0.1 ones", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  assert.equal(orders.evaluate("state.numericStats === state.qualityNumericStats"), true);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 42);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [] });
+  assert.equal(orders.evaluate("state.suspectedTotals.length"), 1);
+  rebuildKeepingTypes(orders);
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows && state.numericStats === state.qualityNumericStats"), true);
+});
+
+test("v3.1.0 counted rows: every exit counts 40 rows after both kinds are left out, through a rebuild too", async () => {
+  const orders = await sampleWithExclusions();
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  const exits = () => JSON.parse(orders.evaluate(`JSON.stringify((() => {
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "";
+    renderV2Analysis();
+    dom.categoryFilterField.value = "地区"; updateCategoryFilterField();
+    return {
+      included: getIncludedRows().length, analysis: getAnalysisRows().length,
+      quantity: state.numericStats.find((item) => item.field === "数量").count,
+      amount: state.numericStats.find((item) => item.field === "金额").count,
+      region: state.categoryStats.find((item) => item.field === "地区").total,
+      histogram: getNumericValues("数量").length,
+      trend: buildDateTrend("下单日期", "").values.reduce((sum, value) => sum + value, 0),
+      filterOptions: state.categoryFilterOptions.reduce((sum, option) => sum + option.count, 0),
+      exportRows: getProcessedExportRows("filtered").length,
+      report: buildReportData(new Date(2026, 10, 15)).dataScale,
+      custom: state.customAnalysis.grouped.reduce((sum, item) => sum + item.count, 0),
+      quality: getQualityNumericStats().find((item) => item.field === "数量").count
+    };
+  })())`));
+  const expected = {
+    included: 40, analysis: 40, quantity: 40, amount: 39, region: 40, histogram: 40, trend: 40, filterOptions: 40, exportRows: 40,
+    report: { rows: 40, originalRows: 42, filteredOutRows: 0, excludedRows: 2, fields: 9, activeFields: 9, numericFields: 2, categoryFields: 5, dateFields: 1, idFields: 1, ignoredFields: 0 },
+    custom: 39, quality: 42
+  };
+  assert.deepEqual(exits(), expected);
+  rebuildKeepingTypes(orders);
+  assert.equal(orders.evaluate("state.numericStats === state.qualityNumericStats"), false);
+  assert.deepEqual(exits(), expected);
+});
+
+test("v3.1.0 counted rows: no analysis output shows the total row's 123440, before or after a rebuild", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const chartConfigs = withFakeCharts(orders);
+  orders.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField(); setRowExclusion("suspectedTotal", true)');
+  const outputs = () => orders.evaluate(`(() => {
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "地区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
+    renderCharts(); renderChartInsights(); renderV2Analysis(); renderNumericStats(); renderCategoryStats();
+    dom.numericFilterField.value = "金额"; updateNumericFilterField(); dom.categoryFilterField.value = "地区"; updateCategoryFilterField();
+    const report = buildReportData(new Date(2026, 10, 15));
+    return [dom.numericStatsTable.innerHTML, dom.categoryStats.innerHTML, dom.v2PrimaryTable.innerHTML, dom.v2SumTable.innerHTML, dom.v2AvgTable.innerHTML,
+      dom.v2ResultSummary.textContent, state.chartInsights.category, state.chartInsights.trend, JSON.stringify(report.numericStats),
+      JSON.stringify(report.categoryStats), JSON.stringify(report.dateTrends), JSON.stringify(report.customAnalysis), dom.numericFilterRange.textContent,
+      dom.numericFilterMax.value, JSON.stringify(state.categoryFilterOptions)].join("\\n");
+  })()`) + JSON.stringify(chartConfigs.map((config) => config.data));
+  const before = outputs();
+  for (const value of SAMPLE_TOTAL_VALUES) assert.ok(!before.includes(value), value);
+  assert.ok(chartConfigs.length >= 3, "charts were drawn");
+  assert.ok(before.includes("7,200"), "the largest counted amount is there");
+  rebuildKeepingTypes(orders);
+  const after = outputs();
+  for (const value of SAMPLE_TOTAL_VALUES) assert.ok(!after.includes(value), value);
+  // The quality page still reads every row.
+  assert.ok(orders.evaluate('getQualityNumericStats().find((item) => item.field === "金额").max') === 123440);
+});
+
+test("v3.1.0 counted rows: a rebuild keeps the totals still flagged, brings back the others once, and says when one is flagged again", async () => {
+  const orders = await sampleWithExclusions();
+  const fieldMessage = () => orders.elements.get("fieldConfigMessage").textContent;
+  orders.evaluate('stageFieldTypeChange("数量", "ignore"); stageFieldTypeChange("金额", "ignore"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用，统计、图表和分析结论已重新计算。 有 1 行不再是疑似合计行，已恢复计入分析。");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [21] });
+  assert.equal(orders.evaluate("getIncludedRows().length"), 41);
+  orders.evaluate('stageFieldTypeChange("数量", "numeric"); stageFieldTypeChange("金额", "numeric"); applyFieldConfiguration()');
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。 第 44 行又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [21] });
+  assert.equal(orders.evaluate("state.suspectedTotals.length"), 1);
+  assert.equal(orders.evaluate("getIncludedRows().length"), 41);
+  // Said once: the next rebuild is quiet.
+  rebuildKeepingTypes(orders);
+  assert.equal(fieldMessage(), "字段配置已应用；1 个非空值认不出，已从对应统计和图表中跳过。");
+  // Excluding it again and losing it again restores it again; then it is not "flagged again"
+  // after the user clicked, until it is restored once more.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  orders.evaluate('stageFieldTypeChange("数量", "category"); stageFieldTypeChange("金额", "category"); applyFieldConfiguration()');
+  assert.match(fieldMessage(), / 有 1 行不再是疑似合计行，已恢复计入分析。$/);
+  // A field configuration that keeps the total flagged keeps it out.
+  const other = await sampleWithExclusions();
+  other.evaluate('stageFieldTypeChange("数量", "category"); applyFieldConfiguration()');
+  assert.deepEqual(excludedLines(other), { suspectedTotal: [44], duplicateRows: [21] });
+  assert.doesNotMatch(other.elements.get("fieldConfigMessage").textContent, /恢复计入|又被标为/);
+});
+
+test("v3.1.0 counted rows: the click keeps filters and the custom analysis, rebuilds nothing, and is refused while drafts wait", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate(`(() => {
+    state.filters = { category: { field: "地区", values: ["华北", "华东", "华南", "西北", "西南"] }, numeric: null, date: null };
+    state.filteredRows = filterRowsByConfig(getIncludedRows(), state.filters);
+    state.filterSourceRows = getIncludedRows();
+    refreshFilteredAnalysis();
+    dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "品类"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "";
+    renderV2Analysis();
+    dom.v2AnalysisResults.classList.remove("hidden");
+    globalThis.__calls = {};
+    ["populateControls", "renderQuality", "rebuildAnalysisFromProfiles", "initializeFilterControls", "renderSchema", "refreshFilteredAnalysis"].forEach((name) => {
+      const original = globalThis[name];
+      __calls[name] = 0;
+      globalThis[name] = function (...args) { __calls[name] += 1; return original.apply(this, args); };
+    });
+  })()`);
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 41);
+  assert.equal(orders.evaluate('setRowExclusion("suspectedTotal", true)'), true);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__calls)")), {
+    populateControls: 0, renderQuality: 0, rebuildAnalysisFromProfiles: 0, initializeFilterControls: 0, renderSchema: 0, refreshFilteredAnalysis: 1
+  });
+  assert.equal(orders.evaluate("hasActiveFilters()"), true);
+  // The total row is the only one with an empty 地区, so the filter keeps every counted row.
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 41);
+  assert.equal(orders.evaluate("Boolean(state.customAnalysis)"), true);
+  assert.equal(orders.evaluate("state.customAnalysis.grouped.reduce((sum, item) => sum + item.count, 0)"), 40);
+  orders.evaluate('stageFieldTypeChange("销售代表", "id")');
+  assert.equal(orders.evaluate('setRowExclusion("duplicateRows", true)'), false);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [] });
+});
+
+test("v3.1.0 counted rows: imports and resets clear the left-out rows; filters and the standardized check keep them", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("checkStandardizedExport()");
+  assert.equal(orders.evaluate("Boolean(state.standardizedExport)"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.equal(orders.evaluate("Boolean(state.standardizedExport)"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  applyFilterState(orders, { category: { field: "地区", values: ["华东"] } });
+  orders.evaluate("clearAllFilters()");
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [44], duplicateRows: [21] });
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+  orders.evaluate(`commitTabularData(["名称", "金额"], [{ 名称: "甲", 金额: "1" }, { 名称: "乙", 金额: "2" }], "next.csv", beginImport())`);
+  assert.deepEqual(excludedLines(orders), { suspectedTotal: [], duplicateRows: [] });
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.evaluate("state.exclusionSourceRows === null && state.includedRows === null && state.excludedRows.suspectedTotal.length === 0"), true);
+});
+
+test("v3.1.0 counted rows: left-out rows of another data set never count", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("state.rows = state.rows.slice()");
+  assert.equal(orders.evaluate("getIncludedRows() === state.rows"), true);
+  assert.equal(orders.evaluate("getExcludedIndexSet().size"), 0);
+  assert.equal(orders.evaluate("getAnalysisRows() === state.rows"), true);
+});
+
+test("v3.1.0 counted rows: an import builds each row key as often as v3.0.1 did", async () => {
+  const counts = {};
+  for (const [name, file] of [["sample-orders.csv", path.join(REPO_ROOT, "examples", "sample-orders.csv")],
+    ["花名册.xlsx", path.join(STAGE3_FIXTURES, "花名册.xlsx")], ["sample-students.csv", path.join(__dirname, "fixtures", "examples", "sample-students.csv")]]) {
+    const scope = createExcelContext();
+    put(scope.context, "Papa", Papa);
+    scope.context.window.Papa = Papa;
+    let calls = 0;
+    const original = scope.evaluate("buildExactRowKey");
+    put(scope.context, "buildExactRowKey", (...args) => { calls += 1; return original(...args); });
+    const bytes = fs.readFileSync(file);
+    put(scope.context, "__countedFile", { name, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+    await scope.evaluate("parseDataFile(__countedFile)");
+    counts[name] = calls;
+  }
+  // v3.0.1: one key per row for the repeated rows, plus the identical-row check of duplicated IDs.
+  assert.deepEqual(counts, { "sample-orders.csv": 44, "花名册.xlsx": 33, "sample-students.csv": 120 });
+});
+
+test("v3.1.0 counted rows: findRepeatedRowIndexes() is what the repeated-row exclusion and the duplicate count share", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const repeated = JSON.parse(orders.evaluate("JSON.stringify(findRepeatedRowIndexes(state.rows, state.fields))"));
+  assert.equal(repeated.length, orders.evaluate("state.duplicateRows"));
+  assert.deepEqual(repeated.map((index) => orders.evaluate(`getSourceRowNumber(state.rows[${index}])`)), [21]);
+  assert.equal(orders.evaluate("typeof deduplicateRows"), "undefined");
+});
+
+test("v3.1.0 counted rows: with rows left out, a placeholder message counts the rows of the analysis", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate('confirmPlaceholder("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已把「金额」的 1 个「N/A」按空值处理：空值 0 → 1，认不出 1 → 0。只是把这 1 格当作空，这一行没有删，其他字段照常参与分析，所以参与分析的行还是 40。平均值等统计不变，因为「N/A」本来就没有算进去。");
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(placeholderMessage(orders), "已撤销「金额」的「N/A」：空值 1 → 0，认不出 0 → 1。这 1 格重新按原来的文字处理，参与分析的行还是 40。");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(placeholderMessage(orders), "已把 2 处常见写法按空值处理（「金额」的「N/A」、「销售代表」的「—」）。只是把这些格当作空，行都没有删，所以参与分析的行还是 40。");
+});
+
+test("v3.1.0 counted rows: the numeric filter inputs follow the counted rows unless that field is filtered", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const inputs = () => [orders.elements.get("numericFilterMin").value, orders.elements.get("numericFilterMax").value, orders.elements.get("numericFilterRange").textContent];
+  orders.evaluate('dom.numericFilterField.value = "金额"; updateNumericFilterField()');
+  assert.deepEqual(inputs(), ["480", "123440", "480 至 123,440"]);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(inputs(), ["480", "7200", "480 至 7,200"]);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.deepEqual(inputs(), ["480", "123440", "480 至 123,440"]);
+  // Applied on 金额: the user's numbers stay, the hint follows.
+  orders.evaluate(`(() => {
+    dom.numericFilterMin.value = "100"; dom.numericFilterMax.value = "200000";
+    state.filters = { category: null, numeric: { field: "金额", min: 100, max: 200000 }, date: null };
+    state.filteredRows = filterRowsByConfig(getIncludedRows(), state.filters);
+    state.filterSourceRows = getIncludedRows();
+    refreshFilteredAnalysis();
+  })()`);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(inputs(), ["100", "200000", "480 至 7,200"]);
+});
+
+// ---- v3.1.0 commit 3: the buttons and what the page says about rows left out ----
+
+const exclusionClick = (scope, kind, on) => scope.evaluate(`handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: "${kind}", exclusionOn: "${on}" } }) } })`);
+const textOf = (scope, id) => scope.elements.get(id).textContent;
+const htmlText = (scope, id) => scope.elements.get(id).innerHTML.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+const isHidden = (scope, id) => scope.elements.get(id).classList.contains("hidden");
+
+// A normal task table: names sometimes end in 汇总, hours are 2, 4 or 8 (review section 5).
+function taskTableCsv() {
+  let seed = 20261115;
+  const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const names = ["整理需求", "评审方案", "编写代码", "测试", "部署", "周报汇总", "数据汇总", "月度汇总", "客户回访", "资料归档"];
+  const people = ["张敏", "李强", "王芳", "赵磊", "陈静"];
+  const lines = ["任务名,负责人,工时,完成日期"];
+  for (let i = 0; i < 300; i += 1) {
+    const day = String(1 + Math.floor(random() * 28)).padStart(2, "0");
+    lines.push(`${pick(names)},${pick(people)},${pick([2, 4, 8])},2026-0${1 + Math.floor(random() * 9)}-${day}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+test("v3.1.0 quality page: every count stays when rows are left out; problem rows only add （不计入分析）", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const snapshot = () => JSON.stringify({
+    pills: sampleOrdersPills(orders),
+    tables: ["qualityTable", "outlierTable", "idDuplicateDetails", "placeholderDetails", "formulaErrorDetails", "dateStyleDetails", "lookAlikeDetails", "constantFieldDetails"].map((id) => orders.elements.get(id).innerHTML),
+    totalMissing: orders.evaluate("state.totalMissing"),
+    lists: JSON.parse(orders.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))"))
+  });
+  const before = snapshot();
+  exclusionClick(orders, "suspectedTotal", true);
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(snapshot(), before);
+  orders.evaluate('openProblemView({ kind: "duplicateRows" })');
+  const notes = [...orders.elements.get("problemRowsTable").innerHTML.matchAll(/<tr><td>(\d+)<\/td><td>([^<]*)<\/td>/g)].map((match) => [match[1], match[2]]);
+  assert.deepEqual(notes, [["20", "第 1 组（保留）"], ["21", "第 1 组（不计入分析）"]]);
+  const csv = orders.evaluate('buildProblemRowsCsvContent(listProblemRows({ kind: "suspectedTotal" }), state.fields)');
+  assert.match(csv, /^44,数量、金额等于第 3–43 行之和（41 行）（不计入分析）,合计,/m);
+});
+
+test("v3.1.0 quality page: the two buttons, their sentences and their own messages", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const totalsFooter = () => orders.elements.get("suspectedTotalDetails").innerHTML;
+  assert.match(totalsFooter(), /data-exclusion-kind="suspectedTotal" data-exclusion-on="true"[^>]*>不计入分析<\/button>/);
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), true);
+  assert.equal(orders.elements.get("suspectedTotalSection").classList.contains("is-excluded"), false);
+  assert.equal(isHidden(orders, "qualityScopeNote"), true);
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "不计入分析");
+  assert.equal(textOf(orders, "duplicateExclusionText"), "重复行里多出来的 1 行目前仍计入分析。");
+  assert.equal(orders.evaluate("formatDuplicateIncludedNote(1234)"), "重复行里多出来的 1,234 行目前仍计入分析。");
+
+  exclusionClick(orders, "suspectedTotal", true);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "已把 1 行疑似合计行设为不计入分析，参与分析的行 42 → 41。");
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "");
+  assert.equal(orders.elements.get("suspectedTotalSection").classList.contains("is-excluded"), true);
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), false);
+  assert.equal(textOf(orders, "suspectedTotalExcludedNote"), "这 1 行已不计入分析：统计、图表、自定义分析和筛选不再包含它。");
+  assert.match(totalsFooter(), /data-exclusion-on="false"[^>]*>撤销<\/button>/);
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。");
+
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "已把 1 行重复的行设为不计入分析，参与分析的行 41 → 40。");
+  assert.equal(textOf(orders, "duplicateExclusionText"), "多出来的 1 行已不计入分析。");
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "撤销");
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 2 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。");
+
+  exclusionClick(orders, "duplicateRows", false);
+  assert.equal(textOf(orders, "duplicateExclusionText"), "重复行里多出来的 1 行目前仍计入分析。");
+  assert.equal(htmlText(orders, "duplicateExclusionAction"), "不计入分析");
+  exclusionClick(orders, "duplicateRows", true);
+
+  exclusionClick(orders, "suspectedTotal", false);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "已撤销：1 行疑似合计行重新计入分析，参与分析的行 40 → 41。");
+  assert.equal(textOf(orders, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
+  assert.equal(isHidden(orders, "suspectedTotalExcludedNote"), true);
+
+  // Drafts: refused in the section that was clicked, nothing changes.
+  orders.evaluate('stageFieldTypeChange("销售代表", "id")');
+  exclusionClick(orders, "suspectedTotal", true);
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。");
+  assert.equal(orders.evaluate("state.excludedRows.suspectedTotal.length"), 0);
+  // A rebuild clears both messages.
+  orders.evaluate("applyFieldConfiguration()");
+  assert.equal(textOf(orders, "suspectedTotalMessage"), "");
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "");
+});
+
+test("v3.1.0 quality page: the totals section of 分区小计表 names the totals that only equal the row above", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  const single = "其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。";
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  region.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  assert.equal(textOf(region, "suspectedTotalExcludedNote"), "这 5 行已不计入分析：统计、图表、自定义分析和筛选不再包含它们。");
+  for (const scope of [await clickSampleButton(sampleOrdersFetchedText()), await importStage3Fixture("门店报表.xlsx")]) {
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /只等于上面一行/);
+  }
+});
+
+test("v3.1.0 quality page: 另有 N 行 names the labelled rows whose numbers do not add up, only where something was checked", async () => {
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  assert.equal(tasks.evaluate("state.totalLabelRows.length"), 95);
+  assert.equal(tasks.evaluate("state.suspectedTotals.length"), 6);
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("另有 89 行也带这类字样，但数字对不上，没有列出。"));
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
+  tasks.evaluate('stageFieldTypeChange("工时", "ignore"); applyFieldConfiguration()');
+  assert.equal(isHidden(tasks, "suspectedTotalSection"), true);
+  assert.equal(tasks.evaluate("formatUnmatchedTotalLabels(95, 0, false)"), "");
+  for (const scope of [await clickSampleButton(sampleOrdersFetchedText()), await importStage3Fixture("分区小计表.csv"), await importStage3Fixture("门店报表.xlsx")]) {
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /另有 \d+ 行也带这类字样/);
+  }
+});
+
+test("v3.1.0 quality page: a message counts only the rows this click left out or brought back", () => {
+  const scope = createScriptContext();
+  const rows = [["甲", "10"], ["乙", "20"], ["丙", "30"], ["合计", "60"], ["合计", "60"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "twice.csv");
+  assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 1);
+  // No column tells the records apart: the long note stays, before and after.
+  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE"));
+  exclusionClick(scope, "suspectedTotal", true);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 5 → 3。");
+  exclusionClick(scope, "duplicateRows", true);
+  assert.equal(textOf(scope, "duplicateExclusionMessage"), "多出来的 1 行已经作为疑似合计行不计入分析，参与分析的行仍是 3。");
+  exclusionClick(scope, "suspectedTotal", false);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已撤销：1 行疑似合计行重新计入分析，参与分析的行 3 → 4。");
+});
+
+test("v3.1.0 page: scope sentence, filter panel, overview, preview, sidebar and custom analysis count the rows left out", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "品类"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis(); dom.v2AnalysisResults.classList.remove("hidden")');
+  const view = () => ({
+    scope: textOf(orders, "globalFilterSummary"),
+    counts: ["filterOriginalCount", "filterCurrentCount", "filterExcludedCount", "filterNotCountedCount"].map((id) => textOf(orders, id)),
+    notCountedHidden: isHidden(orders, "filterNotCountedItem"),
+    filterMessage: textOf(orders, "filterMessage"),
+    overview: htmlText(orders, "overviewCards"),
+    preview: textOf(orders, "previewPageInfo"),
+    // The sidebar says it once, in its 筛选 line; it has no row of its own for the rows left out.
+    sidebar: textOf(orders, "sidebarFilterSummary"),
+    custom: textOf(orders, "v2ResultSummary")
+  });
+  assert.deepEqual(view(), {
+    scope: "全部 42 行", counts: ["42", "42", "0", "0"], notCountedHidden: true, filterMessage: "尚未应用筛选，当前分析使用全部记录。",
+    overview: "总记录数 42 字段数 9 数值字段数 2 分类字段数 5 空值概览 6", preview: "第 1 / 1 页，共 42 行", sidebar: "全部 42 行",
+    custom: "已按 品类 对 金额 进行求和，结果基于完整数据 42 行。指标字段「金额」有 1 个值认不出是数字，已从计算中排除。"
+  });
+  exclusionClick(orders, "suspectedTotal", true);
+  exclusionClick(orders, "duplicateRows", true);
+  assert.deepEqual(view(), {
+    scope: "40 行（另有 2 行不计入分析）", counts: ["42", "40", "0", "2"], notCountedHidden: false, filterMessage: "当前分析使用全部 40 行（不含不计入分析的 2 行）。",
+    overview: "总记录 → 当前分析 42 → 40 字段数 9 数值字段数 2 分类字段数 5 空值概览 0", preview: "第 1 / 1 页，共 40 行（不含不计入分析的 2 行）", sidebar: "40 行（另有 2 行不计入分析）",
+    custom: "已按 品类 对 金额 进行求和，结果基于 40 行（另有 2 行不计入分析）。指标字段「金额」有 1 个值认不出是数字，已从计算中排除。"
+  });
+  orders.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["华东", "华南"]); applyFilters()');
+  assert.deepEqual(view(), {
+    scope: "已筛选 1 项 · 17 / 40 行（另有 2 行不计入分析）", counts: ["42", "17", "23", "2"], notCountedHidden: false, filterMessage: "已应用 1 个筛选条件，保留 17 行，筛除 23 行。",
+    overview: "总记录 → 当前分析 42 → 17 字段数 9 数值字段数 2 分类字段数 5 空值概览 0", preview: "第 1 / 1 页，共 17 行", sidebar: "已筛选 1 项 · 17 / 40 行（另有 2 行不计入分析）",
+    custom: "已按 品类 对 金额 进行求和，结果基于当前筛选数据 17 / 40 行（另有 2 行不计入分析）。"
+  });
+  // A click while filtered writes the filter message again with the new numbers.
+  exclusionClick(orders, "duplicateRows", false);
+  const kept = orders.evaluate("getAnalysisRows().length");
+  assert.equal(textOf(orders, "filterMessage"), `已应用 1 个筛选条件，保留 ${kept} 行，筛除 ${41 - kept} 行。`);
+  assert.equal(textOf(orders, "filterExcludedCount"), String(41 - kept));
+  orders.evaluate("clearAllFilters()");
+  assert.equal(textOf(orders, "filterMessage"), "已清除全部筛选，当前分析恢复使用全部 41 行（不含不计入分析的 1 行）。");
+  // 当前状态 keeps its three rows: 筛选, 表头, 已按空值处理.
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const status = html.slice(html.indexOf('<dl class="sidebar-status">'), html.indexOf("</dl>", html.indexOf('<dl class="sidebar-status">')));
+  assert.deepEqual([...status.matchAll(/<dt>([^<]*)<\/dt>/g)].map((match) => match[1]), ["筛选", "表头", "已按空值处理"]);
+});
+
+test("v3.1.0 filters: 筛除 counts from the rows counted in the analysis, in the message and in the panel", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate('dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["华东", "华南"]); applyFilters()');
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 17);
+  assert.equal(textOf(orders, "filterMessage"), "已应用 1 个筛选条件，保留 17 行，筛除 23 行。");
+  assert.equal(textOf(orders, "filterExcludedCount"), "23");
+});
+
+test("v3.1.0 filters: a filter result made from other rows falls back to the 40 counted rows, never all 42", async () => {
+  const orders = await sampleWithExclusions();
+  orders.evaluate("state.filterSourceRows = state.rows.slice(0, 3); state.filteredRows = state.rows.slice(0, 3)");
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+  assert.equal(orders.evaluate("getAnalysisRows() === getIncludedRows()"), true);
+  orders.evaluate("state.filterSourceRows = state.rows");
+  assert.equal(orders.evaluate("getAnalysisRows().length"), 40);
+});
+
+test("v3.1.0 status bar: the totals sentence offers to leave them out and never says 仍计入统计 again", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(textOf(orders, "statusPanel"), "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  const oldEnding = "目前仍计入统计，详情见“数据质量”";
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  const { html, markdown } = reportOf(orders);
+  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html, markdown]) {
+    assert.ok(!text.includes(oldEnding));
+  }
+  const region = await importStage3Fixture("分区小计表.csv");
+  assert.ok(!textOf(region, "statusPanel").includes(oldEnding));
+  assert.ok(textOf(region, "statusPanel").endsWith("发现 5 行疑似合计 / 小计（第 5、8、10、14、15 行），可以在“数据质量”里设为不计入分析。"));
+});
+
+test("v3.1.0 empty states: without a filter they no longer say 当前筛选", () => {
+  const scope = createScriptContext();
+  withFakeCharts(scope);
+  const emptyTexts = collectEmptyChartTexts(scope);
+  const rows = [...Array.from({ length: 6 }, (_, i) => ({ 名称: `商品${i + 1}`, 金额: String((i + 1) * 10), 备注: "" })), { 名称: "合计", 金额: "210", 备注: "手工合计" }];
+  commitRows(scope, ["名称", "金额", "备注"], rows, "only-total-note.csv");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  emptyTexts();
+  scope.evaluate('dom.categoryChartField.value = "备注"; renderCategoryTopChart()');
+  assert.ok(scope.elements.get("categoryStats").innerHTML.includes("当前分析的行里没有非空类别值。"));
+  assert.deepEqual(emptyTexts(), [["categoryTopChart", "当前分析的行里没有可统计的分类值"]]);
+  assert.doesNotMatch(scope.elements.get("categoryStats").innerHTML, /当前筛选/);
+});
+
+const CONTAINS_NOTE_IDS = ["statisticsContainsNote", "chartsContainsNote", "customContainsNote"];
+const containsNotes = (scope) => CONTAINS_NOTE_IDS.map((id) => (isHidden(scope, id) ? null : htmlText(scope, id)));
+const containsTarget = (scope) => (scope.elements.get("statisticsContainsNote").innerHTML.match(/data-quality-target="(\w+)" aria-label="([^"]*)"/) || []).slice(1);
+const filterRegion = (scope, ...regions) => scope.evaluate(`dom.categoryFilterField.value = "地区"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(${JSON.stringify(regions)}); applyFilters()`);
+
+test("v3.1.0 modules: statistics, charts and custom analysis say what the filtered rows still contain", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const both = "这些结果包含 1 行疑似合计行、1 行重复的行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [both, both, both]);
+  assert.deepEqual(containsTarget(orders), ["suspectedTotal", "去数据质量处理疑似合计行和重复的行"]);
+  // The import built no list of repeated rows for it: state.duplicateRows says how many.
+  assert.equal(orders.evaluate("state.repeatedRowSource === state.rows"), false);
+
+  // By the filtered rows: 华东 has neither the total (no region) nor the repeated row (华南).
+  filterRegion(orders, "华东");
+  assert.deepEqual(containsNotes(orders), [null, null, null]);
+  assert.equal(orders.elements.get("statisticsContainsNote").innerHTML, "");
+  filterRegion(orders, "华南");
+  const repeated = "这些结果包含 1 行重复的行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [repeated, repeated, repeated]);
+  assert.deepEqual(containsTarget(orders), ["duplicateRows", "去数据质量处理重复的行"]);
+  orders.evaluate("clearAllFilters()");
+  assert.deepEqual(containsNotes(orders), [both, both, both]);
+
+  // Rows left out are no longer contained; both kinds out, no note.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(containsNotes(orders), [repeated, repeated, repeated]);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.deepEqual(containsNotes(orders), [null, null, null]);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  const total = "这些结果包含 1 行疑似合计行。 去数据质量处理";
+  assert.deepEqual(containsNotes(orders), [total, total, total]);
+  assert.deepEqual(containsTarget(orders), ["suspectedTotal", "去数据质量处理疑似合计行"]);
+
+  // Without a clean ID column the repeated rows are not named (they may be different records).
+  const noId = await clickSampleButton(sampleOrdersFetchedText());
+  noId.evaluate('stageFieldTypeChange("订单编号", "category"); applyFieldConfiguration()');
+  assert.deepEqual(containsNotes(noId), [total, total, total]);
+  noId.evaluate("resetAnalysisState()");
+  assert.deepEqual(containsNotes(noId), [null, null, null]);
+  assert.equal(noId.elements.get("customContainsNote").innerHTML, "");
+  assert.equal(formatAnalysisContainsNoteOf(noId, 0, 0), "");
+  assert.equal(formatAnalysisContainsNoteOf(noId, 1234, 5678), "这些结果包含 1,234 行疑似合计行、5,678 行重复的行。");
+});
+
+test("v3.1.0 modules: the repeated-row list is built once per import, however often the filters change", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("globalThis.__repeatedListCalls = 0; const __find = findRepeatedRowIndexes; findRepeatedRowIndexes = (...args) => { globalThis.__repeatedListCalls += 1; return __find(...args); }");
+  const calls = () => orders.evaluate("globalThis.__repeatedListCalls");
+  assert.equal(calls(), 0);
+  filterRegion(orders, "华南");
+  assert.equal(calls(), 1);
+  filterRegion(orders, "华东");
+  orders.evaluate("clearAllFilters()");
+  exclusionClick(orders, "duplicateRows", true);
+  assert.equal(orders.evaluate("state.excludedRows.duplicateRows.length"), 1);
+  assert.equal(calls(), 1);
+  // Another file: built again, once.
+  const rows = [["A-1", "甲", "10"], ["A-2", "乙", "20"], ["A-2", "乙", "20"], ...Array.from({ length: 12 }, (_, i) => [`A-${i + 3}`, "丙", String(30 + i)])].map(([订单ID, 名称, 金额]) => ({ 订单ID, 名称, 金额 }));
+  commitRows(orders, ["订单ID", "名称", "金额"], rows, "another.csv");
+  assert.equal(orders.evaluate("state.duplicateRows"), 1);
+  // A clean ID column: the notes need the list once a filter applies.
+  assert.equal(orders.evaluate("hasCleanIdField()"), true);
+  assert.equal(calls(), 1);
+  orders.evaluate('dom.categoryFilterField.value = "名称"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["乙"]); applyFilters()');
+  assert.equal(calls(), 2);
+  assert.deepEqual(containsNotes(orders), Array(3).fill("这些结果包含 1 行重复的行。 去数据质量处理"));
+  orders.evaluate('state.categoryFilterDraftValues = new Set(["乙", "丙"]); applyFilters()');
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(calls(), 2);
+});
+
+function formatAnalysisContainsNoteOf(scope, totals, duplicates) {
+  return scope.evaluate(`formatAnalysisContainsNote(${totals}, ${duplicates})`);
+}
+
+test("v3.1.0 modules: 去数据质量处理 opens the quality module at the subsection and focuses it", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const calls = [];
+  const record = (id, name) => { orders.elements.get(id)[name] = (options) => calls.push(`${id}.${name}${options ? ` ${JSON.stringify(options)}` : ""}`); };
+  record("suspectedTotalSection", "scrollIntoView");
+  record("suspectedTotalTitle", "focus");
+  record("duplicateExclusion", "scrollIntoView");
+  const duplicateButton = { focus: (options) => calls.push(`duplicate button.focus ${JSON.stringify(options)}`) };
+  orders.elements.get("duplicateExclusionAction").querySelector = (selector) => (selector === "button[data-exclusion-kind]" ? duplicateButton : null);
+  const click = (target) => orders.evaluate(`showModule("statisticsSection"); handleAnalysisNoteClick({ target: { closest: () => ({ dataset: { qualityTarget: "${target}" } }) } })`);
+
+  click("suspectedTotal");
+  assert.equal(orders.evaluate("document.body.dataset.module"), "qualitySection");
+  assert.deepEqual(calls, ['suspectedTotalSection.scrollIntoView {"block":"start"}', 'suspectedTotalTitle.focus {"preventScroll":true}']);
+  calls.length = 0;
+  click("duplicateRows");
+  assert.equal(orders.evaluate("document.body.dataset.module"), "qualitySection");
+  assert.deepEqual(calls, ['duplicateExclusion.scrollIntoView {"block":"start"}', 'duplicate button.focus {"preventScroll":true}']);
+  // A click beside the button does nothing.
+  calls.length = 0;
+  orders.evaluate('showModule("chartsSection"); handleAnalysisNoteClick({ target: { closest: () => null } })');
+  assert.equal(orders.evaluate("document.body.dataset.module"), "chartsSection");
+  assert.deepEqual(calls, []);
+
+  const html = repoFile("index.html");
+  assert.match(html, /<h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 \/ 小计行<\/h3>/);
+  for (const [section, id] of [["statisticsSection", "statisticsContainsNote"], ["chartsSection", "chartsContainsNote"], ["customSection", "customContainsNote"]]) {
+    const start = html.indexOf(`<section id="${section}"`);
+    const heading = html.slice(html.indexOf('<div class="section-heading">', start), html.indexOf(`id="${id}"`, start));
+    // Inside the heading, right under the range sentence, and the heading's last child.
+    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<p $/, section);
+    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<\/div>\s*<(div|p) class=/, section);
+  }
+  assert.match(repoFile("script.js"), /\[dom\.statisticsContainsNote, dom\.chartsContainsNote, dom\.customContainsNote\]\.forEach\(\(note\) => note\.addEventListener\("click", handleAnalysisNoteClick\)\)/);
+});
+
+test("v3.1.0 quality page: a total whose columns match different ranges is not one that only equals the row above", () => {
+  const totalsOf = (rows) => {
+    const scope = createScriptContext();
+    commitRows(scope, ["名称", "数量", "金额"], rows.map(([名称, 数量, 金额]) => ({ 名称, 数量, 金额 })), "two-ranges.csv");
+    return scope;
+  };
+  // 合计: 数量 40 is only 丙 above it (the segment after 小计); 金额 15 is 甲 + 乙 + 丙 (5 + 7 + 3).
+  const mixed = totalsOf([["甲", "10", "5"], ["乙", "20", "7"], ["小计", "30", "12"], ["丙", "40", "3"], ["合计", "40", "15"]]);
+  const matches = JSON.parse(mixed.evaluate("JSON.stringify(state.suspectedTotals.map((item) => item.matches.map((match) => [match.scope, match.fields.join(), match.rowCount])))"));
+  assert.deepEqual(matches, [[["segment", "数量,金额", 2]], [["segment", "数量", 1], ["above", "金额", 3]]]);
+  assert.doesNotMatch(htmlText(mixed, "suspectedTotalDetails"), /只等于上面一行/);
+  // Control: with 金额 3, both columns of 合计 only equal 丙, and the sentence names it.
+  const single = totalsOf([["甲", "10", "5"], ["乙", "20", "7"], ["小计", "30", "12"], ["丙", "40", "3"], ["合计", "40", "3"]]);
+  assert.ok(htmlText(single, "suspectedTotalDetails").includes("其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
+});
+
+test("v3.1.0 quality page: the repeated-rows message counts only the rows this click adds, not the total rows already out", () => {
+  const scope = createScriptContext();
+  const rows = [["甲", "10"], ["乙", "20"], ["乙", "20"], ["丙", "30"], ["合计", "80"], ["合计", "80"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "totals-and-repeats.csv");
+  assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
+  assert.equal(scope.evaluate("state.duplicateRows"), 2);
+  exclusionClick(scope, "suspectedTotal", true);
+  assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 6 → 4。");
+  exclusionClick(scope, "duplicateRows", true);
+  assert.equal(textOf(scope, "duplicateExclusionMessage"), "已把 1 行重复的行设为不计入分析，参与分析的行 4 → 3。");
+});
+
+const REPORT_EXCLUDED_KEYS = ["dataScale.excludedRows", "exclusions", "quality.excludedScope", "quality.suspectedTotalsExcluded", "quality.suspectedTotalExtras"];
+const scaleCard = (label, value) => `<div class="scale-card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+
+test("v3.1.0 report: the rows left out are named in the data scale, the filters, the quality part and the totals section", async () => {
+  const orders = await sampleWithExclusions();
+  const { report, html, markdown } = reportOf(orders);
+  assert.deepEqual([report.dataScale.rows, report.dataScale.originalRows, report.dataScale.filteredOutRows, report.dataScale.excludedRows], [40, 42, 0, 2]);
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] }, overlap: null });
+  assert.deepEqual(report.quality.excludedScope, { totalRows: 42, excludedRows: 2, excludedMissing: 6 });
+  assert.equal(report.quality.suspectedTotalsExcluded, 1);
+
+  const left = "不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。";
+  const scope = "质量页检查的是文件里的全部 42 行，包括不计入分析的 2 行（其中有 6 个空值）；偏大或偏小的值也按这 42 行算。";
+  const excludedNote = "这 1 行已不计入分析：统计、图表、自定义分析和筛选不再包含它。";
+  // HTML: a card after 筛除行数; the sentence between the filter text and the quality scope text;
+  // the page's sentence under the quality heading; the totals note as on the page.
+  assert.ok(html.includes(`${scaleCard("筛除行数", 0)}${scaleCard("不计入分析行数", 2)}${scaleCard("字段总数", 9)}`));
+  const noFilter = "未设置筛选，结果基于全部 40 行（不含不计入分析的 2 行）。";
+  assert.match(html, new RegExp(`<p>${noFilter}<\\/p>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据，不受筛选影响。<\\/p>`));
+  assert.match(html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${scope}<\\/p>\\s*<p>空值总数：`));
+  assert.match(html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${excludedNote}<\\/p>`));
+  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  // Markdown: the same four places.
+  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 不计入分析行数 | 2 |\n| 字段总数 | 9 |"));
+  assert.ok(markdown.includes(`${noFilter}\n\n${left}\n\n数据质量部分始终基于原始数据，不受筛选影响。`));
+  assert.ok(markdown.includes(`## 数据质量报告\n\n${scope}\n\n- 空值总数：`));
+  assert.ok(markdown.includes(`### 疑似合计 / 小计行\n\n${excludedNote}\n\n- 第 44 行`));
+  assert.ok(!markdown.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  // The page shows the same sentences.
+  assert.equal(textOf(orders, "qualityScopeNote"), scope);
+  assert.equal(textOf(orders, "suspectedTotalExcludedNote"), excludedNote);
+
+  // Filtered as well: 筛除 counts from the 40 counted rows.
+  filterRegion(orders, "华东", "华南");
+  const filtered = reportOf(orders);
+  assert.deepEqual([filtered.report.dataScale.rows, filtered.report.dataScale.filteredOutRows, filtered.report.dataScale.excludedRows], [17, 23, 2]);
+  assert.ok(filtered.html.includes(`${scaleCard("筛除行数", 23)}${scaleCard("不计入分析行数", 2)}`));
+  assert.match(filtered.html, new RegExp(`<\\/table><\\/div>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据`));
+
+  // One kind only: only that kind; the totals section keeps its usual note.
+  const repeats = await sampleWithExclusions({ totals: false });
+  const one = reportOf(repeats);
+  assert.ok(one.markdown.includes("\n不计入分析：重复的行 1 行（第 21 行）。\n"));
+  assert.ok(one.markdown.includes(`### 疑似合计 / 小计行\n\n${repeats.evaluate("SUSPECTED_TOTAL_NOTE")}\n`));
+  assert.ok(one.markdown.includes(`## 数据质量报告\n\n${textOf(repeats, "qualityScopeNote")}\n\n`));
+  assert.equal(textOf(repeats, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
+  // The same words as the filter panel without a filter.
+  assert.ok(one.markdown.includes("\n未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。\n"));
+  assert.equal(textOf(repeats, "filterMessage"), "当前分析使用全部 41 行（不含不计入分析的 1 行）。");
+  assert.ok(!one.markdown.includes("完整数据") && !one.html.includes("完整数据"));
+});
+
+test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const plain = reportOf(orders);
+  assert.equal(plain.report.dataScale.excludedRows, 0);
+  assert.equal(plain.report.exclusions, null);
+  assert.equal(plain.report.quality.excludedScope, null);
+  assert.equal(plain.report.quality.suspectedTotalsExcluded, 0);
+  for (const text of [plain.html, plain.markdown]) {
+    assert.ok(!text.includes("不计入分析"), text.slice(0, 80));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+  }
+  assert.equal(orders.evaluate("formatReportNoFilterText(42, 0)"), "");
+  assert.equal(orders.evaluate("formatReportNoFilterText(12345, 1234)"), "未设置筛选，结果基于全部 12,345 行（不含不计入分析的 1,234 行）。");
+
+  // A snapshot from before v3.1.0 has none of the new keys: 0 / null, and no sentence.
+  const excluded = await sampleWithExclusions();
+  const report = JSON.parse(excluded.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  for (const key of REPORT_EXCLUDED_KEYS) {
+    const [head, tail] = key.split(".");
+    if (tail) delete report[head][tail];
+    else delete report[head];
+  }
+  put(excluded.context, "__oldReport", report);
+  const normalized = JSON.parse(excluded.evaluate("JSON.stringify(normalizeReportSnapshot(__oldReport))"));
+  assert.deepEqual([normalized.dataScale.excludedRows, normalized.exclusions, normalized.quality.excludedScope, normalized.quality.suspectedTotalsExcluded, normalized.quality.suspectedTotalExtras], [0, null, null, 0, null]);
+  const html = excluded.evaluate("buildHtmlReport(__oldReport, [])");
+  const markdown = excluded.evaluate("buildMarkdownReport(__oldReport)");
+  for (const text of [html, markdown]) {
+    assert.ok(!text.includes("不计入分析"));
+    assert.ok(!text.includes("质量页检查的是"));
+    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE")));
+    assert.ok(text.includes(NO_FILTER_SENTENCE));
+  }
+  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 字段总数 | 9 |"));
+});
+
+test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no line number", () => {
+  const scope = createScriptContext();
+  const lines = (count, from = 5) => Array.from({ length: count }, (_, i) => from + i);
+  const sentence = (exclusions) => scope.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
+  assert.equal(sentence(null), "");
+  assert.equal(sentence({ suspectedTotal: { count: 5, lines: [5, 8, 10, 14, 15] }, duplicateRows: { count: 0, lines: [] } }), "不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。");
+  assert.equal(sentence({ suspectedTotal: { count: 0, lines: [] }, duplicateRows: { count: 20, lines: lines(20) } }), `不计入分析：重复的行 20 行（第 ${lines(20).join("、")} 行）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 0, lines: [] }, duplicateRows: { count: 1234, lines: lines(20) } }), `不计入分析：重复的行 1,234 行（第 ${lines(20).join("、")} 行等）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] } }), "不计入分析：疑似合计行 2 行。");
+  // From the state: at most 20 numbers kept, and none at all when a row has no line number.
+  const rows = [["甲", "10"], ["乙", "20"], ["丙", "30"], ["合计", "60"], ["合计", "60"]].map(([名称, 金额]) => ({ 名称, 金额 }));
+  commitRows(scope, ["名称", "金额"], rows, "no-lines.csv");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  const report = JSON.parse(scope.evaluate("JSON.stringify(buildReportData())"));
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] }, overlap: null });
+  assert.ok(scope.evaluate("buildMarkdownReport(buildReportData())").includes("\n不计入分析：疑似合计行 2 行。\n"));
+});
+
+test("v3.1.0 report: a row of both kinds is counted once, and named, in the 不计入分析 line", async () => {
+  const both = await importCsvFile("编号,名称,金额\n1,甲,10\n2,乙,20\n2,乙,20\n3,丙,30\n,合计,80\n,合计,80\n", "totals-and-repeats.csv");
+  both.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  const { report, html, markdown } = reportOf(both);
+  assert.equal(report.dataScale.excludedRows, 3);
+  assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } });
+  const line = "不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行），共 3 行（第 7 行两类都是）。";
+  assert.ok(html.includes(`<p>${line}</p>`));
+  assert.ok(markdown.includes(`\n${line}\n`));
+  assert.ok(html.includes(`${scaleCard("不计入分析行数", 3)}`));
+
+  // Without overlap the sentence is unchanged, and the snapshot says null.
+  const sample = reportOf(await sampleWithExclusions());
+  assert.equal(sample.report.exclusions.overlap, null);
+  assert.ok(sample.markdown.includes("\n不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。\n"));
+  // An old snapshot (no overlap key) gets null and the sentence without 共.
+  const old = JSON.parse(both.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
+  delete old.exclusions.overlap;
+  put(both.context, "__oldOverlap", old);
+  assert.equal(both.evaluate("normalizeReportSnapshot(__oldOverlap).exclusions.overlap"), null);
+  assert.ok(both.evaluate("buildMarkdownReport(__oldOverlap)").includes("\n不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。\n"));
+
+  // More than 20 rows of both kinds end in 等; without line numbers only 共 N 行.
+  const sentence = (exclusions) => both.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
+  const lines = Array.from({ length: 20 }, (_, i) => i + 2);
+  assert.equal(sentence({ suspectedTotal: { count: 30, lines }, duplicateRows: { count: 40, lines }, overlap: { count: 25, lines } }),
+    `不计入分析：疑似合计行 30 行（第 ${lines.join("、")} 行等）、重复的行 40 行（第 ${lines.join("、")} 行等），共 45 行（第 ${lines.join("、")} 行等两类都是）。`);
+  assert.equal(sentence({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 2, lines: null }, overlap: { count: 1, lines: null } }),
+    "不计入分析：疑似合计行 2 行、重复的行 2 行，共 3 行。");
+  assert.equal(sentence({ suspectedTotal: { count: 1234, lines: null }, duplicateRows: { count: 1000, lines: null }, overlap: { count: 1, lines: null } }),
+    "不计入分析：疑似合计行 1,234 行、重复的行 1,000 行，共 2,233 行。");
+});
+
+test("v3.1.0 report: the totals section has the page's 只等于上面一行 and 另有 N 行 sentences", async () => {
+  const region = await importStage3Fixture("分区小计表.csv");
+  const single = "其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。";
+  assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
+  const regionReport = reportOf(region);
+  assert.ok(regionReport.html.includes(`<p>${single}</p>`));
+  assert.ok(regionReport.markdown.includes(`\n${single}\n`));
+  // Left out: the excluded note and still the same sentence.
+  region.evaluate('setRowExclusion("suspectedTotal", true)');
+  const excludedReport = reportOf(region);
+  assert.ok(excludedReport.markdown.includes(`### 疑似合计 / 小计行\n\n${textOf(region, "suspectedTotalExcludedNote")}\n`));
+  assert.ok(excludedReport.markdown.includes("不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。"));
+  assert.ok(excludedReport.markdown.includes(`\n${single}\n`));
+
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  const tasksReport = reportOf(tasks);
+  for (const sentence of ["另有 89 行也带这类字样，但数字对不上，没有列出。", "其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
+    assert.ok(htmlText(tasks, "suspectedTotalDetails").includes(sentence));
+    assert.ok(tasksReport.html.includes(`<p>${sentence}</p>`), sentence);
+    assert.ok(tasksReport.markdown.includes(`\n${sentence}\n`), sentence);
+  }
+  // The sample has neither.
+  const { html, markdown } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
+  for (const text of [html, markdown]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
+});
+
+test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
+  const html = repoFile("index.html");
+  const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
+  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
+
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const downloads = captureDownloads(orders);
+  const note = () => textOf(orders, "dataExportExcludedNote");
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["42", ""]);
+  orders.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["40", "不含不计入分析的 2 行。"]);
+  assert.equal(orders.evaluate("formatDataExportExcludedNote(1234)"), "不含不计入分析的 1,234 行。");
+  orders.evaluate('exportProcessedCsv("filtered")');
+  const [file] = await downloads();
+  assert.match(file.fileName, /^sample-orders_当前分析_\d{8}\.csv$/);
+  assert.equal(textOf(orders, "dataExportStatus"), `已导出当前分析的 40 行：${file.fileName}`);
+  assert.deepEqual(file.bom, [0xef, 0xbb, 0xbf]);
+  assert.equal(file.text.split("\r\n").length, 41);
+  // Filtered as well: still the rows of the statistics, and the note stays.
+  filterRegion(orders, "华东", "华南");
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["17", "不含不计入分析的 2 行。"]);
+  // Nothing left out: no note.
+  orders.evaluate('clearAllFilters(); setRowExclusion("suspectedTotal", false); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual([textOf(orders, "dataExportFilteredCount"), note()], ["42", ""]);
+  // The deduplicated export is gone, code and page.
+  assert.throws(() => orders.evaluate('getProcessedExportRows("deduplicated")'), /不支持的数据导出类型/);
+  for (const source of ["app.js", "report.js", "script.js"]) assert.doesNotMatch(repoFile(source), /deduplicated|Deduplicated/, source);
+});
+
+test("v3.1.0 export: the page never says 去重后 or 导出筛选后 CSV again", async () => {
+  const words = ["去重后", "导出筛选后 CSV", "筛选后数据", "_filtered"];
+  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  for (const word of words) assert.ok(!html.includes(word), word);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('setRowExclusion("suspectedTotal", true); exportProcessedCsv("filtered")');
+  for (const [id, element] of orders.elements) {
+    for (const word of words) {
+      assert.ok(!String(element.textContent).includes(word) && !String(element.innerHTML).includes(word), `${id}: ${word}`);
+    }
+  }
+});
+
+test("v3.1.0 wording: the new sentences use no old interface word and no space between two Chinese characters", async () => {
+  const hits = [];
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const region = await importStage3Fixture("分区小计表.csv");
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  for (const [name, scope] of [["sample", orders], ["region", region], ["tasks", tasks]]) {
+    scope.evaluate('setRowExclusion("suspectedTotal", true); if (state.duplicateRows) setRowExclusion("duplicateRows", true)');
+    for (const id of ["qualityScopeNote", "suspectedTotalExcludedNote", "suspectedTotalMessage", "duplicateExclusionText", "duplicateExclusionMessage", "globalFilterSummary", "filterMessage", "previewPageInfo", "statusPanel", ...CONTAINS_NOTE_IDS]) {
+      findOldInterfaceWords(`${name} #${id}`, textOf(scope, id), hits);
+      if (HAN_SPACE_HAN.test(textOf(scope, id).replace(/「[^」]*」/g, ""))) hits.push(`${name} #${id}: a space between two Chinese characters`);
+    }
+    findOldInterfaceWords(`${name} #suspectedTotalDetails`, htmlText(scope, "suspectedTotalDetails"), hits);
+  }
+  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
+    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
+    formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
+    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL,
+    formatReportNoFilterText(40, 2), formatDataExportExcludedNote(2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
+  for (const text of fixed) {
+    findOldInterfaceWords("format.js", text, hits);
+    if (HAN_SPACE_HAN.test(text)) hits.push(`format.js: a space between two Chinese characters: ${text}`);
+  }
+  assert.deepEqual(hits, []);
+  // 不计入分析 is part of several sentences and the button: the button is matched with its markup.
+  assert.match(orders.elements.get("suspectedTotalDetails").innerHTML, /data-exclusion-kind="suspectedTotal" data-exclusion-on="false"[^>]*>撤销<\/button>/);
+  assert.doesNotMatch(orders.elements.get("suspectedTotalDetails").innerHTML, />不计入分析<\/button>/);
 });
