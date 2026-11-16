@@ -820,7 +820,7 @@ exportProcessedCsv(mode)
 ```
 
 - 只有 `filtered` 一种（界面上叫“当前分析的行”），使用 `getAnalysisRows()`；文件名 `<原文件名>_当前分析_<yyyymmdd>.csv`（v3.1.0 前是 `_filtered`），状态行“已导出当前分析的 40 行：…”；有不计入分析的行时，导出区说明后加“不含不计入分析的 2 行。”（`formatDataExportExcludedNote()`）。v3.1.0 删去了 `deduplicated`（去重后 CSV），别的 `mode` 抛错。
-- `buildCsvExportContent()` 保留原字段顺序，按 `readCsvExportCell()` 取值（行里没有这个字段或值为 `null` / `undefined` 时为空），交给 `buildCsvTableContent(headers, cellRows)`：表头和每个单元格都经 `sanitizeCsvExportValue()`，通过 PapaParse 生成 CRLF CSV。两种数据导出和问题行导出共用这一个函数。
+- `buildCsvExportContent()` 保留原字段顺序，按 `readCsvExportCell()` 取值（行里没有这个字段或值为 `null` / `undefined` 时为空），交给 `buildCsvTableContent(headers, cellRows)`：表头和每个单元格都经 `sanitizeCsvExportValue()`，通过 PapaParse 生成 CRLF CSV。数据导出（当前分析的行）、问题行导出和写法统一的两个导出共用这一个函数（v3.1.0 前数据导出有两种）。
 - `sanitizeCsvExportValue()` 中和可能触发电子表格公式的前缀，同时保留合法负数。
 - `createUtf8BomBlob()` 添加 UTF-8 BOM。
 
@@ -841,7 +841,7 @@ exportProblemRows()
 
 ### 标准化导出（v2.10.0）
 
-导出区的第三个选项。先点“检查会改哪些格”，按已应用的字段配置把全部原始行逐格过一遍，页面列出每列会改写多少格、哪些格保持原值；再导出“写法统一的表”和“改动清单”。**只多一个导出，现有结果一律不变**：`state.rows`、profile、类型、缺失计数、统计、图表、筛选、质量页数字、问题行、报告、筛选后 / 去重后两种 CSV 都不变（护栏测试在 stage3 和全部示例上核对检查前后 `state.rows` 和两种导出逐字相同）。
+导出区的第二个选项（v3.1.0 删去去重后的导出之前是第三个）。先点“检查会改哪些格”，按已应用的字段配置把全部原始行逐格过一遍，页面列出每列会改写多少格、哪些格保持原值；再导出“写法统一的表”和“改动清单”。**只多一个导出，现有结果一律不变**：`state.rows`、profile、类型、缺失计数、统计、图表、筛选、质量页数字、问题行、报告、筛选后 / 去重后两种 CSV 都不变（护栏测试在 stage3 和全部示例上核对检查前后 `state.rows` 和两种导出逐字相同）。
 
 ```text
 checkStandardizedExport()                      # 只在点“检查会改哪些格”时
@@ -869,7 +869,7 @@ exportStandardizedData("changes") → buildStandardizedChangesCsvContent(…, li
 - **整表汇总**：外层按行、内层按字段，清单天然按行、再按字段排好。`state.standardizedExport = { counts, cells, totals, cellCount }`：`counts` 每字段一项 `{ field, typeKey, kind, currencyMode, unit, date, number, placeholder, trim, kept, keptByAction, keptSamples, orderHint }`；`cells` 是四个平行数组（行下标、字段下标、动作码 `STANDARDIZE_ACTIONS`、导出值，保持原值的格存 `undefined`），不存行对象副本，原值和文件行号在导出时现取。
 - **日月顺序提示**（`orderHint`）：已应用 `dateStrategy.order` 是 dmy / mdy 的日期字段，用 `buildDateStrategy()` 对导出后的非缺失值重算；顺序变了、并且有导出值原来读得出、按重算后的策略读不出时提示——典型是唯一的顺序证据格被改写，剩下的带时间的写法保持原值，再导入时读不成日期。普通的 dmy / mdy 列全部改写后不提示（它们再导入仍是日期）。
 - **时机和作废**：三条刷新路径都不计算；导入、字段配置应用 / 恢复、疑似缺失值确认 / 撤销后作废（`clearStandardizedExport()`，面板收起、表格和状态行清空），筛选不影响（结果基于原始数据）。
-- **页面**：`#dataExportSection` 里 `.data-export-options` 的第三个 `.data-export-option`（`#checkStandardizedExport`、门禁说明 `#standardizedExportGate`），选项下方的静态面板 `#standardizedExportPanel`（摘要句、检查表 `#standardizedExportTable`、`#exportStandardizedCsv`、`#exportStandardizedChanges`、状态行 `#standardizedExportStatus`）。检查表只列有改动、保持原值、按年份读或有顺序提示的字段，字段名下面可有三条说明（按年份读取、单位不写进导出文件、顺序提示）；被忽略的字段只在摘要句里计数；没有任何改动时写“没有需要统一写法的单元格，导出的数据与原始数据相同。”。打印样式隐藏两个导出按钮。
+- **页面**：`#dataExportSection` 里 `.data-export-options` 的第二个 `.data-export-option`（v3.1.0 前是第三个）（`#checkStandardizedExport`、门禁说明 `#standardizedExportGate`），选项下方的静态面板 `#standardizedExportPanel`（摘要句、检查表 `#standardizedExportTable`、`#exportStandardizedCsv`、`#exportStandardizedChanges`、状态行 `#standardizedExportStatus`）。检查表只列有改动、保持原值、按年份读或有顺序提示的字段，字段名下面可有三条说明（按年份读取、单位不写进导出文件、顺序提示）；被忽略的字段只在摘要句里计数；没有任何改动时写“没有需要统一写法的单元格，导出的数据与原始数据相同。”。打印样式隐藏两个导出按钮。
 - **门禁**：检查按钮与报告同条件（`canCheckStandardizedExport()` = `canExportReport()`）；两个导出按钮还要求有检查结果；改动清单 0 条时“导出改动清单”禁用。检查后又出现未应用的字段草稿时三个按钮都禁用并写原因，检查结果不作废。
 - **两份导出**：都经过 `buildCsvTableContent()`（公式中和照旧，改动清单的“原值”列也中和），UTF-8 BOM、CRLF。改动清单列为“文件行号、字段、原值、导出值、处理”，行号查不到为空；最多 `STANDARDIZED_CHANGE_LIMIT`（1,048,575，Excel 一张表的行数减表头）条，超出时只导出前 N 条，文件名 `<原文件名>_写法统一改动清单_前1048575条_<yyyymmdd>.csv`、状态行“只导出了前 1,048,575 条，共 M 条”，检查表计数仍是全部。写法统一的表是 `<原文件名>_写法统一_<yyyymmdd>.csv`，全部原始行、原字段顺序、原表头（单位不写进表头）。
 - **性能**（本机 Node 24、假 DOM，10 万行 × 20 列）：刷新路径与 v2.9.0 交替各 5 次取中位数，导入 +0.4%、筛选 +1.1%、重建 −0.2%（不在刷新路径里）。检查约 1.6 s（干净数据：纯数字和标准日期）、约 3.9 s（最坏情况：每格都要改写或保持原值，200 万格）；最坏情况检查结果约占 108 MB，导出改动清单（到上限 1,048,575 条，约 60 MB）约 2.55 s，峰值 RSS 约 1.22 GB（不设上限时 200 万条约 5.5 s、1.89 GB）。
