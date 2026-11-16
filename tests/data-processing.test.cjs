@@ -342,14 +342,14 @@ test("Markdown report exports untrusted field names and values as inert table te
   assert.ok(report.includes("由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer)"));
 });
 
-test("public current version markers agree on v3.0.1", () => {
+test("public current version markers agree on v3.1.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.0.1");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.0\.1/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.0\.1/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.1.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.1\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.1\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v3.0.1");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.0.1");
+  assert.equal(evaluate("buildReportData().version"), "v3.1.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.1.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;

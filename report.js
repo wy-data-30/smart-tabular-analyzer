@@ -571,7 +571,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v3.0.1",
+    version: "v3.1.0",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -836,7 +836,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v3.0.1",
+    version: reportData.version || "v3.1.0",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
