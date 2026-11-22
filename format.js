@@ -72,7 +72,7 @@ const I18N_EN = Object.freeze({
   "sidebar.title": "File and columns",
   "sidebar.close": "Close file and columns",
   "sidebar.fields": "Columns",
-  "sidebar.status": "Current state",
+  "sidebar.status": "Current status",
   "sidebar.filter": "Filter",
   "sidebar.header": "Header",
   "sidebar.placeholders": "Treated as blank",
@@ -346,8 +346,8 @@ const NO_ID_DUPLICATE_NOTE = Lp(
   "This table has no ID column that tells each row apart, so rows with the same content may still be different records. Click “View duplicate rows” to check first."
 );
 // Empty states that also show without a filter (they said 当前筛选 before v3.1.0).
-const CATEGORY_STATS_EMPTY_NOTE = Lp("当前分析的行里没有非空类别值。", "The rows in analysis have no non-blank category values.");
-const CATEGORY_CHART_EMPTY_NOTE = Lp("当前分析的行里没有可统计的分类值", "The rows in analysis have no category values to count");
+const CATEGORY_STATS_EMPTY_NOTE = Lp("当前分析的行里没有非空类别值。", "The rows in analysis have no non-blank values.");
+const CATEGORY_CHART_EMPTY_NOTE = Lp("当前分析的行里没有可统计的分类值", "The rows in analysis have no values to count");
 
 // "（另有 2 行不计入分析）", or "" when nothing is left out.
 function formatExcludedTail(excludedCount) {
@@ -739,7 +739,7 @@ function formatProblemCategoryLabel(category) {
     case "formulaError": return L(`公式错误 · ${field}（${count} 个值）`, `Formula errors · ${field} (${values})`);
     case "dateStyle": return L(`日期写法 · ${field}（${count} 个值）`, `Mixed date formats · ${field} (${values})`);
     case "lookAlike": return L(`写法不一样 · ${field}（${count} 行）`, `Variants · ${field} (${rows})`);
-    default: return L(`读取时有疑问（${count} 处）`, `Reading issues (${count})`);
+    default: return L(`读取时有疑问（${count} 处）`, `Reading issues (${enCount(category.count, "issue", "issues")})`);
   }
 }
 
@@ -869,8 +869,8 @@ function formatPlaceholderCounts(key, before, after, confirmed) {
   if (reads(before.typeKey) || reads(after.typeKey)) parts.push(L(`认不出 ${formatInteger(before.failures)} → ${formatInteger(after.failures)}`, `not recognized ${formatInteger(before.failures)} → ${formatInteger(after.failures)}`));
   if (before.typeKey === "category" && after.typeKey === "category") {
     parts.push(confirmed
-      ? L(`分类里不再有「${key}」这一类`, `the categories no longer have “${key}”`)
-      : L(`分类里重新有「${key}」这一类`, `the categories have “${key}” again`));
+      ? L(`分类里不再有「${key}」这一类`, `the value counts no longer have “${key}”`)
+      : L(`分类里重新有「${key}」这一类`, `the value counts have “${key}” again`));
   }
   if (confirmed && before.listed && !after.listed) parts.push(L(`编号重复里不再列出「${key}」`, `duplicate IDs no longer list “${key}”`));
   if (!confirmed && !before.listed && after.listed) parts.push(L(`编号重复里重新列出「${key}」`, `duplicate IDs list “${key}” again`));
@@ -903,7 +903,7 @@ function formatPlaceholderConfirmMessage({ field, key, count, before, after, row
   const typeText = typeChanged ? formatPlaceholderTypeChange(field, before.typeKey, after.typeKey) : "";
   return L(
     `已把「${field}」的 ${cells} 个「${key}」按空值处理：${counts}。只是把这 ${cells} 格当作空，${count === 1 ? "这一行" : "这些行"}没有删，其他字段照常参与分析，所以${rowCountText}。${typeChanged ? `${typeText}。` : after.typeKey === "numeric" ? `平均值等统计不变，因为「${key}」本来就没有算进去。` : after.typeKey === "date" ? `按日期的趋势不变，因为「${key}」本来就没有算进去。` : ""}`,
-    `Treated ${cells} “${key}” in “${field}” as blank: ${counts}. ${count === 1 ? "Only this 1 cell is" : `Only these ${cells} cells are`} treated as empty; ${count === 1 ? "its row is" : "their rows are"} not deleted and the other columns still count, so ${rowCountText}.${typeChanged ? ` ${typeText}.` : after.typeKey === "numeric" ? ` Averages and other stats do not change, because “${key}” was never counted in them.` : after.typeKey === "date" ? ` Trends by date do not change, because “${key}” was never counted in them.` : ""}`
+    `Treated ${cells} “${key}” in “${field}” as blank: ${counts}. ${count === 1 ? "Only this 1 cell is" : `Only these ${cells} cells are`} treated as blank; ${count === 1 ? "its row is" : "their rows are"} not deleted and the other columns still count, so ${rowCountText}.${typeChanged ? ` ${typeText}.` : after.typeKey === "numeric" ? ` Averages and other stats do not change, because “${key}” was never counted in them.` : after.typeKey === "date" ? ` Trends by date do not change, because “${key}” was never counted in them.` : ""}`
   );
 }
 
@@ -931,7 +931,7 @@ function formatAllPlaceholdersMessage(entries, typeChanges, rowCount, rowsLeftOu
   const rowCountText = formatPlaceholderRowCount(rowCount, rowsLeftOut);
   return L(
     `已把 ${formatInteger(entries.length)} 处常见写法按空值处理（${entries.map((entry) => `「${entry.field}」的「${entry.key}」`).join("、")}）。${types.length ? `${types.join("；")}。` : ""}只是把这些格当作空，行都没有删，所以${rowCountText}。`,
-    `Treated ${enCount(entries.length, "common one", "common ones")} as blank (${entries.map((entry) => `“${entry.key}” in “${entry.field}”`).join(", ")}). ${types.length ? `${types.join("; ")}. ` : ""}Only these cells are treated as empty and no rows are deleted, so ${rowCountText}.`
+    `Treated ${enCount(entries.length, "common one", "common ones")} as blank (${entries.map((entry) => `“${entry.key}” in “${entry.field}”`).join(", ")}). ${types.length ? `${types.join("; ")}. ` : ""}Only these cells are treated as blank and no rows are deleted, so ${rowCountText}.`
   );
 }
 
@@ -947,18 +947,18 @@ const CONSTANT_FIELD_NOTE = Lp(
 );
 const LOOK_ALIKE_NOTE = Lp(
   "首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。",
-  "Leading or trailing spaces: this tool ignores them, but they will not match when exported to other systems or used with VLOOKUP. One value written in several ways: this tool counts them as different values, so category stats, filters and duplicate IDs count them separately. Only invisible characters: the cell looks empty, but this tool does not treat it as blank, so category stats and filters show an extra value you cannot see."
+  "Leading or trailing spaces: this tool ignores them, but they will not match when exported to other systems or used with VLOOKUP. One value written in several ways: this tool counts them as different values, so value counts, filters and duplicate IDs count them separately. Only invisible characters: the cell looks empty, but this tool does not treat it as blank, so value counts and filters show an extra value you cannot see."
 );
 // Names of the date styles, as a user would recognise them in Excel.
 const DATE_STYLE_NAMES = Object.freeze({
   excelCell: Lp("Excel 日期单元格", "Excel date cell"),
-  ymdDash: Lp("文本 年-月-日", "text year-month-day"),
-  ymdSlash: Lp("文本 年/月/日", "text year/month/day"),
-  ymdDot: Lp("文本 年.月.日", "text year.month.day"),
-  chinese: Lp("文本 中文年月日", "text Chinese year-month-day"),
-  dmy: Lp("文本 日/月/年", "text day/month/year"),
-  mdy: Lp("文本 月/日/年", "text month/day/year"),
-  dayMonthSame: Lp("文本 日和月相同（看不出先后）", "text with day and month the same (order unclear)"),
+  ymdDash: Lp("文本 年-月-日", "text YYYY-MM-DD"),
+  ymdSlash: Lp("文本 年/月/日", "text YYYY/MM/DD"),
+  ymdDot: Lp("文本 年.月.日", "text YYYY.MM.DD"),
+  chinese: Lp("文本 中文年月日", "text with Chinese year/month/day characters"),
+  dmy: Lp("文本 日/月/年", "text DD/MM/YYYY"),
+  mdy: Lp("文本 月/日/年", "text MM/DD/YYYY"),
+  dayMonthSame: Lp("文本 日和月相同（看不出先后）", "text with the same day and month (order unclear)"),
   english: Lp("文本 英文月份", "text with English month names"),
   yearOnly: Lp("只写年份", "year only")
 });
@@ -968,7 +968,7 @@ const VISIBLE_TEXT_NAMES = Object.freeze({
   "\u00AD": Lp("[软连字符]", "[soft hyphen]"), "\u200E": Lp("[方向符]", "[direction mark]"), "\u200F": Lp("[方向符]", "[direction mark]"),
   "\u200B": Lp("[零宽字符]", "[zero-width character]"), "\u200C": Lp("[零宽字符]", "[zero-width character]"), "\u200D": Lp("[零宽字符]", "[zero-width character]"), "\u2060": Lp("[零宽字符]", "[zero-width character]"), "\uFEFF": Lp("[零宽字符]", "[zero-width character]")
 });
-const VISIBLE_TEXT_OTHER = Lp("[空白]", "[white space]");
+const VISIBLE_TEXT_OTHER = Lp("[空白]", "[whitespace]");
 const VISIBLE_TEXT_PATTERN = new RegExp(`[\\s${INVISIBLE_CHARACTER_CLASS}]`, "g");
 
 // A text with its whitespace and invisible characters shown: "␣" for a half-width space at

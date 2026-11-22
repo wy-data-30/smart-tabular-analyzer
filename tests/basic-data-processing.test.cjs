@@ -10359,3 +10359,31 @@ test("v3.2.0 app.js: the (excluded) suffix of a problem row is no L() call, one 
   scope.evaluate("L = globalThis.__realL");
   assert.equal(notes[0], "x (excluded from analysis)");
 });
+
+test("v3.2.0 format.js English wording: values (not categories), treated as blank, counts with their unit, date formats as written", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  const en = (expression) => scope.evaluate(expression);
+  assert.equal(en("Lpick(CATEGORY_STATS_EMPTY_NOTE)"), "The rows in analysis have no non-blank values.");
+  assert.equal(en("Lpick(CATEGORY_CHART_EMPTY_NOTE)"), "The rows in analysis have no values to count");
+  assert.equal(en('formatPlaceholderCounts("-", { missing: 0, failures: 0, typeKey: "category", listed: false }, { missing: 1, failures: 0, typeKey: "category", listed: false }, true)'), "blanks 0 → 1, the value counts no longer have “-”");
+  assert.equal(en('formatPlaceholderCounts("-", { missing: 1, failures: 0, typeKey: "category", listed: false }, { missing: 0, failures: 0, typeKey: "category", listed: false }, false)'), "blanks 1 → 0, the value counts have “-” again");
+  assert.match(en("Lpick(LOOK_ALIKE_NOTE)"), /so value counts, filters and duplicate IDs count them separately\..*so value counts and filters show an extra value you cannot see\.$/);
+  // No English sentence of format.js says category or categories any more, nor treated as empty.
+  const english = [...repoFile("format.js").matchAll(/Lp?\(\s*(?:"[^"]*"|`[^`]*`)\s*,\s*("[^"]*"|`[^`]*`)/g)].map((match) => match[1]).join("\n");
+  assert.ok(english.length > 5000);
+  // (category.key and category.count are the variable, not a word.)
+  assert.doesNotMatch(english, /categor(?!y\.)|treated as empty|white space/i);
+  assert.match(en('formatPlaceholderConfirmMessage({ field: "Amount", key: "N/A", count: 2, before: { missing: 0, failures: 2, typeKey: "numeric", listed: false }, after: { missing: 2, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })'), /Only these 2 cells are treated as blank;/);
+  assert.match(en('formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }], [], 42, false)'), /Only these cells are treated as blank and no rows are deleted/);
+  // Every category label counts in its unit.
+  assert.deepEqual(["missing", "conversion", "idDuplicate", "parseWarnings"].map((kind) => en(`formatProblemCategoryLabel({ kind: "${kind}", field: "Amount", count: 3 })`)),
+    ["Blanks · Amount (3 rows)", "Numbers or dates not recognized · Amount (3 values)", "Duplicate IDs · Amount (3 duplicate values)", "Reading issues (3 issues)"]);
+  assert.equal(en('formatProblemCategoryLabel({ kind: "parseWarnings", count: 1 })'), "Reading issues (1 issue)");
+  assert.deepEqual(JSON.parse(en("JSON.stringify(Object.fromEntries(Object.entries(DATE_STYLE_NAMES).map(([key, pair]) => [key, pair[1]])))")), {
+    excelCell: "Excel date cell", ymdDash: "text YYYY-MM-DD", ymdSlash: "text YYYY/MM/DD", ymdDot: "text YYYY.MM.DD", chinese: "text with Chinese year/month/day characters",
+    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only"
+  });
+  assert.equal(en("Lpick(VISIBLE_TEXT_OTHER)"), "[whitespace]");
+  assert.equal(en('I18N_EN["sidebar.status"]'), "Current status");
+});
