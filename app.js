@@ -743,7 +743,7 @@ function buildCategoryInsight(field) {
   if (!item) return "";
   if (isConcentratedCategory(item)) {
     const top = item.top[0];
-    return L(`分类字段「${field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`, `In “${field}”, the most common category is “${top.name}”: ${enCount(top.count, "time", "times")}, ${formatPercent(top.ratio)}.`);
+    return L(`分类字段「${field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`, `In “${field}”, the most common value is “${top.name}”: ${enCount(top.count, "time", "times")}, ${formatPercent(top.ratio)}.`);
   }
   if (!item.top.length) return L(`「${field}」当前没有可统计的取值，不做概括。`, `“${field}” has no values to count right now, so there is no summary.`);
   return L(`「${field}」取值比较分散（超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），不做概括。`, `“${field}” is too scattered to summarize (more than ${INSIGHT_CATEGORY_MAX_DISTINCT} distinct values, or no value appears twice).`);
@@ -1407,7 +1407,7 @@ function renderCategoryFilterValues() {
     : L("未选择字段", "No column chosen");
 
   if (!visibleOptions.length) {
-    dom.categoryFilterValues.innerHTML = `<p class="filter-value-empty">${L("没有匹配的类别。", "No matching categories.")}</p>`;
+    dom.categoryFilterValues.innerHTML = `<p class="filter-value-empty">${L("没有匹配的类别。", "No matching values.")}</p>`;
     return;
   }
 

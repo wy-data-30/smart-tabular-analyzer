@@ -10760,3 +10760,18 @@ test("v3.2.0 report.js English wording: a long list of kept values, and the stan
   assert.equal(descriptions.zh, "Kind：保留 13 / 共 13 个类别（（空值）、V01、V02、V03、V04、V05、V06、V07、V08、V09……等 13 个）");
   assert.equal(descriptions.en, "Kind: keeps 13 of 13 values: (Blank), “V01”, “V02”, “V03”, “V04”, “V05”, “V06”, “V07”, “V08”, “V09”, … 13 in all");
 });
+
+test("v3.2.0 app.js English wording: the chart's value conclusion and an empty filter search say value", () => {
+  const texts = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Region"], [..."EEEEEEEEEEEE", ..."W".repeat(20), ..."N".repeat(8)].map((letter) => ({ Region: { E: "East", W: "West", N: "North" }[letter] })));
+    const insight = scope.evaluate('buildCategoryInsight("Region")');
+    scope.evaluate('dom.categoryFilterField.value = "Region"; updateCategoryFilterField(); dom.categoryFilterSearch.value = "zzz"; renderCategoryFilterValues()');
+    texts[language] = [insight, scope.evaluate("dom.categoryFilterValues.innerHTML")];
+  }
+  assert.deepEqual(texts.zh, ["分类字段「Region」中占比最高的类别是「West」，出现 20 次，占比 50.0%。", '<p class="filter-value-empty">没有匹配的类别。</p>']);
+  assert.deepEqual(texts.en, ["In “Region”, the most common value is “West”: 20 times, 50.0%.", '<p class="filter-value-empty">No matching values.</p>']);
+  // The problem category's sentence keeps category (it is a category of problem rows).
+  assert.match(repoFile("app.js"), /"This category has no problem rows any more\."/);
+});
