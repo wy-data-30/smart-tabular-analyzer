@@ -5069,7 +5069,7 @@ test("v2.8.0 report: sections and summary counts only when there is something, o
 test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
   const pageHtml = indexHtmlSource();
   const exact = await importCsvFile(subtotalsCsv(20));
-  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE");
+  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE[0]");
   assert.equal(note, "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。");
   assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
   const atLimit = reportOf(exact);
@@ -5118,7 +5118,7 @@ test("v2.8.0 report: labels and fields are escaped for each output", async () =>
 test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
   const pageHtml = indexHtmlSource();
   const errors = await importStage3Fixture("公式错误.xlsx");
-  const note = errors.evaluate("FORMULA_ERROR_NOTE");
+  const note = errors.evaluate("FORMULA_ERROR_NOTE[0]");
   assert.equal(note, "这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。");
   assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
   const { html } = reportOf(errors);
@@ -5972,8 +5972,8 @@ test("v2.9.0 the sections are static, in place and change neither the pills nor 
 test("v2.9.0 reports: the notes are the page's sentences", () => {
   const html = indexHtmlSource();
   const { evaluate } = createScriptContext();
-  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(name)}</p>`), name);
-  assert.match(evaluate("LOOK_ALIKE_NOTE"), /只有不可见字符：格子看起来是空的/);
+  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(`${name}[0]`)}</p>`), name);
+  assert.match(evaluate("LOOK_ALIKE_NOTE[0]"), /只有不可见字符：格子看起来是空的/);
 });
 
 test("v2.9.0 reports: three sections with content, two summary counts, constant columns not counted", async () => {
@@ -5986,7 +5986,7 @@ test("v2.9.0 reports: three sections with content, two summary counts, constant 
   const errors = reportOf(errorsScope);
   assert.ok(errors.html.includes("<li>「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。</li>"));
   // The note right under the heading, then the list.
-  assert.match(errors.html, new RegExp(`<h3>整列只有一个值<\\/h3>\\s*<p>${regExpText(errorsScope.evaluate("CONSTANT_FIELD_NOTE"))}<\\/p>\\s*<ul[^>]*>\\s*<li>「备注」`));
+  assert.match(errors.html, new RegExp(`<h3>整列只有一个值<\\/h3>\\s*<p>${regExpText(errorsScope.evaluate("CONSTANT_FIELD_NOTE[0]"))}<\\/p>\\s*<ul[^>]*>\\s*<li>「备注」`));
   assert.ok(!errors.html.includes("整列只有一个值：<strong>"));
 
   const writing = reportOf(await importStage3Fixture("写法不一致.csv"));
@@ -6863,7 +6863,8 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
   "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
-const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE",
+// (v3.2.0: the constants are [中文, English] pairs; [0] is the Chinese.)
+const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE[0]", "FORMULA_ERROR_NOTE[0]", "DATE_STYLE_NOTE[0]", "CONSTANT_FIELD_NOTE[0]", "LOOK_ALIKE_NOTE[0]", "PLACEHOLDER_MAYBE_NOTE[0]", "PLACEHOLDER_DASH_NOTE[0]",
   // v3.1.0: the totals note once they are left out, one row and several.
   "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)"];
 const HAN_SPACE_HAN = /\p{Script=Han} +\p{Script=Han}/u;
@@ -9044,7 +9045,7 @@ test("v3.1.0 quality page: a message counts only the rows this click left out or
   assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
   assert.equal(scope.evaluate("state.duplicateRows"), 1);
   // No column tells the records apart: the long note stays, before and after.
-  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE"));
+  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE[0]"));
   exclusionClick(scope, "suspectedTotal", true);
   assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 5 → 3。");
   exclusionClick(scope, "duplicateRows", true);
@@ -9304,7 +9305,7 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   assert.match(html, new RegExp(`<p>${noFilter}<\\/p>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据，不受筛选影响。<\\/p>`));
   assert.match(html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${scope}<\\/p>\\s*<p>空值总数：`));
   assert.match(html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${excludedNote}<\\/p>`));
-  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE[0]")));
   // The page shows the same sentences.
   assert.equal(textOf(orders, "qualityScopeNote"), scope);
   assert.equal(textOf(orders, "suspectedTotalExcludedNote"), excludedNote);
@@ -9323,7 +9324,7 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   // The same words as the filter panel without a filter.
   // HTML: the same four places.
   assert.ok(one.html.includes("<p>不计入分析：重复的行 1 行（第 21 行）。</p>"));
-  assert.match(one.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(repeats.evaluate("SUSPECTED_TOTAL_NOTE"))}<\\/p>`));
+  assert.match(one.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(repeats.evaluate("SUSPECTED_TOTAL_NOTE[0]"))}<\\/p>`));
   assert.match(one.html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${regExpText(textOf(repeats, "qualityScopeNote"))}<\\/p>`));
   assert.ok(one.html.includes("<p>未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。</p>"));
   assert.equal(textOf(repeats, "filterMessage"), "当前分析使用全部 41 行（不含不计入分析的 1 行）。");
@@ -9359,7 +9360,7 @@ test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", a
   for (const text of [html]) {
     assert.ok(!text.includes("不计入分析"));
     assert.ok(!text.includes("质量页检查的是"));
-    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE")));
+    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE[0]")));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
   }
   assert.ok(html.includes(`${scaleCard("筛除行数", 0)}${scaleCard("字段总数", 9)}`));
@@ -9494,10 +9495,10 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
     }
     findOldInterfaceWords(`${name} #suspectedTotalDetails`, htmlText(scope, "suspectedTotalDetails"), hits);
   }
-  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
-    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
+  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE[0], formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
+    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL[0],
     formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
-    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL,
+    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL[0],
     formatReportNoFilterText(40, 2), formatDataExportExcludedNote(2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
   for (const text of fixed) {
     findOldInterfaceWords("format.js", text, hits);
@@ -9711,7 +9712,8 @@ test("v3.2.0 static guard: the whitelist names declarations that exist, with exa
 
 test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
   const whitelist = i18nWhitelist();
-  assert.deepEqual(i18nGuard.I18N_DONE_FILES, [], "commit 4: no file is done yet");
+  // commit 5: format.js.
+  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js"]);
   for (const file of i18nGuard.APP_SCRIPT_NAMES) {
     const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
     assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
@@ -9953,4 +9955,209 @@ test("v3.2.0 language: two switches, in the top bar of the upload page and at th
   const css = repoFile("style.css");
   assert.match(css, /body\.has-results \.header-actions \.language-switch \{\s*display: none;\s*\}/);
   assert.deepEqual(domKeys(createScriptContext()).filter((key) => /language/i.test(key)), ["languageSwitch", "sidebarLanguageSwitch"]);
+});
+
+// ---- v3.2.0 commit 5: the sentences of format.js in English ----
+// The 18 constants set at load time: [中文, English] pairs (Lp), read with Lpick() or [0] / [1].
+const FORMAT_PAIRED_CONSTANTS = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "EXCLUSION_KIND_LABELS", "EXCLUSION_DRAFT_REFUSAL", "NO_ID_DUPLICATE_NOTE", "CATEGORY_STATS_EMPTY_NOTE",
+  "CATEGORY_CHART_EMPTY_NOTE", "GO_TO_QUALITY_LABEL", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "DATE_STYLE_NAMES",
+  "VISIBLE_TEXT_NAMES", "LOOK_ALIKE_REASON_NAMES", "STANDARDIZE_ACTION_LABELS", "STANDARDIZE_ORDER_HINT"];
+const ENGLISH_BAD = /[\p{Script=Han}\u3000-\u303F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/u;
+const numbersOf = (text) => (String(text).match(/\d[\d,.]*\d|\d/g) || []).sort();
+
+test("v3.2.0 format.js: the 18 constants are frozen [中文, English] pairs, and the English has no Chinese", () => {
+  const scope = createScriptContext();
+  assert.equal(FORMAT_PAIRED_CONSTANTS.length, 18);
+  let pairs = 0;
+  for (const name of FORMAT_PAIRED_CONSTANTS) {
+    const value = scope.context[name] ?? scope.evaluate(name);
+    const list = Array.isArray(value) ? [value] : Object.values(value);
+    assert.ok(Object.isFrozen(value), name);
+    for (const pair of list) {
+      assert.ok(Array.isArray(pair) && pair.length === 2 && Object.isFrozen(pair), name);
+      assert.match(pair[0], /\p{Script=Han}/u, name);
+      // The one English that is not a fixed text: the maybe-valid note names this column's writings (R11).
+      const english = typeof pair[1] === "function" ? pair[1](["NA"]) : pair[1];
+      assert.equal(typeof english, "string", name);
+      assert.ok(english.length > 0 && !ENGLISH_BAD.test(english), `${name}: ${english}`);
+      pairs += 1;
+    }
+  }
+  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 10, VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
+  assert.equal(pairs, 13 + 2 + 10 + 13 + 4 + 13);
+  // The page notes, as index.html will have them in English (commit 9 checks I18N_EN against these).
+  assert.equal(scope.evaluate("SUSPECTED_TOTAL_NOTE[1]"), "These rows still count as ordinary data, so their numbers are counted again in sums, averages and the check for unusually high or low values.");
+  assert.equal(scope.evaluate("LOOK_ALIKE_NOTE[1]").split(": ")[0], "Leading or trailing spaces");
+});
+
+// Every function of format.js that writes text, called with the same arguments in both languages.
+const FORMAT_TEXT_CALLS = [
+  'formatConversionFailures(3, ["N/A", "x1", "about 500"], "3")',
+  'numericAxisLabel("Weight", "Weight")', 'numericAxisLabel("Rate", "Rate")', 'formatFieldLabelWithUnit("Amount", "kg")',
+  'formatNumberConversion({ field: "Weight", unit: "kg", unitCount: 5, unitSamples: ["5kg", "6kg", "7kg"], magnitudeCount: 2, fullwidthCount: 1, conflictUnits: [] })',
+  'formatNumberConversion({ field: "Weight", unit: "", unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 0, conflictUnits: [{ unit: "kg", count: 5 }, { unit: "t", count: 1 }] })',
+  'formatNumericLookingHint({ field: "Floor", valueCount: 6, numericCount: 4, ratio: 0.6667, samples: ["B1", "B2"] })',
+  'formatTotalMatchedFields(["a", "b", "c", "d", "e", "f", "g"])', 'formatTotalMatchedFields(["a", "b"])',
+  'formatTotalAddends({ scope: "segment", firstLine: 5, lastLine: 32, rowCount: 28, contiguous: true })',
+  'formatTotalAddends({ scope: "above", firstLine: 2, lastLine: 13, rowCount: 9, contiguous: false })',
+  'formatTotalAddends({ scope: "segment", firstLine: 9, lastLine: 9, rowCount: 1, contiguous: true })',
+  'formatTotalAddends({ scope: "all", firstLine: null, lastLine: null, rowCount: 12, contiguous: true })',
+  'formatSuspectedTotal({ line: 33, label: "Total", matches: [{ fields: ["Sales", "Cost"], scope: "segment", firstLine: 5, lastLine: 32, rowCount: 28, contiguous: true }, { fields: ["Qty"], scope: "all", firstLine: null, lastLine: null, rowCount: 9, contiguous: true }] })',
+  'formatSuspectedTotal({ line: null, label: "Sum", matches: [{ fields: ["Qty"], scope: "above", firstLine: 3, lastLine: 3, rowCount: 1, contiguous: true }] })',
+  "formatSuspectedTotalOverflow(21)",
+  'formatSuspectedTotalStatus([{ line: 44, label: "Total" }])', 'formatSuspectedTotalStatus([{ line: null, label: "Total" }])',
+  'formatSuspectedTotalStatus([1, 2, 3, 4, 5, 6, 7].map((line) => ({ line, label: "Subtotal" })))', 'formatSuspectedTotalStatus([{ line: 5, label: "A" }, { line: 8, label: "B" }])',
+  "formatExclusionLines([44])", "formatExclusionLines([1, 2, 3, 4, 5, 6, 7])",
+  "formatExclusionRestored(1)", "formatExclusionRestored(3)", "formatTotalsFlaggedAgain([5])", "formatTotalsFlaggedAgain([5, 8])", "formatTotalsFlaggedAgain([null, null])",
+  "formatExcludedTail(2)", "formatAnalysisScope(1, 28, 40, 2)", "formatAnalysisScope(2, 28, 40, 0)", "formatAnalysisScope(0, 40, 40, 2)", "formatAnalysisScope(0, 42, 42, 0)", "formatAnalysisScope(0, 1, 1, 0)",
+  "formatAllIncludedRows(40, 2)", "formatAllIncludedRows(42, 0)", "formatDataExportExcludedNote(2)", "formatReportNoFilterText(40, 2)", "formatNoFilterMessage(40, 2)", "formatNoFilterMessage(42, 0)",
+  "formatFiltersApplied(2, 17, 23)", "formatFiltersApplied(1, 0, 40)", "formatPreviewPageInfo(1, 3, 120, 2, false)", "formatPreviewPageInfo(2, 3, 120, 2, true)",
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: true, currentCount: 17, includedCount: 40, totalCount: 42, excludedCount: 2 })',
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: false, currentCount: 40, includedCount: 40, totalCount: 42, excludedCount: 2 })',
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: false, currentCount: 42, includedCount: 42, totalCount: 42, excludedCount: 0 })',
+  "formatQualityScopeNote(42, 2, 6)", "formatQualityScopeNote(42, 1, 0)", "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)",
+  "formatSingleRowTotals(1)", "formatSingleRowTotals(6)", "formatUnmatchedTotalLabels(95, 6, true)", "formatUnmatchedTotalLabels(7, 6, true)",
+  "formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })",
+  "formatReportExclusions({ suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } })",
+  "formatReportExclusions({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 2, lines: null }, overlap: { count: 1, lines: null } })",
+  "formatDuplicateIncludedNote(1)", "formatDuplicateIncludedNote(3)", "formatDuplicateExcludedNote(1)", "formatDuplicateExcludedNote(3)",
+  "formatAnalysisContainsNote(1, 1)", "formatAnalysisContainsNote(2, 0)", "formatAnalysisContainsNote(0, 3)", "formatGoToQualityAriaLabel(1, 1)", "formatGoToQualityAriaLabel(0, 1)",
+  'formatExclusionMessage({ kind: "suspectedTotal", on: true, rows: 1, changed: 1, before: 42, after: 41 })',
+  'formatExclusionMessage({ kind: "duplicateRows", on: true, rows: 2, changed: 0, before: 40, after: 40 })',
+  'formatExclusionMessage({ kind: "suspectedTotal", on: true, rows: 1, changed: 0, before: 40, after: 40 })',
+  'formatExclusionMessage({ kind: "duplicateRows", on: false, rows: 3, changed: 3, before: 39, after: 42 })',
+  'formatExclusionMessage({ kind: "suspectedTotal", on: false, rows: 1, changed: 0, before: 41, after: 41 })',
+  "formatFormulaErrorStatus([{ count: 3 }, { count: 4 }])", 'formatStatusNoteSummary("orders.csv", 2)', 'formatStatusNoteSummary("orders.csv", 1)',
+  "formatSchemaSearchPlaceholder(21)", 'formatReturnToAnalysis("orders.csv")',
+  'formatFormulaError({ field: "Margin", count: 3, byError: { "#DIV/0!": 2, "#REF!": 1 }, lines: [3, 5, 9] })',
+  'formatFormulaError({ field: "Margin", count: 12, byError: { "#N/A": 12 }, lines: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], fieldIgnored: true })',
+  'formatFormulaError({ field: "Margin", count: 1, byError: { "#VALUE!": 1 }, lines: [null] })',
+  'formatHeaderDetectionNote({ headerRowNumber: 2, skippedRows: [{ preview: "Sales 2025" }] })',
+  'formatHeaderDetectionNote({ headerRowNumber: 5, skippedRows: [{ preview: "A" }, { preview: "B" }, { preview: "C" }] })', 'formatHeaderDetectionNote({ headerRowNumber: 3, skippedRows: [] })',
+  'formatCsvWarningMessage("TooFewFields", { line: 12, cellCount: 2, headerCount: 4 })', 'formatCsvWarningMessage("TooFewFields", { line: 12 })',
+  'formatCsvWarningMessage("TooFewFields", { cellCount: 1, headerCount: 4 })', 'formatCsvWarningMessage("TooFewFields")',
+  'formatCsvWarningMessage("InvalidQuotes", { line: 7 })', 'formatCsvWarningMessage("InvalidQuotes")',
+  'formatCsvWarningMessage("UndetectableDelimiter", { separator: ";" })', 'formatCsvWarningMessage("UndetectableDelimiter", { separator: "|" })',
+  'formatCsvWarningMessage("UndetectableDelimiter", { separator: String.fromCharCode(9) })',
+  ...["missing", "conversion", "outlier", "duplicateRows", "idDuplicate", "placeholder", "suspectedTotal", "formulaError", "dateStyle", "lookAlike", "parseWarnings"].flatMap((kind) => [
+    `formatProblemViewLabel({ kind: "${kind}", field: "Amount", key: "N/A", count: 3 })`,
+    `formatProblemCategoryLabel({ kind: "${kind}", field: "Amount", key: "N/A", count: 3 })`,
+    `formatProblemRowsSummary({ kind: "${kind}" }, { count: 2, groupCount: 1, items: [1, 2, 3] }, 1, 2)`
+  ]),
+  "formatRowNumberList([6, 19])", "formatRowNumberList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 15)", "formatIdenticalRows(2, 1)", "formatIdenticalRows(4, 2)",
+  "formatIdDuplicateOverflow(12, 10)", 'formatCleanIdFieldsNote(["ID", "Name"])', 'formatCleanIdFieldsNote(["ID"], true)',
+  'formatMostlyRepeatedIdHint({ field: "User", distinctCount: 5, nonMissingCount: 120, uniqueRatio: 0.0417 })',
+  'formatPlaceholderValue({ key: "N/A", rawValues: ["N/A", "n/a"] })', "formatPlaceholderRows([15], 1)", "formatPlaceholderRows([2, 3], 5)", "formatPlaceholderRows([null], 1)",
+  'formatPlaceholderChange("Amount", 0, "numeric", { typeKey: "numeric", missingCount: 1 })', 'formatPlaceholderChange("Amount", 2, "category", { typeKey: "numeric", missingCount: 5 })',
+  'formatPendingPlaceholder({ field: "Amount", key: "N/A", rawValues: ["N/A"], count: 1, rowNumbers: [15] }, formatPlaceholderChange("Amount", 0, "numeric", { typeKey: "numeric", missingCount: 1 }))',
+  'formatConfirmedPlaceholder({ field: "Note", key: "N/A", rawValues: ["N/A"], count: 2, fieldIgnored: true })',
+  'formatPlaceholderNotes(["-", "N/A"])', 'formatPlaceholderNotes(["NA", "/"])',
+  'formatPlaceholderCounts("N/A", { missing: 0, failures: 1, typeKey: "numeric", listed: true }, { missing: 1, failures: 0, typeKey: "numeric", listed: false }, true)',
+  'formatPlaceholderCounts("-", { missing: 1, failures: 0, typeKey: "category", listed: false }, { missing: 0, failures: 0, typeKey: "category", listed: true }, false)',
+  'formatPlaceholderTypeChange("Amount", "category", "numeric")', "formatPlaceholderRowCount(42, false)", "formatPlaceholderRowCount(40, true)",
+  'formatPlaceholderConfirmMessage({ field: "Amount", key: "N/A", count: 1, before: { missing: 0, failures: 1, typeKey: "numeric", listed: false }, after: { missing: 1, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderConfirmMessage({ field: "Date", key: "-", count: 3, before: { missing: 0, failures: 3, typeKey: "date", listed: false }, after: { missing: 3, failures: 0, typeKey: "date", listed: false }, rowCount: 40, rowsLeftOut: true })',
+  'formatPlaceholderConfirmMessage({ field: "Size", key: "none", count: 4, before: { missing: 0, failures: 0, typeKey: "category", listed: false }, after: { missing: 4, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderUndoMessage({ field: "Amount", key: "N/A", count: 1, before: { missing: 1, failures: 0, typeKey: "numeric", listed: false }, after: { missing: 0, failures: 1, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderUndoMessage({ field: "Size", key: "none", count: 4, before: { missing: 4, failures: 0, typeKey: "numeric", listed: false }, after: { missing: 0, failures: 0, typeKey: "category", listed: false }, rowCount: 40, rowsLeftOut: true })',
+  'formatPlaceholderUndoMessage({ field: "Note", key: "N/A", count: 2, ignored: true })',
+  'formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }, { field: "Rep", key: "--" }], [{ field: "Amount", typeKey: "numeric", previousTypeKey: "category" }], 42, false)',
+  'formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }], [], 40, true)',
+  'formatDateStyleLine({ field: "Hired", styles: [{ key: "excelCell", count: 24, sample: "2016-04-01" }, { key: "ymdSlash", count: 2, sample: "2021/3/5" }, { key: "english", count: 4, sample: "Mar 5, 2021" }], otherCount: 6 })',
+  'formatDateStyleLine({ field: "Hired", styles: [{ key: "ymdDash", count: 9, sample: "2021-03-05" }, { key: "dayMonthSame", count: 1, sample: "05/05/2021" }], otherCount: 1 })',
+  'formatConstantField({ field: "Note", value: "OK", count: 6, missingCount: 3 })', 'formatConstantField({ field: "Note", value: " OK", count: 1, missingCount: 0 })',
+  'formatLookAlikeReasons(["compat", "case", "invisible", "innerSpace"])',
+  'formatLookAlikeLine({ field: "Region", edgeSpaceCount: 2, edgeSample: "East ", invisibleOnlyCount: 1, groups: [{ variants: [{ text: "HD", count: 2 }, { text: "hd", count: 1 }], variantCount: 3, reasons: ["case"] }], groupCount: 3, rowCount: 18 })',
+  'formatLookAlikeLine({ field: "Region", edgeSpaceCount: 0, edgeSample: "", invisibleOnlyCount: 0, groups: [{ variants: [{ text: "a  b", count: 1 }, { text: "a b", count: 4 }], reasons: ["innerSpace"] }], groupCount: 1, rowCount: 5 })',
+  'formatDateStyleRowNote("ymdSlash", "excelCell")', 'formatLookAlikeRowNote("East ", { position: 0, reasons: ["case", "compat"] }, true, true)', 'formatLookAlikeRowNote("x", null, true, false)',
+  ...["date", "number", "placeholder", "trim", "keptTime", "keptPercent", "keptScientific", "keptCurrencyMix", "keptPendingPlaceholder", "keptDateUnreadable", "keptDateOrder", "keptNumberUnreadable", "keptUnsafe"].map((action) => `formatStandardizeAction("${action}")`),
+  "formatStandardizedExportGate(false, false, false)", "formatStandardizedExportGate(true, true, false)", "formatStandardizedExportGate(true, false, false)",
+  'formatStandardizeFieldNotes({ kind: "year", unit: "kg", number: 3, field: "Weight", orderHint: true }).join(" | ")',
+  'formatStandardizeKept({ kept: 2, keptSamples: ["2024-05-08 10:30", "TBD"] })',
+  'formatStandardizedChangesStatus(100, 250, "orders_changes.csv")', 'formatStandardizedChangesStatus(3, 3, "orders_changes.csv")',
+  "formatStandardizedSummary({ changed: 12, kept: 3, quietCount: 4, ignoredCount: 1 })", "formatStandardizedSummary({ changed: 0, kept: 0, quietCount: 0, ignoredCount: 2 })",
+  "formatStandardizedSummary({ changed: 1, kept: 0, quietCount: 0, ignoredCount: 0 })"
+];
+// Numbers the English adds on purpose: 万 and 亿 written out.
+const ENGLISH_EXTRA_NUMBERS = ["10,000", "100,000,000"];
+
+test("v3.2.0 format.js: every sentence in English keeps the Chinese sentence's numbers and has no Chinese", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__unitRows", Array.from({ length: 5 }, (_, index) => ({ Weight: `${index + 5}kg`, Rate: `${(index + 1) * 10}%`, Amount: String(index) })));
+  scope.evaluate('commitTabularData(["Weight", "Rate", "Amount"], __unitRows, "units.csv", beginImport())');
+  // The type names come from profiling.js and are paired in commit 7; until then, their keys.
+  scope.evaluate("fieldTypeLabel = (typeKey) => typeKey");
+  const failures = [];
+  for (const call of FORMAT_TEXT_CALLS) {
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const zh = scope.evaluate(call);
+    scope.evaluate('setInterfaceLanguage("en")');
+    const en = scope.evaluate(call);
+    if (typeof zh !== "string" || typeof en !== "string") { failures.push(`${call}: not a string`); continue; }
+    if (!zh) { failures.push(`${call}: empty`); continue; }
+    if (ENGLISH_BAD.test(en)) failures.push(`${call}: Chinese in the English: ${en}`);
+    if (/\p{Script=Han}|[、。，：；（）「」]/u.test(zh) && zh === en) failures.push(`${call}: not translated: ${en}`);
+    const zhNumbers = numbersOf(zh);
+    const enNumbers = numbersOf(en);
+    const left = [...enNumbers];
+    for (const number of zhNumbers) {
+      const at = left.indexOf(number);
+      if (at < 0) failures.push(`${call}: ${number} missing from the English: ${zh} / ${en}`);
+      else left.splice(at, 1);
+    }
+    const extra = left.filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+    if (extra.length) failures.push(`${call}: English has ${extra.join(" ")} more: ${zh} / ${en}`);
+  }
+  assert.deepEqual(failures, []);
+  assert.ok(FORMAT_TEXT_CALLS.length > 150, `${FORMAT_TEXT_CALLS.length}`);
+});
+
+test("v3.2.0 format.js: the English sentences read as written", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  const en = (expression) => scope.evaluate(expression);
+  assert.equal(en("formatAnalysisScope(1, 28, 40, 2)"), "1 filter · 28 / 40 rows (2 more excluded from analysis)");
+  assert.equal(en("formatAnalysisScope(0, 42, 42, 0)"), "All 42 rows");
+  assert.equal(en("formatSuspectedTotalExcludedNote(1)"), "1 row is excluded from analysis: stats, charts, breakdowns and filters no longer include it.");
+  assert.equal(en("formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] } })"), "Excluded from analysis: 1 possible total row (row 44), 1 duplicate row (row 21).");
+  assert.equal(en("formatReportExclusions({ suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } })"),
+    "Excluded from analysis: 2 possible total rows (rows 6, 7), 2 duplicate rows (rows 4, 7), 3 rows in all (row 7 is both).");
+  assert.equal(en('formatSuspectedTotalStatus([{ line: 44, label: "Total" }])'), "Row 44 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.equal(en('formatFormulaError({ field: "Margin", count: 3, byError: { "#DIV/0!": 2, "#REF!": 1 }, lines: [3, 5, 9] })'), "“Margin”: 3 (#DIV/0! 2, #REF! 1), rows 3, 5, 9.");
+  assert.equal(en('formatHeaderDetectionNote({ headerRowNumber: 2, skippedRows: [{ preview: "Sales 2025" }] })'), "The header is on row 2; 1 row above it was skipped: “Sales 2025”.");
+  assert.equal(en('formatProblemCategoryLabel({ kind: "missing", field: "Region", count: 1 })'), "Blanks · Region (1 row)");
+  assert.equal(en('formatCsvWarningMessage("TooFewFields", { line: 12, cellCount: 2, headerCount: 4 })'), "Row 12 has only 2 columns (the header has 4); the missing cells are treated as blank.");
+  assert.equal(en('formatStandardizeAction("date")'), "Date rewritten as YYYY-MM-DD");
+  assert.equal(en('formatVisibleText(" a" + String.fromCharCode(9) + "b ")'), "␣a[tab]b␣");
+  assert.equal(en("formatPreviewPageInfo(1, 1, 1, 0, false)"), "Page 1 of 1, 1 row");
+  // Back in Chinese the same calls give the Chinese.
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate("formatAnalysisScope(0, 42, 42, 0)"), "全部 42 行");
+  assert.equal(scope.evaluate('formatVisibleText(" a" + String.fromCharCode(9) + "b ")'), "␣a[制表符]b␣");
+});
+
+test("v3.2.0 format.js: the English maybe-valid note names only the writings this column has (R11)", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["N/A", "-"])'), "“-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA", "/"])'), "“NA”, “/” may also be real values (for example a yes/no answer, or NA for North America); make sure that in this column they mean there is no data.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA"])'), "“NA” may also be a real value (for example NA for North America); make sure that in this column it means there is no data.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["N/A", "NULL"])'), "");
+  // Chinese keeps its one fixed sentence.
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA", "/"])'), PLACEHOLDER_MAYBE_NOTE_TEXT);
+});
+
+test("v3.2.0 format.js: the per-row texts never call L() (both arguments would be built for every row)", () => {
+  const scope = createScriptContext();
+  for (const language of ["zh", "en"]) {
+    scope.evaluate(`setInterfaceLanguage("${language}")`);
+    scope.evaluate("globalThis.__lCalls = 0; globalThis.__realL ??= L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+    scope.evaluate('formatDateStyleRowNote("ymdSlash", "excelCell"); formatLookAlikeRowNote("East ", { position: 0, reasons: ["case"] }, true, true); formatStandardizeAction("trim"); formatVisibleText(" x "); formatCsvWarningMessage("TooFewFields", { line: 3, cellCount: 1, headerCount: 2 }); formatCsvWarningMessage("InvalidQuotes", { line: 3 })');
+    assert.equal(scope.evaluate("__lCalls"), 0, language);
+    // The counter itself works.
+    scope.evaluate('formatExcludedTail(2)');
+    assert.equal(scope.evaluate("__lCalls"), 1, language);
+    scope.evaluate("L = globalThis.__realL");
+  }
 });

@@ -1007,12 +1007,12 @@ function buildReportRowNoteSections(quality) {
       {
         title: "疑似合计 / 小计行",
         // The page's note: another one once the totals are left out (v3.1.0).
-        note: quality.suspectedTotalsExcluded ? formatSuspectedTotalExcludedNote(quality.suspectedTotalsExcluded) : SUSPECTED_TOTAL_NOTE,
+        note: quality.suspectedTotalsExcluded ? formatSuspectedTotalExcludedNote(quality.suspectedTotalsExcluded) : Lpick(SUSPECTED_TOTAL_NOTE),
         lines: totals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => formatSuspectedTotal(item)),
         overflow: formatSuspectedTotalOverflow(totals.length),
         extras: formatSuspectedTotalExtras(quality.suspectedTotalExtras, totals.length)
       },
-      { title: "公式错误单元格", note: FORMULA_ERROR_NOTE, lines: errors.map((item) => formatFormulaError(item)), overflow: "", extras: [] }
+      { title: "公式错误单元格", note: Lpick(FORMULA_ERROR_NOTE), lines: errors.map((item) => formatFormulaError(item)), overflow: "", extras: [] }
     ].filter((section) => section.lines.length)
   };
 }
@@ -1028,9 +1028,9 @@ function buildReportFormatSections(quality) {
     dateStyleCount: dateStyles.length,
     lookAlikeCount: lookAlikes.length,
     sections: [
-      { title: "日期写法混用", note: DATE_STYLE_NOTE, lines: dateStyles.map(formatDateStyleLine) },
-      { title: "整列只有一个值", note: CONSTANT_FIELD_NOTE, lines: constantFields.map(formatConstantField) },
-      { title: "同一个值，写法不一样", note: LOOK_ALIKE_NOTE, lines: lookAlikes.map(formatLookAlikeLine) }
+      { title: "日期写法混用", note: Lpick(DATE_STYLE_NOTE), lines: dateStyles.map(formatDateStyleLine) },
+      { title: "整列只有一个值", note: Lpick(CONSTANT_FIELD_NOTE), lines: constantFields.map(formatConstantField) },
+      { title: "同一个值，写法不一样", note: Lpick(LOOK_ALIKE_NOTE), lines: lookAlikes.map(formatLookAlikeLine) }
     ].filter((section) => section.lines.length)
   };
 }

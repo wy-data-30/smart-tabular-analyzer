@@ -1579,7 +1579,7 @@ function renderAnalysisContainsNotes() {
   const { totals, duplicates } = state.rows.length ? countAnalysisContains() : { totals: 0, duplicates: 0 };
   const text = formatAnalysisContainsNote(totals, duplicates);
   const html = text
-    ? `${escapeHtml(text)} <button type="button" class="text-button" data-quality-target="${totals ? "suspectedTotal" : "duplicateRows"}" aria-label="${escapeHtml(formatGoToQualityAriaLabel(totals, duplicates))}">${GO_TO_QUALITY_LABEL}</button>`
+    ? `${escapeHtml(text)} <button type="button" class="text-button" data-quality-target="${totals ? "suspectedTotal" : "duplicateRows"}" aria-label="${escapeHtml(formatGoToQualityAriaLabel(totals, duplicates))}">${Lpick(GO_TO_QUALITY_LABEL)}</button>`
     : "";
   [dom.statisticsContainsNote, dom.chartsContainsNote, dom.customContainsNote].forEach((element) => {
     element.innerHTML = html;
@@ -1725,7 +1725,7 @@ function listExclusionCandidates(kind) {
 function setRowExclusion(kind, on) {
   if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
   if (hasFieldConfigDraftChanges()) {
-    setExclusionMessage(kind, EXCLUSION_DRAFT_REFUSAL, "warning");
+    setExclusionMessage(kind, Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
     return false;
   }
   const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
@@ -1984,7 +1984,7 @@ function renderSuspectedTotalDetails() {
 
 // "不计入分析" or "撤销" for a kind; it carries no data-problem-index or data-placeholder-index.
 function exclusionToggleButton(kind, excluded) {
-  const label = EXCLUSION_KIND_LABELS[kind];
+  const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
   const ariaLabel = excluded ? `撤销：让${label}重新计入分析` : `把${label}设为不计入分析`;
   return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? "撤销" : "不计入分析"}</button>`;
 }
@@ -2018,7 +2018,7 @@ function renderExclusionControls() {
   dom.duplicateExclusion.classList.toggle("hidden", !state.duplicateRows);
   dom.duplicateExclusionText.textContent = !state.duplicateRows ? ""
     : duplicateExcluded ? formatDuplicateExcludedNote(duplicateExcluded)
-      : hasCleanIdField() ? formatDuplicateIncludedNote(state.duplicateRows) : NO_ID_DUPLICATE_NOTE;
+      : hasCleanIdField() ? formatDuplicateIncludedNote(state.duplicateRows) : Lpick(NO_ID_DUPLICATE_NOTE);
   dom.duplicateExclusionAction.innerHTML = state.duplicateRows ? exclusionToggleButton("duplicateRows", duplicateExcluded > 0) : "";
 }
 
@@ -2330,7 +2330,7 @@ function renderCategoryStats() {
           <strong>${formatInteger(item.count)}</strong>
           <span>${formatPercent(item.ratio)}</span>
         </div>
-      `).join("") : `<div class="empty-note">${escapeHtml(CATEGORY_STATS_EMPTY_NOTE)}</div>`}
+      `).join("") : `<div class="empty-note">${escapeHtml(Lpick(CATEGORY_STATS_EMPTY_NOTE))}</div>`}
     </div>
   `).join("");
 }
@@ -2419,7 +2419,7 @@ function renderCategoryTopChart() {
   const counts = Array.from(countValues(field).entries())
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10);
-  if (!counts.length) return drawEmptyChart(canvas, CATEGORY_CHART_EMPTY_NOTE);
+  if (!counts.length) return drawEmptyChart(canvas, Lpick(CATEGORY_CHART_EMPTY_NOTE));
   state.charts.categoryTopChart = new Chart(canvas, {
     type: "bar",
     data: {
