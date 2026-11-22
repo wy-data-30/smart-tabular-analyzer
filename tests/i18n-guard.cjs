@@ -227,7 +227,7 @@ const I18N_WHITELIST = Object.freeze([
 
 // The files whose interface text is all in L() / Lp() (rule 1 applies). Only grows; when all nine
 // are here the list goes and rule 1 applies to every file.
-const I18N_DONE_FILES = Object.freeze(["format.js"]);
+const I18N_DONE_FILES = Object.freeze(["format.js", "app.js"]);
 
 const isChineseLiteral = (token) => (token.type === "str" || token.type === "tmpl" || token.type === "regex") && (HAN.test(token.value) || CJK_PUNCT_STRICT.test(token.value));
 

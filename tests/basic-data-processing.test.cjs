@@ -9712,8 +9712,8 @@ test("v3.2.0 static guard: the whitelist names declarations that exist, with exa
 
 test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
   const whitelist = i18nWhitelist();
-  // commit 5: format.js.
-  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js"]);
+  // commit 5: format.js; commit 6: app.js.
+  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js"]);
   for (const file of i18nGuard.APP_SCRIPT_NAMES) {
     const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
     assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
@@ -10160,4 +10160,202 @@ test("v3.2.0 format.js: the per-row texts never call L() (both arguments would b
     assert.equal(scope.evaluate("__lCalls"), 1, language);
     scope.evaluate("L = globalThis.__realL");
   }
+});
+
+// ---- v3.2.0 commit 6: the sentences of app.js in English ----
+// A table with English names and values that reaches most of app.js: an ID column with a repeated
+// ID, a repeated row, N/A, a total row, a short row (a reading issue), two date formats, "east" next
+// to "East", a value with a trailing space, a blank region and regions whose order depends on the
+// sort key ("(A)", "Z", blank; R3).
+function englishScenarioCsv() {
+  const regions = ["East", "(A)", "Z", "North"];
+  const rows = Array.from({ length: 16 }, (_, index) => ({
+    id: `A${String(index + 1).padStart(2, "0")}`,
+    region: index === 5 ? "east" : index === 9 ? "" : regions[index % 4],
+    amount: index === 3 ? "N/A" : String((index + 1) * 100),
+    date: index === 7 || index === 11 ? `01/${String(index + 2).padStart(2, "0")}/2025` : `2025-01-${String(index + 2).padStart(2, "0")}`,
+    rep: index === 4 ? "Cy " : ["Ann", "Bob", "Cy", "Dee"][index % 4]
+  }));
+  const line = (row) => [row.id, row.region, row.amount, row.date, row.rep].join(",");
+  const amounts = [...rows, rows[2]].map((row) => Number(row.amount)).filter(Number.isFinite);
+  return ["ID,Region,Amount,Date,Rep", ...rows.map(line), line(rows[2]), "A17,East", `Total,,${amounts.reduce((sum, value) => sum + value, 0)},,`].join("\r\n") + "\r\n";
+}
+
+async function importCsvInLanguage(text, fileName, language) {
+  const scope = createScriptContext({ language });
+  put(scope.context, "XLSX", XLSX);
+  scope.context.window.XLSX = XLSX;
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  const bytes = Buffer.from(text, "utf8");
+  put(scope.context, "__languageFile", { name: fileName, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  await scope.evaluate("parseDataFile(__languageFile)");
+  return scope;
+}
+
+// Every element's text, markup, options and attributes (the fake setAttribute keeps nothing, so
+// it is recorded on the shared prototype for the length of the scenario).
+function elementTexts(scope) {
+  const out = {};
+  for (const [id, element] of scope.elements) {
+    out[id] = [element.textContent, element.innerHTML, element.value, ...(element.options || []).map((option) => `${option.textContent ?? ""}`), ...Object.values(element.__attributes || {})].join(" ¦ ");
+  }
+  return out;
+}
+
+// The steps, the same in both languages; texts after each.
+async function runLanguageScenario(language) {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+  const steps = [["import", elementTexts(scope)]];
+  const step = (name, expression) => { scope.evaluate(expression); steps.push([name, elementTexts(scope)]); };
+  step("blanks", "confirmAllCommonPlaceholders()");
+  step("exclude", `["suspectedTotal", "duplicateRows"].forEach((kind) => handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: kind, exclusionOn: "true" } }) } }))`);
+  step("filter", `(() => {
+    const values = getCategoryFilterOptions("Region").map((option) => option.value);
+    dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+    state.categoryFilterDraftValues = new Set(values.slice(0, 3));
+    applyFilters();
+  })()`);
+  step("field type", 'stageFieldTypeChange("Rep", "ignore"); applyFieldConfiguration()');
+  step("custom", 'dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  step("standardize", "checkStandardizedExport()");
+  const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+  categories.forEach((category, index) => {
+    put(scope.context, "__scenarioCategory", category);
+    step(`problem rows ${index}`, "openProblemView(__scenarioCategory)");
+  });
+  step("status fold", "toggleStatusNote()");
+  step("clear filters", "clearAllFilters()");
+  return { scope, steps, categories };
+}
+
+async function withRecordedAttributes(action) {
+  const proto = Object.getPrototypeOf(createScriptContext().elements.get("languageSwitch") || createScriptContext().evaluate("dom.languageSwitch"));
+  const original = proto.setAttribute;
+  proto.setAttribute = function setAttribute(name, value) { (this.__attributes ??= {})[name] = String(value); };
+  try {
+    return await action();
+  } finally {
+    proto.setAttribute = original;
+  }
+}
+
+// The Chinese of app.js and format.js (the files that are done), in pieces of two or more Han
+// characters, without the pieces the files still in Chinese or the data also use.
+function doneFileChineseFragments() {
+  const pieces = (file, chineseArgumentOnly) => new Set(i18nGuard.lex(repoFile(file))
+    .filter((token) => (token.type === "str" || token.type === "tmpl") && (!chineseArgumentOnly || (token.lFrame && token.lFrame.arg === 0)))
+    .flatMap((token) => token.value.match(/\p{Script=Han}{2,}/gu) || []));
+  const done = new Set([...pieces("app.js", true), ...pieces("format.js", true)]);
+  for (const file of ["parsing.js", "profiling.js", "stats.js", "quality.js", "importer.js", "report.js", "script.js"]) {
+    // Also a piece inside one of their texts (“按空值处理” in quality.js's “已按空值处理”).
+    const texts = i18nGuard.lex(repoFile(file)).filter((token) => token.type === "str" || token.type === "tmpl").map((token) => token.value);
+    for (const piece of [...done]) if (texts.some((text) => text.includes(piece))) done.delete(piece);
+  }
+  return [...done];
+}
+
+test("v3.2.0 app.js: in English the page never shows the Chinese of app.js or format.js, and every element keeps the numbers of its Chinese text", async () => {
+  const [zh, en] = await withRecordedAttributes(async () => [await runLanguageScenario("zh"), await runLanguageScenario("en")]);
+  assert.equal(en.scope.evaluate("currentLanguage"), "en");
+  assert.ok(zh.categories.length >= 8, `${zh.categories.length} problem categories`);
+  assert.deepEqual(en.categories, zh.categories);
+  const fragments = doneFileChineseFragments();
+  assert.ok(fragments.length > 300, `${fragments.length} fragments`);
+  const leaks = [];
+  const numberGaps = [];
+  en.steps.forEach(([name, texts], stepIndex) => {
+    const zhTexts = zh.steps[stepIndex][1];
+    assert.equal(zh.steps[stepIndex][0], name);
+    for (const [id, text] of Object.entries(texts)) {
+      const leaked = fragments.filter((fragment) => text.includes(fragment));
+      if (leaked.length) leaks.push(`${name} #${id}: ${leaked.slice(0, 3).join(" / ")} in ${text.slice(0, 120)}`);
+      const zhNumbers = numbersOf(zhTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+      const enNumbers = numbersOf(text).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+      if (zhNumbers.join(" ") !== enNumbers.join(" ")) numberGaps.push(`${name} #${id}: ${zhNumbers.join(" ")} / ${enNumbers.join(" ")}`);
+    }
+  });
+  assert.deepEqual(leaks.slice(0, 15), [], `${leaks.length} leaks`);
+  assert.deepEqual(numberGaps.slice(0, 15), [], `${numberGaps.length} elements with other numbers`);
+  // The steps really ran: a filter, two kinds left out, a custom analysis, a standardized check.
+  assert.equal(en.scope.evaluate("state.excludedRows.suspectedTotal.length + state.excludedRows.duplicateRows.length"), 2);
+  assert.ok(en.scope.evaluate("Boolean(state.customAnalysis && state.standardizedExport)"));
+});
+
+test("v3.2.0 app.js: the filter values keep the Chinese order in both languages (R3); only the empty one's label changes", () => {
+  const orders = [];
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Region"], ["(A)", "Z", "", "(A)", "Z", ""].map((Region) => ({ Region })));
+    orders.push(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label, option.count]))')));
+  }
+  assert.deepEqual(orders[0], [["", "（空值）", 2], ["(A)", "(A)", 2], ["Z", "Z", 2]]);
+  assert.deepEqual(orders[1], [["", "(Blank)", 2], ["(A)", "(A)", 2], ["Z", "Z", 2]]);
+});
+
+test("v3.2.0 app.js: the import message is kept as figures and written in the language it is shown in", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const status = JSON.parse(scope.evaluate("JSON.stringify(state.importStatus)"));
+  assert.deepEqual(Object.keys(status).sort(), ["affectedRows", "formulaErrors", "headerDetection", "sourceDisplayName", "suspectedTotals", "warningCount"]);
+  assert.equal(status.warningCount, 1);
+  assert.equal(status.affectedRows, 1);
+  const chinese = textOf(scope, "statusPanel");
+  assert.equal(chinese, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 20 行「Total」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  scope.evaluate('setInterfaceLanguage("en"); showImportStatus(state.importStatus)');
+  assert.equal(textOf(scope, "statusPanel"), "The CSV is loaded, but there is 1 reading issue in 1 row. Check the data preview and the number of columns. Row 20 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 1 note");
+  // Back from 换一个文件: written again, now in Chinese, byte for byte as after the import.
+  scope.evaluate('setInterfaceLanguage("zh"); showUploadPage(); returnToAnalysis()');
+  assert.equal(textOf(scope, "statusPanel"), chinese);
+});
+
+test("v3.2.0 app.js: one-off messages are written again in the other language, and back byte for byte", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  scope.evaluate('confirmPlaceholder("Amount", "N/A")');
+  scope.evaluate(`handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: "duplicateRows", exclusionOn: "true" } }) } })`);
+  scope.evaluate('stageFieldTypeChange("Rep", "ignore")');
+  scope.evaluate("applyFilters()");
+  scope.evaluate('state.problemView = { category: { kind: "missing", field: "Nope" }, page: 1, list: { items: [] } }; refreshProblemView()');
+  const ids = ["placeholderMessage", "duplicateExclusionMessage", "fieldConfigMessage", "filterMessage", "problemRowsMessage"];
+  const chinese = ids.map((id) => textOf(scope, id));
+  chinese.forEach((text, index) => assert.match(text, /\p{Script=Han}/u, ids[index]));
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  const english = ids.map((id) => textOf(scope, id));
+  english.forEach((text, index) => assert.ok(text && !ENGLISH_BAD.test(text), `${ids[index]}: ${text}`));
+  assert.equal(english[4], "This category has no problem rows any more.");
+  assert.equal(english[2], "Column settings have changes that are not applied. Click “Apply column settings” first, then apply the filters.");
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.deepEqual(ids.map((id) => textOf(scope, id)), chinese);
+  // An empty message forgets the element: nothing is written back into it.
+  scope.evaluate('setProblemRowsMessage(""); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "problemRowsMessage"), "");
+  assert.equal(scope.evaluate("oneOffMessages.has(dom.problemRowsMessage)"), false);
+});
+
+test("v3.2.0 app.js: the rebuild message is built at the click in both languages; a later switch shows the counts of the click", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  scope.evaluate('confirmPlaceholder("Amount", "N/A")');
+  const chinese = textOf(scope, "placeholderMessage");
+  // The short row has no Amount: one blank before. 19 rows: 16, the repeated one, the short one and the total.
+  assert.match(chinese, /^已把「Amount」的 1 个「N\/A」按空值处理：空值 1 → 2，认不出 1 → 0。.*行数还是 19。/);
+  // Afterwards a row is left out (the analysis has 18 rows), and only then the language switches:
+  // the English still has the counts of the click.
+  scope.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(scope.evaluate("getIncludedRows().length"), 18);
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  assert.match(textOf(scope, "placeholderMessage"), /^Treated 1 “N\/A” in “Amount” as blank: blanks 1 → 2, not recognized 1 → 0\..*there are still 19 rows\./);
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "placeholderMessage"), chinese);
+  // The language is the one shown before the message was built.
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+});
+
+test("v3.2.0 app.js: the (excluded) suffix of a problem row is no L() call, one per listed row", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  scope.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const notes = JSON.parse(scope.evaluate("JSON.stringify(Array.from({ length: 50 }, () => markExcludedNote({ index: state.excludedRows.suspectedTotal[0], note: \"x\" }, getExcludedIndexSet())))"));
+  assert.equal(scope.evaluate("__lCalls"), 0);
+  scope.evaluate("L = globalThis.__realL");
+  assert.equal(notes[0], "x (excluded from analysis)");
 });

@@ -321,9 +321,8 @@ function returnToAnalysis() {
   dom.returnToAnalysis.textContent = "";
   document.body.classList.add("has-results");
   dom.results.classList.remove("hidden");
-  const { message, tone, hasNote, summary } = state.importStatus;
-  setStatus(message, tone, hasNote);
-  dom.statusNoteSummary.textContent = summary;
+  // v3.2.0: the message is written again from its figures, in the current language.
+  showImportStatus(state.importStatus);
   syncSidebarToggle();
   showModule(state.returnModule || MODULE_IDS[0]);
 }

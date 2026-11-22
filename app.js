@@ -392,22 +392,22 @@ function showResultsWorkspace() {
 }
 
 // The sidebar (v3.0.0): the file, its fields and the current state, for display only.
-const SIDEBAR_TYPE_MARKS = Object.freeze({ id: "#", date: "日", category: "Aa", numeric: "12", ignore: "—" });
+const SIDEBAR_TYPE_MARKS = Object.freeze({ id: Lp("#", "#"), date: Lp("日", "D"), category: Lp("Aa", "Aa"), numeric: Lp("12", "12"), ignore: Lp("—", "—") });
 
 function renderSidebar() {
-  dom.sidebarFileSize.textContent = `${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`;
+  dom.sidebarFileSize.textContent = L(`${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`, `${enCount(state.rows.length, "row", "rows")} × ${enCount(state.fields.length, "column", "columns")}`);
   dom.sidebarFieldCount.textContent = formatInteger(state.fields.length);
   dom.sidebarFieldList.innerHTML = state.profiles.map((profile) => {
     const unit = profile.typeKey === "numeric" ? getFieldNumberUnit(profile.field) : "";
-    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] || ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
+    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] ? Lpick(SIDEBAR_TYPE_MARKS[profile.typeKey]) : ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
   }).join("");
   const headerRowNumber = state.headerDetection?.headerRowNumber;
   const showsHeader = Boolean(headerRowNumber) && headerRowNumber !== 1;
   dom.sidebarHeaderRow.classList.toggle("hidden", !showsHeader);
-  dom.sidebarHeaderValue.textContent = showsHeader ? `第 ${formatInteger(headerRowNumber)} 行` : "";
+  dom.sidebarHeaderValue.textContent = showsHeader ? L(`第 ${formatInteger(headerRowNumber)} 行`, `row ${formatInteger(headerRowNumber)}`) : "";
   const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
   dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
-  dom.sidebarPlaceholderValue.textContent = confirmedCount ? `${formatInteger(confirmedCount)} 处` : "";
+  dom.sidebarPlaceholderValue.textContent = confirmedCount ? L(`${formatInteger(confirmedCount)} 处`, formatInteger(confirmedCount)) : "";
 }
 
 // Open by default from 1100 px, closed below; once the user opens or closes it, body carries
@@ -496,11 +496,11 @@ function refreshFormatConsistency() {
 function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null, dateCells = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
-    showError("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", importId);
+    showError(L("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", "The file has no data to analyze. Make sure it has a header row and at least one row of data."), importId);
     return;
   }
   if (fields.length > IMPORT_LIMITS.maxColumns || rows.length > IMPORT_LIMITS.maxRows) {
-    showError(`数据超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行或 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请拆分后重试。`, importId);
+    showError(L(`数据超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行或 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请拆分后重试。`, `The data is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows or ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; split it and try again.`), importId);
     return;
   }
 
@@ -582,22 +582,17 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
   dom.results.classList.remove("hidden");
-  const notes = [formatHeaderDetectionNote(state.headerDetection), formatSuspectedTotalStatus(state.suspectedTotals), formatFormulaErrorStatus(state.formulaErrors)];
-  const headerNote = notes.join("");
-  if (state.parseWarnings.length) {
-    // Warnings without a line count in the total only.
-    const affectedRows = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-    setStatus(`CSV 已载入，但读取时有 ${formatInteger(state.parseWarnings.length)} 处疑问${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`, "warning", Boolean(headerNote));
-  } else {
-    setStatus(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, "success", Boolean(headerNote));
-  }
-  dom.statusNoteSummary.textContent = headerNote ? formatStatusNoteSummary(sourceDisplayName, notes.filter(Boolean).length) : "";
+  // v3.2.0: the figures of the import message, not its sentence (buildImportStatus()). Warnings
+  // without a line count in the total only.
   state.importStatus = {
-    message: dom.statusPanel.textContent,
-    tone: state.parseWarnings.length ? "warning" : "success",
-    hasNote: Boolean(headerNote),
-    summary: dom.statusNoteSummary.textContent
+    sourceDisplayName,
+    warningCount: state.parseWarnings.length,
+    affectedRows: new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size,
+    headerDetection: state.headerDetection,
+    suspectedTotals: state.suspectedTotals,
+    formulaErrors: state.formulaErrors
   };
+  showImportStatus(state.importStatus);
   state.returnModule = null;
 
   renderOverview();
@@ -671,9 +666,9 @@ function renderStandardizedExport() {
     const notes = formatStandardizeFieldNotes(count).map((note) => `<span class="standardize-note">${escapeHtml(note)}</span>`).join("");
     return `<tr><td>${escapeHtml(count.field)}${notes}</td><td>${escapeHtml(FIELD_TYPE_LABELS[count.typeKey] || "")}</td>${cell(count.date)}${cell(count.number)}${cell(count.placeholder)}${cell(count.trim)}<td>${escapeHtml(formatStandardizeKept(count))}</td></tr>`;
   }).join("");
-  const total = `<tr class="standardize-total"><td>合计</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
+  const total = `<tr class="standardize-total"><td>${L("合计", "Total")}</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
   dom.standardizedExportTable.innerHTML = listed.length
-    ? `<thead><tr><th>字段</th><th>类型</th><th>日期改写</th><th>数字改写</th><th>清空空值写法</th><th>去首尾空格</th><th>保持原值</th></tr></thead><tbody>${rows}${total}</tbody>`
+    ? `<thead><tr>${L(["字段", "类型", "日期改写", "数字改写", "清空空值写法", "去首尾空格", "保持原值"], ["Column", "Type", "Dates rewritten", "Numbers rewritten", "Blank-like cleared", "Spaces trimmed", "Kept as is"]).map((title) => `<th>${title}</th>`).join("")}</tr></thead><tbody>${rows}${total}</tbody>`
     : "";
 }
 
@@ -692,11 +687,11 @@ function renderOverview() {
     ? `${formatInteger(state.rows.length)} → ${formatInteger(analysisRows.length)}`
     : state.rows.length;
   const cards = [
-    [narrowed ? "总记录 → 当前分析" : "总记录数", rowValue],
-    ["字段数", state.fields.length],
-    ["数值字段数", numericCount],
-    ["分类字段数", categoryCount],
-    ["空值概览", activeMissing]
+    [narrowed ? L("总记录 → 当前分析", "All rows → In analysis") : L("总记录数", "Total rows"), rowValue],
+    [L("字段数", "Columns"), state.fields.length],
+    [L("数值字段数", "Number columns"), numericCount],
+    [L("分类字段数", "Text columns"), categoryCount],
+    [L("空值概览", "Blanks"), activeMissing]
   ];
 
   // v3.0.0: one line of text, same labels and numbers as the old cards.
@@ -713,7 +708,7 @@ function toggleSectionNote(event) {
   const expand = button.getAttribute("aria-expanded") !== "true";
   button.previousElementSibling.classList.toggle("is-expanded", expand);
   button.setAttribute("aria-expanded", String(expand));
-  button.textContent = expand ? "收起" : "展开";
+  button.textContent = expand ? L("收起", "Collapse") : L("展开", "Expand");
 }
 
 // v3.0.0 dirty data: table cells are capped and cut (style.css); hovering one that is cut shows
@@ -745,10 +740,10 @@ function buildCategoryInsight(field) {
   if (!item) return "";
   if (isConcentratedCategory(item)) {
     const top = item.top[0];
-    return `分类字段「${field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`;
+    return L(`分类字段「${field}」中占比最高的类别是「${top.name}」，出现 ${formatInteger(top.count)} 次，占比 ${formatPercent(top.ratio)}。`, `In “${field}”, the most common category is “${top.name}”: ${enCount(top.count, "time", "times")}, ${formatPercent(top.ratio)}.`);
   }
-  if (!item.top.length) return `「${field}」当前没有可统计的取值，不做概括。`;
-  return `「${field}」取值比较分散（超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），不做概括。`;
+  if (!item.top.length) return L(`「${field}」当前没有可统计的取值，不做概括。`, `“${field}” has no values to count right now, so there is no summary.`);
+  return L(`「${field}」取值比较分散（超过 ${INSIGHT_CATEGORY_MAX_DISTINCT} 个不同值，或没有重复出现的值），不做概括。`, `“${field}” is too scattered to summarize (more than ${INSIGHT_CATEGORY_MAX_DISTINCT} distinct values, or no value appears twice).`);
 }
 
 function renderCategoryInsight() {
@@ -818,7 +813,7 @@ function buildRowTableHtml(fields, entries, { withNote = false } = {}) {
   };
   return `
     <thead>
-      <tr><th>文件行号</th>${withNote ? "<th>说明</th>" : ""}${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
+      <tr><th>${L("文件行号", "File row")}</th>${withNote ? `<th>${L("说明", "Note")}</th>` : ""}${fields.map((field) => `<th>${escapeHtml(field)}</th>`).join("")}</tr>
     </thead>
     <tbody>
       ${entries.map((entry) => `<tr><td>${entry.line === null || entry.line === undefined ? "—" : escapeHtml(entry.line)}</td>${withNote ? `<td>${escapeHtml(entry.note || "")}</td>` : ""}${fields.map((field) => cell(entry, field)).join("")}</tr>`).join("")}
@@ -835,7 +830,7 @@ function renderPreview() {
   setPagerButtons([dom.previewFirstPage, dom.previewPrevPage, dom.previewNextPage, dom.previewLastPage], page, pageCount);
   if (!rows.length) {
     dom.previewTable.classList.add("is-empty-table");
-    dom.previewTable.innerHTML = emptyTable("当前筛选条件下没有可预览的数据。");
+    dom.previewTable.innerHTML = emptyTable(L("当前筛选条件下没有可预览的数据。", "No rows to preview under the current filters."));
     return;
   }
   dom.previewTable.classList.remove("is-empty-table");
@@ -854,13 +849,13 @@ function renderSchema() {
   dom.schemaTable.innerHTML = `
     <thead>
       <tr>
-        <th>字段名</th>
-        <th>自动类型</th>
-        <th>确认类型</th>
-        <th class="num">非空值</th>
-        <th class="num">唯一值</th>
-        <th class="num">认不出</th>
-        <th>示例值</th>
+        <th>${L("字段名", "Column")}</th>
+        <th>${L("自动类型", "Detected type")}</th>
+        <th>${L("确认类型", "Type")}</th>
+        <th class="num">${L("非空值", "Non-blank")}</th>
+        <th class="num">${L("唯一值", "Distinct")}</th>
+        <th class="num">${L("认不出", "Unrecognized")}</th>
+        <th>${L("示例值", "Examples")}</th>
       </tr>
     </thead>
     <tbody>
@@ -868,16 +863,14 @@ function renderSchema() {
         const draftTypeKey = getDraftTypeKey(profile);
         const failureCount = countFieldConversionFailures(profile.field, draftTypeKey);
         const requiresConversion = draftTypeKey === "numeric" || draftTypeKey === "date";
-        const exampleText = profile.sampleValues.join("、") || "—";
-        const failureLabel = requiresConversion
-          ? `${profile.field} 认不出 ${formatInteger(failureCount)} 个`
-          : `${profile.field} 当前类型无需转换`;
+        const exampleText = profile.sampleValues.join(Lpick(LIST_SEPARATOR)) || "—";
+        const failureLabel = formatSchemaFailureLabel(profile.field, failureCount, requiresConversion);
         return `
           <tr>
             <td><span class="field-name" title="${escapeHtml(profile.field)}">${escapeHtml(profile.field)}</span></td>
             <td><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></td>
             <td>
-              <select class="schema-type-select${draftTypeKey !== profile.typeKey ? " is-changed" : ""}" data-field-type="${escapeHtml(profile.field)}" aria-label="调整 ${escapeHtml(profile.field)} 的字段类型">
+              <select class="schema-type-select${draftTypeKey !== profile.typeKey ? " is-changed" : ""}" data-field-type="${escapeHtml(profile.field)}" aria-label="${escapeHtml(L(`调整 ${profile.field} 的字段类型`, `Change the type of ${profile.field}`))}">
                 ${Object.entries(FIELD_TYPE_LABELS).map(([typeKey, label]) => `
                   <option value="${typeKey}"${draftTypeKey === typeKey ? " selected" : ""}>${escapeHtml(label)}</option>
                 `).join("")}
@@ -885,7 +878,7 @@ function renderSchema() {
             </td>
             <td class="num">${formatInteger(profile.nonMissingCount)}</td>
             <td class="num">${formatInteger(profile.uniqueCount)}</td>
-            <td class="num"><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${requiresConversion ? "非空值中认不出的数量" : "该类型不需要转换"}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
+            <td class="num"><span class="conversion-failure-count${failureCount ? " warning" : ""}" title="${formatSchemaFailureTitle(requiresConversion)}" aria-label="${escapeHtml(failureLabel)}">${requiresConversion ? formatInteger(failureCount) : "—"}</span></td>
             <td><span class="schema-example" title="${escapeHtml(exampleText)}">${escapeHtml(exampleText)}</span></td>
           </tr>
         `;
@@ -895,7 +888,7 @@ function renderSchema() {
   renderSchemaFilter();
   updateFieldConfigActions();
   if (!dom.fieldConfigMessage.textContent) {
-    setFieldConfigMessage("自动识别已完成。可修改类型后统一应用。", "");
+    setFieldConfigMessage(() => L("自动识别已完成。可修改类型后统一应用。", "Types detected. You can change them and apply them all at once."), "");
   }
 }
 
@@ -904,8 +897,8 @@ function renderSchema() {
 // the focus, and applying, restoring and the draft check still cover every field.
 const SCHEMA_FILTER_MIN_FIELDS = 21;
 const SCHEMA_KINDS = Object.freeze([
-  ["all", "全部"], ["numeric", "数值"], ["category", "分类"], ["date", "日期"], ["id", "ID"], ["ignore", "忽略"],
-  ["failing", "有认不出的"], ["changed", "改过的"]
+  ["all", Lp("全部", "All")], ["numeric", Lp("数值", "Number")], ["category", Lp("分类", "Text")], ["date", Lp("日期", "Date")], ["id", Lp("ID", "ID")], ["ignore", Lp("忽略", "Ignored")],
+  ["failing", Lp("有认不出的", "With unrecognized")], ["changed", Lp("改过的", "Changed")]
 ]);
 
 function isSchemaFilterOn() {
@@ -939,7 +932,7 @@ function renderSchemaKinds() {
   const counts = countSchemaKinds();
   dom.schemaKinds.innerHTML = SCHEMA_KINDS
     .filter(([kind]) => kind === "all" || counts[kind] > 0 || kind === state.schemaFilter.kind)
-    .map(([kind, label]) => `<button type="button" class="schema-kind" data-schema-kind="${kind}" aria-pressed="${kind === state.schemaFilter.kind}">${escapeHtml(label)} <span class="schema-kind-count">${formatInteger(counts[kind])}</span></button>`)
+    .map(([kind, label]) => `<button type="button" class="schema-kind" data-schema-kind="${kind}" aria-pressed="${kind === state.schemaFilter.kind}">${escapeHtml(Lpick(label))} <span class="schema-kind-count">${formatInteger(counts[kind])}</span></button>`)
     .join("");
 }
 
@@ -1007,16 +1000,29 @@ function stageFieldTypeChange(field, typeKey) {
   if (isSchemaFilterOn()) renderSchemaKinds();
   updateFieldConfigActions();
   if (!hasFieldConfigDraftChanges()) {
-    setFieldConfigMessage("当前选择与已应用的字段配置一致。", "");
+    setFieldConfigMessage(() => L("当前选择与已应用的字段配置一致。", "The selection matches the applied column settings."), "");
     return;
   }
   const totalFailures = state.profiles.reduce((sum, item) => (
     sum + countFieldConversionFailures(item.field, getDraftTypeKey(item))
   ), 0);
-  const failureText = totalFailures
-    ? `；当前配置预计有 ${formatInteger(totalFailures)} 个非空值认不出，应用后会从对应统计中跳过`
-    : "";
-  setFieldConfigMessage(`字段配置有未应用的修改${failureText}。`, "warning");
+  setFieldConfigMessage(() => (totalFailures
+    ? L(
+      `字段配置有未应用的修改；当前配置预计有 ${formatInteger(totalFailures)} 个非空值认不出，应用后会从对应统计中跳过。`,
+      `Column settings have changes that are not applied; with these settings ${enCount(totalFailures, "non-blank value", "non-blank values")} will not be recognized and will be left out of the stats once applied.`
+    )
+    : L("字段配置有未应用的修改。", "Column settings have changes that are not applied.")), "warning");
+}
+
+// The 认不出 cell of the field table: its aria-label and its title (renderSchema(), updateSchemaDraftRow()).
+function formatSchemaFailureLabel(field, failureCount, requiresConversion) {
+  return requiresConversion
+    ? L(`${field} 认不出 ${formatInteger(failureCount)} 个`, `${field}: ${enCount(failureCount, "value", "values")} not recognized`)
+    : L(`${field} 当前类型无需转换`, `${field}: no conversion for this type`);
+}
+
+function formatSchemaFailureTitle(requiresConversion) {
+  return requiresConversion ? L("非空值中认不出的数量", "Non-blank values not recognized") : L("该类型不需要转换", "This type needs no conversion");
 }
 
 function updateSchemaDraftRow(field, typeKey) {
@@ -1033,15 +1039,8 @@ function updateSchemaDraftRow(field, typeKey) {
   const requiresConversion = typeKey === "numeric" || typeKey === "date";
   failureElement.textContent = requiresConversion ? formatInteger(failureCount) : "—";
   failureElement.classList.toggle("warning", failureCount > 0);
-  failureElement.title = requiresConversion
-    ? "非空值中认不出的数量"
-    : "该类型不需要转换";
-  failureElement.setAttribute(
-    "aria-label",
-    requiresConversion
-      ? `${field} 认不出 ${formatInteger(failureCount)} 个`
-      : `${field} 当前类型无需转换`
-  );
+  failureElement.title = formatSchemaFailureTitle(requiresConversion);
+  failureElement.setAttribute("aria-label", formatSchemaFailureLabel(field, failureCount, requiresConversion));
 }
 
 function applyFieldConfiguration() {
@@ -1066,10 +1065,12 @@ function applyFieldConfiguration() {
   );
 
   const failureCount = state.profiles.reduce((sum, profile) => sum + profile.conversionFailureCount, 0);
-  const message = failureCount
-    ? `字段配置已应用；${formatInteger(failureCount)} 个非空值认不出，已从对应统计和图表中跳过。`
-    : "字段配置已应用，统计、图表和分析结论已重新计算。";
-  rebuildAnalysisFromProfiles(message);
+  rebuildAnalysisFromProfiles(() => (failureCount
+    ? L(
+      `字段配置已应用；${formatInteger(failureCount)} 个非空值认不出，已从对应统计和图表中跳过。`,
+      `Column settings applied; ${enCount(failureCount, "non-blank value is", "non-blank values are")} not recognized and left out of the stats and charts.`
+    )
+    : L("字段配置已应用，统计、图表和分析结论已重新计算。", "Column settings applied; stats, charts and summaries are recalculated.")));
 }
 
 function restoreAutomaticFieldTypes() {
@@ -1084,7 +1085,7 @@ function restoreAutomaticFieldTypes() {
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
   state.manualFieldTypes = Object.create(null);
-  rebuildAnalysisFromProfiles("已恢复自动识别，统计、图表和分析结论已重新计算。");
+  rebuildAnalysisFromProfiles(() => L("已恢复自动识别，统计、图表和分析结论已重新计算。", "Detected types restored; stats, charts and summaries are recalculated."));
 }
 
 function hasFieldConfigDraftChanges() {
@@ -1109,20 +1110,44 @@ function updateFieldConfigActions() {
   updateExportButtons();
 }
 
-function setFieldConfigMessage(message, tone = "") {
-  dom.fieldConfigMessage.className = `field-config-message${tone ? ` ${tone}` : ""}`;
-  dom.fieldConfigMessage.textContent = message;
+// v3.2.0: a one-off message (the outcome of a click) keeps the function that wrote it, so a
+// language switch can write it again in the other language (rewriteOneOffMessages()). message
+// is a text or a function returning one; an empty text forgets the element.
+const oneOffMessages = new Map();
+
+function writeOneOffMessage(element, className, message, tone = "") {
+  const build = typeof message === "function" ? message : () => message;
+  element.className = `${className}${tone ? ` ${tone}` : ""}`;
+  element.textContent = build();
+  if (element.textContent) oneOffMessages.set(element, { build, className, tone });
+  else oneOffMessages.delete(element);
 }
 
+function rewriteOneOffMessages() {
+  oneOffMessages.forEach(({ build, className, tone }, element) => writeOneOffMessage(element, className, build, tone));
+}
+
+function setFieldConfigMessage(message, tone = "") {
+  writeOneOffMessage(dom.fieldConfigMessage, "field-config-message", message, tone);
+}
+
+// actionLabel: what was refused, [中文, English] (an Lp pair), or a text.
 function ensureFieldConfigurationApplied(actionLabel) {
   if (!hasFieldConfigDraftChanges()) return true;
-  setFieldConfigMessage(`字段配置有未应用的修改。请先点击“应用字段配置”，再${actionLabel}。`, "warning");
+  const action = (index) => (Array.isArray(actionLabel) ? actionLabel[index] : actionLabel);
+  setFieldConfigMessage(() => L(
+    `字段配置有未应用的修改。请先点击“应用字段配置”，再${action(0)}。`,
+    `Column settings have changes that are not applied. Click “Apply column settings” first, then ${action(1)}.`
+  ), "warning");
   return false;
 }
 
+// What ensureFieldConfigurationApplied() refused, in both languages.
+const DRAFT_ACTION_PLACEHOLDERS = Lp("处理像是空值的写法", "handle values that may mean blank");
+const DRAFT_ACTION_FILTERS = Lp("应用筛选", "apply the filters");
+
 function setPlaceholderMessage(message, tone = "") {
-  dom.placeholderMessage.className = `placeholder-message${tone ? ` ${tone}` : ""}`;
-  dom.placeholderMessage.textContent = message;
+  writeOneOffMessage(dom.placeholderMessage, "placeholder-message", message, tone);
 }
 
 // Pending common keys of fields that are not ignored: what "全部确认常见写法" covers.
@@ -1210,8 +1235,11 @@ function confirmAllCommonPlaceholders() {
 // a function that writes it once the analysis is rebuilt (v3.1.0: it compares the counts).
 function updatePlaceholderConfirmations(keysByField, message) {
   if (!state.rows.length) return false;
-  if (!ensureFieldConfigurationApplied("处理像是空值的写法")) {
-    setPlaceholderMessage("字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。", "warning");
+  if (!ensureFieldConfigurationApplied(DRAFT_ACTION_PLACEHOLDERS)) {
+    setPlaceholderMessage(() => L(
+      "字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。",
+      "Column settings have changes that are not applied. Click “Apply column settings” first, then handle values that may mean blank."
+    ), "warning");
     return false;
   }
   const fields = Object.keys(keysByField).filter((field) => getFieldProfile(field));
@@ -1309,9 +1337,9 @@ function initializeFilterControls() {
     .filter((profile) => fieldHasDateData(profile.field, getIncludedRows()))
     .map((profile) => profile.field);
 
-  setSelectOptions(dom.categoryFilterField, categoryFields, "不筛选分类字段", true);
-  setSelectOptions(dom.numericFilterField, numericFields, "不筛选数值字段", true);
-  setSelectOptions(dom.dateFilterField, dateFields, "不筛选日期字段", true);
+  setSelectOptions(dom.categoryFilterField, categoryFields, L("不筛选分类字段", "Don’t filter by text"), true);
+  setSelectOptions(dom.numericFilterField, numericFields, L("不筛选数值字段", "Don’t filter by number"), true);
+  setSelectOptions(dom.dateFilterField, dateFields, L("不筛选日期字段", "Don’t filter by date"), true);
   dom.categoryFilterField.disabled = categoryFields.length === 0;
   dom.numericFilterField.disabled = numericFields.length === 0;
   dom.dateFilterField.disabled = dateFields.length === 0;
@@ -1322,8 +1350,12 @@ function initializeFilterControls() {
   updateNumericFilterField();
   updateDateFilterField();
   renderFilterCounts();
-  setFilterMessage(formatNoFilterMessage(getIncludedRows().length, countExcludedRows()), "");
+  const included = getIncludedRows().length;
+  const excluded = countExcludedRows();
+  setFilterMessage(() => formatNoFilterMessage(included, excluded), "");
 }
+
+const FILTER_BLANK_LABEL = Lp("（空值）", "(Blank)");
 
 function getCategoryFilterOptions(field) {
   if (!field) return [];
@@ -1338,9 +1370,11 @@ function getCategoryFilterOptions(field) {
     .map(([value, count]) => ({
       value,
       count,
-      label: value || "（空值）"
+      label: value || Lpick(FILTER_BLANK_LABEL)
     }))
-    .sort((a, b) => a.label.localeCompare(b.label, "zh-CN", { numeric: true }));
+    // v3.2.0 (R3): the order is the Chinese one in both languages (the empty group sorts as
+    // （空值）); only the label shown follows the language.
+    .sort((a, b) => (a.value || FILTER_BLANK_LABEL[0]).localeCompare(b.value || FILTER_BLANK_LABEL[0], "zh-CN", { numeric: true }));
 }
 
 function updateCategoryFilterField() {
@@ -1353,8 +1387,8 @@ function updateCategoryFilterField() {
   dom.categoryFilterControls.classList.toggle("hidden", !field);
   dom.categoryFilterEmpty.classList.toggle("hidden", Boolean(field));
   dom.categoryFilterEmpty.textContent = dom.categoryFilterField.disabled
-    ? "没有可用的分类字段。"
-    : "请选择分类字段。";
+    ? L("没有可用的分类字段。", "No text columns available.")
+    : L("请选择分类字段。", "Choose a text column.");
   renderCategoryFilterValues();
 }
 
@@ -1365,11 +1399,11 @@ function renderCategoryFilterValues() {
   ));
   const selectedCount = state.categoryFilterDraftValues.size;
   dom.categoryFilterSelectionCount.textContent = dom.categoryFilterField.value
-    ? `已选 ${formatInteger(selectedCount)} / ${formatInteger(state.categoryFilterOptions.length)}`
-    : "未选择字段";
+    ? formatFilterSelectionCount(selectedCount)
+    : L("未选择字段", "No column chosen");
 
   if (!visibleOptions.length) {
-    dom.categoryFilterValues.innerHTML = `<p class="filter-value-empty">没有匹配的类别。</p>`;
+    dom.categoryFilterValues.innerHTML = `<p class="filter-value-empty">${L("没有匹配的类别。", "No matching categories.")}</p>`;
     return;
   }
 
@@ -1385,6 +1419,21 @@ function renderCategoryFilterValues() {
   }).join("");
 }
 
+// "已选 3 / 6" under the category values.
+function formatFilterSelectionCount(selectedCount) {
+  const total = formatInteger(state.categoryFilterOptions.length);
+  return L(`已选 ${formatInteger(selectedCount)} / ${total}`, `${formatInteger(selectedCount)} / ${total} selected`);
+}
+
+// The range hint of a number or date filter, or what to do without one.
+function formatFilterRange(from, to) {
+  return L(`${from} 至 ${to}`, `${from} to ${to}`);
+}
+
+function formatFilterRangeEmpty(disabled) {
+  return disabled ? L("没有可用字段", "No columns available") : L("请选择字段", "Choose a column");
+}
+
 function updateCategoryFilterDraftSelection(event) {
   const checkbox = event.target.closest("input[data-category-filter-index]");
   if (!checkbox) return;
@@ -1392,7 +1441,7 @@ function updateCategoryFilterDraftSelection(event) {
   if (!option) return;
   if (checkbox.checked) state.categoryFilterDraftValues.add(option.value);
   else state.categoryFilterDraftValues.delete(option.value);
-  dom.categoryFilterSelectionCount.textContent = `已选 ${formatInteger(state.categoryFilterDraftValues.size)} / ${formatInteger(state.categoryFilterOptions.length)}`;
+  dom.categoryFilterSelectionCount.textContent = formatFilterSelectionCount(state.categoryFilterDraftValues.size);
 }
 
 function setAllCategoryFilterValues(selected) {
@@ -1411,13 +1460,13 @@ function updateNumericFilterField() {
   if (!enabled) {
     dom.numericFilterMin.value = "";
     dom.numericFilterMax.value = "";
-    dom.numericFilterRange.textContent = dom.numericFilterField.disabled ? "没有可用字段" : "请选择字段";
+    dom.numericFilterRange.textContent = formatFilterRangeEmpty(dom.numericFilterField.disabled);
     return;
   }
   const { min, max } = numericExtents(values);
   dom.numericFilterMin.value = String(min);
   dom.numericFilterMax.value = String(max);
-  dom.numericFilterRange.textContent = `${formatFieldNumber(field, min)} 至 ${formatFieldNumber(field, max)}`;
+  dom.numericFilterRange.textContent = formatFilterRange(formatFieldNumber(field, min), formatFieldNumber(field, max));
 }
 
 function updateDateFilterField() {
@@ -1431,14 +1480,14 @@ function updateDateFilterField() {
   if (!enabled) {
     dom.dateFilterStart.value = "";
     dom.dateFilterEnd.value = "";
-    dom.dateFilterRange.textContent = dom.dateFilterField.disabled ? "没有可用字段" : "请选择字段";
+    dom.dateFilterRange.textContent = formatFilterRangeEmpty(dom.dateFilterField.disabled);
     return;
   }
   const start = dates[0].toISOString().slice(0, 10);
   const end = dates[dates.length - 1].toISOString().slice(0, 10);
   dom.dateFilterStart.value = start;
   dom.dateFilterEnd.value = end;
-  dom.dateFilterRange.textContent = `${start} 至 ${end}`;
+  dom.dateFilterRange.textContent = formatFilterRange(start, end);
 }
 
 function readFilterConfig() {
@@ -1454,15 +1503,15 @@ function readFilterConfig() {
   const numericField = dom.numericFilterField.value;
   if (numericField) {
     if (dom.numericFilterMin.value === "" || dom.numericFilterMax.value === "") {
-      return { error: "请填写数值筛选的最小值和最大值。", filters };
+      return { error: Lp("请填写数值筛选的最小值和最大值。", "Fill in the minimum and maximum of the number filter."), filters };
     }
     const min = Number(dom.numericFilterMin.value);
     const max = Number(dom.numericFilterMax.value);
     if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      return { error: "数值筛选范围必须是有效数字。", filters };
+      return { error: Lp("数值筛选范围必须是有效数字。", "The number filter range must be valid numbers."), filters };
     }
     if (min > max) {
-      return { error: "数值筛选的最小值不能大于最大值。", filters };
+      return { error: Lp("数值筛选的最小值不能大于最大值。", "The minimum of the number filter cannot be greater than the maximum."), filters };
     }
     filters.numeric = { field: numericField, min, max };
   }
@@ -1472,10 +1521,10 @@ function readFilterConfig() {
     const start = dom.dateFilterStart.value;
     const end = dom.dateFilterEnd.value;
     if (!start || !end) {
-      return { error: "请填写日期筛选的开始日期和结束日期。", filters };
+      return { error: Lp("请填写日期筛选的开始日期和结束日期。", "Fill in the start and end dates of the date filter."), filters };
     }
     if (start > end) {
-      return { error: "日期筛选的开始日期不能晚于结束日期。", filters };
+      return { error: Lp("日期筛选的开始日期不能晚于结束日期。", "The start date of the date filter cannot be after the end date."), filters };
     }
     filters.date = { field: dateField, start, end };
   }
@@ -1510,13 +1559,13 @@ function filterRowsByConfig(rows, filters) {
 
 function applyFilters() {
   if (!state.rows.length) return;
-  if (!ensureFieldConfigurationApplied("应用筛选")) {
-    setFilterMessage("字段配置有未应用的修改，请先应用字段配置。", "warning");
+  if (!ensureFieldConfigurationApplied(DRAFT_ACTION_FILTERS)) {
+    setFilterMessage(() => L("字段配置有未应用的修改，请先应用字段配置。", "Column settings have changes that are not applied; apply them first."), "warning");
     return;
   }
   const { error, filters } = readFilterConfig();
   if (error) {
-    setFilterMessage(error, "warning");
+    setFilterMessage(() => Lpick(error), "warning");
     return;
   }
 
@@ -1528,9 +1577,12 @@ function applyFilters() {
   const activeCount = [filters.category, filters.numeric, filters.date].filter(Boolean).length;
   const filteredOutCount = getIncludedRows().length - state.filteredRows.length;
   if (!activeCount) {
-    setFilterMessage(`未选择筛选字段，当前分析继续使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "");
+    const included = getIncludedRows().length;
+    const excluded = countExcludedRows();
+    setFilterMessage(() => L(`未选择筛选字段，当前分析继续使用${formatAllIncludedRows(included, excluded)}。`, `No filter column chosen; the analysis still uses ${formatAllIncludedRows(included, excluded)}.`), "");
   } else {
-    setFilterMessage(formatFiltersApplied(activeCount, state.filteredRows.length, filteredOutCount), state.filteredRows.length ? "success" : "warning");
+    const keptCount = state.filteredRows.length;
+    setFilterMessage(() => formatFiltersApplied(activeCount, keptCount, filteredOutCount), keptCount ? "success" : "warning");
   }
 }
 
@@ -1539,7 +1591,9 @@ function clearAllFilters() {
   resetFilterState();
   initializeFilterControls();
   refreshFilteredAnalysis();
-  setFilterMessage(`已清除全部筛选，当前分析恢复使用${formatAllIncludedRows(getIncludedRows().length, countExcludedRows())}。`, "success");
+  const included = getIncludedRows().length;
+  const excluded = countExcludedRows();
+  setFilterMessage(() => L(`已清除全部筛选，当前分析恢复使用${formatAllIncludedRows(included, excluded)}。`, `All filters cleared; the analysis uses ${formatAllIncludedRows(included, excluded)} again.`), "success");
 }
 
 function renderFilterCounts() {
@@ -1616,8 +1670,7 @@ function updateGlobalFilterStatus() {
 }
 
 function setFilterMessage(message, tone = "") {
-  dom.filterMessage.className = `filter-message${tone ? ` ${tone}` : ""}`;
-  dom.filterMessage.textContent = message;
+  writeOneOffMessage(dom.filterMessage, "filter-message", message, tone);
 }
 
 function refreshFilteredAnalysis() {
@@ -1654,7 +1707,7 @@ function refreshFilteredAnalysis() {
 // placeholder subsection for placeholder confirmations. fieldConfigMessage is a text or a
 // function called once everything is rebuilt. "已清除现有筛选条件。" only when a filter was
 // applied before (v3.1.0).
-function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新。", setMessage = setFieldConfigMessage) {
+function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置已更新。", "Column settings updated."), setMessage = setFieldConfigMessage) {
   const hadFilters = hasActiveFilters();
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
@@ -1686,15 +1739,31 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = "字段配置已更新
   renderCharts();
   renderChartInsights();
   resetV2AnalysisState();
-  const message = typeof fieldConfigMessage === "function" ? fieldConfigMessage() : fieldConfigMessage;
-  const notes = [
-    hadFilters ? "已清除现有筛选条件。" : "",
-    formatExclusionRestored(exclusionChanges.restored),
-    formatTotalsFlaggedAgain(exclusionChanges.flaggedAgain)
-  ].filter(Boolean);
+  // The message is built now, in both languages, now that everything is rebuilt: it compares
+  // counts taken at this click, which later changes must not touch. A language switch only
+  // picks the other text.
+  const buildMessage = () => {
+    const message = typeof fieldConfigMessage === "function" ? fieldConfigMessage() : fieldConfigMessage;
+    const notes = [
+      hadFilters ? L("已清除现有筛选条件。", "The filters in use were cleared.") : "",
+      formatExclusionRestored(exclusionChanges.restored),
+      formatTotalsFlaggedAgain(exclusionChanges.flaggedAgain)
+    ].filter(Boolean);
+    return [message, ...notes].join(" ");
+  };
   setExclusionMessage("suspectedTotal", "");
   setExclusionMessage("duplicateRows", "");
-  setMessage([message, ...notes].join(" "), "success");
+  const built = {};
+  const shown = currentLanguage;
+  try {
+    for (const language of ["zh", "en"]) {
+      currentLanguage = language;
+      built[language] = buildMessage();
+    }
+  } finally {
+    currentLanguage = shown;
+  }
+  setMessage(() => built[currentLanguage], "success");
   state.analysisCompletedAt = new Date();
   updateFieldConfigActions();
 }
@@ -1725,7 +1794,7 @@ function listExclusionCandidates(kind) {
 function setRowExclusion(kind, on) {
   if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
   if (hasFieldConfigDraftChanges()) {
-    setExclusionMessage(kind, Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
+    setExclusionMessage(kind, () => Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
     return false;
   }
   const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
@@ -1759,9 +1828,11 @@ function refreshAfterExclusion() {
   refreshFilterPanelForIncludedRows();
   refreshFilteredAnalysis();
   const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
-  setFilterMessage(activeCount
-    ? formatFiltersApplied(activeCount, state.filteredRows.length, included.length - state.filteredRows.length)
-    : formatNoFilterMessage(included.length, countExcludedRows()), activeCount && !state.filteredRows.length ? "warning" : "");
+  const keptCount = state.filteredRows.length;
+  const excludedCount = countExcludedRows();
+  setFilterMessage(() => (activeCount
+    ? formatFiltersApplied(activeCount, keptCount, included.length - keptCount)
+    : formatNoFilterMessage(included.length, excludedCount)), activeCount && !keptCount ? "warning" : "");
   renderExclusionControls();
   if (state.problemView) renderProblemView();
   renderSidebar();
@@ -1784,7 +1855,7 @@ function refreshFilterPanelForIncludedRows() {
   const numbers = numericField ? getNumericValues(numericField, getIncludedRows()) : [];
   if (numbers.length) {
     const { min, max } = numericExtents(numbers);
-    dom.numericFilterRange.textContent = `${formatFieldNumber(numericField, min)} 至 ${formatFieldNumber(numericField, max)}`;
+    dom.numericFilterRange.textContent = formatFilterRange(formatFieldNumber(numericField, min), formatFieldNumber(numericField, max));
     if (state.filters.numeric?.field !== numericField) {
       dom.numericFilterMin.value = String(min);
       dom.numericFilterMax.value = String(max);
@@ -1795,7 +1866,7 @@ function refreshFilterPanelForIncludedRows() {
   if (dates.length) {
     const start = dates[0].toISOString().slice(0, 10);
     const end = dates[dates.length - 1].toISOString().slice(0, 10);
-    dom.dateFilterRange.textContent = `${start} 至 ${end}`;
+    dom.dateFilterRange.textContent = formatFilterRange(start, end);
     if (state.filters.date?.field !== dateField) {
       dom.dateFilterStart.value = start;
       dom.dateFilterEnd.value = end;
@@ -1831,13 +1902,13 @@ function renderQuality() {
   // First, so every 查看 button below can carry its category's index.
   state.problemCategories = listProblemCategories();
   dom.qualitySummary.innerHTML = `
-    <span class="quality-pill ${missingClass}">空值总数：${formatInteger(state.totalMissing)}</span>
-    <span class="quality-pill ${duplicateClass}">重复行：${formatInteger(state.duplicateRows)}</span>
-    <span class="quality-pill ${conversionFailureClass}">认不出的数字或日期：${formatInteger(conversionFailureTotal)} 个值</span>
-    <span class="quality-pill">偏大或偏小的值：${formatInteger(qualityNumericStats.filter((item) => item.outlierCount > 0).length)} 个字段</span>
-    <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">编号重复：${formatInteger(listedIdFieldCount)} 个字段</span>
-    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">像是空值的写法：${formatInteger(pendingPlaceholderFieldCount)} 个字段</span>
-    ${problemViewButton({ kind: "duplicateRows" }, "查看重复行")}
+    <span class="quality-pill ${missingClass}">${L(`空值总数：${formatInteger(state.totalMissing)}`, `Blanks: ${formatInteger(state.totalMissing)}`)}</span>
+    <span class="quality-pill ${duplicateClass}">${L(`重复行：${formatInteger(state.duplicateRows)}`, `Duplicate rows: ${formatInteger(state.duplicateRows)}`)}</span>
+    <span class="quality-pill ${conversionFailureClass}">${L(`认不出的数字或日期：${formatInteger(conversionFailureTotal)} 个值`, `Numbers or dates not recognized: ${enCount(conversionFailureTotal, "value", "values")}`)}</span>
+    <span class="quality-pill">${formatQualityFieldPill(Lp("偏大或偏小的值", "Unusually high or low values"), qualityNumericStats.filter((item) => item.outlierCount > 0).length)}</span>
+    <span class="quality-pill ${listedIdFieldCount ? "warning" : "success"}">${formatQualityFieldPill(Lp("编号重复", "Duplicate IDs"), listedIdFieldCount)}</span>
+    <span class="quality-pill ${pendingPlaceholderFieldCount ? "warning" : "success"}">${formatQualityFieldPill(Lp("像是空值的写法", "Values that may mean blank"), pendingPlaceholderFieldCount)}</span>
+    ${problemViewButton({ kind: "duplicateRows" }, L("查看重复行", "View duplicate rows"))}
   `;
   renderParseWarningSummary();
   renderExclusionControls();
@@ -1853,12 +1924,12 @@ function renderQuality() {
   dom.qualityTable.innerHTML = `
     <thead>
       <tr>
-        <th>字段</th>
-        <th>类型</th>
-        <th class="num">空值数量</th>
-        <th class="num">空值占比</th>
-        <th class="num">认不出</th>
-        <th>查看</th>
+        <th>${L("字段", "Column")}</th>
+        <th>${L("类型", "Type")}</th>
+        <th class="num">${L("空值数量", "Blanks")}</th>
+        <th class="num">${L("空值占比", "Blank share")}</th>
+        <th class="num">${L("认不出", "Unrecognized")}</th>
+        <th>${L("查看", "View")}</th>
       </tr>
     </thead>
     <tbody>
@@ -1870,8 +1941,8 @@ function renderQuality() {
           <td class="num">${formatPercent(profile.missingRate)}</td>
           <td class="num${profile.conversionFailureCount ? " cell-warning" : ""}">${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
           <td>${problemViewCell([
-            problemViewButton({ kind: "missing", field: profile.field }, "空值"),
-            problemViewButton({ kind: "conversion", field: profile.field }, "认不出")
+            problemViewButton({ kind: "missing", field: profile.field }, L("空值", "Blanks")),
+            problemViewButton({ kind: "conversion", field: profile.field }, L("认不出", "Unrecognized"))
           ])}</td>
         </tr>
       `).join("")}
@@ -1880,7 +1951,7 @@ function renderQuality() {
 
   if (!qualityNumericStats.length) {
     dom.outlierTable.classList.add("is-empty-table");
-    dom.outlierTable.innerHTML = emptyTable("未识别到数值字段。");
+    dom.outlierTable.innerHTML = emptyTable(L("未识别到数值字段。", "No number columns found."));
     return;
   }
 
@@ -1888,11 +1959,11 @@ function renderQuality() {
   dom.outlierTable.innerHTML = `
     <thead>
       <tr>
-        <th>字段</th>
-        <th class="num">偏大或偏小的个数</th>
-        <th class="num">下界</th>
-        <th class="num">上界</th>
-        <th>查看</th>
+        <th>${L("字段", "Column")}</th>
+        <th class="num">${L("偏大或偏小的个数", "High or low values")}</th>
+        <th class="num">${L("下界", "Lower bound")}</th>
+        <th class="num">${L("上界", "Upper bound")}</th>
+        <th>${L("查看", "View")}</th>
       </tr>
     </thead>
     <tbody>
@@ -1902,11 +1973,18 @@ function renderQuality() {
           <td class="num">${formatInteger(stat.outlierCount)}</td>
           <td class="num">${formatFieldNumber(stat.field, stat.lowerBound)}</td>
           <td class="num">${formatFieldNumber(stat.field, stat.upperBound)}</td>
-          <td>${problemViewCell([problemViewButton({ kind: "outlier", field: stat.field }, "查看")])}</td>
+          <td>${problemViewCell([problemViewButton({ kind: "outlier", field: stat.field }, Lpick(VIEW_LABEL))])}</td>
         </tr>
       `).join("")}
     </tbody>
   `;
+}
+
+const VIEW_LABEL = Lp("查看", "View");
+
+// "偏大或偏小的值：2 个字段" and the other pills that count columns.
+function formatQualityFieldPill(name, count) {
+  return L(`${name[0]}：${formatInteger(count)} 个字段`, `${name[1]}: ${enCount(count, "column", "columns")}`);
 }
 
 // A 查看 button for a category of state.problemCategories, or "" when the category
@@ -1920,7 +1998,7 @@ function problemViewButton(category, text) {
 // The content of a 查看 cell: its buttons, or a short note so the cell is never empty.
 function problemViewCell(buttons) {
   const html = buttons.filter(Boolean).join("");
-  return html || `<span class="problem-view-none">无</span>`;
+  return html || `<span class="problem-view-none">${L("无", "None")}</span>`;
 }
 
 function isSameProblemCategory(a, b) {
@@ -1936,7 +2014,7 @@ function renderParseWarningSummary() {
     return;
   }
   const rowCount = new Set(state.parseWarnings.map((warning) => warning.row).filter((row) => row !== null)).size;
-  dom.parseWarningSummary.innerHTML = `${escapeHtml(`读取时有疑问：${formatInteger(count)} 处${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`)} ${problemViewButton({ kind: "parseWarnings" }, "查看")}`;
+  dom.parseWarningSummary.innerHTML = `${escapeHtml(L(`读取时有疑问：${formatInteger(count)} 处${rowCount ? `，涉及 ${formatInteger(rowCount)} 行` : ""}`, `Reading issues: ${formatInteger(count)}${rowCount ? ` in ${enCount(rowCount, "row", "rows")}` : ""}`))} ${problemViewButton({ kind: "parseWarnings" }, Lpick(VIEW_LABEL))}`;
 }
 
 // "疑似合计 / 小计行" and "公式错误单元格": lines of ready HTML, then footer, the whole
@@ -1967,7 +2045,7 @@ function getSuspectedTotalExtras() {
 
 function renderSuspectedTotalDetails() {
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
-  const button = problemViewButton({ kind: "suspectedTotal" }, "查看");
+  const button = problemViewButton({ kind: "suspectedTotal" }, Lpick(VIEW_LABEL));
   const excludedCount = state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0;
   dom.suspectedTotalSection.classList.toggle("is-excluded", excludedCount > 0);
   dom.suspectedTotalExcludedNote.classList.toggle("hidden", excludedCount === 0);
@@ -1978,15 +2056,17 @@ function renderSuspectedTotalDetails() {
     dom.suspectedTotalSection,
     dom.suspectedTotalDetails,
     state.suspectedTotals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => escapeHtml(formatSuspectedTotal(item))),
-    `<p class="row-note-footer">${overflow ? `${escapeHtml(overflow)}全部行请点「查看」。 ` : ""}${button}${exclusionButton}</p>${notes.map((note) => `<p class="row-note-footer">${escapeHtml(note)}</p>`).join("")}`
+    `<p class="row-note-footer">${overflow ? `${escapeHtml(L(`${overflow}全部行请点「查看」。`, `${overflow} Click “View” for all of them.`))} ` : ""}${button}${exclusionButton}</p>${notes.map((note) => `<p class="row-note-footer">${escapeHtml(note)}</p>`).join("")}`
   );
 }
 
 // "不计入分析" or "撤销" for a kind; it carries no data-problem-index or data-placeholder-index.
 function exclusionToggleButton(kind, excluded) {
   const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
-  const ariaLabel = excluded ? `撤销：让${label}重新计入分析` : `把${label}设为不计入分析`;
-  return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? "撤销" : "不计入分析"}</button>`;
+  const ariaLabel = excluded
+    ? L(`撤销：让${label}重新计入分析`, `Undo: count the ${label} in the analysis again`)
+    : L(`把${label}设为不计入分析`, `Exclude the ${label} from analysis`);
+  return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? L("撤销", "Undo") : L("不计入分析", "Exclude from analysis")}</button>`;
 }
 
 // An applied ID field that is not mostly repeated (state.idDuplicates lists the applied ID fields).
@@ -2027,9 +2107,12 @@ function getExclusionMessageElement(kind) {
 }
 
 function setExclusionMessage(kind, message, tone = "") {
-  const element = getExclusionMessageElement(kind);
-  element.className = `exclusion-message${tone ? ` ${tone}` : ""}`;
-  element.textContent = message;
+  writeOneOffMessage(getExclusionMessageElement(kind), "exclusion-message", message, tone);
+}
+
+// #problemRowsMessage has no class of its own.
+function setProblemRowsMessage(message) {
+  writeOneOffMessage(dom.problemRowsMessage, "", message);
 }
 
 // Delegated click of #qualitySection for 不计入分析 / 撤销, bound in script.js. The message goes
@@ -2039,7 +2122,8 @@ function handleExclusionClick(event) {
   if (!button) return;
   const kind = button.dataset.exclusionKind;
   if (!setRowExclusion(kind, button.dataset.exclusionOn === "true")) return;
-  setExclusionMessage(kind, formatExclusionMessage(state.lastExclusion), "success");
+  const exclusion = state.lastExclusion;
+  setExclusionMessage(kind, () => formatExclusionMessage(exclusion), "success");
   const container = kind === "duplicateRows" ? dom.duplicateExclusionAction : dom.suspectedTotalDetails;
   container.querySelector?.("button[data-exclusion-kind]")?.focus?.();
 }
@@ -2048,7 +2132,7 @@ function handleExclusionClick(event) {
 function renderFormulaErrorDetails() {
   renderRowNoteSection(dom.formulaErrorSection, dom.formulaErrorDetails, state.formulaErrors.map((item) => {
     const text = formatFormulaError({ ...item, fieldIgnored: getFieldProfile(item.field)?.typeKey === "ignore" });
-    return `${escapeHtml(text)} ${problemViewButton({ kind: "formulaError", field: item.field }, "查看")}`;
+    return `${escapeHtml(text)} ${problemViewButton({ kind: "formulaError", field: item.field }, Lpick(VIEW_LABEL))}`;
   }));
 }
 
@@ -2072,7 +2156,7 @@ function openProblemView(category) {
   const list = match ? listProblemRows(match) : null;
   if (!list) return false;
   state.problemView = { category: { kind: match.kind, field: match.field, key: match.key }, page: 1, list };
-  dom.problemRowsMessage.textContent = "";
+  setProblemRowsMessage("");
   setProblemRowsExportStatus("");
   renderProblemView();
   return true;
@@ -2137,8 +2221,11 @@ function findProblemViewButton(category) {
 }
 
 // v3.1.0: "（不计入分析）" after the note of a left-out row, in the viewer and in 导出这一类.
+// Called once per listed row: a pair read with Lpick(), no L().
+const EXCLUDED_NOTE_SUFFIX = Lp("（不计入分析）", " (excluded from analysis)");
+
 function markExcludedNote(item, excluded) {
-  return item.index !== null && excluded.has(item.index) ? `${item.note || ""}（不计入分析）` : item.note;
+  return item.index !== null && excluded.has(item.index) ? `${item.note || ""}${Lpick(EXCLUDED_NOTE_SUFFIX)}` : item.note;
 }
 
 function hideProblemView() {
@@ -2149,7 +2236,7 @@ function hideProblemView() {
   dom.problemRowsSummary.textContent = "";
   dom.problemRowsTable.innerHTML = "";
   dom.problemRowsDraftNote.classList.add("hidden");
-  dom.problemRowsMessage.textContent = "";
+  setProblemRowsMessage("");
   setProblemRowsExportStatus("");
   setPagerButtons([dom.problemRowsFirstPage, dom.problemRowsPrevPage, dom.problemRowsNextPage, dom.problemRowsLastPage], 1, 1);
 }
@@ -2161,7 +2248,7 @@ function refreshProblemView() {
   if (!view) return;
   if (!openProblemView(view.category)) {
     hideProblemView();
-    dom.problemRowsMessage.textContent = "这一类已经没有问题行。";
+    setProblemRowsMessage(() => L("这一类已经没有问题行。", "This category has no problem rows any more."));
   }
 }
 
@@ -2169,11 +2256,11 @@ function refreshProblemView() {
 // button: every row looks the same. They come before the early return of renderQuality().
 function renderFormatConsistencySections() {
   renderRowNoteSection(dom.dateStyleSection, dom.dateStyleDetails, state.dateStyles.map((item) => (
-    `${escapeHtml(formatDateStyleLine(item))} ${problemViewButton({ kind: "dateStyle", field: item.field }, "查看")}`
+    `${escapeHtml(formatDateStyleLine(item))} ${problemViewButton({ kind: "dateStyle", field: item.field }, Lpick(VIEW_LABEL))}`
   )));
   renderNumberNoteSection(dom.constantFieldSection, dom.constantFieldDetails, state.constantFields.map(formatConstantField));
   renderRowNoteSection(dom.lookAlikeSection, dom.lookAlikeDetails, state.lookAlikes.map((item) => (
-    `${escapeHtml(formatLookAlikeLine(item))} ${problemViewButton({ kind: "lookAlike", field: item.field }, "查看")}`
+    `${escapeHtml(formatLookAlikeLine(item))} ${problemViewButton({ kind: "lookAlike", field: item.field }, Lpick(VIEW_LABEL))}`
   )));
 }
 
@@ -2191,7 +2278,7 @@ function renderNumberNoteSection(section, details, lines) {
 function renderIdDuplicateDetails() {
   if (!state.idDuplicates.length) {
     dom.idDuplicateDetails.classList.add("is-empty");
-    dom.idDuplicateDetails.innerHTML = `<p class="id-duplicate-note">未识别到 ID 字段。</p>`;
+    dom.idDuplicateDetails.innerHTML = `<p class="id-duplicate-note">${L("未识别到 ID 字段。", "No ID columns found.")}</p>`;
     return;
   }
   const reported = state.idDuplicates.filter((item) => item.mostlyRepeated || item.values.length);
@@ -2205,10 +2292,10 @@ function renderIdDuplicateDetails() {
       const overflow = formatIdDuplicateOverflow(item.duplicateValueCount, item.values.length);
       return `
         <div class="id-duplicate-field">
-          <p class="id-duplicate-field-name">${escapeHtml(item.field)} ${problemViewButton({ kind: "idDuplicate", field: item.field }, "查看")}</p>
-          <div class="table-wrap" tabindex="0" aria-label="${escapeHtml(item.field)} 的重复值表，可横向滚动">
-            <table aria-label="${escapeHtml(item.field)} 的重复值">
-              <thead><tr><th>重复值</th><th>出现次数</th><th>文件行号</th><th>说明</th></tr></thead>
+          <p class="id-duplicate-field-name">${escapeHtml(item.field)} ${problemViewButton({ kind: "idDuplicate", field: item.field }, Lpick(VIEW_LABEL))}</p>
+          <div class="table-wrap" tabindex="0" aria-label="${escapeHtml(L(`${item.field} 的重复值表，可横向滚动`, `Duplicate values of ${item.field}, scrolls sideways`))}">
+            <table aria-label="${escapeHtml(L(`${item.field} 的重复值`, `Duplicate values of ${item.field}`))}">
+              <thead><tr>${L(["重复值", "出现次数", "文件行号", "说明"], ["Duplicate value", "Count", "File rows", "Note"]).map((title) => `<th>${title}</th>`).join("")}</tr></thead>
               <tbody>${item.values.map((value) => `<tr><td>${escapeHtml(value.value)}</td><td>${formatInteger(value.count)}</td><td>${escapeHtml(formatRowNumberList(value.rowNumbers, value.count))}</td><td>${escapeHtml(formatIdenticalRows(value.identicalRowCount, value.identicalGroupCount))}</td></tr>`).join("")}</tbody>
             </table>
           </div>
@@ -2227,7 +2314,7 @@ function renderIdDuplicateDetails() {
 function renderPlaceholderDetails() {
   if (!state.placeholders.length) {
     dom.placeholderDetails.classList.add("is-empty");
-    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">没有发现像是空值的写法。</p>`;
+    dom.placeholderDetails.innerHTML = `<p class="placeholder-note">${L("没有发现像是空值的写法。", "No values that may mean blank were found.")}</p>`;
     return;
   }
   const commonCount = getPendingCommonPlaceholders().length;
@@ -2236,27 +2323,27 @@ function renderPlaceholderDetails() {
     const textId = `placeholderText${index}`;
     const profile = getFieldProfile(entry.field);
     // Its own data-problem-index: handlePlaceholderClick() only reads data-placeholder-*.
-    const viewButton = problemViewButton({ kind: "placeholder", field: entry.field, key: entry.key }, "查看");
+    const viewButton = problemViewButton({ kind: "placeholder", field: entry.field, key: entry.key }, Lpick(VIEW_LABEL));
     let item;
     if (entry.confirmed) {
-      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">撤销</button>${viewButton}</li>`;
+      item = `<li class="placeholder-item confirmed"><p id="${textId}" class="placeholder-text">${escapeHtml(formatConfirmedPlaceholder(entry))}</p><button type="button" class="secondary-button placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">${L("撤销", "Undo")}</button>${viewButton}</li>`;
     } else {
       const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, [entry.key]));
       const notes = formatPlaceholderNotes([entry.key]);
-      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">按空值处理</button>${viewButton}</li>`;
+      item = `<li class="placeholder-item"><p id="${textId}" class="placeholder-text">${escapeHtml(formatPendingPlaceholder(entry, change))}</p>${notes ? `<p class="placeholder-note warning">${escapeHtml(notes)}</p>` : ""}<button type="button" class="placeholder-button" data-placeholder-index="${index}" aria-describedby="${textId}">${L("按空值处理", "Treat as blank")}</button>${viewButton}</li>`;
     }
     if (state.placeholders[index + 1]?.field === entry.field) return item;
     const pendingKeys = state.placeholders.filter((other) => other.field === entry.field && !other.confirmed).map((other) => other.key);
     if (pendingKeys.length < 2) return item;
     const change = formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, previewPlaceholderConfirmation(entry.field, pendingKeys));
-    return `${item}<li class="placeholder-field-summary">${escapeHtml(`「${entry.field}」全部按空值处理后：${change}。`)}</li>`;
+    return `${item}<li class="placeholder-field-summary">${escapeHtml(L(`「${entry.field}」全部按空值处理后：${change}。`, `After treating all of them in “${entry.field}” as blank: ${change}.`))}</li>`;
   });
   const typeChangeNote = typeChanges.length
-    ? `<span class="placeholder-note">${escapeHtml(`按空值处理后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`)}</span>`
+    ? `<span class="placeholder-note">${escapeHtml(L(`按空值处理后类型会变：${typeChanges.map((change) => `「${change.field}」`).join("")}`, `Treating them as blank changes the type of ${typeChanges.map((change) => `“${change.field}”`).join(", ")}`))}</span>`
     : "";
   dom.placeholderDetails.classList.remove("is-empty");
   dom.placeholderDetails.innerHTML = `
-    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>常见写法全部按空值处理（${formatInteger(commonCount)} 处）</button>${typeChangeNote}</div>` : ""}
+    ${commonCount ? `<div class="placeholder-actions"><button type="button" class="placeholder-button" data-placeholder-all>${L(`常见写法全部按空值处理（${formatInteger(commonCount)} 处）`, `Treat all common ones as blank (${formatInteger(commonCount)})`)}</button>${typeChangeNote}</div>` : ""}
     <ul class="placeholder-list">${items.join("")}</ul>
   `;
 }
@@ -2278,7 +2365,7 @@ function handlePlaceholderClick(event) {
 function renderNumericStats() {
   if (!state.numericStats.length) {
     dom.numericStatsTable.classList.add("is-empty-table");
-    dom.numericStatsTable.innerHTML = emptyTable("未识别到数值字段。");
+    dom.numericStatsTable.innerHTML = emptyTable(L("未识别到数值字段。", "No number columns found."));
     return;
   }
 
@@ -2286,14 +2373,14 @@ function renderNumericStats() {
   dom.numericStatsTable.innerHTML = `
     <thead>
       <tr>
-        <th>字段</th>
-        <th class="num">有效数量</th>
-        <th class="num">认不出</th>
-        <th class="num">平均值</th>
-        <th class="num">中位数</th>
-        <th class="num">最大值</th>
-        <th class="num">最小值</th>
-        <th class="num">标准差</th>
+        <th>${L("字段", "Column")}</th>
+        <th class="num">${L("有效数量", "Count")}</th>
+        <th class="num">${L("认不出", "Unrecognized")}</th>
+        <th class="num">${L("平均值", "Mean")}</th>
+        <th class="num">${L("中位数", "Median")}</th>
+        <th class="num">${L("最大值", "Max")}</th>
+        <th class="num">${L("最小值", "Min")}</th>
+        <th class="num">${L("标准差", "Std dev")}</th>
       </tr>
     </thead>
     <tbody>
@@ -2315,7 +2402,7 @@ function renderNumericStats() {
 
 function renderCategoryStats() {
   if (!state.categoryStats.length) {
-    dom.categoryStats.innerHTML = `<div class="empty-note">未识别到分类字段。</div>`;
+    dom.categoryStats.innerHTML = `<div class="empty-note">${L("未识别到分类字段。", "No text columns found.")}</div>`;
     return;
   }
 
@@ -2359,20 +2446,20 @@ function populateControls({ keepChartSelections = false } = {}) {
     : findConcentratedCategory(state.categoryStats)?.field ?? categoryFields[0] ?? "";
   setSelectOptions(dom.dateChartField, dateProfiles.map((profile) => profile.field));
   dom.dateChartField.value = dateProfiles[0]?.field ?? "";
-  setSelectOptions(dom.dateChartMetric, numericFields, "记录数", true);
+  setSelectOptions(dom.dateChartMetric, numericFields, L("记录数", "Record count"), true);
   dom.dateChartMetric.value = keepChartSelections && numericFields.includes(previousDateChartMetric)
     ? previousDateChartMetric
     : "";
   dom.dateChartAggregate.value = keepChartSelections && previousDateChartAggregate === "sum" ? "sum" : "avg";
-  setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), "请选择数值字段");
-  setSelectOptions(dom.v2GroupField, categoryProfiles.map((profile) => profile.field), "请选择分类字段");
-  setSelectOptions(dom.v2DateField, dateProfiles.map((profile) => profile.field), "不选择时间字段", true);
+  setSelectOptions(dom.v2MetricField, numericProfiles.map((profile) => profile.field), L("请选择数值字段", "Choose a number column"));
+  setSelectOptions(dom.v2GroupField, categoryProfiles.map((profile) => profile.field), L("请选择分类字段", "Choose a text column"));
+  setSelectOptions(dom.v2DateField, dateProfiles.map((profile) => profile.field), L("不选择时间字段", "No date column"), true);
 }
 
 function renderCharts() {
   if (!window.Chart) {
     ["numericDistributionChart", "categoryTopChart", "dateTrendChart"].forEach((id) => {
-      drawEmptyChart(document.getElementById(id), "图表组件加载失败，请刷新页面重试");
+      drawEmptyChart(document.getElementById(id), Lpick(CHART_LIBRARY_MISSING));
     });
     return;
   }
@@ -2385,25 +2472,25 @@ function renderNumericDistributionChart() {
   const field = dom.numericChartField.value;
   const canvas = document.getElementById("numericDistributionChart");
   destroyChart("numericDistributionChart");
-  dom.numericChartTitle.textContent = field ? `${formatFieldLabel(field)} 数值分布（记录频数）` : "数值字段分布（记录频数）";
+  dom.numericChartTitle.textContent = field ? L(`${formatFieldLabel(field)} 数值分布（记录频数）`, `${formatFieldLabel(field)} distribution (record count)`) : L("数值字段分布（记录频数）", "Number column distribution (record count)");
   canvas.setAttribute("aria-label", dom.numericChartTitle.textContent);
   dom.numericChartTitle.title = dom.numericChartTitle.textContent;
-  if (!field) return drawEmptyChart(canvas, "没有可用的数值字段");
+  if (!field) return drawEmptyChart(canvas, L("没有可用的数值字段", "No number columns available"));
 
   const values = getNumericValues(field);
-  if (!values.length) return drawEmptyChart(canvas, "该字段没有认得出的数字");
+  if (!values.length) return drawEmptyChart(canvas, L("该字段没有认得出的数字", "This column has no recognized numbers"));
   const bins = buildDiscreteValueCounts(values, field) || buildHistogram(values, 10, field);
   state.charts.numericDistributionChart = new Chart(canvas, {
     type: "bar",
     data: {
       labels: bins.map((bin) => bin.label),
       datasets: [{
-        label: `${formatFieldLabel(field)} 分布（记录频数）`,
+        label: L(`${formatFieldLabel(field)} 分布（记录频数）`, `${formatFieldLabel(field)} distribution (record count)`),
         data: bins.map((bin) => bin.count),
         backgroundColor: CHART_THEME.primary
       }]
     },
-    options: chartOptions("记录频数")
+    options: chartOptions(L("记录频数", "Record count"))
   });
 }
 
@@ -2411,10 +2498,10 @@ function renderCategoryTopChart() {
   const field = dom.categoryChartField.value;
   const canvas = document.getElementById("categoryTopChart");
   destroyChart("categoryTopChart");
-  dom.categoryChartTitle.textContent = field ? `${field} Top 10（记录数）` : "分类字段 Top 10（记录数）";
+  dom.categoryChartTitle.textContent = field ? L(`${field} Top 10（记录数）`, `${field} top 10 (record count)`) : L("分类字段 Top 10（记录数）", "Text column top 10 (record count)");
   canvas.setAttribute("aria-label", dom.categoryChartTitle.textContent);
   dom.categoryChartTitle.title = dom.categoryChartTitle.textContent;
-  if (!field) return drawEmptyChart(canvas, "没有可用的分类字段");
+  if (!field) return drawEmptyChart(canvas, L("没有可用的分类字段", "No text columns available"));
 
   const counts = Array.from(countValues(field).entries())
     .sort((a, b) => b[1] - a[1])
@@ -2425,12 +2512,12 @@ function renderCategoryTopChart() {
     data: {
       labels: counts.map(([name]) => name),
       datasets: [{
-        label: `${field} Top 10（记录数）`,
+        label: L(`${field} Top 10（记录数）`, `${field} top 10 (record count)`),
         data: counts.map(([, count]) => count),
         backgroundColor: CHART_THEME.secondary
       }]
     },
-    options: chartOptions("记录数")
+    options: chartOptions(L("记录数", "Record count"))
   });
 }
 
@@ -2438,23 +2525,24 @@ function renderDateTrendChart() {
   const field = dom.dateChartField.value;
   const canvas = document.getElementById("dateTrendChart");
   destroyChart("dateTrendChart");
-  dom.dateChartTitle.textContent = "日期字段趋势（记录数）";
+  dom.dateChartTitle.textContent = L("日期字段趋势（记录数）", "Date column trend (record count)");
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
   dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   const { metricField: numericField, aggregate } = getDateChartSelection();
   dom.dateChartAggregate.disabled = !numericField;
-  if (!field) return drawEmptyChart(canvas, "没有可用的日期字段");
+  if (!field) return drawEmptyChart(canvas, L("没有可用的日期字段", "No date columns available"));
 
   const trend = buildDateChartTrend(field, numericField, aggregate);
-  if (!trend.labels.length) return drawEmptyChart(canvas, "该字段没有认得出的日期");
+  if (!trend.labels.length) return drawEmptyChart(canvas, L("该字段没有认得出的日期", "This column has no recognized dates"));
   const timeUnit = getDateGranularity(field) === "year"
-    ? "年份"
-    : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
+    ? L("年份", "year")
+    : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? L("月份", "month") : L("日期", "date");
   const aggregationLabel = getDateChartAggregateLabel(aggregate);
   const yearly = getDateGranularity(field) === "year";
-  dom.dateChartTitle.textContent = numericField
-    ? `${formatFieldLabel(numericField)} 按${timeUnit}趋势（${aggregationLabel}）`
-    : `${field} 按${timeUnit}趋势（${aggregationLabel}）`;
+  dom.dateChartTitle.textContent = L(
+    `${numericField ? formatFieldLabel(numericField) : field} 按${timeUnit}趋势（${aggregationLabel}）`,
+    `${numericField ? formatFieldLabel(numericField) : field} by ${timeUnit} (${aggregationLabel})`
+  );
   canvas.setAttribute("aria-label", dom.dateChartTitle.textContent);
   dom.dateChartTitle.title = dom.dateChartTitle.textContent;
   state.charts.dateTrendChart = new Chart(canvas, {
@@ -2463,8 +2551,8 @@ function renderDateTrendChart() {
       labels: trend.labels,
       datasets: [{
         label: numericField
-          ? `${formatFieldLabel(numericField)}${yearly ? "年度" : " "}${aggregationLabel}趋势`
-          : `${yearly ? "年度" : ""}记录数趋势`,
+          ? L(`${formatFieldLabel(numericField)}${yearly ? "年度" : " "}${aggregationLabel}趋势`, `${formatFieldLabel(numericField)} ${yearly ? "yearly " : ""}${aggregationLabel} trend`)
+          : L(`${yearly ? "年度" : ""}记录数趋势`, `${yearly ? "Yearly record count" : "Record count"} trend`),
         data: trend.values,
         ...trendLineStyle(CHART_THEME.primary)
       }]
@@ -2483,7 +2571,7 @@ function getDateChartSelection() {
 }
 
 function getDateChartAggregateLabel(aggregate) {
-  return { count: "记录数", avg: "平均值", sum: "求和" }[aggregate] || "记录数";
+  return L({ count: "记录数", avg: "平均值", sum: "求和" }[aggregate] || "记录数", { count: "record count", avg: "average", sum: "sum" }[aggregate] || "record count");
 }
 
 function resetV2AnalysisState() {
@@ -2492,7 +2580,7 @@ function resetV2AnalysisState() {
   state.customAnalysis = null;
   dom.v2AnalysisResults.classList.add("hidden");
   dom.v2FieldPrompt.className = "analysis-prompt";
-  dom.v2FieldPrompt.textContent = "请选择指标字段、分组维度和聚合方式，再点击“生成自定义分析”。时间字段为可选。";
+  dom.v2FieldPrompt.textContent = L("请选择指标字段、分组维度和聚合方式，再点击“生成自定义分析”。时间字段为可选。", "Choose a metric column, a column to group by and an aggregation, then click “Create breakdown”. A date column is optional.");
 }
 
 function renderV2Analysis() {
@@ -2519,14 +2607,14 @@ function renderV2Analysis() {
     state.customAnalysis = null;
     dom.v2AnalysisResults.classList.add("hidden");
     dom.v2FieldPrompt.className = "analysis-prompt warning";
-    dom.v2FieldPrompt.textContent = "所选字段没有可计算的有效记录，请重新选择字段后再分析。";
+    dom.v2FieldPrompt.textContent = L("所选字段没有可计算的有效记录，请重新选择字段后再分析。", "The chosen columns have no valid rows to compute; choose other columns and try again.");
     return;
   }
 
   dom.v2FieldPrompt.className = "analysis-prompt";
   dom.v2FieldPrompt.textContent = dateField
-    ? `已生成分组${aggregateLabel}汇总和时间趋势。`
-    : `已生成分组${aggregateLabel}汇总；未选择时间字段，因此不生成时间趋势图。`;
+    ? L(`已生成分组${aggregateLabel}汇总和时间趋势。`, `Created the ${aggregateLabel} by group and its trend over time.`)
+    : L(`已生成分组${aggregateLabel}汇总；未选择时间字段，因此不生成时间趋势图。`, `Created the ${aggregateLabel} by group; no date column was chosen, so there is no trend chart.`);
   dom.v2AnalysisResults.classList.remove("hidden");
 
   const metricInvalidCount = countInvalidNumericValues(metricField, getAnalysisRows());
@@ -2545,7 +2633,10 @@ function renderV2Analysis() {
   renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod);
   renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod);
   const invalidMetricText = metricInvalidCount
-    ? `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值认不出是数字，已从计算中排除。`
+    ? L(
+      `指标字段「${metricField}」有 ${formatInteger(metricInvalidCount)} 个值认不出是数字，已从计算中排除。`,
+      ` ${enCount(metricInvalidCount, "value", "values")} of the metric column “${metricField}” ${metricInvalidCount === 1 ? "is" : "are"} not recognized as numbers and left out of the calculation.`
+    )
     : "";
   dom.v2ResultSummary.textContent = formatCustomAnalysisScope({
     groupField, metricField, aggregateLabel, filtered: hasActiveFilters(), currentCount: getAnalysisRows().length,
@@ -2561,18 +2652,18 @@ function renderV2Analysis() {
 }
 
 function getV2ValidationMessage(metricField, groupField, dateField) {
-  if (!state.rows.length) return "请先上传或加载 CSV 数据。";
-  if (!getAnalysisRows().length) return "当前筛选条件下没有可分析的记录，请调整或清除筛选条件。";
-  if (!metricField) return "请选择一个数值字段作为分析指标。";
-  if (!groupField) return "请选择一个分类字段作为分组维度。";
+  if (!state.rows.length) return L("请先上传或加载 CSV 数据。", "Upload or load a CSV file first.");
+  if (!getAnalysisRows().length) return L("当前筛选条件下没有可分析的记录，请调整或清除筛选条件。", "No rows to analyze under the current filters; change or clear the filters.");
+  if (!metricField) return L("请选择一个数值字段作为分析指标。", "Choose a number column as the metric.");
+  if (!groupField) return L("请选择一个分类字段作为分组维度。", "Choose a text column to group by.");
   if (!getProfilesByType("numeric").some((profile) => profile.field === metricField)) {
-    return "分析指标必须是系统识别出的数值字段。";
+    return L("分析指标必须是系统识别出的数值字段。", "The metric must be a column read as numbers.");
   }
   if (!getProfilesByType("category").some((profile) => profile.field === groupField)) {
-    return "分组维度必须是系统识别出的分类字段。";
+    return L("分组维度必须是系统识别出的分类字段。", "The column to group by must be a column read as text.");
   }
   if (dateField && !getProfilesByType("date").some((profile) => profile.field === dateField)) {
-    return "时间字段必须是系统识别出的日期字段，或保持不选择。";
+    return L("时间字段必须是系统识别出的日期字段，或保持不选择。", "The date column must be a column read as dates, or none.");
   }
   return "";
 }
@@ -2581,10 +2672,10 @@ function renderV2SummaryCards(metricField, groupField, aggregateMethod, dateFiel
   const validRecordCount = grouped.reduce((total, item) => total + item.count, 0);
   const trendPointCount = dateField ? buildMetricDateTrend(dateField, metricField, aggregateMethod).labels.length : 0;
   const cards = [
-    ["分析指标", formatFieldLabel(metricField)],
-    ["分组维度", groupField],
-    ["聚合方式", getAggregateMethodLabel(aggregateMethod)],
-    [dateField ? "时间点数量" : "有效记录数", dateField ? formatInteger(trendPointCount) : formatInteger(validRecordCount)]
+    [L("分析指标", "Metric"), formatFieldLabel(metricField)],
+    [L("分组维度", "Group by"), groupField],
+    [L("聚合方式", "Aggregation"), getAggregateMethodLabel(aggregateMethod)],
+    [dateField ? L("时间点数量", "Time points") : L("有效记录数", "Valid rows"), dateField ? formatInteger(trendPointCount) : formatInteger(validRecordCount)]
   ];
 
   dom.v2SummaryCards.innerHTML = cards.map(([label, value]) => `
@@ -2607,18 +2698,18 @@ function renderV2PrimaryTable(metricField, groupField, grouped, aggregateMethod)
     compareNumbersDescending(a[aggregateMethod], b[aggregateMethod])
   ));
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
-  dom.v2PrimaryTableTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`;
+  dom.v2PrimaryTableTitle.textContent = L(`${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`, `${formatFieldLabel(metricField)} by ${groupField} (${aggregateLabel})`);
   dom.v2PrimaryTableTitle.title = dom.v2PrimaryTableTitle.textContent;
   dom.v2PrimaryTable.innerHTML = buildV2AggregationTableHtml(groupField, metricField, sorted, aggregateMethod);
 }
 
 function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
-  const valueLabel = { sum: "求和值", avg: "平均值", median: "中位数" }[valueKey] || "汇总值";
+  const valueLabel = L({ sum: "求和值", avg: "平均值", median: "中位数" }[valueKey] || "汇总值", { sum: "sum", avg: "average", median: "median" }[valueKey] || "total");
   return `
     <thead>
       <tr>
         <th>${escapeHtml(groupField)}</th>
-        <th>记录数</th>
+        <th>${L("记录数", "Records")}</th>
         <th>${escapeHtml(formatFieldLabel(metricField))} ${valueLabel}</th>
       </tr>
     </thead>
@@ -2636,12 +2727,12 @@ function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
 
 function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2TopGroupChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
+  if (!window.Chart) return drawEmptyChart(canvas, Lpick(CHART_LIBRARY_MISSING));
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
   const topGroups = [...grouped]
     .sort((a, b) => compareNumbersDescending(a[aggregateMethod], b[aggregateMethod]))
     .slice(0, 10);
-  dom.v2TopGroupTitle.textContent = `${formatFieldLabel(metricField)} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`;
+  dom.v2TopGroupTitle.textContent = L(`${formatFieldLabel(metricField)} 按 ${groupField} 分组 Top 10（${aggregateLabel}）`, `${formatFieldLabel(metricField)} by ${groupField}, top 10 (${aggregateLabel})`);
   canvas.setAttribute("aria-label", dom.v2TopGroupTitle.textContent);
   dom.v2TopGroupTitle.title = dom.v2TopGroupTitle.textContent;
   state.charts.v2TopGroupChart = new Chart(canvas, {
@@ -2649,7 +2740,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
     data: {
       labels: topGroups.map((item) => item.name),
       datasets: [{
-        label: `${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`,
+        label: L(`${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`, `${formatFieldLabel(metricField)} by ${groupField} (${aggregateLabel})`),
         data: topGroups.map((item) => item[aggregateMethod]),
         backgroundColor: CHART_THEME.primary
       }]
@@ -2660,17 +2751,17 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
 
 function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
   const canvas = document.getElementById("v2SelectedTrendChart");
-  if (!window.Chart) return drawEmptyChart(canvas, "图表组件加载失败，请刷新页面重试");
+  if (!window.Chart) return drawEmptyChart(canvas, Lpick(CHART_LIBRARY_MISSING));
   const trend = buildMetricDateTrend(dateField, metricField, aggregateMethod);
   if (!trend.labels.length) {
-    return drawEmptyChart(canvas, "所选时间字段没有可用的趋势数据");
+    return drawEmptyChart(canvas, L("所选时间字段没有可用的趋势数据", "The chosen date column has no trend data"));
   }
 
   const timeUnit = getDateGranularity(dateField) === "year"
-    ? "年份"
-    : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? "月份" : "日期";
+    ? L("年份", "year")
+    : trend.labels.some((label) => /^\d{4}-\d{2}$/.test(label)) ? L("月份", "month") : L("日期", "date");
   const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
-  dom.v2TrendTitle.textContent = `${formatFieldLabel(metricField)} 按${timeUnit}趋势（${aggregateLabel}）`;
+  dom.v2TrendTitle.textContent = L(`${formatFieldLabel(metricField)} 按${timeUnit}趋势（${aggregateLabel}）`, `${formatFieldLabel(metricField)} by ${timeUnit} (${aggregateLabel})`);
   canvas.setAttribute("aria-label", dom.v2TrendTitle.textContent);
   dom.v2TrendTitle.title = dom.v2TrendTitle.textContent;
   state.charts.v2SelectedTrendChart = new Chart(canvas, {
@@ -2688,7 +2779,7 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
 }
 
 function getAggregateMethodLabel(method) {
-  return { sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和";
+  return L({ sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和", { sum: "sum", avg: "average", median: "median" }[method] || "sum");
 }
 
 // v3.0.0: a trend is a straight line with white points outlined in the line's colour, no fill.
@@ -2851,7 +2942,7 @@ function resetAnalysisState() {
   state.returnModule = null;
   dom.returnToAnalysis.classList.add("hidden");
   dom.returnToAnalysis.textContent = "";
-  dom.reportTitle.textContent = "数据分析工作区";
+  dom.reportTitle.textContent = L("数据分析工作区", "Analysis workspace");
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
@@ -2875,19 +2966,19 @@ function resetAnalysisState() {
   dom.categoryFilterValues.innerHTML = "";
   dom.categoryFilterControls.classList.add("hidden");
   dom.categoryFilterEmpty.classList.remove("hidden");
-  dom.categoryFilterSelectionCount.textContent = "未选择字段";
+  dom.categoryFilterSelectionCount.textContent = L("未选择字段", "No column chosen");
   dom.numericFilterField.innerHTML = "";
   dom.numericFilterMin.value = "";
   dom.numericFilterMax.value = "";
-  dom.numericFilterRange.textContent = "请选择字段";
+  dom.numericFilterRange.textContent = formatFilterRangeEmpty(false);
   dom.dateFilterField.innerHTML = "";
   dom.dateFilterStart.value = "";
   dom.dateFilterEnd.value = "";
-  dom.dateFilterRange.textContent = "请选择字段";
+  dom.dateFilterRange.textContent = formatFilterRangeEmpty(false);
   dom.filterOriginalCount.textContent = "0";
   dom.filterCurrentCount.textContent = "0";
   dom.filterExcludedCount.textContent = "0";
-  setFilterMessage("尚未应用筛选，当前分析使用全部记录。", "");
+  setFilterMessage(() => formatNoFilterMessage(0, 0), "");
   dom.qualitySummary.innerHTML = "";
   dom.parseWarningSummary.innerHTML = "";
   dom.parseWarningSummary.classList.add("hidden");
@@ -2946,6 +3037,8 @@ function resetAnalysisState() {
   updateExportButtons();
 }
 
+const CHART_LIBRARY_MISSING = Lp("图表组件加载失败，请刷新页面重试", "The chart library failed to load; refresh the page and try again");
+
 function destroyChart(id) {
   clearChartEmpty(id);
   if (state.charts[id]) {
@@ -2961,15 +3054,40 @@ function setSelectOptions(select, values, placeholder = "", allowEmpty = false) 
   const valueOptions = values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
   select.innerHTML = values.length || allowEmpty
     ? `${placeholderOption}${valueOptions}`
-    : `<option value="">无可用字段</option>`;
+    : `<option value="">${L("无可用字段", "No columns available")}</option>`;
   select.disabled = values.length === 0 && !allowEmpty;
 }
 
 function emptyTable(message) {
   return `
-    <thead><tr><th>提示</th></tr></thead>
+    <thead><tr><th>${L("提示", "Note")}</th></tr></thead>
     <tbody><tr><td>${escapeHtml(message)}</td></tr></tbody>
   `;
+}
+
+// The import message from state.importStatus, in the current language: after the import, back
+// from 换一个文件 (script.js) and after a language switch.
+function buildImportStatus({ sourceDisplayName, warningCount, affectedRows, headerDetection, suspectedTotals, formulaErrors }) {
+  const notes = [formatHeaderDetectionNote(headerDetection), formatSuspectedTotalStatus(suspectedTotals), formatFormulaErrorStatus(formulaErrors)].filter(Boolean);
+  const headerNote = notes.join(L("", " "));
+  const message = warningCount
+    ? L(
+      `CSV 已载入，但读取时有 ${formatInteger(warningCount)} 处疑问${affectedRows ? `，涉及 ${formatInteger(affectedRows)} 行` : ""}。请核对数据预览和字段数量。${headerNote}`,
+      `The CSV is loaded, but there ${warningCount === 1 ? "is 1 reading issue" : `are ${formatInteger(warningCount)} reading issues`}${affectedRows ? ` in ${enCount(affectedRows, "row", "rows")}` : ""}. Check the data preview and the number of columns.${headerNote ? ` ${headerNote}` : ""}`
+    )
+    : L(`${sourceDisplayName} 已成功载入，分析结果已生成。${headerNote}`, `${sourceDisplayName} is loaded and the analysis is ready.${headerNote ? ` ${headerNote}` : ""}`);
+  return {
+    message,
+    tone: warningCount ? "warning" : "success",
+    hasNote: notes.length > 0,
+    summary: notes.length ? formatStatusNoteSummary(sourceDisplayName, notes.length) : ""
+  };
+}
+
+function showImportStatus(status) {
+  const { message, tone, hasNote, summary } = buildImportStatus(status);
+  setStatus(message, tone, hasNote);
+  dom.statusNoteSummary.textContent = summary;
 }
 
 // hasNote keeps a successful status on screen once results show (style.css): its message
@@ -2994,14 +3112,14 @@ function setStatus(message, tone = "", hasNote = false) {
 function resetStatusNote() {
   dom.statusNote.classList.remove("can-collapse", "is-collapsed");
   dom.statusNoteToggle.setAttribute("aria-expanded", "true");
-  dom.statusNoteToggle.textContent = "收起";
+  dom.statusNoteToggle.textContent = L("收起", "Collapse");
 }
 
 function toggleStatusNote() {
   const collapse = !dom.statusNote.classList.contains("is-collapsed");
   dom.statusNote.classList.toggle("is-collapsed", collapse);
   dom.statusNoteToggle.setAttribute("aria-expanded", String(!collapse));
-  dom.statusNoteToggle.textContent = collapse ? "看说明" : "收起";
+  dom.statusNoteToggle.textContent = collapse ? L("看说明", "Show notes") : L("收起", "Collapse");
 }
 
 function showError(message, importId = state.activeImportId) {
