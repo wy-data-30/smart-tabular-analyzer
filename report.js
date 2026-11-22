@@ -170,9 +170,14 @@ const PROBLEM_KIND_FILE_NAMES = Object.freeze({
 function buildProblemRowsFileName(category, now = new Date()) {
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
-  const parts = [stem, "问题行", PROBLEM_KIND_FILE_NAMES[category.kind], category.field, category.key]
-    .filter((part) => part !== undefined && part !== null && part !== "");
-  return `${sanitizeFileName(parts.join("_"))}_${formatReportFileDate(now)}.csv`;
+  const parts = [
+    { text: stem, cut: true },
+    { text: "问题行", cut: false },
+    { text: PROBLEM_KIND_FILE_NAMES[category.kind], cut: false },
+    { text: category.field, cut: true },
+    { text: category.key, cut: true }
+  ].filter((part) => part.text !== undefined && part.text !== null && part.text !== "");
+  return `${buildLabeledFileName(parts)}_${formatReportFileDate(now)}.csv`;
 }
 
 // "导出这一类": the open category, every row, as a UTF-8 CSV with BOM.
@@ -354,8 +359,8 @@ function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, 
 function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
-  const label = kind === "changes" ? `写法统一改动清单${truncatedTo ? `_前${truncatedTo}条` : ""}` : "写法统一";
-  return `${sanitizeFileName(`${stem}_${label}`)}_${formatReportFileDate(now)}.csv`;
+  const labels = kind === "changes" ? ["写法统一改动清单", ...(truncatedTo ? [`前${truncatedTo}条`] : [])] : ["写法统一"];
+  return `${buildLabeledFileName([{ text: stem, cut: true }, ...labels.map((text) => ({ text, cut: false }))])}_${formatReportFileDate(now)}.csv`;
 }
 
 // 导出标准化 CSV / 导出改动清单: from the result of the last check, never computed again.
@@ -1327,13 +1332,47 @@ function padReportNumber(value) {
   return String(value).padStart(2, "0");
 }
 
-function sanitizeFileName(value) {
-  return String(value || "data-report")
+// v3.2.0 (R1): at most this many characters before the date and the extension.
+const FILE_NAME_LIMIT = 80;
+
+// What sanitizeFileName() does before trimming and cutting: unsafe characters become "-", bidi
+// controls go, runs of white space become one space.
+function cleanFileNamePart(value) {
+  return String(value)
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
     .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80) || "data-report";
+    .replace(/\s+/g, " ");
+}
+
+function sanitizeFileName(value) {
+  return cleanFileNamePart(value || "data-report").trim().slice(0, FILE_NAME_LIMIT) || "data-report";
+}
+
+// The original name and the labels joined by "_", for the problem-row and standardized files
+// (v3.2.0, R1). A name that fits in FILE_NAME_LIMIT is exactly sanitizeFileName() over the whole,
+// as before. A longer one is cut in the parts marked { cut: true } (the original name, the
+// user's column and writing), the longest first, one character at a time; the labels (问题行,
+// the category word, 写法统一改动清单, 前N条) are never cut.
+function buildLabeledFileName(parts) {
+  const whole = cleanFileNamePart(parts.map((part) => part.text).join("_")).trim();
+  if (whole.length <= FILE_NAME_LIMIT) return whole || "data-report";
+  const pieces = parts.map((part) => ({ cut: part.cut, chars: Array.from(cleanFileNamePart(part.text)) }));
+  pieces[0].chars = Array.from(pieces[0].chars.join("").trimStart());
+  pieces[pieces.length - 1].chars = Array.from(pieces[pieces.length - 1].chars.join("").trimEnd());
+  const textLength = (piece) => piece.chars.join("").length;
+  let length = pieces.reduce((sum, piece) => sum + textLength(piece), pieces.length - 1);
+  while (length > FILE_NAME_LIMIT) {
+    let longest = null;
+    pieces.forEach((piece) => {
+      if (piece.cut && piece.chars.length > 1 && (!longest || textLength(piece) > textLength(longest))) longest = piece;
+    });
+    if (!longest) break;
+    length -= longest.chars.pop().length;
+  }
+  return pieces
+    .map((piece) => (piece.cut ? piece.chars.join("").trim() : piece.chars.join("")))
+    .filter(Boolean)
+    .join("_");
 }
 
 function setReportExportStatus(message, tone = "") {

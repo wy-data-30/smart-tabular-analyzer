@@ -9531,3 +9531,97 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // above does not see, on purpose: this is the one comparison with the raw file).
   assert.equal(indexHtmlSource(), fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8"));
 });
+
+// v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
+// whole, so a long original name cut off the labels: the standardized table and the change list
+// got the same name, _前N条 went missing, and problem-row files of different categories or columns
+// got the same name. Now the original name (and the user's column and writing) is cut, the labels
+// never; a name that fitted in 80 is byte for byte the same as before.
+const LONG_NAME_EN71 = "Quarterly Regional Sales Orders Export for the North America Team v2 Q3";
+const LONG_NAME_ZH = (count) => "华东区上半年销售订单明细表".repeat(8).slice(0, count);
+const FILE_NAME_DATE = new Date(2026, 10, 21);
+// The file names as cd4d2a0 builds them: one sanitize over the whole, cut at 80.
+const oldSanitizeFileName = (value) => String(value || "data-report")
+  .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+  .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+const oldCutFileName = (value) => oldSanitizeFileName(value).slice(0, 80) || "data-report";
+const PROBLEM_KIND_WORDS = { missing: "空值", conversion: "认不出", outlier: "偏大或偏小", duplicateRows: "整行重复", idDuplicate: "编号重复", placeholder: "像是空值的写法",
+  parseWarnings: "读取有疑问", suspectedTotal: "疑似合计", formulaError: "公式错误", dateStyle: "日期写法", lookAlike: "写法不一样" };
+
+async function longNameExports(stem) {
+  const scope = await importCsvFile(readExampleCsv("sample-orders.csv"), `${stem}.csv`);
+  put(scope.context, "__fileNameDate", FILE_NAME_DATE);
+  const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+  const problemRows = categories.map((category) => {
+    put(scope.context, "__fileNameCategory", category);
+    const joined = [stem, "问题行", PROBLEM_KIND_WORDS[category.kind], category.field, category.key].filter((part) => part !== undefined && part !== null && part !== "").join("_");
+    return { category, name: scope.evaluate("buildProblemRowsFileName(__fileNameCategory, __fileNameDate)"), joined };
+  });
+  return {
+    scope,
+    problemRows,
+    data: { name: scope.evaluate('buildStandardizedFileName("data", __fileNameDate)'), joined: `${stem}_写法统一` },
+    changes: { name: scope.evaluate('buildStandardizedFileName("changes", __fileNameDate)'), joined: `${stem}_写法统一改动清单` },
+    changesCut: { name: scope.evaluate('buildStandardizedFileName("changes", __fileNameDate, 1048575)'), joined: `${stem}_写法统一改动清单_前1048575条` },
+    analysis: scope.evaluate('buildDataExportFileName("filtered", __fileNameDate)'),
+    report: scope.evaluate("buildReportFileName(\"html\", __fileNameDate)")
+  };
+}
+const beforeDate = (name) => name.replace(/_20261121\.csv$/, "");
+
+test("v3.2.0 long file names: the labels stay, so no two exports of one file get the same name", async () => {
+  for (const stem of [LONG_NAME_EN71, LONG_NAME_ZH(76)]) {
+    const files = await longNameExports(stem);
+    assert.ok(files.data.name.endsWith("_写法统一_20261121.csv"), files.data.name);
+    assert.ok(files.changes.name.endsWith("_写法统一改动清单_20261121.csv"), files.changes.name);
+    assert.ok(files.changesCut.name.endsWith("_写法统一改动清单_前1048575条_20261121.csv"), files.changesCut.name);
+    const names = [files.data.name, files.changes.name, files.changesCut.name, ...files.problemRows.map((item) => item.name)];
+    assert.equal(new Set(names).size, names.length, names.join("\n"));
+    for (const { category, name } of files.problemRows) {
+      assert.ok(name.includes(`_问题行_${PROBLEM_KIND_WORDS[category.kind]}`), name);
+      // The column (and the writing) is still there, maybe cut, after the category word.
+      if (category.field) assert.ok(beforeDate(name).split(`_问题行_${PROBLEM_KIND_WORDS[category.kind]}_`)[1].length > 0, name);
+    }
+    for (const name of names) {
+      assert.ok(beforeDate(name).length <= 80, `${beforeDate(name).length} ${name}`);
+      assert.ok(name.startsWith(stem.slice(0, 10)), name);
+    }
+  }
+  // The rule itself: the parts that may be cut share what the labels leave, longest first (the
+  // first one on a tie); a label is never cut, even past 80; a cut part loses a space it ends with.
+  const { evaluate } = createScriptContext();
+  const labeled = (parts) => evaluate(`buildLabeledFileName(${JSON.stringify(parts)})`);
+  assert.equal(labeled([{ text: "S".repeat(90), cut: true }, { text: "L".repeat(40), cut: false }, { text: "F".repeat(40), cut: true }]),
+    `${"S".repeat(19)}_${"L".repeat(40)}_${"F".repeat(19)}`);
+  assert.equal(labeled([{ text: "S".repeat(10), cut: true }, { text: "L".repeat(90), cut: false }]), `S_${"L".repeat(90)}`);
+  assert.equal(labeled([{ text: `${"a".repeat(74)} b`, cut: true }, { text: "写法统一", cut: false }]), `${"a".repeat(74)}_写法统一`);
+  assert.equal(labeled([{ text: "表".repeat(81), cut: true }]), "表".repeat(80));
+  // One character over: before, the column lost its last character; now the original name does.
+  const over = await longNameExports("B".repeat(69));
+  const missing = over.problemRows.find((item) => item.category.kind === "missing" && item.category.field === "下单日期");
+  assert.equal(missing.joined.length, 81);
+  assert.equal(missing.name, `${"B".repeat(68)}_问题行_空值_下单日期_20261121.csv`);
+});
+
+test("v3.2.0 long file names: every name that fitted in 80 characters is byte for byte as before", async () => {
+  let same = 0;
+  let cut = 0;
+  for (const stem of [LONG_NAME_EN71, LONG_NAME_ZH(40), LONG_NAME_ZH(76), "B".repeat(68), "B".repeat(69), "短名", `  ${"甲".repeat(70)} 乙  `, `a:b?${"x".repeat(60)} \u202Ec`]) {
+    const files = await longNameExports(stem);
+    for (const { name, joined } of [files.data, files.changes, files.changesCut, ...files.problemRows]) {
+      if (oldSanitizeFileName(joined).length > 80) { cut += 1; continue; }
+      assert.equal(name, `${oldCutFileName(joined)}_20261121.csv`, joined);
+      same += 1;
+    }
+    // These two never cut a label: unchanged for every length.
+    assert.equal(files.analysis, `${oldCutFileName(stem)}_当前分析_20261121.csv`);
+    assert.ok(files.report.startsWith(`${oldCutFileName(stem)}-20261121-`), files.report);
+  }
+  // The boundary: 68 + "_问题行_空值_下单日期" is exactly 80 and stays as it was.
+  const exact = (await longNameExports("B".repeat(68))).problemRows.find((item) => item.category.kind === "missing" && item.category.field === "下单日期");
+  assert.equal(exact.joined.length, 80);
+  assert.equal(exact.name, `${exact.joined}_20261121.csv`);
+  assert.ok(same > 50 && cut > 10, `${same} same, ${cut} cut`);
+});
