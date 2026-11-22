@@ -10557,3 +10557,15 @@ test("v3.2.0 script.js: the self-check notice and the sample messages have Engli
   // The notice reads the mark before removing it (format.js may be the missing file).
   assert.ok(source.indexOf('hasAttribute?.("data-lang-pending")') < source.indexOf('removeAttribute("data-lang-pending")'));
 });
+
+test("v3.2.0 quality.js English wording: a writing like a blank that is not treated as blank yet, and one that is", async () => {
+  const notesOf = (scope) => JSON.parse(scope.evaluate('JSON.stringify([...new Set(listPlaceholderRows("Amount", "N/A").items.map((item) => item.note))])'));
+  const en = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  const zh = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  assert.deepEqual(notesOf(en), ["Not treated as blank yet"]);
+  assert.deepEqual(notesOf(zh), ["待确认"]);
+  en.evaluate('confirmPlaceholder("Amount", "N/A")');
+  zh.evaluate('confirmPlaceholder("Amount", "N/A")');
+  assert.deepEqual(notesOf(en), ["Treated as blank"]);
+  assert.deepEqual(notesOf(zh), ["已按空值处理"]);
+});

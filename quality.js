@@ -644,7 +644,7 @@ const PROBLEM_ROW_NOTES = Lp({
   formulaError: (error) => `Formula error ${error}`,
   missing: "Blank",
   confirmed: "Treated as blank",
-  pending: "Not confirmed",
+  pending: "Not treated as blank yet",
   notDate: "Not recognized as a date",
   notNumber: "Not recognized as a number",
   above: (bound) => `Above the upper bound ${bound}`,
