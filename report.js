@@ -1,18 +1,25 @@
 // 报告与导出：报告快照、HTML 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。
 
+// v3.2.0: [中文, English] pairs (Lp), read with Lpick(); the report, its file names and its CSV
+// columns follow the language at the moment of the export.
 const REPORT_CHART_TITLES = Object.freeze({
-  numericDistributionChart: "数值字段分布",
-  categoryTopChart: "分类字段 Top 10",
-  dateTrendChart: "日期字段趋势",
-  v2TopGroupChart: "自定义分析 Top 10 分组",
-  v2SelectedTrendChart: "自定义分析时间趋势"
+  numericDistributionChart: Lp("数值字段分布", "Distribution of number columns"),
+  categoryTopChart: Lp("分类字段 Top 10", "Top 10 values of text columns"),
+  dateTrendChart: Lp("日期字段趋势", "Trend of date columns"),
+  v2TopGroupChart: Lp("自定义分析 Top 10 分组", "Breakdown: top 10 groups"),
+  v2SelectedTrendChart: Lp("自定义分析时间趋势", "Breakdown: trend over time")
 });
 
 const REPORT_FILTER_MAX_VALUES = 10;
 
-const REPORT_NO_FILTER_TEXT = "未设置筛选，结果基于完整数据。";
+const REPORT_NO_FILTER_TEXT = Lp("未设置筛选，结果基于完整数据。", "No filters are set; the results use all the data.");
 
-const REPORT_QUALITY_SCOPE_TEXT = "数据质量部分始终基于原始数据，不受筛选影响。";
+const REPORT_QUALITY_SCOPE_TEXT = Lp("数据质量部分始终基于原始数据，不受筛选影响。", "The data quality part always uses the original data; filters do not change it.");
+
+const REPORT_NO_CUSTOM_ANALYSIS = Lp("当前没有可导出的自定义分组分析结果。", "There is no breakdown by group to export yet.");
+
+// What ensureFieldConfigurationApplied() refused (app.js writes the sentence).
+const DRAFT_ACTION_REPORT = Lp("导出报告", "export the report");
 
 const REPORT_CHART_HEADING_IDS = Object.freeze({
   numericDistributionChart: "numericChartTitle",
@@ -79,7 +86,7 @@ function renderDataExportSummary() {
 
 function exportProcessedCsv(mode) {
   if (!canExportProcessedData()) {
-    setDataExportStatus("请先上传并解析有效的数据文件。", "warning");
+    setDataExportStatus(() => L("请先上传并解析有效的数据文件。", "Upload and read a valid data file first."), "warning");
     return;
   }
 
@@ -89,16 +96,16 @@ function exportProcessedCsv(mode) {
     const content = buildCsvExportContent(rows, state.fields);
     const fileName = buildDataExportFileName(mode, exportedAt);
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-    setDataExportStatus(`已导出当前分析的 ${formatInteger(rows.length)} 行：${fileName}`, "success");
+    setDataExportStatus(() => L(`已导出当前分析的 ${formatInteger(rows.length)} 行：${fileName}`, `Exported ${enCount(rows.length, "row in analysis", "rows in analysis")}: ${fileName}`), "success");
   } catch (error) {
-    setDataExportStatus(`数据导出失败：${error.message}`, "error");
+    setDataExportStatus(() => L(`数据导出失败：${error.message}`, `The data export failed: ${error.message}`), "error");
   }
 }
 
 function getProcessedExportRows(mode) {
   // v3.1.0: one data export, the rows of the current analysis (the one without repeats is gone).
   if (mode === "filtered") return getAnalysisRows();
-  throw new Error("不支持的数据导出类型。");
+  throw new Error(L("不支持的数据导出类型。", "This data export type is not supported."));
 }
 
 function buildCsvExportContent(rows, fields) {
@@ -111,7 +118,7 @@ function buildCsvExportContent(rows, fields) {
 // current analysis), the problem-row export and both standardized exports write through here.
 function buildCsvTableContent(headers, cellRows) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
-    throw new Error("CSV 导出组件未加载，请刷新页面重试。");
+    throw new Error(L("CSV 导出组件未加载，请刷新页面重试。", "The CSV writer failed to load; refresh the page and try again."));
   }
   return window.Papa.unparse(
     { fields: headers.map(sanitizeCsvExportValue), data: cellRows.map((cells) => cells.map(sanitizeCsvExportValue)) },
@@ -126,17 +133,24 @@ function readCsvExportCell(row, field) {
     : "";
 }
 
+// The two columns the export adds, and how a taken name is numbered, in both languages.
+const PROBLEM_ROWS_CSV_COLUMNS = Lp(
+  { line: "文件行号", note: "说明", numbered: (name, suffix) => `${name}（${suffix}）` },
+  { line: "File row", note: "Note", numbered: (name, suffix) => `${name} (${suffix})` }
+);
+
 // Column names of a problem-row export: 文件行号 and 说明 ahead of the fields, each
-// numbered "（2）", "（3）"… past any field already named so; field names stay.
+// numbered "（2）", "（3）"… (English " (2)") past any field already named so; field names stay.
 function buildProblemRowsCsvHeaders(fields) {
+  const columns = Lpick(PROBLEM_ROWS_CSV_COLUMNS);
   const taken = new Set(fields);
   const unique = (name) => {
     let candidate = name;
-    for (let suffix = 2; taken.has(candidate); suffix += 1) candidate = `${name}（${suffix}）`;
+    for (let suffix = 2; taken.has(candidate); suffix += 1) candidate = columns.numbered(name, suffix);
     taken.add(candidate);
     return candidate;
   };
-  return [unique("文件行号"), unique("说明"), ...fields];
+  return [unique(columns.line), unique(columns.note), ...fields];
 }
 
 // Every item of a problem-row list (listProblemRows()), not only the page on screen:
@@ -152,28 +166,28 @@ function buildProblemRowsCsvContent(list, fields) {
 }
 
 const PROBLEM_KIND_FILE_NAMES = Object.freeze({
-  missing: "空值",
-  conversion: "认不出",
-  outlier: "偏大或偏小",
-  duplicateRows: "整行重复",
-  idDuplicate: "编号重复",
-  placeholder: "像是空值的写法",
-  parseWarnings: "读取有疑问",
-  suspectedTotal: "疑似合计",
-  formulaError: "公式错误",
-  dateStyle: "日期写法",
-  lookAlike: "写法不一样"
+  missing: Lp("空值", "blank"),
+  conversion: Lp("认不出", "unrecognized"),
+  outlier: Lp("偏大或偏小", "high-or-low"),
+  duplicateRows: Lp("整行重复", "duplicate-rows"),
+  idDuplicate: Lp("编号重复", "duplicate-ids"),
+  placeholder: Lp("像是空值的写法", "blank-like"),
+  parseWarnings: Lp("读取有疑问", "reading-issues"),
+  suspectedTotal: Lp("疑似合计", "possible-totals"),
+  formulaError: Lp("公式错误", "formula-errors"),
+  dateStyle: Lp("日期写法", "mixed-date-formats"),
+  lookAlike: Lp("写法不一样", "variants")
 });
 
-// <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv; only the part before the
-// date is sanitized and shortened, so the date always stays.
+// <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv (English <name>_problem-rows_<kind>…);
+// only the part before the date is sanitized and shortened, so the date always stays.
 function buildProblemRowsFileName(category, now = new Date()) {
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   const parts = [
     { text: stem, cut: true },
-    { text: "问题行", cut: false },
-    { text: PROBLEM_KIND_FILE_NAMES[category.kind], cut: false },
+    { text: L("问题行", "problem-rows"), cut: false },
+    { text: PROBLEM_KIND_FILE_NAMES[category.kind] && Lpick(PROBLEM_KIND_FILE_NAMES[category.kind]), cut: false },
     { text: category.field, cut: true },
     { text: category.key, cut: true }
   ].filter((part) => part.text !== undefined && part.text !== null && part.text !== "");
@@ -184,16 +198,17 @@ function buildProblemRowsFileName(category, now = new Date()) {
 function exportProblemRows() {
   const view = state.problemView;
   if (!canExportProcessedData() || !view) {
-    setProblemRowsExportStatus("请先打开一类问题行。", "warning");
+    setProblemRowsExportStatus(() => L("请先打开一类问题行。", "Open a category of problem rows first."), "warning");
     return;
   }
   try {
     const content = buildProblemRowsCsvContent(view.list, state.fields);
     const fileName = buildProblemRowsFileName(view.category, new Date());
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-    setProblemRowsExportStatus(`已导出 ${formatInteger(view.list.items.length)} 条：${fileName}`, "success");
+    const count = view.list.items.length;
+    setProblemRowsExportStatus(() => L(`已导出 ${formatInteger(count)} 条：${fileName}`, `Exported ${enCount(count, "row", "rows")}: ${fileName}`), "success");
   } catch (error) {
-    setProblemRowsExportStatus(`导出失败：${error.message}`, "error");
+    setProblemRowsExportStatus(() => L(`导出失败：${error.message}`, `The export failed: ${error.message}`), "error");
   }
 }
 
@@ -330,7 +345,7 @@ function buildStandardizedCellRows(result, rows, fields) {
 // At most this many cells go into one change list: an Excel sheet holds 1,048,576 rows,
 // one of them the header.
 const STANDARDIZED_CHANGE_LIMIT = 1048575;
-const STANDARDIZED_CHANGE_HEADERS = Object.freeze(["文件行号", "字段", "原值", "导出值", "处理"]);
+const STANDARDIZED_CHANGE_HEADERS = Lp(Object.freeze(["文件行号", "字段", "原值", "导出值", "处理"]), Object.freeze(["File row", "Column", "Original", "Exported", "Action"]));
 
 // The standardized CSV: every original row and field, in order, original headers.
 function buildStandardizedCsvContent(result, rows, fields) {
@@ -351,15 +366,18 @@ function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, 
     const exported = cells.values[index] === undefined ? original : cells.values[index];
     data[index] = [getRowNumber(row) ?? "", field, original, exported, formatStandardizeAction(STANDARDIZE_ACTIONS[cells.actions[index]])];
   }
-  return buildCsvTableContent([...STANDARDIZED_CHANGE_HEADERS], data);
+  return buildCsvTableContent([...Lpick(STANDARDIZED_CHANGE_HEADERS)], data);
 }
 
-// <原文件名>_标准化_<yyyymmdd>.csv, <原文件名>_标准化改动清单[_前N条]_<yyyymmdd>.csv; only the part
-// before the date is sanitized and shortened, so the date always stays.
+// <原文件名>_写法统一_<yyyymmdd>.csv, <原文件名>_写法统一改动清单[_前N条]_<yyyymmdd>.csv (English
+// _standardized_, _standardized-changes[_first-N]_); only the part before the date is sanitized
+// and shortened, so the date always stays.
 function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
-  const labels = kind === "changes" ? ["写法统一改动清单", ...(truncatedTo ? [`前${truncatedTo}条`] : [])] : ["写法统一"];
+  const labels = kind === "changes"
+    ? [L("写法统一改动清单", "standardized-changes"), ...(truncatedTo ? [L(`前${truncatedTo}条`, `first-${truncatedTo}`)] : [])]
+    : [L("写法统一", "standardized")];
   return `${buildLabeledFileName([{ text: stem, cut: true }, ...labels.map((text) => ({ text, cut: false }))])}_${formatReportFileDate(now)}.csv`;
 }
 
@@ -367,11 +385,11 @@ function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
 function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
   const result = state.standardizedExport;
   if (!result || !canCheckStandardizedExport()) {
-    setStandardizedExportStatus("请先点“检查会改哪些格”。", "warning");
+    setStandardizedExportStatus(() => L("请先点“检查会改哪些格”。", "Click “Check which cells will change” first."), "warning");
     return;
   }
   if (kind === "changes" && !result.cellCount) {
-    setStandardizedExportStatus("没有需要列出的单元格。", "warning");
+    setStandardizedExportStatus(() => L("没有需要列出的单元格。", "There are no cells to list."), "warning");
     return;
   }
   try {
@@ -381,15 +399,18 @@ function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
       const content = buildStandardizedChangesCsvContent(result, state.rows, state.fields, getSourceRowNumber, limit);
       const fileName = buildStandardizedFileName("changes", now, truncatedTo);
       downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-      setStandardizedExportStatus(formatStandardizedChangesStatus(Math.min(result.cellCount, limit), result.cellCount, fileName), truncatedTo ? "warning" : "success");
+      const listed = Math.min(result.cellCount, limit);
+      const total = result.cellCount;
+      setStandardizedExportStatus(() => formatStandardizedChangesStatus(listed, total, fileName), truncatedTo ? "warning" : "success");
       return;
     }
     const content = buildStandardizedCsvContent(result, state.rows, state.fields);
     const fileName = buildStandardizedFileName("data", now);
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
-    setStandardizedExportStatus(`已导出写法统一的表 ${formatInteger(state.rows.length)} 行：${fileName}`, "success");
+    const rowCount = state.rows.length;
+    setStandardizedExportStatus(() => L(`已导出写法统一的表 ${formatInteger(rowCount)} 行：${fileName}`, `Exported the standardized table, ${enCount(rowCount, "row", "rows")}: ${fileName}`), "success");
   } catch (error) {
-    setStandardizedExportStatus(`导出失败：${error.message}`, "error");
+    setStandardizedExportStatus(() => L(`导出失败：${error.message}`, `The export failed: ${error.message}`), "error");
   }
 }
 
@@ -405,10 +426,11 @@ function checkStandardizedExport() {
   updateExportButtons();
 }
 
+// v3.2.0: the four export status lines are one-off messages (app.js): a message is a text or a
+// function returning one, written again in the other language after a switch.
 function setStandardizedExportStatus(message, tone = "") {
   if (!dom.standardizedExportStatus) return;
-  dom.standardizedExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
-  dom.standardizedExportStatus.textContent = message;
+  writeOneOffMessage(dom.standardizedExportStatus, "inline-status", message, tone);
 }
 
 function sanitizeCsvExportValue(value) {
@@ -431,11 +453,11 @@ function exportHtmlReport() {
 function exportAnalysisReport() {
   if (!canExportReport()) {
     if (state.rows.length && hasFieldConfigDraftChanges()) {
-      ensureFieldConfigurationApplied("导出报告");
-      setReportExportStatus("字段配置有未应用的修改，请先应用配置后再导出。", "warning");
+      ensureFieldConfigurationApplied(DRAFT_ACTION_REPORT);
+      setReportExportStatus(() => L("字段配置有未应用的修改，请先应用配置后再导出。", "Column settings have changes that are not applied; apply them before exporting."), "warning");
     } else {
-      setStatus("请先完成数据分析，再导出报告。", "warning");
-      setReportExportStatus("请先完成数据分析，再导出报告。", "warning");
+      setStatus(L("请先完成数据分析，再导出报告。", "Finish the analysis before exporting the report."), "warning");
+      setReportExportStatus(() => L("请先完成数据分析，再导出报告。", "Finish the analysis before exporting the report."), "warning");
     }
     updateExportButtons();
     return;
@@ -446,8 +468,8 @@ function exportAnalysisReport() {
   buttons.forEach((button) => {
     button.disabled = true;
   });
-  if (dom.exportHtmlReport) dom.exportHtmlReport.textContent = "正在导出...";
-  setReportExportStatus("正在生成报告...", "loading");
+  if (dom.exportHtmlReport) dom.exportHtmlReport.textContent = L("正在导出...", "Exporting...");
+  setReportExportStatus(() => L("正在生成报告...", "Creating the report..."), "loading");
 
   try {
     const exportedAt = new Date();
@@ -455,11 +477,11 @@ function exportAnalysisReport() {
     const content = buildHtmlReport(reportData, captureCurrentChartImages());
     const fileName = buildReportFileName("html", exportedAt);
     downloadUtf8TextFile(content, fileName, "text/html;charset=utf-8");
-    setStatus(`报告已生成：${fileName}`, "success");
-    setReportExportStatus(`报告已生成：${fileName}`, "success");
+    setStatus(L(`报告已生成：${fileName}`, `The report is ready: ${fileName}`), "success");
+    setReportExportStatus(() => L(`报告已生成：${fileName}`, `The report is ready: ${fileName}`), "success");
   } catch (error) {
-    setStatus(`报告导出失败：${error.message}`, "error");
-    setReportExportStatus(`报告导出失败：${error.message}`, "error");
+    setStatus(L(`报告导出失败：${error.message}`, `The report export failed: ${error.message}`), "error");
+    setReportExportStatus(() => L(`报告导出失败：${error.message}`, `The report export failed: ${error.message}`), "error");
   } finally {
     buttons.forEach((button, index) => {
       button.textContent = labels[index];
@@ -508,9 +530,9 @@ function captureCurrentChartImages() {
       return [{
         id,
         title: document.getElementById(REPORT_CHART_HEADING_IDS[id])?.textContent?.trim()
-          || REPORT_CHART_TITLES[id]
+          || (REPORT_CHART_TITLES[id] && Lpick(REPORT_CHART_TITLES[id]))
           || chart.data?.datasets?.[0]?.label
-          || "分析图表",
+          || L("分析图表", "Chart"),
         dataUrl
       }];
     } catch {
@@ -531,8 +553,9 @@ function buildReportData(now = new Date()) {
   const activeProfiles = getActiveProfiles();
   const fieldTypes = state.profiles.map((profile) => ({
     field: profile.field,
-    inferredType: profile.inferredType,
-    appliedType: profile.type,
+    // The names in the language of the export (in Chinese the same as profile.inferredType / type).
+    inferredType: fieldTypeLabel(profile.inferredTypeKey),
+    appliedType: fieldTypeLabel(profile.typeKey),
     typeKey: profile.typeKey,
     nonMissingCount: profile.nonMissingCount,
     uniqueCount: profile.uniqueCount,
@@ -559,7 +582,7 @@ function buildReportData(now = new Date()) {
     total: category.total,
     distinctCount: category.distinctCount,
     top: category.top.slice(0, 10).map((item) => ({
-      name: item.name,
+      name: displayGroupName(item.name),
       count: item.count,
       ratio: formatPercent(item.ratio)
     }))
@@ -605,7 +628,7 @@ function buildReportData(now = new Date()) {
       })),
       missingByField: state.profiles.map((profile) => ({
         field: profile.field,
-        type: profile.type,
+        type: fieldTypeLabel(profile.typeKey),
         missingCount: profile.missingCount,
         missingRate: formatPercent(profile.missingRate)
       })),
@@ -679,7 +702,7 @@ function buildReportPlaceholders() {
         rawValues: [...entry.rawValues],
         count: entry.count,
         rowNumbers: [...entry.rowNumbers],
-        effect: `按空值处理后，${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`
+        effect: L(`按空值处理后，${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`, `If treated as blank: ${formatPlaceholderChange(entry.field, profile.missingCount, profile.typeKey, preview)}`)
       };
     })
   };
@@ -694,16 +717,22 @@ function buildReportFilters(filters = state.filters) {
     const options = getCategoryFilterOptions(field);
     const keptKeys = new Set(values);
     // Kept labels follow the filter panel order (display labels, zh-CN sort).
-    const kept = options.filter((option) => keptKeys.has(option.value)).map((option) => option.label);
+    const keptOptions = options.filter((option) => keptKeys.has(option.value));
+    const kept = keptOptions.map((option) => option.label);
     const keptValues = kept.slice(0, REPORT_FILTER_MAX_VALUES);
-    const more = kept.length > keptValues.length ? `……等 ${formatInteger(kept.length)} 个` : "";
+    // English lists the values after a colon, each in curly quotes; the blank one is its label (Blank).
+    const quotedValues = () => keptOptions.slice(0, REPORT_FILTER_MAX_VALUES).map((option) => (option.value === "" ? option.label : `“${option.label}”`)).join(", ");
+    const more = kept.length > keptValues.length ? L(`……等 ${formatInteger(kept.length)} 个`, `, … ${formatInteger(kept.length)} in all`) : "";
     items.push({
       type: "category",
       field,
       keptCount: kept.length,
       totalCount: options.length,
       keptValues,
-      description: `${field}：保留 ${formatInteger(kept.length)} / 共 ${formatInteger(options.length)} 个类别${kept.length ? `（${keptValues.join("、")}${more}）` : ""}`
+      description: L(
+        `${field}：保留 ${formatInteger(kept.length)} / 共 ${formatInteger(options.length)} 个类别${kept.length ? `（${keptValues.join("、")}${more}）` : ""}`,
+        `${field}: keeps ${formatInteger(kept.length)} of ${enCount(options.length, "value", "values")}${kept.length ? `: ${quotedValues()}${more}` : ""}`
+      )
     });
   }
   if (filters?.numeric) {
@@ -713,20 +742,22 @@ function buildReportFilters(filters = state.filters) {
       field,
       min,
       max,
-      description: `${field}：${formatFieldNumber(field, min)} 至 ${formatFieldNumber(field, max)}`
+      description: L(`${field}：${formatFieldNumber(field, min)} 至 ${formatFieldNumber(field, max)}`, `${field}: ${formatFieldNumber(field, min)} to ${formatFieldNumber(field, max)}`)
     });
   }
   if (filters?.date) {
     const { field, start, end } = filters.date;
-    items.push({ type: "date", field, start, end, description: `${field}：${start} 至 ${end}` });
+    items.push({ type: "date", field, start, end, description: L(`${field}：${start} 至 ${end}`, `${field}: ${start} to ${end}`) });
   }
   return items;
 }
 
+// v3.2.0 (R10): #sourceName holds the display name alone since v3.0.0 (“name · sheet”), so the
+// old “已载入 · ” prefix is gone from the fallback.
 function getReportSourceFileName() {
   if (state.sourceFileName) return state.sourceFileName;
   const sourceTitle = dom.sourceName?.title || dom.sourceName?.textContent || "";
-  return sourceTitle.replace(/^已载入\s*·\s+/, "").split(" · ")[0] || "data-report";
+  return sourceTitle.split(" · ")[0] || "data-report";
 }
 
 // Every date field uses the trend chart's current metric / aggregate selection.
@@ -743,23 +774,22 @@ function buildReportDateTrends() {
         values: [],
         start: "",
         end: "",
-        summary: `日期字段「${profile.field}」里没有认得出的日期。`
+        summary: L(`日期字段「${profile.field}」里没有认得出的日期。`, `The date column “${profile.field}” has no recognized dates.`)
       };
     }
 
     const firstValue = trend.values[0];
     const lastValue = trend.values[trend.values.length - 1];
-    const valueLabel = metricField ? `${formatFieldLabel(metricField)}${getDateChartAggregateLabel(aggregate)}` : "记录数";
+    const valueLabel = metricField
+      ? L(`${formatFieldLabel(metricField)}${getDateChartAggregateLabel(aggregate)}`, `the ${getDateChartAggregateLabel(aggregate)} of ${formatFieldLabel(metricField)}`)
+      : L("记录数", "the record count");
     const firstDisplay = metricField
       ? formatFieldNumber(metricField, firstValue)
       : formatInteger(firstValue);
     const lastDisplay = metricField
       ? formatFieldNumber(metricField, lastValue)
       : formatInteger(lastValue);
-    let direction = "仅有一个时间点";
-    if (trend.values.length > 1) {
-      direction = lastValue > firstValue ? "整体上升" : lastValue < firstValue ? "整体下降" : "整体持平";
-    }
+    const direction = formatReportTrendDirection(trend.values.length, firstValue, lastValue);
 
     return {
       field: profile.field,
@@ -769,9 +799,21 @@ function buildReportDateTrends() {
       values: [...trend.values],
       start: trend.labels[0],
       end: trend.labels[trend.labels.length - 1],
-      summary: `日期字段「${profile.field}」包含 ${formatInteger(trend.labels.length)} 个时间点；${valueLabel}从 ${trend.labels[0]} 的 ${firstDisplay} 变为 ${trend.labels[trend.labels.length - 1]} 的 ${lastDisplay}，${direction}。`
+      summary: L(
+        `日期字段「${profile.field}」包含 ${formatInteger(trend.labels.length)} 个时间点；${valueLabel}从 ${trend.labels[0]} 的 ${firstDisplay} 变为 ${trend.labels[trend.labels.length - 1]} 的 ${lastDisplay}，${direction}。`,
+        `The date column “${profile.field}” has ${enCount(trend.labels.length, "point in time", "points in time")}; ${valueLabel} goes from ${firstDisplay} in ${trend.labels[0]} to ${lastDisplay} in ${trend.labels[trend.labels.length - 1]}${direction}`
+      )
     };
   });
+}
+
+// The direction at the end of a trend sentence: Chinese "整体上升" (the sentence adds "。"),
+// English with its own punctuation (", rising overall." or " (only one point in time).").
+function formatReportTrendDirection(pointCount, first, last) {
+  if (pointCount < 2) return L("仅有一个时间点", " (only one point in time).");
+  if (last > first) return L("整体上升", ", rising overall.");
+  if (last < first) return L("整体下降", ", falling overall.");
+  return L("整体持平", ", about the same overall.");
 }
 
 function buildReportCustomAnalysis() {
@@ -780,12 +822,12 @@ function buildReportCustomAnalysis() {
   if (!current || !Array.isArray(current.grouped) || !current.grouped.length) {
     return {
       completed: false,
-      message: "当前没有可导出的自定义分组分析结果。"
+      message: Lpick(REPORT_NO_CUSTOM_ANALYSIS)
     };
   }
 
   const rows = current.grouped.map((item) => ({
-    group: item.name,
+    group: displayGroupName(item.name),
     count: item.count,
     sum: formatFieldNumber(current.metricField, item.sum),
     average: formatFieldNumber(current.metricField, item.avg),
@@ -813,17 +855,18 @@ function buildReportCustomAnalysis() {
 
 function summarizeCustomTrend(dateField, metricField, trend, aggregateMethod = "sum") {
   if (!trend?.labels?.length) {
-    return `日期字段「${dateField}」没有足够的有效记录生成自定义趋势。`;
+    return L(`日期字段「${dateField}」没有足够的有效记录生成自定义趋势。`, `The date column “${dateField}” does not have enough valid records for a trend.`);
   }
   const first = trend.values[0];
   const last = trend.values[trend.values.length - 1];
   if (!Number.isFinite(first) || !Number.isFinite(last)) {
-    return `按「${dateField}」观察时，「${metricField}」的聚合结果超出浏览器可表示的有限数值范围，无法可靠判断趋势。`;
+    return L(`按「${dateField}」观察时，「${metricField}」的聚合结果超出浏览器可表示的有限数值范围，无法可靠判断趋势。`, `By “${dateField}”, the aggregated “${metricField}” is beyond the numbers the browser can represent, so the trend cannot be judged reliably.`);
   }
-  const direction = trend.values.length < 2
-    ? "仅有一个时间点"
-    : last > first ? "整体上升" : last < first ? "整体下降" : "整体持平";
-  return `按「${dateField}」观察，「${metricField}」${getAggregateMethodLabel(aggregateMethod)}从 ${trend.labels[0]} 的 ${formatFieldNumber(metricField, first)} 变为 ${trend.labels[trend.labels.length - 1]} 的 ${formatFieldNumber(metricField, last)}，${direction}。`;
+  const direction = formatReportTrendDirection(trend.values.length, first, last);
+  return L(
+    `按「${dateField}」观察，「${metricField}」${getAggregateMethodLabel(aggregateMethod)}从 ${trend.labels[0]} 的 ${formatFieldNumber(metricField, first)} 变为 ${trend.labels[trend.labels.length - 1]} 的 ${formatFieldNumber(metricField, last)}，${direction}。`,
+    `By “${dateField}”, the ${getAggregateMethodLabel(aggregateMethod)} of “${metricField}” goes from ${formatFieldNumber(metricField, first)} in ${trend.labels[0]} to ${formatFieldNumber(metricField, last)} in ${trend.labels[trend.labels.length - 1]}${direction}`
+  );
 }
 
 function normalizeReportSnapshot(reportData = {}) {
@@ -913,18 +956,18 @@ function normalizeReportSnapshot(reportData = {}) {
       }
       : {
         completed: false,
-        message: "当前没有可导出的自定义分组分析结果。"
+        message: Lpick(REPORT_NO_CUSTOM_ANALYSIS)
       },
     insights: Array.isArray(reportData.insights) ? reportData.insights : []
   };
 }
 
-const REPORT_ID_DUPLICATE_HEADERS = ["字段", "重复值", "出现次数", "文件行号", "说明"];
+const REPORT_ID_DUPLICATE_HEADERS = Lp(["字段", "重复值", "出现次数", "文件行号", "说明"], ["Column", "Duplicate value", "Count", "File rows", "Note"]);
 
 // Plain-text rows and notes of the report's ID duplicate section: listed values and
 // mostly repeated fields as table rows, then overflow and clean-field notes.
 function buildReportIdDuplicateSection(idDuplicates) {
-  if (!idDuplicates.length) return { rows: [], notes: ["未识别到 ID 字段。"] };
+  if (!idDuplicates.length) return { rows: [], notes: [L("未识别到 ID 字段。", "No ID columns were found.")] };
   const rows = [];
   const notes = [];
   const cleanFields = [];
@@ -945,37 +988,37 @@ function buildReportIdDuplicateSection(idDuplicates) {
       formatIdenticalRows(value.identicalRowCount, value.identicalGroupCount)
     ]));
     const overflow = formatIdDuplicateOverflow(item.duplicateValueCount, item.values.length);
-    if (overflow) notes.push(`「${item.field}」${overflow}`);
+    if (overflow) notes.push(L(`「${item.field}」${overflow}`, `“${item.field}”: ${overflow}.`));
   });
   if (cleanFields.length) notes.push(formatCleanIdFieldsNote(cleanFields, rows.length > 0));
   return { rows, notes };
 }
 
-const REPORT_PLACEHOLDER_CONFIRMED_HEADERS = ["字段", "写法", "出现次数", "状态"];
-const REPORT_PLACEHOLDER_PENDING_HEADERS = ["字段", "写法", "档位", "出现次数", "文件行号", "按空值处理后的影响"];
-const REPORT_PLACEHOLDER_TIER_LABELS = { common: "常见", maybe: "可能是有效值" };
+const REPORT_PLACEHOLDER_CONFIRMED_HEADERS = Lp(["字段", "写法", "出现次数", "状态"], ["Column", "Value", "Count", "Status"]);
+const REPORT_PLACEHOLDER_PENDING_HEADERS = Lp(["字段", "写法", "档位", "出现次数", "文件行号", "按空值处理后的影响"], ["Column", "Value", "Kind", "Count", "File rows", "If treated as blank"]);
+const REPORT_PLACEHOLDER_TIER_LABELS = { common: Lp("常见", "Common"), maybe: Lp("可能是有效值", "May be a real value") };
 
 // Plain-text tables and notes of the report's placeholder section. Every note
 // starts with fixed text, never with a field name or value.
 function buildReportPlaceholderSection({ confirmed, pending }) {
-  if (!confirmed.length && !pending.length) return { confirmedRows: [], pendingRows: [], notes: ["没有发现像是空值的写法。"] };
+  if (!confirmed.length && !pending.length) return { confirmedRows: [], pendingRows: [], notes: [L("没有发现像是空值的写法。", "No values that may mean blank were found.")] };
   const notes = formatPlaceholderNotes(pending.map((entry) => entry.key));
   return {
     confirmedRows: confirmed.map((entry) => [
       entry.field,
       formatPlaceholderValue(entry),
       entry.count,
-      entry.fieldIgnored ? "已按空值处理（字段已忽略）" : "已按空值处理"
+      entry.fieldIgnored ? L("已按空值处理（字段已忽略）", "Treated as blank (column ignored)") : L("已按空值处理", "Treated as blank")
     ]),
     pendingRows: pending.map((entry) => [
       entry.field,
       formatPlaceholderValue(entry),
-      REPORT_PLACEHOLDER_TIER_LABELS[entry.tier] || "—",
+      REPORT_PLACEHOLDER_TIER_LABELS[entry.tier] ? Lpick(REPORT_PLACEHOLDER_TIER_LABELS[entry.tier]) : "—",
       entry.count,
       formatRowNumberList(entry.rowNumbers, entry.count),
       entry.effect
     ]),
-    notes: notes ? [`说明：${notes}`] : []
+    notes: notes ? [L(`说明：${notes}`, `Note: ${notes}`)] : []
   };
 }
 
@@ -1005,14 +1048,14 @@ function buildReportRowNoteSections(quality) {
     formulaErrorCount: formatFormulaErrorCount(errors),
     sections: [
       {
-        title: "疑似合计 / 小计行",
+        title: L("疑似合计 / 小计行", "Possible total or subtotal rows"),
         // The page's note: another one once the totals are left out (v3.1.0).
         note: quality.suspectedTotalsExcluded ? formatSuspectedTotalExcludedNote(quality.suspectedTotalsExcluded) : Lpick(SUSPECTED_TOTAL_NOTE),
         lines: totals.slice(0, SUSPECTED_TOTAL_LIST_LIMIT).map((item) => formatSuspectedTotal(item)),
         overflow: formatSuspectedTotalOverflow(totals.length),
         extras: formatSuspectedTotalExtras(quality.suspectedTotalExtras, totals.length)
       },
-      { title: "公式错误单元格", note: Lpick(FORMULA_ERROR_NOTE), lines: errors.map((item) => formatFormulaError(item)), overflow: "", extras: [] }
+      { title: L("公式错误单元格", "Cells with formula errors"), note: Lpick(FORMULA_ERROR_NOTE), lines: errors.map((item) => formatFormulaError(item)), overflow: "", extras: [] }
     ].filter((section) => section.lines.length)
   };
 }
@@ -1028,11 +1071,16 @@ function buildReportFormatSections(quality) {
     dateStyleCount: dateStyles.length,
     lookAlikeCount: lookAlikes.length,
     sections: [
-      { title: "日期写法混用", note: Lpick(DATE_STYLE_NOTE), lines: dateStyles.map(formatDateStyleLine) },
-      { title: "整列只有一个值", note: Lpick(CONSTANT_FIELD_NOTE), lines: constantFields.map(formatConstantField) },
-      { title: "同一个值，写法不一样", note: Lpick(LOOK_ALIKE_NOTE), lines: lookAlikes.map(formatLookAlikeLine) }
+      { title: L("日期写法混用", "Mixed date formats"), note: Lpick(DATE_STYLE_NOTE), lines: dateStyles.map(formatDateStyleLine) },
+      { title: L("整列只有一个值", "Single-value columns"), note: Lpick(CONSTANT_FIELD_NOTE), lines: constantFields.map(formatConstantField) },
+      { title: L("同一个值，写法不一样", "Same value, written differently"), note: Lpick(LOOK_ALIKE_NOTE), lines: lookAlikes.map(formatLookAlikeLine) }
     ].filter((section) => section.lines.length)
   };
+}
+
+// The unit after a count in <strong> of the English summary ("1 column", "2 columns").
+function reportCountUnit(count, one, many) {
+  return Number(count) === 1 ? one : many;
 }
 
 function buildHtmlReport(reportData, chartImages = []) {
@@ -1041,20 +1089,20 @@ function buildHtmlReport(reportData, chartImages = []) {
   const numberSections = buildReportNumberSections(reportData.quality);
   // The summary counts problems only: numbers read by unit get their section, no count.
   const numericLookingSummary = numberSections.numericLooking.length
-    ? `；像是数字的文本列：<strong>${escapeHtml(numberSections.numericLooking.length)}</strong> 个字段`
+    ? L(`；像是数字的文本列：<strong>${escapeHtml(numberSections.numericLooking.length)}</strong> 个字段`, `; text columns that look numeric: <strong>${escapeHtml(numberSections.numericLooking.length)}</strong> ${reportCountUnit(numberSections.numericLooking.length, "column", "columns")}`)
     : "";
   const numberSectionHtml = [
-    ["按单位读取的数字", numberSections.conversions],
-    ["像是数字的文本列", numberSections.numericLooking]
+    [L("按单位读取的数字", "Numbers read with a unit"), numberSections.conversions],
+    [L("像是数字的文本列", "Text columns that look numeric"), numberSections.numericLooking]
   ].filter(([, lines]) => lines.length).map(([title, lines]) => `<h3>${title}</h3>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const formatSections = buildReportFormatSections(reportData.quality);
-  const formatSummary = `${formatSections.dateStyleCount ? `；日期写法混用：<strong>${escapeHtml(formatSections.dateStyleCount)}</strong> 个字段` : ""}${formatSections.lookAlikeCount ? `；同一个值，写法不一样：<strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> 个字段` : ""}`;
+  const formatSummary = `${formatSections.dateStyleCount ? L(`；日期写法混用：<strong>${escapeHtml(formatSections.dateStyleCount)}</strong> 个字段`, `; mixed date formats: <strong>${escapeHtml(formatSections.dateStyleCount)}</strong> ${reportCountUnit(formatSections.dateStyleCount, "column", "columns")}`) : ""}${formatSections.lookAlikeCount ? L(`；同一个值，写法不一样：<strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> 个字段`, `; same value, written differently: <strong>${escapeHtml(formatSections.lookAlikeCount)}</strong> ${reportCountUnit(formatSections.lookAlikeCount, "column", "columns")}`) : ""}`;
   const formatSectionHtml = formatSections.sections.map(({ title, note, lines }) => `<h3>${title}</h3>
     <p>${escapeHtml(note)}</p>
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>`).join("\n    ");
   const rowNotes = buildReportRowNoteSections(reportData.quality);
-  const rowNoteSummary = `${rowNotes.suspectedTotalCount ? `；疑似合计 / 小计行：<strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong> 行` : ""}${rowNotes.formulaErrorCount ? `；公式错误：<strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> 个单元格` : ""}`;
+  const rowNoteSummary = `${rowNotes.suspectedTotalCount ? L(`；疑似合计 / 小计行：<strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong> 行`, `; possible total or subtotal rows: <strong>${escapeHtml(rowNotes.suspectedTotalCount)}</strong>`) : ""}${rowNotes.formulaErrorCount ? L(`；公式错误：<strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> 个单元格`, `; formula errors: <strong>${escapeHtml(rowNotes.formulaErrorCount)}</strong> ${reportCountUnit(rowNotes.formulaErrorCount, "cell", "cells")}`) : ""}`;
   const rowNoteSectionHtml = rowNotes.sections.map(({ title, note, lines, overflow, extras }) => `<h3>${title}</h3>${note ? `
     <p>${escapeHtml(note)}</p>` : ""}
     <ul class="summary-list">${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>${overflow ? `
@@ -1062,36 +1110,37 @@ function buildHtmlReport(reportData, chartImages = []) {
     <p>${escapeHtml(extra)}</p>`).join("")}`).join("\n    ");
   // v3.1.0: the rows left out, each sentence only when there are any.
   const exclusionsText = formatReportExclusions(reportData.exclusions);
-  const noFilterText = formatReportNoFilterText(reportData.dataScale.rows, reportData.dataScale.excludedRows) || REPORT_NO_FILTER_TEXT;
+  const noFilterText = formatReportNoFilterText(reportData.dataScale.rows, reportData.dataScale.excludedRows) || Lpick(REPORT_NO_FILTER_TEXT);
   const excludedScope = reportData.quality.excludedScope;
   const qualityScopeText = excludedScope ? formatQualityScopeNote(excludedScope.totalRows, excludedScope.excludedRows, excludedScope.excludedMissing) : "";
   const safeCharts = chartImages.filter((chart) => isSafeChartDataUrl(chart.dataUrl));
+  const sampleSeparator = L("、", ", ");
   const sheetMeta = reportData.sheetName
-    ? `<div><dt>工作表名称</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
+    ? `<div><dt>${L("工作表名称", "Worksheet")}</dt><dd>${escapeHtml(reportData.sheetName)}</dd></div>`
     : "";
   const headerNote = formatHeaderDetectionNote(reportData.headerDetection);
   const headerMeta = headerNote
-    ? `<div><dt>表头位置</dt><dd>${escapeHtml(headerNote)}</dd></div>`
+    ? `<div><dt>${L("表头位置", "Header row")}</dt><dd>${escapeHtml(headerNote)}</dd></div>`
     : "";
   const idDuplicates = reportData.quality.idDuplicates;
   const idSummary = idDuplicates
-    ? `；编号重复：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong> 个字段`
+    ? L(`；编号重复：<strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong> 个字段`, `; duplicate IDs: <strong>${escapeHtml(countListedIdDuplicateFields(idDuplicates))}</strong> ${reportCountUnit(countListedIdDuplicateFields(idDuplicates), "column", "columns")}`)
     : "";
   const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
   const placeholders = reportData.quality.placeholders;
   const placeholderSummary = placeholders && (placeholders.confirmed.length || placeholders.pending.length)
-    ? `；像是空值的写法：<strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> 个字段`
+    ? L(`；像是空值的写法：<strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> 个字段`, `; values that may mean blank: <strong>${escapeHtml(countPendingPlaceholderFields(placeholders.pending))}</strong> ${reportCountUnit(countPendingPlaceholderFields(placeholders.pending), "column", "columns")}`)
     : "";
   const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
   const placeholderSectionHtml = placeholderSection
-    ? `<h3>像是空值的写法</h3>
-    ${placeholderSection.confirmedRows.length ? `<p>已按空值处理的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows, "")}` : ""}
-    ${placeholderSection.pendingRows.length ? `<p>还没确认的写法：</p>${buildHtmlReportTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows, "")}` : ""}
+    ? `<h3>${L("像是空值的写法", "Values that may mean blank")}</h3>
+    ${placeholderSection.confirmedRows.length ? `<p>${L("已按空值处理的写法：", "Treated as blank:")}</p>${buildHtmlReportTable(Lpick(REPORT_PLACEHOLDER_CONFIRMED_HEADERS), placeholderSection.confirmedRows, "")}` : ""}
+    ${placeholderSection.pendingRows.length ? `<p>${L("还没确认的写法：", "Not treated as blank yet:")}</p>${buildHtmlReportTable(Lpick(REPORT_PLACEHOLDER_PENDING_HEADERS), placeholderSection.pendingRows, "")}` : ""}
     ${placeholderSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
     : "";
   const idSectionHtml = idSection
-    ? `<h3>编号重复</h3>
-    ${idSection.rows.length ? buildHtmlReportTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows, "") : ""}
+    ? `<h3>${L("编号重复", "Duplicate IDs")}</h3>
+    ${idSection.rows.length ? buildHtmlReportTable(Lpick(REPORT_ID_DUPLICATE_HEADERS), idSection.rows, "") : ""}
     ${idSection.notes.map((note) => `<p>${escapeHtml(note)}</p>`).join("")}`
     : "";
   const categorySections = reportData.categoryStats.length
@@ -1099,27 +1148,27 @@ function buildHtmlReport(reportData, chartImages = []) {
       <section class="subsection">
         <h3>${escapeHtml(category.field)} Top 10</h3>
         ${buildHtmlReportTable(
-          ["类别", "数量", "占比"],
+          Lpick(REPORT_CATEGORY_HEADERS),
           category.top.map((item) => [item.name, item.count, item.ratio]),
-          "该分类字段没有可统计的非空值。"
+          L("该分类字段没有可统计的非空值。", "This text column has no non-blank values to count.")
         )}
       </section>
     `).join("")
-    : `<p class="empty">无适用的分类字段。</p>`;
+    : `<p class="empty">${L("无适用的分类字段。", "There are no text columns.")}</p>`;
   const dateTrendItems = reportData.dateTrends.length
     ? `<ul class="summary-list">${reportData.dateTrends.map((trend) => `<li>${escapeHtml(trend.summary)}</li>`).join("")}</ul>`
-    : `<p class="empty">无适用的日期字段。</p>`;
+    : `<p class="empty">${L("无适用的日期字段。", "There are no date columns.")}</p>`;
   const customSection = reportData.customAnalysis.completed
     ? `
-      <p><strong>指标字段：</strong>${escapeHtml(fieldLabel(reportData.customAnalysis.metricField))}　
-      <strong>分组字段：</strong>${escapeHtml(reportData.customAnalysis.groupField)}
-      ${reportData.customAnalysis.aggregateLabel ? `　<strong>聚合方式：</strong>${escapeHtml(reportData.customAnalysis.aggregateLabel)}` : ""}
-      ${reportData.customAnalysis.dateField ? `　<strong>日期字段：</strong>${escapeHtml(reportData.customAnalysis.dateField)}` : ""}</p>
+      <p><strong>${L("指标字段：", "Metric column:")}</strong>${L("", " ")}${escapeHtml(fieldLabel(reportData.customAnalysis.metricField))}${L("　", " &nbsp;")}
+      <strong>${L("分组字段：", "Group by:")}</strong>${L("", " ")}${escapeHtml(reportData.customAnalysis.groupField)}
+      ${reportData.customAnalysis.aggregateLabel ? `${L("　", "&nbsp; ")}<strong>${L("聚合方式：", "Aggregation:")}</strong>${L("", " ")}${escapeHtml(reportData.customAnalysis.aggregateLabel)}` : ""}
+      ${reportData.customAnalysis.dateField ? `${L("　", "&nbsp; ")}<strong>${L("日期字段：", "Date column:")}</strong>${L("", " ")}${escapeHtml(reportData.customAnalysis.dateField)}` : ""}</p>
       ${reportData.customAnalysis.trendSummary ? `<p>${escapeHtml(reportData.customAnalysis.trendSummary)}</p>` : ""}
       ${buildHtmlReportTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
+        [reportData.customAnalysis.groupField, ...Lpick(REPORT_CUSTOM_HEADERS)],
         reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum]),
-        "当前没有可导出的自定义分组分析结果。"
+        Lpick(REPORT_NO_CUSTOM_ANALYSIS)
       )}
     `
     : `<p class="empty">${escapeHtml(reportData.customAnalysis.message)}</p>`;
@@ -1130,14 +1179,14 @@ function buildHtmlReport(reportData, chartImages = []) {
           <img src="${chart.dataUrl}" alt="${escapeHtml(chart.title)}">
         </figure>
       `).join("")}</div>`
-    : `<p class="empty">当前没有可嵌入的图表。</p>`;
+    : `<p class="empty">${L("当前没有可嵌入的图表。", "There are no charts to include.")}</p>`;
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${L("zh-CN", "en")}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(`${reportData.fileName} - 表格体检报告`)}</title>
+  <title>${escapeHtml(L(`${reportData.fileName} - 表格体检报告`, `${reportData.fileName} - Sheet Checkup report`))}</title>
   <style>
     :root { color-scheme: light; --ink: #23263a; --muted: #686f82; --line: #dfe2ea; --panel: #ffffff; --accent: #625bde; }
     * { box-sizing: border-box; }
@@ -1174,45 +1223,45 @@ function buildHtmlReport(reportData, chartImages = []) {
 <body>
 <main>
   <header>
-    <h1>表格体检报告</h1>
+    <h1>${L("表格体检报告", "Sheet Checkup report")}</h1>
     <dl class="meta">
-      <div><dt>文件名称</dt><dd>${escapeHtml(reportData.fileName)}</dd></div>
+      <div><dt>${L("文件名称", "File")}</dt><dd>${escapeHtml(reportData.fileName)}</dd></div>
       ${sheetMeta}
       ${headerMeta}
-      <div><dt>分析时间</dt><dd>${escapeHtml(reportData.analysisTime)}</dd></div>
-      <div><dt>报告生成时间</dt><dd>${escapeHtml(reportData.exportTime)}</dd></div>
+      <div><dt>${L("分析时间", "Analyzed at")}</dt><dd>${escapeHtml(reportData.analysisTime)}</dd></div>
+      <div><dt>${L("报告生成时间", "Report created at")}</dt><dd>${escapeHtml(reportData.exportTime)}</dd></div>
     </dl>
   </header>
   <section>
-    <h2>数据规模</h2>
+    <h2>${L("数据规模", "Data size")}</h2>
     <div class="scale-grid">
       ${[
-        ["当前分析行数", reportData.dataScale.rows],
-        ["原始数据行数", reportData.dataScale.originalRows],
-        ["筛除行数", reportData.dataScale.filteredOutRows],
-        ...(reportData.dataScale.excludedRows ? [["不计入分析行数", reportData.dataScale.excludedRows]] : []),
-        ["字段总数", reportData.dataScale.fields],
-        ["参与分析字段", reportData.dataScale.activeFields],
-        ["数值字段", reportData.dataScale.numericFields],
-        ["分类字段", reportData.dataScale.categoryFields],
-        ["日期字段", reportData.dataScale.dateFields],
-        ["ID 字段", reportData.dataScale.idFields],
-        ["忽略字段", reportData.dataScale.ignoredFields]
+        [L("当前分析行数", "Rows in analysis"), reportData.dataScale.rows],
+        [L("原始数据行数", "Rows in the original data"), reportData.dataScale.originalRows],
+        [L("筛除行数", "Rows filtered out"), reportData.dataScale.filteredOutRows],
+        ...(reportData.dataScale.excludedRows ? [[L("不计入分析行数", "Rows excluded from analysis"), reportData.dataScale.excludedRows]] : []),
+        [L("字段总数", "Columns"), reportData.dataScale.fields],
+        [L("参与分析字段", "Columns in analysis"), reportData.dataScale.activeFields],
+        [L("数值字段", "Number columns"), reportData.dataScale.numericFields],
+        [L("分类字段", "Text columns"), reportData.dataScale.categoryFields],
+        [L("日期字段", "Date columns"), reportData.dataScale.dateFields],
+        [L("ID 字段", "ID columns"), reportData.dataScale.idFields],
+        [L("忽略字段", "Ignored columns"), reportData.dataScale.ignoredFields]
       ].map(([label, value]) => `<div class="scale-card"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`).join("")}
     </div>
   </section>
   <section>
-    <h2>筛选条件</h2>
+    <h2>${L("筛选条件", "Filters")}</h2>
     ${reportData.filters.length
-      ? buildHtmlReportTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]), REPORT_NO_FILTER_TEXT)
+      ? buildHtmlReportTable(Lpick(REPORT_FILTER_HEADERS), reportData.filters.map((item) => [item.field, item.description]), Lpick(REPORT_NO_FILTER_TEXT))
       : `<p>${escapeHtml(noFilterText)}</p>`}${exclusionsText ? `
     <p>${escapeHtml(exclusionsText)}</p>` : ""}
-    <p>${escapeHtml(REPORT_QUALITY_SCOPE_TEXT)}</p>
+    <p>${escapeHtml(Lpick(REPORT_QUALITY_SCOPE_TEXT))}</p>
   </section>
   <section>
-    <h2>字段类型结果</h2>
+    <h2>${L("字段类型结果", "Column types")}</h2>
     ${buildHtmlReportTable(
-      ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "空值", "认不出", "示例值"],
+      Lpick(REPORT_FIELD_TYPE_HEADERS),
       reportData.fieldTypes.map((field) => [
         field.field,
         field.inferredType,
@@ -1221,68 +1270,84 @@ function buildHtmlReport(reportData, chartImages = []) {
         field.uniqueCount,
         field.missingCount,
         formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
-        field.sampleValues.join("、") || "—"
+        field.sampleValues.join(sampleSeparator) || "—"
       ]),
-      "无字段类型结果。"
+      L("无字段类型结果。", "No column types.")
     )}
   </section>
   <section>
-    <h2>数据质量报告</h2>${qualityScopeText ? `
+    <h2>${L("数据质量报告", "Data quality")}</h2>${qualityScopeText ? `
     <p>${escapeHtml(qualityScopeText)}</p>` : ""}
-    <p>空值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；读取时有疑问：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong> 处${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}。</p>
+    <p>${L(
+      `空值总数：<strong>${escapeHtml(reportData.quality.totalMissing)}</strong>；重复行：<strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>；读取时有疑问：<strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong> 处`,
+      `Blanks: <strong>${escapeHtml(reportData.quality.totalMissing)}</strong>; duplicate rows: <strong>${escapeHtml(reportData.quality.duplicateRows)}</strong>; reading issues: <strong>${escapeHtml(reportData.quality.parseWarningCount)}</strong>`
+    )}${idSummary}${placeholderSummary}${numericLookingSummary}${rowNoteSummary}${formatSummary}${L("。", ".")}</p>
     ${rowNoteSectionHtml}
-    <h3>各字段空值情况</h3>
+    <h3>${L("各字段空值情况", "Blanks by column")}</h3>
     ${buildHtmlReportTable(
-      ["字段", "类型", "空值", "空值占比"],
+      Lpick(REPORT_MISSING_HEADERS),
       reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate]),
-      "无字段质量结果。"
+      L("无字段质量结果。", "No column results.")
     )}
     ${numberSectionHtml}
     ${formatSectionHtml}
     ${placeholderSectionHtml}
-    <h3>偏大或偏小的值</h3>
+    <h3>${L("偏大或偏小的值", "Unusually high or low values")}</h3>
     ${buildHtmlReportTable(
-      ["字段", "偏大或偏小的个数", "下界", "上界"],
+      Lpick(REPORT_OUTLIER_HEADERS),
       reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound]),
-      "未识别到数值字段，暂无可用数值统计。"
+      Lpick(REPORT_NO_NUMBER_FIELDS)
     )}
     ${idSectionHtml}
   </section>
   <section>
-    <h2>数值字段描述性统计</h2>
+    <h2>${L("数值字段描述性统计", "Number column statistics")}</h2>
     ${buildHtmlReportTable(
-      ["字段", "有效数量", "认不出", "平均值", "中位数", "最小值", "最大值", "标准差"],
+      Lpick(REPORT_NUMERIC_HEADERS),
       reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation]),
-      "未识别到数值字段，暂无可用数值统计。"
+      Lpick(REPORT_NO_NUMBER_FIELDS)
     )}
   </section>
   <section>
-    <h2>分类字段 Top 10</h2>
+    <h2>${L("分类字段 Top 10", "Top 10 values of text columns")}</h2>
     ${categorySections}
   </section>
   <section>
-    <h2>日期趋势摘要</h2>
+    <h2>${L("日期趋势摘要", "Date trends")}</h2>
     ${dateTrendItems}
   </section>
   <section>
-    <h2>自定义分组分析结果</h2>
+    <h2>${L("自定义分组分析结果", "Breakdown by group")}</h2>
     ${customSection}
   </section>
   <section>
-    <h2>当前图表</h2>
+    <h2>${L("当前图表", "Charts")}</h2>
     ${chartSection}
   </section>
   <section>
-    <h2>自动分析结论</h2>
+    <h2>${L("自动分析结论", "Automatic conclusions")}</h2>
     ${reportData.insights.length
       ? `<ol class="insights">${reportData.insights.map((insight) => `<li>${escapeHtml(insight)}</li>`).join("")}</ol>`
-      : `<p class="empty">暂无自动分析结论。</p>`}
+      : `<p class="empty">${L("暂无自动分析结论。", "There are no automatic conclusions.")}</p>`}
   </section>
-  <footer>由<a href="https://github.com/wy-data-30/smart-tabular-analyzer">表格体检</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。</footer>
+  <footer>${L(
+    `由<a href="https://github.com/wy-data-30/smart-tabular-analyzer">表格体检</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。`,
+    `Created by <a href="https://github.com/wy-data-30/smart-tabular-analyzer">Sheet Checkup</a> ${escapeHtml(reportData.version)} in your browser; no data was uploaded.`
+  )}</footer>
 </main>
 </body>
 </html>`;
 }
+
+// The report's table headers in both languages (v3.2.0).
+const REPORT_CATEGORY_HEADERS = Lp(["类别", "数量", "占比"], ["Value", "Count", "Share"]);
+const REPORT_CUSTOM_HEADERS = Lp(["记录数", "求和", "平均值", "中位数", "最小值", "最大值"], ["Records", "Sum", "Average", "Median", "Minimum", "Maximum"]);
+const REPORT_FILTER_HEADERS = Lp(["字段", "条件"], ["Column", "Condition"]);
+const REPORT_FIELD_TYPE_HEADERS = Lp(["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "空值", "认不出", "示例值"], ["Column", "Detected type", "Applied type", "Non-blank", "Unique", "Blank", "Unrecognized", "Sample values"]);
+const REPORT_MISSING_HEADERS = Lp(["字段", "类型", "空值", "空值占比"], ["Column", "Type", "Blank", "Blank share"]);
+const REPORT_OUTLIER_HEADERS = Lp(["字段", "偏大或偏小的个数", "下界", "上界"], ["Column", "High/low values", "Lower bound", "Upper bound"]);
+const REPORT_NUMERIC_HEADERS = Lp(["字段", "有效数量", "认不出", "平均值", "中位数", "最小值", "最大值", "标准差"], ["Column", "Valid", "Unrecognized", "Average", "Median", "Minimum", "Maximum", "Standard deviation"]);
+const REPORT_NO_NUMBER_FIELDS = Lp("未识别到数值字段，暂无可用数值统计。", "No number columns were found, so there are no number statistics.");
 
 function buildHtmlReportTable(headers, rows, emptyMessage) {
   if (!rows.length) return `<p class="empty">${escapeHtml(emptyMessage)}</p>`;
@@ -1300,7 +1365,7 @@ function buildReportFileName(extension, now = new Date()) {
 }
 
 function buildDataExportFileName(mode, now = new Date()) {
-  const suffix = "当前分析";
+  const suffix = L("当前分析", "in-analysis");
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   return `${sanitizeFileName(stem)}_${suffix}_${formatReportFileDate(now)}.csv`;
@@ -1377,18 +1442,15 @@ function buildLabeledFileName(parts) {
 
 function setReportExportStatus(message, tone = "") {
   if (!dom.reportExportStatus) return;
-  dom.reportExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
-  dom.reportExportStatus.textContent = message;
+  writeOneOffMessage(dom.reportExportStatus, "inline-status", message, tone);
 }
 
 function setProblemRowsExportStatus(message, tone = "") {
   if (!dom.problemRowsExportStatus) return;
-  dom.problemRowsExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
-  dom.problemRowsExportStatus.textContent = message;
+  writeOneOffMessage(dom.problemRowsExportStatus, "inline-status", message, tone);
 }
 
 function setDataExportStatus(message, tone = "") {
   if (!dom.dataExportStatus) return;
-  dom.dataExportStatus.className = `inline-status${tone ? ` ${tone}` : ""}`;
-  dom.dataExportStatus.textContent = message;
+  writeOneOffMessage(dom.dataExportStatus, "inline-status", message, tone);
 }

@@ -9715,7 +9715,9 @@ test("v3.2.0 static guard: the whitelist names declarations that exist, with exa
 test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
   const whitelist = i18nWhitelist();
   // commit 5: format.js; commit 6: app.js; commit 7: importer, stats, quality, profiling and script.
-  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js"]);
+  // v3.2.0 commit 8: all nine (parsing.js has only whitelisted data); commit 9 removes the list.
+  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js", "report.js", "parsing.js"]);
+  assert.deepEqual([...i18nGuard.I18N_DONE_FILES].sort(), [...i18nGuard.APP_SCRIPT_NAMES].sort());
   for (const file of i18nGuard.APP_SCRIPT_NAMES) {
     const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
     assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
@@ -10568,4 +10570,193 @@ test("v3.2.0 quality.js English wording: a writing like a blank that is not trea
   zh.evaluate('confirmPlaceholder("Amount", "N/A")');
   assert.deepEqual(notesOf(en), ["Treated as blank"]);
   assert.deepEqual(notesOf(zh), ["已按空值处理"]);
+});
+
+// ---- v3.2.0 commit 8: the report, file names and CSV columns in English ----
+// The scenario's steps that reach every part of the report: values like blanks pending, the
+// repeated row left out, a filter, a breakdown with a date column, a standardized check.
+async function reportScenario(language, csv = englishScenarioCsv(), fileName = "orders.csv") {
+  const scope = await importCsvInLanguage(csv, fileName, language);
+  const fields = JSON.parse(scope.evaluate("JSON.stringify(state.fields)"));
+  if (fields.includes("Region")) {
+    scope.evaluate('setRowExclusion("duplicateRows", true)');
+    scope.evaluate(`(() => {
+      dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+      state.categoryFilterDraftValues = new Set(getCategoryFilterOptions("Region").map((option) => option.value).slice(0, 3));
+      applyFilters();
+    })()`);
+    scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  }
+  scope.evaluate("checkStandardizedExport()");
+  return scope;
+}
+
+// The report's text a reader sees: no style block, no tags, entities as characters.
+const reportVisibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+
+test("v3.2.0 report.js: an English report has <html lang=\"en\">, no Chinese and every number of the Chinese report", async () => {
+  const zh = reportOf(await reportScenario("zh"));
+  const en = reportOf(await reportScenario("en"));
+  assert.match(zh.html, /^<!DOCTYPE html>\n<html lang="zh-CN">/);
+  assert.match(en.html, /^<!DOCTYPE html>\n<html lang="en">/);
+  const text = reportVisibleText(en.html);
+  assert.ok(!ENGLISH_BAD.test(text), text.slice(Math.max(0, text.search(ENGLISH_BAD) - 40), text.search(ENGLISH_BAD) + 40));
+  assert.deepEqual(numbersOf(text), numbersOf(reportVisibleText(zh.html)));
+  // Every part was there: the filter, the row left out, the breakdown, the pending blank-like values.
+  for (const heading of ["Filters", "Column types", "Data quality", "Values that may mean blank", "Breakdown by group", "Date trends", "Automatic conclusions"]) {
+    assert.ok(text.includes(heading), heading);
+  }
+  // The kept values after a colon, each in curly quotes; the blank one is (Blank) without quotes.
+  assert.ok(text.includes("Region: keeps 3 of 6 values: (Blank), “(A)”, “east”"), text.slice(text.indexOf("Region: keeps"), text.indexOf("Region: keeps") + 80));
+  assert.deepEqual(en.report.filters[0].keptValues, ["(Blank)", "(A)", "east"]);
+  assert.match(zh.report.filters[0].description, /^Region：保留 3 \/ 共 6 个类别（（空值）、\(A\)、east）$/);
+  assert.match(text, /Metric column:\s+Amount\s+Group by:\s+Region\s+Aggregation:\s+sum\s+Date column:\s+Date/);
+  // The two trend sentences, each with its direction.
+  assert.match(text, /The date column “Date” has \d+ points in time; the record count goes from \d+ in \d{4}-\d{2}(?:-\d{2})? to \d+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
+  assert.match(text, /By “Date”, the sum of “Amount” goes from [\d,.]+ in \d{4}-\d{2}(?:-\d{2})? to [\d,.]+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
+  assert.match(en.html, /<title>orders\.csv - Sheet Checkup report<\/title>/);
+  assert.match(en.html, /<footer>Created by <a href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">Sheet Checkup<\/a> v3\.1\.0 in your browser; no data was uploaded\.<\/footer>/);
+  // The type names of the snapshot are those of the export's language; in Chinese, profile.type.
+  assert.deepEqual(en.report.fieldTypes.map((field) => field.appliedType), ["ID", "Text", "Number", "Date", "Text"]);
+  assert.deepEqual(zh.report.fieldTypes.map((field) => [field.inferredType, field.appliedType]), JSON.parse((await reportScenario("zh")).evaluate("JSON.stringify(state.profiles.map((profile) => [profile.inferredType, profile.type]))")));
+});
+
+test("v3.2.0 report.js: the sample orders (Chinese data) give an English report with every number of the Chinese one", async () => {
+  const csv = readExampleCsv("sample-orders.csv");
+  const zh = reportOf(await reportScenario("zh", csv, "sample-orders.csv"));
+  const en = reportOf(await reportScenario("en", csv, "sample-orders.csv"));
+  assert.deepEqual(numbersOf(reportVisibleText(en.html)), numbersOf(reportVisibleText(zh.html)));
+  // Only the data and the sample's own Chinese name pieces are Chinese in the English report.
+  const dataPieces = new Set((csv.match(/\p{Script=Han}+/gu) || []));
+  const leftover = (reportVisibleText(en.html).match(/\p{Script=Han}+/gu) || []).filter((piece) => ![...dataPieces].some((data) => data.includes(piece)));
+  assert.deepEqual([...new Set(leftover)], []);
+});
+
+test("v3.2.0 report.js: English file names use the label words of the plan; the Chinese ones are as before", async () => {
+  const day = 'new Date("2026-10-25T12:00:00")';
+  const names = {};
+  for (const language of ["zh", "en"]) {
+    const scope = await reportScenario(language);
+    const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+    names[language] = {
+      data: scope.evaluate(`buildDataExportFileName("filtered", ${day})`),
+      standardized: scope.evaluate(`buildStandardizedFileName("data", ${day})`),
+      changes: scope.evaluate(`buildStandardizedFileName("changes", ${day})`),
+      first: scope.evaluate(`buildStandardizedFileName("changes", ${day}, 2)`),
+      report: scope.evaluate(`buildReportFileName("html", ${day})`),
+      problems: categories.map((category) => { put(scope.context, "__nameCategory", category); return [category.kind, scope.evaluate(`buildProblemRowsFileName(__nameCategory, ${day})`)]; })
+    };
+  }
+  assert.deepEqual([names.en.data, names.en.standardized, names.en.changes, names.en.first, names.en.report],
+    ["orders_in-analysis_20261025.csv", "orders_standardized_20261025.csv", "orders_standardized-changes_20261025.csv", "orders_standardized-changes_first-2_20261025.csv", names.zh.report]);
+  assert.deepEqual([names.zh.data, names.zh.standardized, names.zh.changes, names.zh.first],
+    ["orders_当前分析_20261025.csv", "orders_写法统一_20261025.csv", "orders_写法统一改动清单_20261025.csv", "orders_写法统一改动清单_前2条_20261025.csv"]);
+  const words = { missing: "blank", conversion: "unrecognized", outlier: "high-or-low", duplicateRows: "duplicate-rows", idDuplicate: "duplicate-ids", placeholder: "blank-like", parseWarnings: "reading-issues", suspectedTotal: "possible-totals", formulaError: "formula-errors", dateStyle: "mixed-date-formats", lookAlike: "variants" };
+  names.en.problems.forEach(([kind, name], index) => {
+    assert.ok(name.startsWith(`orders_problem-rows_${words[kind]}`) && name.endsWith("_20261025.csv"), name);
+    // The same name with the Chinese labels in their place.
+    const zhName = names.zh.problems[index][1];
+    assert.equal(name.replace(`_problem-rows_${words[kind]}`, ""), zhName.replace(/_问题行_[^_]+/, ""), `${name} / ${zhName}`);
+  });
+  // The eleven words, each a pair with the Chinese of v3.1.0.
+  const scope = createScriptContext({ language: "en" });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.fromEntries(Object.entries(PROBLEM_KIND_FILE_NAMES).map(([kind, pair]) => [kind, pair[1]])))")), words);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.values(PROBLEM_KIND_FILE_NAMES).map((pair) => pair[0]))")),
+    ["空值", "认不出", "偏大或偏小", "整行重复", "编号重复", "像是空值的写法", "读取有疑问", "疑似合计", "公式错误", "日期写法", "写法不一样"]);
+});
+
+test("v3.2.0 report.js: long English names keep their label words (R1)", async () => {
+  const stem = "a".repeat(90);
+  const scope = await reportScenario("en", englishScenarioCsv(), `${stem}.csv`);
+  const category = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories.find((item) => item.kind === \"missing\"))"));
+  put(scope.context, "__longCategory", category);
+  const day = 'new Date("2026-10-25T12:00:00")';
+  const problem = scope.evaluate(`buildProblemRowsFileName(__longCategory, ${day})`);
+  const first = scope.evaluate(`buildStandardizedFileName("changes", ${day}, 1048575)`);
+  assert.match(problem, new RegExp(`^a+_problem-rows_blank_${category.field}_20261025\\.csv$`));
+  assert.match(first, /^a+_standardized-changes_first-1048575_20261025\.csv$/);
+  for (const name of [problem, first]) assert.equal(name.replace(/_20261025\.csv$/, "").length, 80, name);
+});
+
+test("v3.2.0 report.js: the CSV columns the exports add are in the language of the export", () => {
+  const scope = createScriptContext({ language: "zh" });
+  const headers = (fields) => { put(scope.context, "__headerFields", fields); return JSON.parse(scope.evaluate("JSON.stringify(buildProblemRowsCsvHeaders(__headerFields))")); };
+  assert.deepEqual(headers(["文件行号", "说明", "x"]), ["文件行号（2）", "说明（2）", "文件行号", "说明", "x"]);
+  assert.deepEqual(headers(["File row", "x"]), ["文件行号", "说明", "File row", "x"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Lpick(STANDARDIZED_CHANGE_HEADERS))")), ["文件行号", "字段", "原值", "导出值", "处理"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(headers(["File row", "Note", "File row (2)", "x"]), ["File row (3)", "Note (2)", "File row", "Note", "File row (2)", "x"]);
+  assert.deepEqual(headers(["文件行号", "x"]), ["File row", "Note", "文件行号", "x"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Lpick(STANDARDIZED_CHANGE_HEADERS))")), ["File row", "Column", "Original", "Exported", "Action"]);
+});
+
+test("v3.2.0 report.js: the exported CSV files of an English export start with the English columns", async () => {
+  const scope = await reportScenario("en");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView(state.problemCategories.find((item) => item.kind === "missing")); exportProblemRows(); exportStandardizedData("changes")');
+  const files = await downloads();
+  assert.equal(files.length, 2);
+  assert.match(files[0].text, /^File row,Note,ID,Region,Amount,Date,Rep\r\n/);
+  assert.match(files[1].text, /^File row,Column,Original,Exported,Action\r\n/);
+  assert.match(files[0].fileName, /^orders_problem-rows_blank_/);
+});
+
+test("v3.2.0 report.js: an old snapshot's sentences come out as written; a missing one is written in the current language", () => {
+  const scope = createScriptContext({ language: "en" });
+  put(scope.context, "__oldSnapshot", {
+    fileName: "old.csv",
+    dateTrends: [{ summary: "日期字段「日期」包含 3 个时间点。" }],
+    customAnalysis: { completed: false, message: "旧版本写的句子。" },
+    insights: ["旧的结论。"]
+  });
+  const html = scope.evaluate("buildHtmlReport(__oldSnapshot, [])");
+  for (const text of ["日期字段「日期」包含 3 个时间点。", "旧版本写的句子。", "旧的结论。"]) assert.ok(html.includes(text), text);
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).customAnalysis.message"), "There is no breakdown by group to export yet.");
+  assert.match(scope.evaluate("buildHtmlReport({}, [])"), /<p class="empty">There is no breakdown by group to export yet\.<\/p>/);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).customAnalysis.message"), "当前没有可导出的自定义分组分析结果。");
+});
+
+test("v3.2.0 report.js: the export status lines are written again in the other language, and back byte for byte", async () => {
+  const scope = await reportScenario("zh");
+  captureDownloads(scope);
+  scope.evaluate('exportProcessedCsv("filtered"); exportStandardizedData("data"); openProblemView(state.problemCategories[0]); exportProblemRows(); exportAnalysisReport()');
+  const ids = ["dataExportStatus", "standardizedExportStatus", "problemRowsExportStatus", "reportExportStatus"];
+  const chinese = ids.map((id) => textOf(scope, id));
+  chinese.forEach((text, index) => assert.match(text, /^已导出|^报告已生成：/, ids[index]));
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  const english = ids.map((id) => textOf(scope, id));
+  assert.match(english[0], /^Exported \d+ rows in analysis: orders_当前分析_\d{8}\.csv$/);
+  assert.match(english[1], /^Exported the standardized table, 19 rows: orders_写法统一_\d{8}\.csv$/);
+  assert.match(english[3], /^The report is ready: orders-\d{8}-\d{6}\.html$/);
+  english.forEach((text, index) => assert.deepEqual(numbersOf(text), numbersOf(chinese[index]), text));
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.deepEqual(ids.map((id) => textOf(scope, id)), chinese);
+});
+
+test("v3.2.0 report.js (R10): the report's file name never had the 已载入 prefix since v3.0.0, so its fallback reads the name alone", async () => {
+  assert.doesNotMatch(repoFile("report.js").replace(/\/\/.*$/gm, ""), /已载入/);
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  assert.equal(scope.evaluate("dom.sourceName.title"), "orders.csv");
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "orders.csv");
+  scope.evaluate('state.sourceFileName = ""; dom.sourceName.title = "book.xlsx · Sheet1"');
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "book.xlsx");
+  scope.evaluate('dom.sourceName.title = ""; dom.sourceName.textContent = ""');
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "data-report");
+});
+
+test("v3.2.0 report.js English wording: a long list of kept values, and the standardized check's name", () => {
+  const descriptions = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    const names = Array.from({ length: 12 }, (_, index) => `V${String(index + 1).padStart(2, "0")}`);
+    commitRows(scope, ["Kind"], [...names, ""].map((Kind) => ({ Kind })));
+    descriptions[language] = scope.evaluate('buildReportFilters({ category: { field: "Kind", values: getCategoryFilterOptions("Kind").map((option) => option.value) } })[0].description');
+    if (language === "en") {
+      scope.evaluate('exportStandardizedData("data")');
+      assert.equal(textOf(scope, "standardizedExportStatus"), "Click “Check which cells will change” first.");
+    }
+  }
+  assert.equal(descriptions.zh, "Kind：保留 13 / 共 13 个类别（（空值）、V01、V02、V03、V04、V05、V06、V07、V08、V09……等 13 个）");
+  assert.equal(descriptions.en, "Kind: keeps 13 of 13 values: (Blank), “V01”, “V02”, “V03”, “V04”, “V05”, “V06”, “V07”, “V08”, “V09”, … 13 in all");
 });
