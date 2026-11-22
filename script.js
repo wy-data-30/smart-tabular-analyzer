@@ -15,7 +15,7 @@ function ensureDomElementsPresent() {
   const missingScripts = [
     ["parsing.js", typeof toNumber],
     ["profiling.js", typeof buildColumnProfile],
-    ["format.js", typeof formatNumber],
+    ["format.js", typeof L],
     ["stats.js", typeof buildNumericStats],
     ["quality.js", typeof countDuplicateRows],
     ["app.js", typeof commitTabularData],
@@ -27,6 +27,9 @@ function ensureDomElementsPresent() {
     : Object.keys(dom).filter((key) => !dom[key]);
   if (!missingKeys.length) return;
 
+  // v3.2.0: an English page is hidden until this script has set the language; show it again
+  // first, so the notice below is not hidden with it.
+  document.documentElement?.removeAttribute("data-lang-pending");
   const notice = document.createElement("div");
   notice.setAttribute("role", "alert");
   notice.style.cssText = "position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid #fedf89;background:#fffaeb;color:#b54708;font:600 14px/1.5 system-ui,-apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;";
@@ -43,6 +46,13 @@ function ensureDomElementsPresent() {
     ? `脚本文件缺失，HTML 与脚本版本不一致：${missingKeys.join(", ")}`
     : `页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
 }
+
+// v3.2.0: the language, before anything is drawn or bound: ?lang= first, then the browser's
+// first language. Chinese needs nothing (the page is written in it); the English page has been
+// hidden by the inline script in <head> until now.
+const INITIAL_LANGUAGE = pickInterfaceLanguage(window.location?.search, readNavigatorLanguages(typeof navigator === "undefined" ? null : navigator));
+if (INITIAL_LANGUAGE !== "zh") setInterfaceLanguage(INITIAL_LANGUAGE);
+document.documentElement?.removeAttribute("data-lang-pending");
 
 if (window.Chart) {
   Chart.defaults.color = CHART_THEME.text;
@@ -136,6 +146,13 @@ dom.exportStandardizedChanges.addEventListener("click", () => exportStandardized
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
+
+[dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
+
+// The switches are disabled while a worksheet waits to be chosen: follow the list's panel.
+if (typeof MutationObserver === "function") {
+  new MutationObserver(syncLanguageSwitches).observe(dom.sheetSelectionPanel, { attributes: true, attributeFilter: ["class"] });
+}
 
 dom.excelSheetSelect.addEventListener("change", () => {
   dom.sheetSelectionMessage.className = "sheet-selection-message";

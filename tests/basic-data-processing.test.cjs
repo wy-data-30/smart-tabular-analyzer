@@ -9527,9 +9527,29 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   assert.equal(stripI18nAttributes("<p>data-i18n=\"x\"</p>"), "<p>data-i18n=\"x\"</p>");
   assert.equal(stripI18nAttributes('<p data-lang="en" data-i18ndex="1">'), '<p data-lang="en">');
   assert.equal(stripI18nAttributes('<p data-lang="en">'), '<p data-lang="en">');
-  // Today index.html has none, so the helper returns the file as it is (read by a name the scan
-  // above does not see, on purpose: this is the one comparison with the raw file).
-  assert.equal(indexHtmlSource(), fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8"));
+  // The raw file is read by a name the scan above does not see, on purpose: these are the only
+  // comparisons with it. (1) Everything the helper takes out is an attribute inside a start tag,
+  // and as many as the file has data-i18n names.
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8").replace(/\r\n/g, "\n");
+  const taken = [...raw.matchAll(DATA_I18N_ATTRIBUTE)];
+  // (Names written inside a data-i18n-attr value, "data-i18n-open=details.open", have no quote.)
+  assert.equal(taken.length, (raw.match(/\sdata-i18n[\w-]*="/g) || []).length);
+  assert.ok(taken.length > 0);
+  for (const match of taken) {
+    const before = raw.slice(0, match.index);
+    assert.ok(before.lastIndexOf("<") > before.lastIndexOf(">"), `not inside a tag: ${match[0]}`);
+    assert.match(before.slice(before.lastIndexOf("<")), /^<[a-z][\w-]*(?:\s+[^\s=>]+(?:="[^"]*")?)*$/, match[0]);
+  }
+  assert.ok(!indexHtmlSource().includes("data-i18n"));
+  // (2) What is left is index.html as it was at commit 2 (1001bb9, before any data-i18n), byte for
+  // byte, once the v3.2.0 additions that are not attributes are taken out too: the inline script in
+  // <head> and the two language switches. A later commit that changes the Chinese page on purpose
+  // changes this hash and says why.
+  const withoutAdditions = stripI18nAttributes(raw)
+    .replace(/ {2}<!-- v3\.2\.0: the one script[\s\S]*?<\/script>\n/, "")
+    .replace(/\n\s*<button id="(?:languageSwitch|sidebarLanguageSwitch)"[^>]*>English<\/button>/g, "");
+  // sha256 of index.html at 1001bb9 with LF line endings.
+  assert.equal(crypto.createHash("sha256").update(withoutAdditions).digest("hex"), "75fc338d3e2cc195426fd357ad1880e8306f24a49f0308d0f649da89b4d46851");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -9659,4 +9679,278 @@ test("v3.2.0 long file names: 80 and 79 characters with a space before a label a
     checked += 1;
   }
   assert.equal(checked, 8);
+});
+
+// ---- v3.2.0 commit 4: the language skeleton and the static guard ----
+const i18nGuard = require("./i18n-guard.cjs");
+const i18nWhitelist = () => new Map(i18nGuard.I18N_WHITELIST.map(([file, decl, count]) => [`${file}|${decl}`, count]));
+
+test("v3.2.0 static guard: the tokenizer puts every Han character of the nine scripts in a comment or a literal", () => {
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const source = repoFile(file);
+    const { all, inTokens } = i18nGuard.lexerSelfCheck(source);
+    assert.ok(all > 0, file);
+    assert.equal(inTokens, all, file);
+  }
+  // The guard's own file list is the page's script list.
+  assert.deepEqual(i18nGuard.APP_SCRIPT_NAMES, require("./test-context.cjs").APP_SCRIPT_FILES);
+});
+
+test("v3.2.0 static guard: the whitelist names declarations that exist, with exactly that many Chinese literals", () => {
+  const whitelist = i18nWhitelist();
+  assert.equal(whitelist.size, i18nGuard.I18N_WHITELIST.length, "one entry per file and declaration");
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const tokens = i18nGuard.lex(repoFile(file));
+    const { used } = i18nGuard.checkScriptTokens(file, tokens, whitelist, { rule1: false });
+    for (const [entryFile, decl, count] of i18nGuard.I18N_WHITELIST.filter(([entryFile]) => entryFile === file)) {
+      assert.ok(tokens.some((token) => token.type === "ident" && token.value === decl && token.decl === decl), `${entryFile} ${decl} is declared`);
+      assert.equal(used.get(`${entryFile}|${decl}`), count, `${entryFile} ${decl}`);
+    }
+  }
+});
+
+test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
+  const whitelist = i18nWhitelist();
+  assert.deepEqual(i18nGuard.I18N_DONE_FILES, [], "commit 4: no file is done yet");
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
+    assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
+  }
+});
+
+test("v3.2.0 static guard catches each kind of missed text (the review's 13 cases)", () => {
+  assert.equal(i18nGuard.SELF_TEST_CASES.length, 13);
+  for (const [name, code, expected] of i18nGuard.SELF_TEST_CASES) {
+    const { problems } = i18nGuard.checkScriptTokens("test.js", i18nGuard.lex(code), i18nGuard.SELF_TEST_WHITELIST);
+    assert.equal(problems.length, expected, `${name}: ${problems.map((problem) => problem.kind).join("; ")}`);
+  }
+  // The self-check fails when the tokenizer loses its place (a division read as a regex start
+  // would swallow code): Han in an identifier is outside every literal.
+  const broken = i18nGuard.lexerSelfCheck("const 金额 = 1;");
+  assert.notEqual(broken.inTokens, broken.all);
+});
+
+// The parts of index.html that have their keys so far (commit 4): <head>, the skip link, the top
+// bar, the sidebar, the upload page; the preview's <summary> for its two words.
+const I18N_HTML_BLOCKS = [["<head>", "</head>"], ['<a class="skip-link"', "</a>"], ['<header class="app-header">', "</header>"], ['<aside id="appSidebar"', "</aside>"], ['<div class="upload-hero">', '<div id="statusNote"']];
+
+test("v3.2.0 static guard: index.html, where it has keys, has a key for every Chinese text and attribute, and every key has English", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8");
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  const ranges = I18N_HTML_BLOCKS.map(([start, end]) => {
+    const from = raw.indexOf(start);
+    assert.ok(from >= 0, start);
+    return [from, raw.indexOf(end, from) + end.length];
+  });
+  const { problems, keys } = i18nGuard.checkIndexHtml(raw, english, (offset) => ranges.some(([from, to]) => offset >= from && offset < to));
+  assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.kind}: ${problem.text}`), []);
+  assert.equal(keys.size, Object.keys(english).length);
+  const summary = raw.match(/<summary [^>]*>/)[0];
+  assert.match(summary, /data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details\.open data-i18n-closed=details\.closed"/);
+  // The same check finds a Chinese text without a key, an attribute not named and a key without English.
+  const bad = i18nGuard.checkIndexHtml('<p data-i18n="hero.title">甲</p><p>乙</p><b aria-label="丙">x</b><i data-i18n="no.such">丁</i>', english);
+  assert.deepEqual(bad.problems.filter((problem) => problem.line > 0).map((problem) => problem.kind), ["text without data-i18n", "attribute aria-label not in data-i18n-attr"]);
+  assert.ok(bad.problems.some((problem) => problem.kind === "key not in I18N_EN" && problem.text === "no.such"));
+  // The rest of the page has no keys yet (commit 9).
+  const rest = i18nGuard.checkIndexHtml(raw, english);
+  assert.ok(rest.problems.length > 100, `${rest.problems.length}`);
+});
+
+const LANGUAGE_CASES = [
+  ["", ["zh-CN"], "zh"], ["", ["zh"], "zh"], ["", ["zh-TW", "en"], "zh"], ["", ["zh-HK"], "zh"], ["", ["ZH-cn"], "zh"],
+  ["", ["en-US"], "en"], ["", ["en-US", "zh-CN"], "en"], ["", ["ja-JP"], "en"], ["", ["zhx"], "en"], ["", ["fr"], "en"],
+  ["?lang=en", ["zh-CN"], "en"], ["?lang=zh", ["en-US"], "zh"], ["?a=1&lang=en", ["zh-CN"], "en"], ["?lang=en&a=1", ["zh-CN"], "en"],
+  ["?lang=EN", ["zh-CN"], "zh"], ["?lang=EN", ["en-US"], "en"], ["?lang=fr", ["zh-CN"], "zh"], ["?lang=en-US", ["zh-CN"], "zh"], ["?xlang=en", ["zh-CN"], "zh"],
+  ["", [], "zh"], ["", [""], "zh"], ["?lang=en", [], "en"], [undefined, undefined, "zh"]
+];
+
+test("v3.2.0 language: ?lang= first (lower case only), then the browser's first language, Chinese without either", () => {
+  const scope = createScriptContext();
+  for (const [search, languages, expected] of LANGUAGE_CASES) {
+    put(scope.context, "__languageCase", [search, languages]);
+    assert.equal(scope.evaluate("pickInterfaceLanguage(__languageCase[0], __languageCase[1])"), expected, JSON.stringify([search, languages]));
+  }
+  const read = (browser) => { put(scope.context, "__browser", browser); return JSON.parse(scope.evaluate("JSON.stringify(readNavigatorLanguages(__browser))")); };
+  assert.deepEqual(read(null), []);
+  assert.deepEqual(read({ languages: ["en-US", "zh"], language: "zh" }), ["en-US", "zh"]);
+  assert.deepEqual(read({ languages: [], language: "en-GB" }), ["en-GB"]);
+  assert.deepEqual(read({ language: "zh-TW" }), ["zh-TW"]);
+  assert.deepEqual(read({}), []);
+});
+
+test("v3.2.0 language: the inline script in <head> decides as pickInterfaceLanguage() does, defines nothing and only marks <html>", () => {
+  const html = indexHtmlSource();
+  const head = html.slice(0, html.indexOf("</head>"));
+  const inline = [...head.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(inline.length, 1);
+  // Before the style sheet, so the hidden state is set before the first paint; after <title>.
+  assert.ok(head.indexOf("<script>") < head.indexOf('<link rel="stylesheet"'));
+  assert.ok(head.indexOf("</title>") < head.indexOf("<script>"));
+  const vm = require("node:vm");
+  const code = inline[0][1];
+  assert.match(code.trim(), /^\(function \(\) \{[\s\S]*\}\)\(\);$/);
+  const scope = createScriptContext();
+  const browsers = [];
+  for (const [search, languages] of LANGUAGE_CASES) browsers.push([search, languages === undefined ? undefined : { languages, language: languages[0] }]);
+  browsers.push(["", { languages: [], language: "en-US" }], ["", { languages: [], language: "zh-CN" }], ["", { language: "" }], ["?lang=zh", {}]);
+  for (const [search, browser] of browsers) {
+    const marks = [];
+    const sandbox = vm.createContext({
+      window: { location: { search } },
+      navigator: browser || {},
+      document: { documentElement: { setAttribute: (name, value) => marks.push([name, value]) } },
+      String,
+      Array
+    });
+    const before = new Set(Object.keys(sandbox));
+    vm.runInContext(code, sandbox);
+    assert.deepEqual(Object.keys(sandbox).filter((key) => !before.has(key)), [], "no global names");
+    put(scope.context, "__headCase", [search, browser || null]);
+    const expected = scope.evaluate("pickInterfaceLanguage(__headCase[0], readNavigatorLanguages(__headCase[1]))");
+    assert.deepEqual(marks, expected === "en" ? [["data-lang-pending", ""]] : [], JSON.stringify([search, browser]));
+  }
+});
+
+test("v3.2.0 language: style.css hides a marked page and shows it after 3 s without any script; script.js removes the mark", () => {
+  const css = repoFile("style.css");
+  assert.match(cssRule(css, "html[data-lang-pending] body"), /visibility: hidden;\s*animation: lang-pending-reveal 0s linear 3s forwards;/);
+  assert.match(css, /@keyframes lang-pending-reveal \{\s*to \{\s*visibility: visible;\s*\}\s*\}/);
+  // The preview's 收起 / 展开 come from the attributes now, so they can switch language.
+  assert.match(cssRule(css, ".preview-details > summary::after"), /content: attr\(data-i18n-open\);/);
+  assert.match(cssRule(css, ".preview-details:not([open]) > summary::after"), /content: attr\(data-i18n-closed\);/);
+  assert.doesNotMatch(css, /content: "收起"|content: "展开"/);
+  const script = repoFile("script.js");
+  // Removed on the way out of a failed startup check, before the notice, and after the language is set.
+  const check = script.slice(script.indexOf("function ensureDomElementsPresent()"), script.indexOf("throw new Error", script.indexOf("function ensureDomElementsPresent()")));
+  assertInOrder(check, ["if (!missingKeys.length) return;", 'document.documentElement?.removeAttribute("data-lang-pending");', 'const notice = document.createElement("div");']);
+  assert.ok(script.indexOf("\nensureDomElementsPresent();") >= 0 && script.indexOf("\nensureDomElementsPresent();") < script.indexOf("const INITIAL_LANGUAGE"));
+  const startup = script.slice(script.indexOf("const INITIAL_LANGUAGE"));
+  assertInOrder(startup, ["const INITIAL_LANGUAGE = pickInterfaceLanguage(", "if (INITIAL_LANGUAGE !== \"zh\") setInterfaceLanguage(INITIAL_LANGUAGE);", 'document.documentElement?.removeAttribute("data-lang-pending");', "setupResultNavigation();"]);
+  // The startup check's representative of format.js is L (still one per file).
+  assert.match(script, /\["format\.js", typeof L\],/);
+  assert.doesNotMatch(script, /typeof formatNumber/);
+});
+
+test("v3.2.0 language: a test context with an English browser goes through the real startup, a Chinese one changes nothing", () => {
+  const english = createScriptContext({ language: "en" });
+  assert.equal(english.evaluate("currentLanguage"), "en");
+  assert.equal(english.evaluate("INITIAL_LANGUAGE"), "en");
+  assert.equal(english.elements.get("languageSwitch").textContent, "中文");
+  assert.equal(english.elements.get("sidebarLanguageSwitch").textContent, "中文");
+  assert.equal(english.evaluate('L("甲", "A")'), "A");
+  for (const [options, language] of [[{}, "zh"], [{ language: "zh" }, "zh"], [{ language: "en", search: "?lang=zh" }, "zh"], [{ language: "zh", search: "?lang=en" }, "en"]]) {
+    const scope = createScriptContext(options);
+    assert.equal(scope.evaluate("currentLanguage"), language, JSON.stringify(options));
+  }
+  // Chinese: the switches keep the text index.html gives them; nothing writes them.
+  const chinese = createScriptContext({ language: "zh" });
+  assert.equal(chinese.elements.get("languageSwitch").textContent, "");
+});
+
+test("v3.2.0 language: L, Lp / Lpick and enCount follow the language", () => {
+  const scope = createScriptContext();
+  assert.equal(scope.evaluate('L("甲", "A")'), "甲");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(Lp("甲", "A"))')), ["甲", "A"]);
+  assert.equal(scope.evaluate('Object.isFrozen(Lp("甲", "A"))'), true);
+  assert.equal(scope.evaluate('Lpick(Lp("甲", "A"))'), "甲");
+  assert.equal(scope.evaluate("languageSwitchLabel()"), "English");
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scope.evaluate('L("甲", "A")'), "A");
+  assert.equal(scope.evaluate('Lpick(Lp("甲", "A"))'), "A");
+  assert.equal(scope.evaluate("languageSwitchLabel()"), "中文");
+  assert.deepEqual(["enCount(0, \"row\", \"rows\")", "enCount(1, \"row\", \"rows\")", "enCount(2, \"row\", \"rows\")", "enCount(12345, \"row\", \"rows\")"].map((expression) => scope.evaluate(expression)), ["0 rows", "1 row", "2 rows", "12,345 rows"]);
+  scope.evaluate('setInterfaceLanguage("fr")');
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+});
+
+// Elements as the browser has them: own text nodes, attributes.
+function i18nElement(attributes, nodes) {
+  const element = {
+    attributes: { ...attributes },
+    childNodes: nodes.map((node) => (typeof node === "string" ? { nodeType: 3, nodeValue: node } : node)),
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
+    setAttribute(name, value) { this.attributes[name] = String(value); }
+  };
+  return element;
+}
+
+test("v3.2.0 language: the static text switches by its own text nodes and attributes, and comes back byte for byte", () => {
+  const scope = createScriptContext();
+  const count = { nodeType: 1, nodeValue: null, textContent: "（9）" };
+  const fields = i18nElement({ "data-i18n": "sidebar.fields" }, ["字段 ", count]);
+  const choose = i18nElement({ "data-i18n": "upload.choose" }, ["\n              选择数据文件\n            "]);
+  const toggle = i18nElement({ "aria-label": "文件和字段", "data-i18n-attr": "aria-label=sidebar.toggle" }, []);
+  const summary = i18nElement({ "data-i18n-open": "收起", "data-i18n-closed": "展开", "data-i18n-attr": "data-i18n-open=details.open data-i18n-closed=details.closed" }, []);
+  const unknown = i18nElement({ "data-i18n": "no.such.key" }, ["甲"]);
+  put(scope.context, "__i18nElements", [fields, choose, toggle, summary, unknown]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  const snapshot = () => JSON.stringify([fields.childNodes.map((node) => node.nodeValue), choose.childNodes[0].nodeValue, toggle.attributes, summary.attributes, unknown.childNodes[0].nodeValue]);
+  const chinese = snapshot();
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(fields.childNodes.map((node) => node.nodeValue), ["Columns ", null]);
+  assert.equal(fields.childNodes[1], count, "the count element stays");
+  assert.equal(choose.childNodes[0].nodeValue, "\n              Choose a file\n            ");
+  assert.equal(toggle.attributes["aria-label"], "File and columns");
+  assert.deepEqual([summary.attributes["data-i18n-open"], summary.attributes["data-i18n-closed"]], ["Collapse", "Expand"]);
+  assert.equal(unknown.childNodes[0].nodeValue, "甲", "a key without English keeps the Chinese");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(snapshot(), chinese);
+  scope.evaluate('setInterfaceLanguage("en"); setInterfaceLanguage("en"); setInterfaceLanguage("zh")');
+  assert.equal(snapshot(), chinese);
+});
+
+test("v3.2.0 language: the switch names the other language, sets <html lang> and ?lang=, keeps the module, and waits during an import", () => {
+  const scope = createScriptContext({ search: "?x=1" });
+  const attributes = new Map();
+  for (const id of ["languageSwitch", "sidebarLanguageSwitch"]) {
+    const button = scope.elements.get(id);
+    button.setAttribute = (name, value) => attributes.set(`${id}.${name}`, String(value));
+  }
+  const documentElement = { lang: "zh-CN" };
+  scope.context.document.documentElement = documentElement;
+  const addresses = [];
+  scope.context.window.location.href = "http://127.0.0.1/index.html?x=1#chartsSection";
+  scope.context.window.history.replaceState = (state, title, address) => addresses.push(address);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "en");
+  assert.equal(documentElement.lang, "en");
+  assert.equal(scope.elements.get("languageSwitch").textContent, "中文");
+  assert.equal(attributes.get("languageSwitch.lang"), "zh-CN");
+  assert.equal(attributes.get("sidebarLanguageSwitch.lang"), "zh-CN");
+  assert.deepEqual(addresses, ["/index.html?x=1&lang=en#chartsSection"]);
+  scope.context.window.location.href = "http://127.0.0.1/index.html?x=1&lang=en#chartsSection";
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(documentElement.lang, "zh-CN");
+  assert.equal(scope.elements.get("sidebarLanguageSwitch").textContent, "English");
+  assert.equal(attributes.get("sidebarLanguageSwitch.lang"), "en");
+  assert.equal(addresses[1], "/index.html?x=1&lang=zh#chartsSection");
+  // While a file is read, or a worksheet waits: disabled, and a click does nothing.
+  scope.evaluate("setImportBusy(true)");
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [true, true]);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  scope.evaluate("setImportBusy(false)");
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  scope.evaluate("state.pendingExcel = { workbook: {}, fileName: 'a.xlsx', importId: 1 }; syncLanguageSwitches()");
+  assert.equal(scope.elements.get("languageSwitch").disabled, true);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  scope.evaluate("state.pendingExcel = null; syncLanguageSwitches()");
+  assert.equal(scope.elements.get("sidebarLanguageSwitch").disabled, false);
+  // script.js: both buttons bound, the worksheet panel followed.
+  const script = repoFile("script.js");
+  assert.match(script, /\[dom\.languageSwitch, dom\.sidebarLanguageSwitch\]\.forEach\(\(button\) => button\.addEventListener\("click", switchInterfaceLanguage\)\);/);
+  assert.match(script, /new MutationObserver\(syncLanguageSwitches\)\.observe\(dom\.sheetSelectionPanel, \{ attributes: true, attributeFilter: \["class"\] \}\);/);
+});
+
+test("v3.2.0 language: two switches, in the top bar of the upload page and at the sidebar's foot, written in the other language", () => {
+  const html = indexHtmlSource();
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>"));
+  assert.match(header, /<div class="header-actions">\s*<button id="languageSwitch" class="secondary-button language-switch" type="button" lang="en">English<\/button>\s*<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件<\/a>/);
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assert.match(sidebar, /<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。<\/p>\s*<button id="sidebarLanguageSwitch" class="secondary-button language-switch sidebar-language-switch" type="button" lang="en">English<\/button>\s*$/);
+  assert.equal((html.match(/class="[^"]*\blanguage-switch\b/g) || []).length, 2);
+  const css = repoFile("style.css");
+  assert.match(css, /body\.has-results \.header-actions \.language-switch \{\s*display: none;\s*\}/);
+  assert.deepEqual(domKeys(createScriptContext()).filter((key) => /language/i.test(key)), ["languageSwitch", "sidebarLanguageSwitch"]);
 });

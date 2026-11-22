@@ -277,7 +277,10 @@ const dom = {
   exportStandardizedChanges: document.getElementById("exportStandardizedChanges"),
   standardizedExportStatus: document.getElementById("standardizedExportStatus"),
   exportHtmlReport: document.getElementById("exportHtmlReport"),
-  reportExportStatus: document.getElementById("reportExportStatus")
+  reportExportStatus: document.getElementById("reportExportStatus"),
+  // v3.2.0: the language switch, in the top bar of the upload page and at the sidebar's foot.
+  languageSwitch: document.getElementById("languageSwitch"),
+  sidebarLanguageSwitch: document.getElementById("sidebarLanguageSwitch")
 };
 
 // A category field with more distinct values than this is too scattered for
@@ -300,6 +303,83 @@ function setImportBusy(isBusy) {
   dom.loadSample.disabled = isBusy;
   dom.confirmSheetSelection.disabled = isBusy;
   dom.dropZone.setAttribute("aria-busy", String(isBusy));
+  syncLanguageSwitches();
+}
+
+// ---- Interface language (v3.2.0) ----
+// index.html keeps the Chinese. An element's data-i18n names the I18N_EN key of its text (its own
+// text nodes only, so child elements such as a count stay where they are), data-i18n-attr
+// ("aria-label=key title=key") those of its attributes. The Chinese is read from the page the
+// first time an element is switched, so switching back writes it back exactly.
+const staticChineseText = new WeakMap();
+
+function readI18nAttributePairs(element) {
+  return String(element.getAttribute("data-i18n-attr") || "").split(/\s+/).filter(Boolean).map((pair) => pair.split("="));
+}
+
+function applyStaticLanguage() {
+  if (typeof document.querySelectorAll !== "function") return;
+  document.querySelectorAll("[data-i18n], [data-i18n-attr]").forEach((element) => {
+    const key = element.getAttribute("data-i18n");
+    const attributes = readI18nAttributePairs(element);
+    if (!staticChineseText.has(element)) {
+      const textNode = key ? Array.from(element.childNodes || []).find((node) => node.nodeType === 3 && node.nodeValue.trim()) : null;
+      staticChineseText.set(element, {
+        textNode,
+        text: textNode ? textNode.nodeValue : null,
+        attributes: Object.fromEntries(attributes.map(([name]) => [name, element.getAttribute(name)]))
+      });
+    }
+    const chinese = staticChineseText.get(element);
+    if (chinese.textNode) {
+      const english = currentLanguage === "en" ? I18N_EN[key] : undefined;
+      // Keep the white space around the words, so the Chinese comes back byte for byte.
+      chinese.textNode.nodeValue = english === undefined
+        ? chinese.text
+        : chinese.text.replace(chinese.text.trim(), () => english);
+    }
+    attributes.forEach(([name, attributeKey]) => {
+      const english = currentLanguage === "en" ? I18N_EN[attributeKey] : undefined;
+      element.setAttribute(name, english === undefined ? chinese.attributes[name] : english);
+    });
+  });
+}
+
+// Sets the language, <html lang>, the static text and the two switches. The analysis on the page
+// is not drawn again here.
+function setInterfaceLanguage(language) {
+  currentLanguage = language === "en" ? "en" : "zh";
+  if (document.documentElement) document.documentElement.lang = currentLanguage === "en" ? "en" : "zh-CN";
+  applyStaticLanguage();
+  [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => {
+    button.textContent = languageSwitchLabel();
+    button.setAttribute("lang", currentLanguage === "en" ? "zh-CN" : "en");
+  });
+}
+
+// The switch: the other language, written into the address as ?lang= (the #module stays).
+function switchInterfaceLanguage() {
+  if (isLanguageSwitchLocked()) return;
+  setInterfaceLanguage(currentLanguage === "en" ? "zh" : "en");
+  if (window.location && window.history && typeof URL === "function") {
+    const url = new URL(window.location.href);
+    url.searchParams.set("lang", currentLanguage);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+// No switching while a file is being read or a worksheet waits to be chosen. The worksheet list
+// is shown (importer.js) right after setImportBusy(false), so script.js also calls
+// syncLanguageSwitches() when #sheetSelectionPanel shows or hides.
+function isLanguageSwitchLocked() {
+  return document.body.classList.contains("is-loading") || Boolean(state.pendingExcel);
+}
+
+function syncLanguageSwitches() {
+  const locked = isLanguageSwitchLocked();
+  [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => {
+    if (button) button.disabled = locked;
+  });
 }
 
 // An import opens the first module at the top of the page with the focus on its title

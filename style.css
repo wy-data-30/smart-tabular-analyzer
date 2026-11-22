@@ -246,6 +246,36 @@ body.has-results .header-actions .nav-new-analysis {
   white-space: nowrap;
 }
 
+/* v3.2.0: the language switch, a small secondary button. The upload page shows it in the top bar;
+   after an import it sits at the foot of the sidebar, under the privacy sentence. */
+.language-switch {
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+body.has-results .header-actions .language-switch {
+  display: none;
+}
+
+.sidebar-language-switch {
+  align-self: flex-start;
+}
+
+/* v3.2.0: an English page stays hidden until script.js has switched the Chinese text (the inline
+   script in <head> sets data-lang-pending). If script.js never gets there (a file missing, the
+   startup check stopping, an error), the page shows itself after 3 s anyway: no blank page. */
+html[data-lang-pending] body {
+  visibility: hidden;
+  animation: lang-pending-reveal 0s linear 3s forwards;
+}
+
+@keyframes lang-pending-reveal {
+  to {
+    visibility: visible;
+  }
+}
+
 .header-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1213,13 +1243,14 @@ body.has-results .app-sidebar {
 
 .preview-details > summary::after {
   color: var(--text-secondary);
-  content: "收起";
+  /* v3.2.0: the words are in index.html (data-i18n-open / data-i18n-closed), in either language. */
+  content: attr(data-i18n-open);
   font-size: 13px;
   margin-left: auto;
 }
 
 .preview-details:not([open]) > summary::after {
-  content: "展开";
+  content: attr(data-i18n-closed);
 }
 
 .preview-details > summary .subsection-title {

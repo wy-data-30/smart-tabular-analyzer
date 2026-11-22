@@ -45,9 +45,13 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
     getContext() { return { clearRect() {}, save() {}, restore() {}, fillText() {} }; }
   });
   const body = makeElement("body");
+  // v3.2.0: an English page arrives marked by the inline script in <head>.
+  const documentElement = makeElement("html");
+  documentElement.attributes["data-lang-pending"] = "";
   const lookedUp = new Set();
   const document = {
     body,
+    documentElement,
     getElementById(id) {
       if (id === missingId) return null;
       const element = makeElement("div");
@@ -78,6 +82,7 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
   return {
     error,
     body,
+    documentElement,
     reloads,
     listeners,
     domListeners: listeners.filter(({ element }) => lookedUp.has(element))
@@ -95,6 +100,8 @@ const refreshButton = refreshNotice.children.find((node) => node.tagName === "bu
 assert.equal(refreshButton?.textContent, "刷新页面");
 assert.deepEqual(brokenStartup.domListeners, [], "no listener may be attached after the self-check stops");
 assert.deepEqual(brokenStartup.reloads, []);
+// v3.2.0: the notice must not stay hidden with an English page: the mark is gone.
+assert.equal("data-lang-pending" in brokenStartup.documentElement.attributes, false);
 const refreshClick = brokenStartup.listeners.find(({ element, type }) => element === refreshButton && type === "click");
 assert.ok(refreshClick, "the refresh button needs a click handler");
 refreshClick.handler();
@@ -116,8 +123,10 @@ function assertStoppedForMissingScripts(startup, missingFiles) {
     "only the refresh button may get a listener"
   );
 }
+const scriptOnlyStartup = loadScriptWithMissingElement(null, ["script.js"]);
+assert.equal("data-lang-pending" in scriptOnlyStartup.documentElement.attributes, false);
 assertStoppedForMissingScripts(
-  loadScriptWithMissingElement(null, ["script.js"]),
+  scriptOnlyStartup,
   APP_SCRIPT_FILES.filter((file) => file !== "script.js")
 );
 assertStoppedForMissingScripts(
@@ -127,6 +136,7 @@ assertStoppedForMissingScripts(
 
 const healthyStartup = loadScriptWithMissingElement(null);
 assert.equal(healthyStartup.error, null);
+assert.equal("data-lang-pending" in healthyStartup.documentElement.attributes, false);
 assert.deepEqual(healthyStartup.body.children, []);
 assert.ok(healthyStartup.domListeners.some(({ type }) => type === "change"), "a complete page keeps attaching its listeners");
 

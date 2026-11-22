@@ -1,4 +1,95 @@
 // 显示格式化：数值、整数、百分比和字段格式的展示文本，带单位的字段标签，表头位置说明，编号重复的行号列表和说明文字，像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法、整列只有一个值和“同一个值，写法不一样”的说明文字，CSV 读取时有疑问的中文消息，问题行的按钮、类别和摘要文字，写法统一的表的处理文字、检查表说明和状态行，以及 HTML 转义。
+// v3.2.0 起还有界面语言：currentLanguage、L()、Lp() / Lpick()、enCount()、pickInterfaceLanguage()、readNavigatorLanguages()、languageSwitchLabel() 和 index.html 的英文表 I18N_EN。
+
+// ---- Interface language (v3.2.0) ----
+// Only setInterfaceLanguage() (app.js) changes it. Every text shown to the user reads it through
+// L() or Lpick(); the data, the field names and the detection rules never depend on it.
+let currentLanguage = "zh";
+
+// One text in both languages, Chinese first. Both arguments are evaluated, so keep L() off the
+// per-value and per-row paths.
+function L(zh, en) {
+  return currentLanguage === "en" ? en : zh;
+}
+
+// A fixed text in both languages kept in a constant, Lp("中文", "English"), read with Lpick().
+function Lp(zh, en) {
+  return Object.freeze([zh, en]);
+}
+
+function Lpick(pair) {
+  return currentLanguage === "en" ? pair[1] : pair[0];
+}
+
+// "1 row", "2 rows", "1,234 rows": English only, the Chinese text has no plural.
+function enCount(count, one, many) {
+  return `${formatInteger(count)} ${count === 1 ? one : many}`;
+}
+
+// ?lang=zh or ?lang=en first (exactly these, lower case), then the browser's first language:
+// zh, zh-CN, zh-TW, zh-HK… are Chinese, anything else English. Without either, as in the
+// tests, Chinese. The inline script in index.html's <head> follows the same rule (a test runs
+// both on the same cases).
+function pickInterfaceLanguage(search, languages) {
+  const asked = /(?:^|[?&])lang=(zh|en)(?:&|$)/.exec(String(search || ""))?.[1];
+  if (asked) return asked;
+  const first = Array.isArray(languages) && languages.length ? String(languages[0] || "") : "";
+  if (!first) return "zh";
+  return /^zh(?:-|$)/i.test(first) ? "zh" : "en";
+}
+
+// navigator.languages, or [navigator.language] when that list is empty; [] without a navigator.
+function readNavigatorLanguages(browser) {
+  if (!browser) return [];
+  if (Array.isArray(browser.languages) && browser.languages.length) return browser.languages;
+  return browser.language ? [browser.language] : [];
+}
+
+// The switch names the other language, in that language.
+const LANGUAGE_NAME_ZH = "中文";
+function languageSwitchLabel() {
+  return currentLanguage === "en" ? LANGUAGE_NAME_ZH : "English";
+}
+
+// English for the static text of index.html: data-i18n="key" (the text) and
+// data-i18n-attr="attribute=key …" (attributes). The Chinese stays in index.html.
+const I18N_EN = Object.freeze({
+  "page.title": "Sheet Checkup | Check CSV and Excel files for data problems",
+  "skip": "Skip to main content",
+  "sidebar.toggle": "File and columns",
+  "brand.label": "Sheet Checkup home",
+  "brand.name": "Sheet Checkup",
+  "nav.label": "Analysis modules",
+  "nav.overview": "Overview",
+  "nav.schema": "Columns",
+  "nav.quality": "Quality",
+  "nav.filter": "Filter",
+  "nav.statistics": "Stats",
+  "nav.charts": "Charts",
+  "nav.custom": "Breakdown",
+  "nav.export": "Export",
+  "changeFile": "Change file",
+  "sidebar.title": "File and columns",
+  "sidebar.close": "Close file and columns",
+  "sidebar.fields": "Columns",
+  "sidebar.status": "Current state",
+  "sidebar.filter": "Filter",
+  "sidebar.header": "Header",
+  "sidebar.placeholders": "Treated as blank",
+  "privacy.sidebar": "Your file is processed only in this browser on this computer and is never uploaded.",
+  "hero.title": "Upload a file for a checkup",
+  "hero.description": "Nothing to install. Your file never leaves this computer.",
+  "upload.title": "Drop a file here",
+  "upload.limits": "CSV, XLSX or XLS, up to 25 MB, 100,000 rows and 200 columns",
+  "upload.choose": "Choose a file",
+  "upload.sample": "Use sample data",
+  "upload.encoding": "CSV encoding",
+  "upload.encodingAuto": "Detect automatically",
+  "upload.encodingHint": "If unsure, keep “Detect automatically”",
+  "upload.download": "Download sample CSV",
+  "details.open": "Collapse",
+  "details.closed": "Expand"
+});
 
 function absorbFloatNoise(value) {
   return Math.abs(value) < 1e-10 ? 0 : value;

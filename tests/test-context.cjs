@@ -45,7 +45,10 @@ const APP_SCRIPT_FILES = [...fs.readFileSync(path.join(__dirname, "..", "index.h
   .map((match) => match[1].split("?")[0])
   .filter((src) => !src.startsWith("vendor/"));
 
-function createScriptContext() {
+// v3.2.0: { language: "en" } puts a browser whose first language is English (or zh-CN) in place
+// before the scripts load, and { search: "?lang=en" } an address, so script.js picks the language
+// the way the page does. Without them there is no navigator and no location: Chinese.
+function createScriptContext({ language, search } = {}) {
   const elements = new Map();
   const document = {
     getElementById(id) {
@@ -69,8 +72,10 @@ function createScriptContext() {
       // v3.0.0: showModule() scrolls to the top and writes the module into the address.
       scrollTo() {},
       history: { replaceState() {} },
-      scrollY: 0
+      scrollY: 0,
+      ...(search === undefined ? {} : { location: { search, hash: "", pathname: "/index.html", href: `http://127.0.0.1/index.html${search}` } })
     },
+    ...(language === undefined ? {} : { navigator: { languages: [language === "en" ? "en-US" : language === "zh" ? "zh-CN" : language], language: language === "en" ? "en-US" : "zh-CN" } }),
     TextDecoder,
     Uint8Array,
     Intl,
