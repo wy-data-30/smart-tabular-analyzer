@@ -9625,3 +9625,38 @@ test("v3.2.0 long file names: every name that fitted in 80 characters is byte fo
   assert.equal(exact.name, `${exact.joined}_20261121.csv`);
   assert.ok(same > 50 && cut > 10, `${same} same, ${cut} cut`);
 });
+
+// An original name that ends in a space, the whole name exactly 80 (or 79) characters: it fits, so
+// it is cd4d2a0's name byte for byte, space before "_" included. With "< 80" instead of "<= 80" the
+// 80-character names would go the cutting way and lose that space.
+test("v3.2.0 long file names: 80 and 79 characters with a space before a label are as before", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__fileNameDate", FILE_NAME_DATE);
+  const nameOf = (stem, expression) => {
+    scope.evaluate(`state.sourceFileName = ${JSON.stringify(`${stem}.csv`)}`);
+    return scope.evaluate(expression);
+  };
+  let checked = 0;
+  for (const total of [80, 79]) {
+    // 问题行 · 空值 · <column>: "订单 " + "_问题行_空值_" + the column.
+    const stem = "订单 ";
+    const field = "列".repeat(total - stem.length - "_问题行_空值_".length);
+    put(scope.context, "__spaceCategory", { kind: "missing", field });
+    const problemJoined = `${stem}_问题行_空值_${field}`;
+    assert.equal(problemJoined.length, total);
+    assert.equal(nameOf(stem, "buildProblemRowsFileName(__spaceCategory, __fileNameDate)"), `${oldCutFileName(problemJoined)}_20261121.csv`);
+    assert.ok(nameOf(stem, "buildProblemRowsFileName(__spaceCategory, __fileNameDate)").startsWith("订单 _问题行_"));
+    // 写法统一的表, 改动清单, 改动清单（前 N 条）: an original name of the right length ending in a space.
+    for (const [label, expression] of [["写法统一", 'buildStandardizedFileName("data", __fileNameDate)'], ["写法统一改动清单", 'buildStandardizedFileName("changes", __fileNameDate)'], ["写法统一改动清单_前1048575条", 'buildStandardizedFileName("changes", __fileNameDate, 1048575)']]) {
+      const spaced = `订单${"a".repeat(total - 4 - label.length)} `;
+      const joined = `${spaced}_${label}`;
+      assert.equal(joined.length, total, label);
+      const name = nameOf(spaced, expression);
+      assert.equal(name, `${oldCutFileName(joined)}_20261121.csv`, label);
+      assert.ok(name.includes(` _${label}_20261121`), name);
+      checked += 1;
+    }
+    checked += 1;
+  }
+  assert.equal(checked, 8);
+});
