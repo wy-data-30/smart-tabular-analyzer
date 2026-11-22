@@ -7,7 +7,11 @@ const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 const { context, elements, source, evaluate } = createScriptContext();
 
 const projectRoot = path.join(__dirname, "..");
-const htmlSource = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+const htmlSource = stripI18nAttributes(fs.readFileSync(path.join(projectRoot, "index.html"), "utf8"));
 const missingDomIds = [...new Set(
   [...source.matchAll(/document\.getElementById\("([^"]+)"\)/g)]
     .map((match) => match[1])

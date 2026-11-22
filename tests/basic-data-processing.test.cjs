@@ -10,6 +10,14 @@ const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.j
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+function indexHtmlSource() {
+  return stripI18nAttributes(fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8"));
+}
+
 function put(context, name, value) {
   context[name] = value;
 }
@@ -2021,7 +2029,7 @@ const idDetails = (scope) => scope.elements.get("idDuplicateDetails").innerHTML;
 const behaviorCsv = () => readExampleCsv("sample-user-behavior.csv");
 
 test("the quality page has a static ID duplicate container in the dom map", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   assert.match(quality, /<h3 class="subsection-title">编号重复<\/h3>\s*<div id="idDuplicateDetails"/);
   const { evaluate } = createScriptContext();
@@ -2560,7 +2568,7 @@ const placeholderDetails = (scope) => scope.elements.get("placeholderDetails").i
 const PLACEHOLDER_MAYBE_NOTE_TEXT = "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。";
 
 test("the quality page has a static placeholder subsection before the ID duplicates", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const placeholderSection = quality.slice(quality.indexOf('<h3 class="subsection-title">像是空值的写法</h3>'), quality.indexOf('<h3 class="subsection-title">编号重复</h3>'));
   assertInOrder(quality, ['<h3 class="subsection-title">像是空值的写法</h3>', '<h3 class="subsection-title">编号重复</h3>']);
@@ -3049,7 +3057,7 @@ test("number conversion texts order conflicting units by count, then first appea
 });
 
 test("the quality page has static number subsections between the missing value check and the placeholders", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const order = ['id="qualityTable"', 'id="numberConversionSection"', 'id="numericLookingSection"', '<h3 class="subsection-title">像是空值的写法</h3>'].map((marker) => quality.indexOf(marker));
   assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
@@ -3472,7 +3480,7 @@ test("renderPreview() clamps the page and works without a page in the state", ()
 });
 
 test("the preview heading, pager and its buttons are static in index.html and bound in script.js", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
   assert.match(overview, /<h3 class="subsection-title">数据预览<\/h3>/);
   assert.match(overview, /<table id="previewTable" aria-label="数据预览"><\/table>/);
@@ -3747,7 +3755,7 @@ test("the viewer escapes field names, values and labels", async () => {
 });
 
 test("the problem-row viewer is static in index.html, in the dom map and bound in script.js", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const order = ['id="qualitySummary"', 'id="parseWarningSummary"', 'id="outlierTable"', 'id="problemRowsSection"', 'id="numberConversionSection"'].map((marker) => quality.indexOf(marker));
   assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
@@ -3959,7 +3967,7 @@ test("the export button needs an open category and its status clears with the vi
   orders.evaluate("exportProblemRows(); closeProblemView()");
   assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
 
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const section = html.slice(html.indexOf('id="problemRowsSection"'), html.indexOf('id="numberConversionSection"'));
   assert.match(section, /<button id="problemRowsExport" class="secondary-button" type="button">导出这一类<\/button>/);
   assert.match(section, /<p id="problemRowsExportStatus" class="inline-status" aria-live="polite"><\/p>/);
@@ -4170,7 +4178,7 @@ const typesOf = (scope, names) => JSON.parse(scope.evaluate("JSON.stringify(" + 
 
 test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles and the scripts", () => {
   const scope = createScriptContext();
-  assert.doesNotMatch(repoFile("index.html"), /workflow-status|workflowStep/);
+  assert.doesNotMatch(indexHtmlSource(), /workflow-status|workflowStep/);
   assert.doesNotMatch(repoFile("style.css"), /workflow-|\.step-(?:number|copy|state)/);
   assert.deepEqual(typesOf(scope, ["updateWorkflowSteps"]), ["undefined"]);
   assert.deepEqual(domKeys(scope).filter((key) => key.startsWith("workflowStep")), []);
@@ -4178,7 +4186,7 @@ test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles
 
 test("v2.7.0 quick grouping: the advanced settings block, its chart and its report fallback are gone", () => {
   const scope = createScriptContext();
-  assert.doesNotMatch(repoFile("index.html"), /id="(?:metricField|groupField|aggregateMethod|customAnalysisChart|customAnalysisChartTitle)"|高级设置|快速分组/);
+  assert.doesNotMatch(indexHtmlSource(), /id="(?:metricField|groupField|aggregateMethod|customAnalysisChart|customAnalysisChartTitle)"|高级设置|快速分组/);
   assert.deepEqual(typesOf(scope, ["renderCustomAnalysisChart"]), ["undefined"]);
   assert.deepEqual(domKeys(scope).filter((key) => ["metricField", "groupField", "aggregateMethod", "customAnalysisChartTitle"].includes(key)), []);
   assert.equal(scope.evaluate('"customAnalysisChart" in REPORT_CHART_TITLES || "customAnalysisChart" in REPORT_CHART_HEADING_IDS'), false);
@@ -4198,7 +4206,7 @@ test("v2.7.0 quick grouping: the report has a custom-analysis section only after
 
 test("v2.7.0 templates: templates.js, its markup, styles, startup check and report entries are gone", () => {
   const scope = createScriptContext();
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "templates.js")), false);
   assert.doesNotMatch(html, /templates\.js|scenarioTemplate|使用分析模板|id="template[A-Z]/);
   assert.doesNotMatch(repoFile("style.css"), /\.template-/);
@@ -4214,7 +4222,7 @@ test("v2.7.0 templates: templates.js, its markup, styles, startup check and repo
 });
 
 test("v2.7.0 conclusions: the findings section and its navigation entries are gone, the conclusions sit in the chart cards", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>/);
   // v3.0.0: one navigation of exactly 8 links, in module order and without numbers; the phone
   // select is gone.
@@ -4761,7 +4769,7 @@ const problemCategories = (scope) => JSON.parse(scope.evaluate("JSON.stringify(s
 const subtotalsCsv = (count) => `名,额\r\n${Array.from({ length: count }, (_, index) => `A${index},10\r\nA${index}小计,10`).join("\r\n")}\r\n`;
 
 test("v2.8.0 page: both subsections are static, after the warnings and before the tables, with their notes", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const positions = ['id="parseWarningSummary"', '<div id="suspectedTotalSection" class="module-subsection row-note-section hidden">', '<div id="formulaErrorSection" class="module-subsection row-note-section hidden">', '<div class="two-column">'].map((text) => html.indexOf(text));
   assert.equal(positions.every((position) => position >= 0), true);
   assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
@@ -5059,7 +5067,7 @@ test("v2.8.0 report: sections and summary counts only when there is something, o
 });
 
 test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
-  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const pageHtml = indexHtmlSource();
   const exact = await importCsvFile(subtotalsCsv(20));
   const note = exact.evaluate("SUSPECTED_TOTAL_NOTE");
   assert.equal(note, "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。");
@@ -5108,7 +5116,7 @@ test("v2.8.0 report: labels and fields are escaped for each output", async () =>
 });
 
 test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
-  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const pageHtml = indexHtmlSource();
   const errors = await importStage3Fixture("公式错误.xlsx");
   const note = errors.evaluate("FORMULA_ERROR_NOTE");
   assert.equal(note, "这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。");
@@ -5953,7 +5961,7 @@ test("v2.9.0 the three sections render without a numeric field, escape data and 
 });
 
 test("v2.9.0 the sections are static, in place and change neither the pills nor the status", async () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const positions = ['id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderDetails"'].map((id) => html.indexOf(id));
   assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), positions.join());
   const writing = await importStage3Fixture("写法不一致.csv");
@@ -5962,7 +5970,7 @@ test("v2.9.0 the sections are static, in place and change neither the pills nor 
 });
 
 test("v2.9.0 reports: the notes are the page's sentences", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const { evaluate } = createScriptContext();
   for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(name)}</p>`), name);
   assert.match(evaluate("LOOK_ALIKE_NOTE"), /只有不可见字符：格子看起来是空的/);
@@ -6457,7 +6465,7 @@ test("v2.10.0 gate: no data or an unapplied field draft disables the buttons and
 });
 
 test("v2.10.0 the page: a third export option, a static hidden panel, print hides its buttons, one binding", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
   assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 2);
   assert.match(options, /<h3>写法统一的表<\/h3>[\s\S]*<p id="standardizedExportGate" class="standardize-gate"><\/p>[\s\S]*<button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格<\/button>/);
@@ -6728,7 +6736,7 @@ test("v2.11.0 sample: the button fetches the new file and names the import after
   const script = repoFile("script.js");
   assert.match(script, /fetch\("examples\/sample-orders\.csv"\)/);
   assert.doesNotMatch(script, /sample-data\.csv/);
-  assert.match(repoFile("index.html"), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
+  assert.match(indexHtmlSource(), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
   const clicked = await clickSampleButton(sampleOrdersFetchedText());
   assert.deepEqual(clicked.fetched, ["examples/sample-orders.csv"]);
   // The handler calls parseCsvText() once; the title-row retry calls it again with the same name.
@@ -6923,7 +6931,7 @@ function findOldWordsInImport(scope, name, hits) {
 
 test("v2.12.0: old interface words no longer appear in pages, reports, file names or exported notes", async () => {
   const hits = [];
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   findOldInterfaceWords("index.html", html, hits);
   const selectStart = html.indexOf('<select id="dateChartAggregate">');
   assert.ok(selectStart >= 0);
@@ -7195,7 +7203,7 @@ function withModuleNavigation(scope) {
 }
 
 test("v3.0.0 modules: the page wraps the eight modules in one stage, each title can take the focus", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const stageStart = html.indexOf('<div id="moduleStage" class="module-stage">');
   assert.ok(stageStart >= 0);
   assertInOrder(html.slice(stageStart), MODULE_SECTION_IDS.map((id) => `<section id="${id}"`));
@@ -7284,7 +7292,7 @@ test("v3.0.0 modules: field configuration, placeholder confirmations and filters
 
 // v3.0.0 commit 2: top bar and sidebar.
 test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 换一个文件; no section labels", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
   assertInOrder(header, ['<button id="sidebarToggle"', "<strong>表格体检</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
   assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
@@ -7304,7 +7312,7 @@ test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 
 });
 
 test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside it for phones", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<aside id="appSidebar"');
   assert.ok(start >= 0);
   const sidebar = html.slice(start, html.indexOf("</aside>", start));
@@ -7327,7 +7335,7 @@ test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside i
 });
 
 test("v3.0.0 shell: the analysis range sits by four module titles; only the overview's carries the ids", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const heading = (id) => {
     const section = html.slice(html.indexOf(`<section id="${id}"`));
     return section.slice(0, section.indexOf("</h2>") + 600);
@@ -7484,7 +7492,7 @@ test("v3.0.0 shell: the sidebar controls are bound once each in script.js", () =
 // v3.0.0 commit 3: the import message with notes can fold to one line. #statusPanel itself
 // keeps its text, classes and role: the fold lives on the wrapper #statusNote.
 test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by CSS that keeps the text for screen readers", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<div id="statusNote" class="status-note">');
   assert.ok(start >= 0);
   const note = html.slice(start, html.indexOf('<section id="sheetSelectionPanel"'));
@@ -7600,7 +7608,7 @@ test("v3.0.0 status note: on the export module, setStatus marks warnings and err
 
 // v3.0.0 commit 4: the upload page and the way back to the last analysis.
 test("v3.0.0 upload page: the new title, the drop area and the encoding line; the old intro is gone", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div id="statusNote"'));
   assertInOrder(hero, [
     '<h1 id="heroTitle">上传表格，先做一次体检</h1>',
@@ -7627,7 +7635,7 @@ test("v3.0.0 upload page: the new title, the drop area and the encoding line; th
 
 // The six rows of examples/sample-orders.csv shown on the upload page, as they are in the file.
 test("v3.0.0 upload page: the sample table shows rows 10, 12, 20, 21, 29 and 44 of sample-orders.csv with their marks", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
   assert.ok(start >= 0);
   assert.ok(start > html.indexOf('<div id="statusNote"'), "below the upload card and the status");
@@ -7667,7 +7675,7 @@ test("v3.0.0 upload page: an error shows between the title and the card; loading
   assert.match(css, /body:not\(\.has-results\) \.upload-hero \{\s*order: -2;\s*\}/);
   assert.match(css, /body:not\(\.has-results\) #statusNote\[data-tone="error"\] \{\s*order: -1;\s*\}/);
   assert.match(css, /body\.has-results \.upload-hero,\s*body\.has-results \.sample-preview \{\s*display: none;\s*\}/);
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   // The sheet choice sits right under the card, above the sample rows.
   assertInOrder(html, ['<div class="upload-hero">', '<section id="dropZone"', '<div id="statusNote"', '<section id="sheetSelectionPanel"', '<section class="sample-preview"', '<section id="results"']);
   assert.match(css, /\.sheet-selection-panel \{\s*grid-template-columns: 1fr;\s*\}/);
@@ -7902,7 +7910,7 @@ test("v3.0.0 F2: applying keeps the search and the type (back to 全部 when it 
 });
 
 test("v3.0.0 F2: the toolbar is static, bound once, and the table box is limited only above 640 px", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
   assertInOrder(schema, [
     '<div id="schemaFilter" class="schema-filter hidden">',
@@ -7954,7 +7962,7 @@ const chartEmpty = (scope, id) => {
 };
 
 test("v3.0.0 F3: every chart frame has a static, hidden empty-state line after its canvas", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   CHART_CANVAS_IDS.forEach((id) => {
     assert.match(html, new RegExp(`<div class="chart-frame"><canvas id="${id}" [^>]*></canvas><p id="${id}Empty" class="empty-state chart-empty hidden"></p></div>`), id);
   });
@@ -8048,7 +8056,7 @@ test("v3.0.0 overview: the five numbers are one line of text with their old labe
 });
 
 test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
   assertInOrder(overview, [
     '<details class="preview-details" open>',
@@ -8060,7 +8068,7 @@ test("v3.0.0 overview: the preview sits in an open <details> whose summary is th
 });
 
 test("v3.0.0 field configuration: the message and both buttons sit under the table, marked has-draft while drafts wait", async () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
   assertInOrder(schema, ['<table id="schemaTable"', '<div id="fieldConfigToolbar" class="field-config-toolbar">', '<p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>', '<button id="restoreAutoFieldTypes"', '<button id="applyFieldConfig"']);
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
@@ -8075,7 +8083,7 @@ test("v3.0.0 field configuration: the message and both buttons sit under the tab
 });
 
 test("v3.0.0 quality: only notes of more than one sentence keep their paragraph and get a 展开 button after it", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
   const notes = [...quality.matchAll(/<p class="section-note">([^<]*)<\/p>(\s*<button type="button" class="text-button note-toggle" aria-expanded="false">展开<\/button>)?/g)];
   const sentences = notes.map((match) => (match[1].match(/。/g) || []).length);
@@ -8117,7 +8125,7 @@ test("v3.0.0 statistics: each frequency row has a bar as long as its share, and 
 });
 
 test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
   assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
   assert.doesNotMatch(options, /去重/);
@@ -8292,7 +8300,7 @@ test("v3.0.0 look: one blue button per group, by id only; the class names stay",
   assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
   // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
   assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>/);
 });
 
@@ -8346,7 +8354,7 @@ test("v3.0.0 look: charts take the new blue and the page's font", () => {
 
 // v3.0.0 look, second pass (impl-v3.0.0-look2): fewer template touches. Items 1–7 of that file.
 test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no privacy badge); the footer only the GitHub link", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
   assert.match(header, /<strong>表格体检<\/strong>/);
@@ -8368,7 +8376,7 @@ test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no priv
 });
 
 test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry a one-line aside next to the title", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const heading = cssRule(css, ".section-heading");
   assert.doesNotMatch(heading, /border-bottom|padding-bottom/);
@@ -8402,7 +8410,7 @@ test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry 
 });
 
 test("v3.0.0 look2: the quality page is cards: three of their own, and one holding the seven note subsections", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
   const start = quality.indexOf('<div class="quality-notes">');
@@ -8512,7 +8520,7 @@ test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export
 });
 
 test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons have no icon", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const buttons = html.slice(html.indexOf('<div class="upload-buttons">'), html.indexOf('<div class="upload-footer">'));
   assert.match(buttons, /<label class="file-button" for="csvFile">\s*选择数据文件\s*<\/label>/);
   assert.match(buttons, /<button id="loadSample" class="secondary-button" type="button">\s*使用示例数据\s*<\/button>/);
@@ -8549,7 +8557,7 @@ function findOldWordsInProductScope(scope, hits) {
 
 test("v3.0.1 rename: the old product name and report title never appear; the new name is exact", async () => {
   const hits = [];
-  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   findOldProductWords("index.html", html, hits);
   assert.equal((html.match(/<title>([^<]*)<\/title>/) || [])[1], "表格体检 | 检查 CSV、Excel 表格的数据问题");
   assert.equal((html.match(/<a class="brand" href="#mainContent" aria-label="([^"]*)">/) || [])[1], "表格体检首页");
@@ -9085,7 +9093,7 @@ test("v3.1.0 page: scope sentence, filter panel, overview, preview, sidebar and 
   orders.evaluate("clearAllFilters()");
   assert.equal(textOf(orders, "filterMessage"), "已清除全部筛选，当前分析恢复使用全部 41 行（不含不计入分析的 1 行）。");
   // 当前状态 keeps its three rows: 筛选, 表头, 已按空值处理.
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const status = html.slice(html.indexOf('<dl class="sidebar-status">'), html.indexOf("</dl>", html.indexOf('<dl class="sidebar-status">')));
   assert.deepEqual([...status.matchAll(/<dt>([^<]*)<\/dt>/g)].map((match) => match[1]), ["筛选", "表头", "已按空值处理"]);
 });
@@ -9235,7 +9243,7 @@ test("v3.1.0 modules: 去数据质量处理 opens the quality module at the subs
   assert.equal(orders.evaluate("document.body.dataset.module"), "chartsSection");
   assert.deepEqual(calls, []);
 
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.match(html, /<h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 \/ 小计行<\/h3>/);
   for (const [section, id] of [["statisticsSection", "statisticsContainsNote"], ["chartsSection", "chartsContainsNote"], ["customSection", "customContainsNote"]]) {
     const start = html.indexOf(`<section id="${section}"`);
@@ -9432,7 +9440,7 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
 });
 
 test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
   assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
 
@@ -9462,7 +9470,7 @@ test("v3.1.0 export: one data export, the rows of the current analysis, and what
 
 test("v3.1.0 export: the page never says 去重后 or 导出筛选后 CSV again", async () => {
   const words = ["去重后", "导出筛选后 CSV", "筛选后数据", "_filtered"];
-  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   for (const word of words) assert.ok(!html.includes(word), word);
   const orders = await clickSampleButton(sampleOrdersFetchedText());
   orders.evaluate('setRowExclusion("suspectedTotal", true); exportProcessedCsv("filtered")');
@@ -9499,4 +9507,27 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
   // 不计入分析 is part of several sentences and the button: the button is matched with its markup.
   assert.match(orders.elements.get("suspectedTotalDetails").innerHTML, /data-exclusion-kind="suspectedTotal" data-exclusion-on="false"[^>]*>撤销<\/button>/);
   assert.doesNotMatch(orders.elements.get("suspectedTotalDetails").innerHTML, />不计入分析<\/button>/);
+});
+
+test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes out data-i18n attributes and nothing else", () => {
+  const readCall = new RegExp("(?:" + ["readFileSync", "repoFile"].join("|") + ")\\([^;\\n]*index\\.html");
+  for (const file of ["basic-data-processing.test.cjs", "core.test.cjs", "data-processing.test.cjs", "destructive-qa.test.cjs"]) {
+    const lines = fs.readFileSync(path.join(__dirname, file), "utf8").split(/\r?\n/);
+    const reads = lines.filter((line) => readCall.test(line));
+    assert.ok(reads.every((line) => line.includes("stripI18nAttributes(")), `${file}: ${reads.filter((line) => !line.includes("stripI18nAttributes(")).join(" | ")}`);
+    if (file !== "destructive-qa.test.cjs") {
+      assert.equal(reads.length, 1, file);
+      assert.ok(lines.includes("const DATA_I18N_ATTRIBUTE = /\\s+data-i18n[\\w-]*=\"[^\"]*\"/g;"), file);
+    }
+  }
+  assert.equal(stripI18nAttributes('<p id="a" data-i18n="upload.title" class="b">表格</p>'), '<p id="a" class="b">表格</p>');
+  assert.equal(stripI18nAttributes('<button data-i18n-attr="aria-label=nav.open title=nav.tip" type="button">打开</button>'), '<button type="button">打开</button>');
+  assert.equal(stripI18nAttributes('<details data-i18n-open="x" data-i18n-closed="y">'), "<details>");
+  // Text that only looks like the attribute stays: no leading space, or not an attribute name.
+  assert.equal(stripI18nAttributes("<p>data-i18n=\"x\"</p>"), "<p>data-i18n=\"x\"</p>");
+  assert.equal(stripI18nAttributes('<p data-lang="en" data-i18ndex="1">'), '<p data-lang="en">');
+  assert.equal(stripI18nAttributes('<p data-lang="en">'), '<p data-lang="en">');
+  // Today index.html has none, so the helper returns the file as it is (read by a name the scan
+  // above does not see, on purpose: this is the one comparison with the raw file).
+  assert.equal(indexHtmlSource(), fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8"));
 });

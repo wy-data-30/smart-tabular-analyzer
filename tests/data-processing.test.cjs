@@ -6,6 +6,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const englishDateCorpus = require("./fixtures/english-date-corpus.cjs");
 
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+
 // Default release gate: exercise the real data functions from the app scripts without
 // coupling core correctness to browser layout or CSS implementation details.
 
@@ -291,7 +296,7 @@ test("public current version markers agree on v3.1.0", () => {
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
-  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const html = stripI18nAttributes(fs.readFileSync(path.join(root, "index.html"), "utf8"));
   assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
   const appScriptVersions = [...html.matchAll(/<script src="(?!vendor\/)([^"?]+)\?v=([^"]+)"><\/script>/g)]
     .map((match) => ({ file: match[1], version: match[2] }));
