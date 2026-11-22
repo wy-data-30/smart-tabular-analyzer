@@ -28,16 +28,18 @@ function ensureDomElementsPresent() {
   if (!missingKeys.length) return;
 
   // v3.2.0: an English page is hidden until this script has set the language; show it again
-  // first, so the notice below is not hidden with it.
+  // first, so the notice below is not hidden with it. The mark is also the only sign of the
+  // language here: format.js (L) may be the file that did not load.
+  const english = Boolean(document.documentElement?.hasAttribute?.("data-lang-pending"));
   document.documentElement?.removeAttribute("data-lang-pending");
   const notice = document.createElement("div");
   notice.setAttribute("role", "alert");
   notice.style.cssText = "position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid #fedf89;background:#fffaeb;color:#b54708;font:600 14px/1.5 system-ui,-apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;";
   const message = document.createElement("span");
-  message.textContent = "页面已更新，请刷新后再使用。";
+  message.textContent = english ? "The page was updated. Refresh it to continue." : "页面已更新，请刷新后再使用。";
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "刷新页面";
+  button.textContent = english ? "Refresh" : "刷新页面";
   button.style.cssText = "padding:6px 14px;border:1px solid #b54708;border-radius:6px;background:#b54708;color:#fff;font:inherit;cursor:pointer;";
   button.addEventListener("click", () => window.location.reload());
   notice.append(message, button);
@@ -78,9 +80,9 @@ dom.fileInput.addEventListener("change", (event) => {
 dom.loadSample.addEventListener("click", async () => {
   const importId = beginImport();
   try {
-    setStatus("正在加载 sample-orders.csv ...");
+    setStatus(L("正在加载 sample-orders.csv ...", "Loading sample-orders.csv ..."));
     const response = await fetch("examples/sample-orders.csv");
-    if (!response.ok) throw new Error("示例数据加载失败");
+    if (!response.ok) throw new Error(L("示例数据加载失败", "The sample data could not be loaded"));
     const text = await response.text();
     if (!isCurrentImport(importId)) return;
     parseCsvText(text, "sample-orders.csv", importId);
@@ -234,7 +236,7 @@ updateExportButtons();
   control.addEventListener("change", () => {
     if (state.rows.length) {
       dom.v2FieldPrompt.className = "analysis-prompt";
-      dom.v2FieldPrompt.textContent = "字段已更新，点击“生成自定义分析”生成新的结果。";
+      dom.v2FieldPrompt.textContent = L("字段已更新，点击“生成自定义分析”生成新的结果。", "The columns changed; click “Create breakdown” for new results.");
     }
   });
 });

@@ -601,7 +601,7 @@ function buildReportData(now = new Date()) {
       parseWarningCount: state.parseWarnings.length,
       parseWarnings: state.parseWarnings.slice(0, 50).map((warning) => ({
         row: warning.row ?? "",
-        message: warning.message || warning.code || warning.type || "读取时有疑问"
+        message: formatParseWarning(warning)
       })),
       missingByField: state.profiles.map((profile) => ({
         field: profile.field,

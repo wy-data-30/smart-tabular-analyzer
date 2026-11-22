@@ -119,9 +119,9 @@ function formatInteger(value) {
 // v3.2.0: the list separator of the language, for lists built on a per-row path.
 const LIST_SEPARATOR = Lp("、", ", ");
 
-// The name of an applied type (数值 / 分类 / 日期 / ID / 忽略).
+// The name of an applied type (数值 / 分类 / 日期 / ID / 忽略) in the current language.
 function fieldTypeLabel(typeKey) {
-  return FIELD_TYPE_LABELS[typeKey];
+  return Lpick(FIELD_TYPE_LABELS[typeKey]);
 }
 
 // Plain text such as "3（N/A、待定、约500）"; callers escape it for their output format.

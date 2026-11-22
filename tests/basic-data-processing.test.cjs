@@ -1712,7 +1712,8 @@ test("CSV edge files keep their errors and parse warnings", () => {
     const panel = scope.elements.get("statusPanel");
     assert.equal(panel.className, className, JSON.stringify(text));
     assert.equal(panel.textContent, status, JSON.stringify(text));
-    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)")), warnings, JSON.stringify(text));
+    // v3.2.0: stored as code and figures; the text is written by formatParseWarning().
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ row: warning.row, code: warning.code, message: formatParseWarning(warning) })))")), warnings, JSON.stringify(text));
   }
 });
 
@@ -1821,7 +1822,8 @@ test("a shown extra-cell error adds one line pass after the main parse and heade
   assert.deepEqual(extra.papaOptions().map((options) => options.header), [true, false, false]);
 });
 
-const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(({ row, code, message }) => [row, code, message]))"));
+// v3.2.0: the text of a warning is written by formatParseWarning() from its code and figures.
+const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => [warning.row, warning.code, formatParseWarning(warning)]))"));
 
 test("imported CSV warnings carry Chinese messages and keep their codes", async () => {
   const short = await importCsvFile("a,b,c\n1,2,3\n4\n5,6,7\n");
@@ -1836,7 +1838,7 @@ test("imported CSV warnings carry Chinese messages and keep their codes", async 
     meta: { fields: ["a", "b", "c"] },
     data: [{ a: "1", b: "2", c: "3" }, { a: "4" }]
   }, "no-source.csv", beginImport())`);
-  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings)")), [
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ row: warning.row, code: warning.code, message: formatParseWarning(warning) })))")), [
     { row: null, code: "TooFewFields", message: "有一条记录的列数少于表头（只有 1 列，表头有 3 列），缺少的单元格按空值处理。" }
   ]);
 });
@@ -9712,8 +9714,8 @@ test("v3.2.0 static guard: the whitelist names declarations that exist, with exa
 
 test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
   const whitelist = i18nWhitelist();
-  // commit 5: format.js; commit 6: app.js.
-  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js"]);
+  // commit 5: format.js; commit 6: app.js; commit 7: importer, stats, quality, profiling and script.
+  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js"]);
   for (const file of i18nGuard.APP_SCRIPT_NAMES) {
     const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
     assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
@@ -9963,7 +9965,10 @@ const FORMAT_PAIRED_CONSTANTS = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "
   "CATEGORY_CHART_EMPTY_NOTE", "GO_TO_QUALITY_LABEL", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "DATE_STYLE_NAMES",
   "VISIBLE_TEXT_NAMES", "LOOK_ALIKE_REASON_NAMES", "STANDARDIZE_ACTION_LABELS", "STANDARDIZE_ORDER_HINT"];
 const ENGLISH_BAD = /[\p{Script=Han}\u3000-\u303F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/u;
-const numbersOf = (text) => (String(text).match(/\d[\d,.]*\d|\d/g) || []).sort();
+// The one exception (commit 7): the trend note writes its last date as “up to YYYY-MM-DD” in
+// English and “截至 M 月 D 日” in Chinese; that date counts as its month and day, without zeros
+// (its year is in the period's name in both languages).
+const numbersOf = (text) => (String(text).replace(/(only has data up to )(\d{4})-(\d{2})-(\d{2})(?=,)/g, (_, words, year, month, day) => `${words}${Number(month)} ${Number(day)}`).match(/\d[\d,.]*\d|\d/g) || []).sort();
 
 test("v3.2.0 format.js: the 18 constants are frozen [中文, English] pairs, and the English has no Chinese", () => {
   const scope = createScriptContext();
@@ -10240,14 +10245,14 @@ async function withRecordedAttributes(action) {
   }
 }
 
-// The Chinese of app.js and format.js (the files that are done), in pieces of two or more Han
-// characters, without the pieces the files still in Chinese or the data also use.
+// The Chinese of the files that are done (I18N_DONE_FILES of the guard), in pieces of two or more
+// Han characters, without the pieces the files still in Chinese or the data also use.
 function doneFileChineseFragments() {
   const pieces = (file, chineseArgumentOnly) => new Set(i18nGuard.lex(repoFile(file))
     .filter((token) => (token.type === "str" || token.type === "tmpl") && (!chineseArgumentOnly || (token.lFrame && token.lFrame.arg === 0)))
     .flatMap((token) => token.value.match(/\p{Script=Han}{2,}/gu) || []));
-  const done = new Set([...pieces("app.js", true), ...pieces("format.js", true)]);
-  for (const file of ["parsing.js", "profiling.js", "stats.js", "quality.js", "importer.js", "report.js", "script.js"]) {
+  const done = new Set(i18nGuard.I18N_DONE_FILES.flatMap((file) => [...pieces(file, true)]));
+  for (const file of i18nGuard.APP_SCRIPT_NAMES.filter((name) => !i18nGuard.I18N_DONE_FILES.includes(name))) {
     // Also a piece inside one of their texts (“按空值处理” in quality.js's “已按空值处理”).
     const texts = i18nGuard.lex(repoFile(file)).filter((token) => token.type === "str" || token.type === "tmpl").map((token) => token.value);
     for (const piece of [...done]) if (texts.some((text) => text.includes(piece))) done.delete(piece);
@@ -10255,7 +10260,7 @@ function doneFileChineseFragments() {
   return [...done];
 }
 
-test("v3.2.0 app.js: in English the page never shows the Chinese of app.js or format.js, and every element keeps the numbers of its Chinese text", async () => {
+test("v3.2.0 app.js: in English the page never shows the Chinese of the files that are done, and every element keeps the numbers of its Chinese text", async () => {
   const [zh, en] = await withRecordedAttributes(async () => [await runLanguageScenario("zh"), await runLanguageScenario("en")]);
   assert.equal(en.scope.evaluate("currentLanguage"), "en");
   assert.ok(zh.categories.length >= 8, `${zh.categories.length} problem categories`);
@@ -10386,4 +10391,169 @@ test("v3.2.0 format.js English wording: values (not categories), treated as blan
   });
   assert.equal(en("Lpick(VISIBLE_TEXT_OTHER)"), "[whitespace]");
   assert.equal(en('I18N_EN["sidebar.status"]'), "Current status");
+});
+
+test("v3.2.0 profiling.js: the type names are [中文, English] pairs (Ignored); profile.type stays the Chinese name", () => {
+  const scope = createScriptContext({ language: "en" });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.fromEntries(Object.keys(FIELD_TYPE_LABELS).map((key) => [key, FIELD_TYPE_LABELS[key]])))")), {
+    numeric: ["数值", "Number"], category: ["分类", "Text"], date: ["日期", "Date"], id: ["ID", "ID"], ignore: ["忽略", "Ignored"]
+  });
+  assert.ok(scope.evaluate("Object.isFrozen(FIELD_TYPE_LABELS)"));
+  assert.deepEqual(["numeric", "category", "date", "id", "ignore"].map((key) => scope.evaluate(`fieldTypeLabel("${key}")`)), ["Number", "Text", "Date", "ID", "Ignored"]);
+  // The profile is data (the v2.8.1 digest holds it): the Chinese name in both languages.
+  commitRows(scope, ["Amount", "Region"], [{ Amount: "1", Region: "East" }, { Amount: "2", Region: "West" }]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.type))")), ["数值", "分类"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(["numeric", "ignore"].map((key) => scope.evaluate(`fieldTypeLabel("${key}")`)), ["数值", "忽略"]);
+});
+
+test("v3.2.0 stats.js: the group of blanks keeps its Chinese key (R3) and is shown as (Blank) in English", () => {
+  const groups = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Amount", "Region"], [{ Amount: "1", Region: "" }, { Amount: "2", Region: "East" }, { Amount: "4", Region: "" }]);
+    groups[language] = JSON.parse(scope.evaluate('JSON.stringify(groupNumericFieldByCategory("Amount", "Region").map((group) => [group.name, displayGroupName(group.name)]))'));
+    assert.equal(scope.evaluate("BLANK_GROUP_KEY"), "（空值）");
+  }
+  assert.deepEqual(groups.zh.map(([key]) => key), groups.en.map(([key]) => key));
+  assert.ok(groups.en.some(([key, label]) => key === "（空值）" && label === "(Blank)"), JSON.stringify(groups.en));
+  assert.ok(groups.zh.some(([key, label]) => key === "（空值）" && label === "（空值）"), JSON.stringify(groups.zh));
+  // A value that is written （空值） in the data is the same group in both languages (as before).
+  const scope = createScriptContext({ language: "en" });
+  assert.equal(scope.evaluate('displayGroupName("East")'), "East");
+});
+
+test("v3.2.0 importer.js: a formula error with no known writing is #错误 in both languages (it is the cell's text)", () => {
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    assert.equal(scope.evaluate("FORMULA_ERROR_FALLBACK"), "#错误");
+  }
+});
+
+test("v3.2.0 importer.js: reading issues are kept as code and figures and written in the language shown", async () => {
+  // A short row (a row with more cells stops the import).
+  const text = "a,b,c\n1,2,3\n4,5\n7,8,9\n10\n";
+  const scope = await importCsvInLanguage(text, "short.csv", "zh");
+  const stored = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)"));
+  assert.ok(stored.length >= 1);
+  for (const warning of stored) {
+    assert.equal("message" in warning, false, JSON.stringify(warning));
+    assert.deepEqual(Object.keys(warning).sort(), ["code", "params", "row", "sourceMessage"]);
+  }
+  assert.deepEqual(stored.map((warning) => [warning.row, warning.code, warning.params]), [
+    [3, "TooFewFields", { line: 3, cellCount: 2, headerCount: 3, separator: "" }],
+    [5, "TooFewFields", { line: 5, cellCount: 1, headerCount: 3, separator: "" }]
+  ]);
+  const chinese = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))"));
+  // The text of v3.1.0, from the figures.
+  assert.deepEqual(chinese, ["第 3 行只有 2 列（表头有 3 列），缺少的单元格按空值处理。", "第 5 行只有 1 列（表头有 3 列），缺少的单元格按空值处理。"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))"));
+  assert.deepEqual(english, ["Row 3 has only 2 columns (the header has 3); the missing cells are treated as blank.", "Row 5 has only 1 column (the header has 3); the missing cells are treated as blank."]);
+  english.forEach((message, index) => {
+    assert.ok(!ENGLISH_BAD.test(message), message);
+    assert.deepEqual(numbersOf(message), numbersOf(chinese[index]), `${message} / ${chinese[index]}`);
+  });
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))")), chinese);
+  // An old message (a string) is shown as it is.
+  assert.equal(scope.evaluate('formatParseWarning({ row: 3, code: "X", message: "原样" })'), "原样");
+});
+
+test("v3.2.0 stats.js: the trend conclusion is figures (computeTrendInsight) and a sentence (formatTrendInsight)", () => {
+  const scope = createScriptContext({ language: "zh" });
+  const sentence = (data, language) => {
+    scope.evaluate(`setInterfaceLanguage("${language}")`);
+    put(scope.context, "__trend", data);
+    return scope.evaluate("formatTrendInsight(__trend)");
+  };
+  const partial = { yearly: false, year: 2025, label: "2025-06", month: 6, day: 15 };
+  const cases = [
+    [{ dateField: "Date", kind: "none" }, "日期字段「Date」里没有认得出的日期，因此未生成趋势结论。", "The date column “Date” has no recognized dates, so there is no trend summary."],
+    [{ dateField: "Date", kind: "few" }, "日期字段「Date」可用于趋势分析，但有效时间点不足以判断变化方向。", "The date column “Date” can show a trend, but it has too few points in time to tell the direction."],
+    [{ dateField: "Date", kind: "flat", yearly: false, from: "2025-01", to: "2025-06", ratio: 0, partial: null }, "基于日期字段「Date」观察，记录数趋势 从 2025-01 到 2025-06 基本持平。", "By the date column “Date”, the record count stays about the same from 2025-01 to 2025-06."],
+    [{ dateField: "Date", kind: "up", yearly: false, from: "2025-01", to: "2025-06", ratio: 0.25, partial },
+      "基于日期字段「Date」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 25.0%。注意：最后一期（2025-06）的数据截至 6 月 15 日，可能不完整，比较结果仅供参考。",
+      "By the date column “Date”, the record count rises from 2025-01 to 2025-06, by about 25.0%. Note: the last period (2025-06) only has data up to 2025-06-15, so it may be incomplete and the comparison is only a guide."],
+    [{ dateField: "Year", kind: "down", yearly: true, from: "2023", to: "2025", ratio: 0.5, partial: { yearly: true, year: 2025, label: "2025", month: 3, day: 1 } },
+      "基于日期字段「Year」观察，年度记录数趋势 从 2023 到 2025 呈下降变化，变化幅度约 50.0%。注意：最后一期（2025 年）的数据截至 3 月 1 日，可能不完整，比较结果仅供参考。",
+      "By the date column “Year”, the yearly record count falls from 2023 to 2025, by about 50.0%. Note: the last period (2025) only has data up to 2025-03-01, so it may be incomplete and the comparison is only a guide."]
+  ];
+  for (const [data, zh, en] of cases) {
+    assert.equal(sentence(data, "zh"), zh);
+    assert.equal(sentence(data, "en"), en);
+    assert.deepEqual(numbersOf(en), numbersOf(zh), en);
+  }
+  // The exception of numbersOf() is that sentence only, and still tells a wrong day or month.
+  assert.deepEqual(numbersOf("only has data up to 2025-06-15, so"), ["15", "6"]);
+  assert.deepEqual(numbersOf("from 2025-06-15 to 2025-07-01."), ["2025-06-15", "2025-07-01"].flatMap((date) => date.split("-")).sort());
+  assert.notDeepEqual(numbersOf(cases[3][2].replace("2025-06-15", "2025-06-16")), numbersOf(cases[3][1]));
+  // (Month and day swapped have the same numbers; the whole sentences above catch that.)
+  assert.notDeepEqual(numbersOf(cases[4][2].replace("2025-03-01", "2025-03-02")), numbersOf(cases[4][1]));
+});
+
+test("v3.2.0 app.js: the trend figures are kept for a switch and cleared with the analysis", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const data = JSON.parse(scope.evaluate("JSON.stringify(state.trendInsightData)"));
+  assert.ok(data && ["flat", "up", "down"].includes(data.kind), JSON.stringify(data));
+  const chinese = scope.evaluate("state.chartInsights.trend");
+  assert.equal(chinese, scope.evaluate("buildTrendInsight(dom.dateChartField.value)"));
+  // The rows are not read again: the sentence from the kept figures in English keeps the numbers.
+  scope.evaluate("globalThis.__realRows = getAnalysisRows; getAnalysisRows = () => { throw new Error(\"read\"); }");
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = scope.evaluate("formatTrendInsight(state.trendInsightData)");
+  scope.evaluate("getAnalysisRows = globalThis.__realRows");
+  assert.ok(!ENGLISH_BAD.test(english), english);
+  assert.deepEqual(numbersOf(english), numbersOf(chinese), `${english} / ${chinese}`);
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.evaluate("state.trendInsightData"), null);
+});
+
+test("v3.2.0 quality.js: problem-row notes in English, picked once per list (no L() call per row)", async () => {
+  const zh = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const en = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  const categories = JSON.parse(zh.evaluate("JSON.stringify(state.problemCategories)"));
+  assert.ok(categories.length >= 8);
+  const notesOf = (scope) => categories.map((category) => {
+    put(scope.context, "__category", category);
+    return JSON.parse(scope.evaluate("JSON.stringify(listProblemRows(__category).items.map((item) => item.note))"));
+  });
+  const zhNotes = notesOf(zh);
+  en.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const enNotes = notesOf(en);
+  const lCalls = en.evaluate("__lCalls");
+  en.evaluate("L = globalThis.__realL");
+  // Some lists format a bound or a number (formatFieldNumber may call L once a list); never once a row.
+  const rows = enNotes.flat().length;
+  assert.ok(rows > 20, `${rows} rows`);
+  assert.ok(lCalls < categories.length, `${lCalls} L() calls for ${rows} rows`);
+  // Many rows of one kind: a list of 12 blanks, 4 values not recognized and 7 rows of one repeat group
+  // makes no L() call at all.
+  const many = createScriptContext({ language: "en" });
+  commitRows(many, ["Amount", "Note"], Array.from({ length: 36 }, (_, index) => ({ Amount: index < 12 ? "" : index < 16 ? `x${index}` : String(index), Note: index >= 30 ? "same" : `n${index}` })).concat(Array.from({ length: 6 }, () => ({ Amount: "35", Note: "same" }))));
+  many.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const manyNotes = JSON.parse(many.evaluate('JSON.stringify([listMissingRows("Amount"), listConversionFailureRows("Amount"), listDuplicateRowGroups()].map((list) => list ? list.items.map((item) => item.note) : null))'));
+  const manyCalls = many.evaluate("__lCalls");
+  many.evaluate("L = globalThis.__realL");
+  assert.deepEqual(manyNotes.map((notes) => notes && notes.length), [12, 4, 7]);
+  assert.deepEqual([manyNotes[0][0], manyNotes[1][0], manyNotes[2][0]], ["Blank", "Not recognized as a number", "Group 1 (kept)"]);
+  assert.equal(manyCalls, 0);
+  enNotes.forEach((notes, index) => {
+    assert.equal(notes.length, zhNotes[index].length);
+    notes.forEach((note, position) => {
+      assert.ok(!/\p{Script=Han}/u.test(note.replace(/「[^」]*」|“[^”]*”/g, "")), note);
+      assert.deepEqual(numbersOf(note), numbersOf(zhNotes[index][position]), `${note} / ${zhNotes[index][position]}`);
+    });
+  });
+  const all = new Set(enNotes.flat());
+  for (const note of ["Blank", "Group 1 (kept)", "Group 1"]) assert.ok(all.has(note), `${note} in ${[...all].slice(0, 20).join(" | ")}`);
+  assert.ok([...all].some((note) => /^Above the upper bound /.test(note)), [...all].join(" | "));
+});
+
+test("v3.2.0 script.js: the self-check notice and the sample messages have English", () => {
+  const source = repoFile("script.js");
+  assert.match(source, /"The page was updated\. Refresh it to continue\."/);
+  assert.match(source, /"Refresh"/);
+  // The notice reads the mark before removing it (format.js may be the missing file).
+  assert.ok(source.indexOf('hasAttribute?.("data-lang-pending")') < source.indexOf('removeAttribute("data-lang-pending")'));
 });

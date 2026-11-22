@@ -22,7 +22,8 @@ assert.deepEqual(missingDomIds, []);
 // Startup self-check: a cached old index.html that lacks an element must stop
 // script.js with a visible refresh notice before any listener is attached.
 // test-context's fake DOM never returns null, so this uses its own minimal one.
-function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
+// english: the page arrived marked by the inline script in <head> (v3.2.0).
+function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES, { english = false } = {}) {
   const vm = require("node:vm");
   const listeners = [];
   const reloads = [];
@@ -37,6 +38,7 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
     dataset: {},
     setAttribute(name, value) { this.attributes[name] = String(value); },
     removeAttribute(name) { delete this.attributes[name]; },
+    hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name); },
     addEventListener(type, handler) { listeners.push({ element: this, type, handler }); },
     append(...nodes) { this.children.push(...nodes); },
     appendChild(node) { this.children.push(node); return node; },
@@ -47,7 +49,7 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
   const body = makeElement("body");
   // v3.2.0: an English page arrives marked by the inline script in <head>.
   const documentElement = makeElement("html");
-  documentElement.attributes["data-lang-pending"] = "";
+  if (english) documentElement.attributes["data-lang-pending"] = "";
   const lookedUp = new Set();
   const document = {
     body,
@@ -100,8 +102,15 @@ const refreshButton = refreshNotice.children.find((node) => node.tagName === "bu
 assert.equal(refreshButton?.textContent, "刷新页面");
 assert.deepEqual(brokenStartup.domListeners, [], "no listener may be attached after the self-check stops");
 assert.deepEqual(brokenStartup.reloads, []);
-// v3.2.0: the notice must not stay hidden with an English page: the mark is gone.
-assert.equal("data-lang-pending" in brokenStartup.documentElement.attributes, false);
+// v3.2.0: an English page: the mark is gone, so the notice is not hidden with the page, and the
+// notice is in English (the mark tells the language: format.js may be the file that is missing).
+const brokenEnglishStartup = loadScriptWithMissingElement("dateChartMetric", APP_SCRIPT_FILES, { english: true });
+assert.ok(brokenEnglishStartup.error);
+assert.equal("data-lang-pending" in brokenEnglishStartup.documentElement.attributes, false);
+const englishNotice = brokenEnglishStartup.body.children[0];
+assert.equal(englishNotice?.attributes.role, "alert");
+assert.equal(englishNotice.children.find((node) => node.tagName !== "button")?.textContent, "The page was updated. Refresh it to continue.");
+assert.equal(englishNotice.children.find((node) => node.tagName === "button")?.textContent, "Refresh");
 const refreshClick = brokenStartup.listeners.find(({ element, type }) => element === refreshButton && type === "click");
 assert.ok(refreshClick, "the refresh button needs a click handler");
 refreshClick.handler();
@@ -124,7 +133,10 @@ function assertStoppedForMissingScripts(startup, missingFiles) {
   );
 }
 const scriptOnlyStartup = loadScriptWithMissingElement(null, ["script.js"]);
-assert.equal("data-lang-pending" in scriptOnlyStartup.documentElement.attributes, false);
+// Only script.js (no format.js, no L): an English page still gets its notice in English.
+const scriptOnlyEnglish = loadScriptWithMissingElement(null, ["script.js"], { english: true });
+assert.equal("data-lang-pending" in scriptOnlyEnglish.documentElement.attributes, false);
+assert.equal(scriptOnlyEnglish.body.children[0].children.find((node) => node.tagName !== "button")?.textContent, "The page was updated. Refresh it to continue.");
 assertStoppedForMissingScripts(
   scriptOnlyStartup,
   APP_SCRIPT_FILES.filter((file) => file !== "script.js")
@@ -136,7 +148,9 @@ assertStoppedForMissingScripts(
 
 const healthyStartup = loadScriptWithMissingElement(null);
 assert.equal(healthyStartup.error, null);
-assert.equal("data-lang-pending" in healthyStartup.documentElement.attributes, false);
+const healthyEnglish = loadScriptWithMissingElement(null, APP_SCRIPT_FILES, { english: true });
+assert.equal(healthyEnglish.error, null);
+assert.equal("data-lang-pending" in healthyEnglish.documentElement.attributes, false);
 assert.deepEqual(healthyStartup.body.children, []);
 assert.ok(healthyStartup.domListeners.some(({ type }) => type === "change"), "a complete page keeps attaching its listeners");
 
@@ -695,7 +709,7 @@ evaluate(`(() => {
   state.profiles = state.fields.map((field) => buildColumnProfile(field, state.rows));
   const orderProfile = state.profiles.find((profile) => profile.field === "订单号");
   orderProfile.typeKey = "id";
-  orderProfile.type = FIELD_TYPE_LABELS.id;
+  orderProfile.type = FIELD_TYPE_LABELS.id[0];
   state.numericStats = buildNumericStats();
   state.categoryStats = buildCategoryStats();
   state.categoryStats.push({

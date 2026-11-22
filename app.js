@@ -92,6 +92,8 @@ const state = {
   sourceType: "",
   analysisCompletedAt: null,
   chartInsights: { category: "", trend: "" },
+  // v3.2.0: the figures behind chartInsights.trend (computeTrendInsight()), or null.
+  trendInsightData: null,
   customAnalysis: null,
   // buildStandardizedExport() as of the last 检查标准化改动, or null. Imports, field
   // configuration and placeholder confirmations clear it; filters never.
@@ -524,6 +526,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.sourceType = sheetName ? "excel" : "csv";
   state.analysisCompletedAt = new Date();
   state.chartInsights = { category: "", trend: "" };
+  state.trendInsightData = null;
   state.customAnalysis = null;
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];
@@ -664,7 +667,7 @@ function renderStandardizedExport() {
   const cell = (value) => `<td>${value ? formatInteger(value) : "—"}</td>`;
   const rows = listed.map((count) => {
     const notes = formatStandardizeFieldNotes(count).map((note) => `<span class="standardize-note">${escapeHtml(note)}</span>`).join("");
-    return `<tr><td>${escapeHtml(count.field)}${notes}</td><td>${escapeHtml(FIELD_TYPE_LABELS[count.typeKey] || "")}</td>${cell(count.date)}${cell(count.number)}${cell(count.placeholder)}${cell(count.trim)}<td>${escapeHtml(formatStandardizeKept(count))}</td></tr>`;
+    return `<tr><td>${escapeHtml(count.field)}${notes}</td><td>${escapeHtml(Object.prototype.hasOwnProperty.call(FIELD_TYPE_LABELS, count.typeKey) ? fieldTypeLabel(count.typeKey) : "")}</td>${cell(count.date)}${cell(count.number)}${cell(count.placeholder)}${cell(count.trim)}<td>${escapeHtml(formatStandardizeKept(count))}</td></tr>`;
   }).join("");
   const total = `<tr class="standardize-total"><td>${L("合计", "Total")}</td><td></td>${STANDARDIZE_COUNT_KEYS.map((key) => cell(totals[key])).join("")}</tr>`;
   dom.standardizedExportTable.innerHTML = listed.length
@@ -753,7 +756,10 @@ function renderCategoryInsight() {
 
 function renderTrendInsight() {
   const field = dom.dateChartField.value;
-  state.chartInsights.trend = field && getAnalysisRows().length ? buildTrendInsight(field) : "";
+  // v3.2.0: the figures are kept until the next refresh; a language switch only writes the
+  // sentence again (formatTrendInsight()).
+  state.trendInsightData = field && getAnalysisRows().length ? computeTrendInsight(field) : null;
+  state.chartInsights.trend = state.trendInsightData ? formatTrendInsight(state.trendInsightData) : "";
   setChartInsight(dom.dateChartInsight, state.chartInsights.trend);
 }
 
@@ -868,11 +874,11 @@ function renderSchema() {
         return `
           <tr>
             <td><span class="field-name" title="${escapeHtml(profile.field)}">${escapeHtml(profile.field)}</span></td>
-            <td><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(profile.inferredType)}</span></td>
+            <td><span class="type-badge ${profile.inferredTypeKey}">${escapeHtml(fieldTypeLabel(profile.inferredTypeKey))}</span></td>
             <td>
               <select class="schema-type-select${draftTypeKey !== profile.typeKey ? " is-changed" : ""}" data-field-type="${escapeHtml(profile.field)}" aria-label="${escapeHtml(L(`调整 ${profile.field} 的字段类型`, `Change the type of ${profile.field}`))}">
                 ${Object.entries(FIELD_TYPE_LABELS).map(([typeKey, label]) => `
-                  <option value="${typeKey}"${draftTypeKey === typeKey ? " selected" : ""}>${escapeHtml(label)}</option>
+                  <option value="${typeKey}"${draftTypeKey === typeKey ? " selected" : ""}>${escapeHtml(Lpick(label))}</option>
                 `).join("")}
               </select>
             </td>
@@ -1055,7 +1061,7 @@ function applyFieldConfiguration() {
       else delete manualFieldTypes[profile.field];
     }
     profile.typeKey = typeKey;
-    profile.type = FIELD_TYPE_LABELS[typeKey];
+    profile.type = FIELD_TYPE_LABELS[typeKey][0];
     profile.conversionFailureCount = countFieldConversionFailures(profile.field, typeKey);
     profile.conversionFailureSamples = getFieldConversionFailureSamples(profile.field, typeKey);
   });
@@ -1265,7 +1271,7 @@ function rebuildConfirmedFieldProfile(field) {
   const manualTypeKey = state.manualFieldTypes[field];
   if (manualTypeKey) {
     profile.typeKey = manualTypeKey;
-    profile.type = FIELD_TYPE_LABELS[manualTypeKey];
+    profile.type = FIELD_TYPE_LABELS[manualTypeKey][0];
     profile.conversionFailureCount = profile.conversionFailuresByType[manualTypeKey] || 0;
     profile.conversionFailureSamples = [...(profile.conversionFailureSamplesByType[manualTypeKey] || [])];
   }
@@ -1355,8 +1361,6 @@ function initializeFilterControls() {
   setFilterMessage(() => formatNoFilterMessage(included, excluded), "");
 }
 
-const FILTER_BLANK_LABEL = Lp("（空值）", "(Blank)");
-
 function getCategoryFilterOptions(field) {
   if (!field) return [];
   // Confirmed placeholders join the empty value, as in filterRowsByConfig().
@@ -1370,11 +1374,11 @@ function getCategoryFilterOptions(field) {
     .map(([value, count]) => ({
       value,
       count,
-      label: value || Lpick(FILTER_BLANK_LABEL)
+      label: value || Lpick(BLANK_GROUP_LABEL)
     }))
     // v3.2.0 (R3): the order is the Chinese one in both languages (the empty group sorts as
-    // （空值）); only the label shown follows the language.
-    .sort((a, b) => (a.value || FILTER_BLANK_LABEL[0]).localeCompare(b.value || FILTER_BLANK_LABEL[0], "zh-CN", { numeric: true }));
+    // BLANK_GROUP_KEY, （空值）); only the label shown follows the language.
+    .sort((a, b) => (a.value || BLANK_GROUP_KEY).localeCompare(b.value || BLANK_GROUP_KEY, "zh-CN", { numeric: true }));
 }
 
 function updateCategoryFilterField() {
@@ -1936,7 +1940,7 @@ function renderQuality() {
       ${state.profiles.map((profile) => `
         <tr>
           <td>${escapeHtml(profile.field)}</td>
-          <td>${escapeHtml(profile.type)}</td>
+          <td>${escapeHtml(fieldTypeLabel(profile.typeKey))}</td>
           <td class="num">${formatInteger(profile.missingCount)}</td>
           <td class="num">${formatPercent(profile.missingRate)}</td>
           <td class="num${profile.conversionFailureCount ? " cell-warning" : ""}">${escapeHtml(formatConversionFailures(profile.conversionFailureCount, profile.conversionFailureSamples, formatInteger(profile.conversionFailureCount)))}</td>
@@ -2716,7 +2720,7 @@ function buildV2AggregationTableHtml(groupField, metricField, rows, valueKey) {
     <tbody>
       ${rows.map((row) => `
         <tr>
-          <td>${escapeHtml(row.name)}</td>
+          <td>${escapeHtml(displayGroupName(row.name))}</td>
           <td>${formatInteger(row.count)}</td>
           <td>${formatFieldNumber(metricField, row[valueKey])}</td>
         </tr>
@@ -2738,7 +2742,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
   state.charts.v2TopGroupChart = new Chart(canvas, {
     type: "bar",
     data: {
-      labels: topGroups.map((item) => item.name),
+      labels: topGroups.map((item) => displayGroupName(item.name)),
       datasets: [{
         label: L(`${formatFieldLabel(metricField)} 按 ${groupField} 分组（${aggregateLabel}）`, `${formatFieldLabel(metricField)} by ${groupField} (${aggregateLabel})`),
         data: topGroups.map((item) => item[aggregateMethod]),
@@ -2911,6 +2915,7 @@ function resetAnalysisState() {
   state.sourceType = "";
   state.analysisCompletedAt = null;
   state.chartInsights = { category: "", trend: "" };
+  state.trendInsightData = null;
   state.customAnalysis = null;
   state.filters = createEmptyFilterConfig();
   state.categoryFilterOptions = [];

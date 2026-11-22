@@ -1,12 +1,15 @@
 // 字段识别：根据取值判断字段类型（ID / 日期 / 数值 / 分类），生成字段 profile，并提供按字段读取 profile 的工具。
 
-const FIELD_TYPE_LABELS = {
-  numeric: "数值",
-  category: "分类",
-  date: "日期",
-  id: "ID",
-  ignore: "忽略"
-};
+// v3.2.0: [中文, English] per type, read with fieldTypeLabel() (format.js). Getters, because Lp()
+// comes with format.js, which loads after this file. profile.type and inferredType keep the
+// Chinese name ([0]): the report snapshot and the v2.8.1 guard read them as data.
+const FIELD_TYPE_LABELS = Object.freeze({
+  get numeric() { return Lp("数值", "Number"); },
+  get category() { return Lp("分类", "Text"); },
+  get date() { return Lp("日期", "Date"); },
+  get id() { return Lp("ID", "ID"); },
+  get ignore() { return Lp("忽略", "Ignored"); }
+});
 
 // confirmedKeys: placeholder keys of this field that count as missing.
 function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = []) {
@@ -52,7 +55,7 @@ function buildColumnProfile(field, rows, numberFormatHint = "", confirmedKeys = 
     numericCount: numericValues.length,
     dateCount: dateValues.length
   });
-  const type = FIELD_TYPE_LABELS[typeKey];
+  const type = FIELD_TYPE_LABELS[typeKey][0];
   const conversionFailuresByType = {
     numeric: nonMissingCount - numericValues.length,
     date: nonMissingCount - dateValues.length

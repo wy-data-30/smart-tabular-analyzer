@@ -222,12 +222,15 @@ const I18N_WHITELIST = Object.freeze([
   ["profiling.js", "buildDateStrategy", 1, "只写年份"],
   ["importer.js", "isSkippableHeaderRow", 1, "说明：两格行"],
   ["format.js", "LANGUAGE_NAME_ZH", 1, "切换按钮上的“中文”"],
-  ["format.js", "formatFieldLabelWithUnit", 2, "字段名结尾已有单位的识别规则：【单位】"]
+  ["format.js", "formatFieldLabelWithUnit", 2, "字段名结尾已有单位的识别规则：【单位】"],
+  ["stats.js", "BLANK_GROUP_KEY", 1, "空值分组的键（数据，两种语言相同；显示用 displayGroupName）"],
+  ["importer.js", "FORMULA_ERROR_FALLBACK", 1, "认不出的公式错误写成的值（数据，原样显示）"],
+  ["script.js", "ensureDomElementsPresent", 4, "启动自检失败的提示：format.js 可能没加载，不能用 L()；语言看 data-lang-pending"]
 ]);
 
 // The files whose interface text is all in L() / Lp() (rule 1 applies). Only grows; when all nine
 // are here the list goes and rule 1 applies to every file.
-const I18N_DONE_FILES = Object.freeze(["format.js", "app.js"]);
+const I18N_DONE_FILES = Object.freeze(["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js"]);
 
 const isChineseLiteral = (token) => (token.type === "str" || token.type === "tmpl" || token.type === "regex") && (HAN.test(token.value) || CJK_PUNCT_STRICT.test(token.value));
 
