@@ -1,4 +1,4 @@
-// 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。
+// 报告与导出：报告快照、HTML 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。
 
 const REPORT_CHART_TITLES = Object.freeze({
   numericDistributionChart: "数值字段分布",
@@ -38,7 +38,7 @@ function canExportProcessedData() {
 
 function updateExportButtons() {
   const disabled = !canExportReport();
-  [dom.exportHtmlReport, dom.exportMarkdownReport].filter(Boolean).forEach((button) => {
+  [dom.exportHtmlReport].filter(Boolean).forEach((button) => {
     button.disabled = disabled;
     button.setAttribute("aria-disabled", String(disabled));
   });
@@ -419,14 +419,11 @@ function sanitizeCsvExportValue(value) {
 }
 
 function exportHtmlReport() {
-  exportAnalysisReport("html");
+  exportAnalysisReport();
 }
 
-function exportMarkdownReport() {
-  exportAnalysisReport("md");
-}
-
-function exportAnalysisReport(format) {
+// v3.2.0: one report, HTML (the Markdown report is gone).
+function exportAnalysisReport() {
   if (!canExportReport()) {
     if (state.rows.length && hasFieldConfigDraftChanges()) {
       ensureFieldConfigurationApplied("导出报告");
@@ -439,28 +436,21 @@ function exportAnalysisReport(format) {
     return;
   }
 
-  const buttons = [dom.exportHtmlReport, dom.exportMarkdownReport].filter(Boolean);
+  const buttons = [dom.exportHtmlReport].filter(Boolean);
   const labels = buttons.map((button) => button.textContent);
   buttons.forEach((button) => {
     button.disabled = true;
   });
-  const activeButton = format === "md" ? dom.exportMarkdownReport : dom.exportHtmlReport;
-  if (activeButton) activeButton.textContent = "正在导出...";
-  setReportExportStatus(`正在生成${format === "html" ? " HTML" : " Markdown"}报告...`, "loading");
+  if (dom.exportHtmlReport) dom.exportHtmlReport.textContent = "正在导出...";
+  setReportExportStatus("正在生成报告...", "loading");
 
   try {
     const exportedAt = new Date();
     const reportData = buildReportData(exportedAt);
-    const chartImages = format === "html" ? captureCurrentChartImages() : [];
-    const content = format === "html"
-      ? buildHtmlReport(reportData, chartImages)
-      : buildMarkdownReport(reportData);
-    const fileName = buildReportFileName(format, exportedAt);
-    const mimeType = format === "html"
-      ? "text/html;charset=utf-8"
-      : "text/markdown;charset=utf-8";
-    downloadUtf8TextFile(content, fileName, mimeType);
-    setStatus(`${format === "html" ? "HTML" : "Markdown"} 报告已生成：${fileName}`, "success");
+    const content = buildHtmlReport(reportData, captureCurrentChartImages());
+    const fileName = buildReportFileName("html", exportedAt);
+    downloadUtf8TextFile(content, fileName, "text/html;charset=utf-8");
+    setStatus(`报告已生成：${fileName}`, "success");
     setReportExportStatus(`报告已生成：${fileName}`, "success");
   } catch (error) {
     setStatus(`报告导出失败：${error.message}`, "error");
@@ -1297,255 +1287,11 @@ function buildHtmlReportTable(headers, rows, emptyMessage) {
   </table></div>`;
 }
 
-function buildMarkdownReport(reportData) {
-  reportData = normalizeReportSnapshot(reportData);
-  const fieldLabel = buildReportFieldLabeler(reportData);
-  const numberSections = buildReportNumberSections(reportData.quality);
-  const numberSectionLines = [
-    ["按单位读取的数字", numberSections.conversions],
-    ["像是数字的文本列", numberSections.numericLooking]
-  ].filter(([, lines]) => lines.length).flatMap(([title, lines]) => [`### ${title}`, "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
-  const formatSections = buildReportFormatSections(reportData.quality);
-  const formatSectionLines = formatSections.sections.flatMap(({ title, note, lines }) => [`### ${title}`, "", escapeMarkdownText(note), "", ...lines.map((line) => `- ${escapeMarkdownText(line)}`), ""]);
-  const rowNotes = buildReportRowNoteSections(reportData.quality);
-  const rowNoteSectionLines = rowNotes.sections.flatMap(({ title, note, lines, overflow, extras }) => [
-    `### ${title}`,
-    "",
-    ...(note ? [escapeMarkdownText(note), ""] : []),
-    ...lines.map((line) => `- ${escapeMarkdownText(line)}`),
-    "",
-    ...(overflow ? [escapeMarkdownText(overflow), ""] : []),
-    ...extras.flatMap((extra) => [escapeMarkdownText(extra), ""])
-  ]);
-  const exclusionsText = formatReportExclusions(reportData.exclusions);
-  const noFilterText = formatReportNoFilterText(reportData.dataScale.rows, reportData.dataScale.excludedRows) || REPORT_NO_FILTER_TEXT;
-  const excludedScope = reportData.quality.excludedScope;
-  const qualityScopeText = excludedScope ? formatQualityScopeNote(excludedScope.totalRows, excludedScope.excludedRows, excludedScope.excludedMissing) : "";
-  const idDuplicates = reportData.quality.idDuplicates;
-  const idSection = idDuplicates ? buildReportIdDuplicateSection(idDuplicates) : null;
-  const idSectionLines = idSection
-    ? [
-      "### 编号重复",
-      "",
-      ...(idSection.rows.length ? [buildMarkdownTable(REPORT_ID_DUPLICATE_HEADERS, idSection.rows), ""] : []),
-      ...idSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
-    ]
-    : [];
-  const placeholders = reportData.quality.placeholders;
-  const placeholderSection = placeholders ? buildReportPlaceholderSection(placeholders) : null;
-  const placeholderSectionLines = placeholderSection
-    ? [
-      "### 像是空值的写法",
-      "",
-      ...(placeholderSection.confirmedRows.length ? ["已按空值处理的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_CONFIRMED_HEADERS, placeholderSection.confirmedRows), ""] : []),
-      ...(placeholderSection.pendingRows.length ? ["还没确认的写法：", "", buildMarkdownTable(REPORT_PLACEHOLDER_PENDING_HEADERS, placeholderSection.pendingRows), ""] : []),
-      ...placeholderSection.notes.flatMap((note) => [escapeMarkdownText(note), ""])
-    ]
-    : [];
-  const lines = [
-    "# 表格体检报告",
-    "",
-    `- 文件名称：${escapeMarkdownText(reportData.fileName)}`,
-    ...(reportData.sheetName ? [`- 工作表名称：${escapeMarkdownText(reportData.sheetName)}`] : []),
-    ...(reportData.headerDetection
-      ? [`- 表头位置：${escapeMarkdownText(formatHeaderDetectionNote(reportData.headerDetection))}`]
-      : []),
-    `- 分析时间：${escapeMarkdownText(reportData.analysisTime)}`,
-    `- 报告生成时间：${escapeMarkdownText(reportData.exportTime)}`,
-    "",
-    "## 数据规模",
-    "",
-    buildMarkdownTable(
-      ["指标", "数量"],
-      [
-        ["当前分析行数", reportData.dataScale.rows],
-        ["原始数据行数", reportData.dataScale.originalRows],
-        ["筛除行数", reportData.dataScale.filteredOutRows],
-        ...(reportData.dataScale.excludedRows ? [["不计入分析行数", reportData.dataScale.excludedRows]] : []),
-        ["字段总数", reportData.dataScale.fields],
-        ["参与分析字段", reportData.dataScale.activeFields],
-        ["数值字段", reportData.dataScale.numericFields],
-        ["分类字段", reportData.dataScale.categoryFields],
-        ["日期字段", reportData.dataScale.dateFields],
-        ["ID 字段", reportData.dataScale.idFields],
-        ["忽略字段", reportData.dataScale.ignoredFields]
-      ]
-    ),
-    "",
-    "## 筛选条件",
-    "",
-    reportData.filters.length
-      ? buildMarkdownTable(["字段", "条件"], reportData.filters.map((item) => [item.field, item.description]))
-      : escapeMarkdownText(noFilterText),
-    "",
-    ...(exclusionsText ? [escapeMarkdownText(exclusionsText), ""] : []),
-    escapeMarkdownText(REPORT_QUALITY_SCOPE_TEXT),
-    "",
-    "## 字段类型结果",
-    "",
-    reportData.fieldTypes.length
-      ? buildMarkdownTable(
-        ["字段名", "自动识别类型", "最终类型", "非空值", "唯一值", "空值", "认不出", "示例值"],
-        reportData.fieldTypes.map((field) => [
-          field.field,
-          field.inferredType,
-          field.appliedType,
-          field.nonMissingCount,
-          field.uniqueCount,
-          field.missingCount,
-          formatConversionFailures(field.conversionFailureCount, field.conversionFailureSamples),
-          field.sampleValues.join("、") || "—"
-        ])
-      )
-      : "无字段类型结果。",
-    "",
-    "## 数据质量报告",
-    "",
-    ...(qualityScopeText ? [escapeMarkdownText(qualityScopeText), ""] : []),
-    `- 空值总数：${reportData.quality.totalMissing}`,
-    `- 重复行：${reportData.quality.duplicateRows}`,
-    `- 读取时有疑问：${reportData.quality.parseWarningCount} 处`,
-    ...(idDuplicates ? [`- 编号重复：${countListedIdDuplicateFields(idDuplicates)} 个字段`] : []),
-    ...(placeholders && (placeholders.confirmed.length || placeholders.pending.length)
-      ? [`- 像是空值的写法：${countPendingPlaceholderFields(placeholders.pending)} 个字段`]
-      : []),
-    ...(numberSections.numericLooking.length ? [`- 像是数字的文本列：${numberSections.numericLooking.length} 个字段`] : []),
-    ...(rowNotes.suspectedTotalCount ? [`- 疑似合计 / 小计行：${rowNotes.suspectedTotalCount} 行`] : []),
-    ...(rowNotes.formulaErrorCount ? [`- 公式错误：${rowNotes.formulaErrorCount} 个单元格`] : []),
-    ...(formatSections.dateStyleCount ? [`- 日期写法混用：${formatSections.dateStyleCount} 个字段`] : []),
-    ...(formatSections.lookAlikeCount ? [`- 同一个值，写法不一样：${formatSections.lookAlikeCount} 个字段`] : []),
-    "",
-    ...rowNoteSectionLines,
-    "### 各字段空值情况",
-    "",
-    reportData.quality.missingByField.length
-      ? buildMarkdownTable(
-        ["字段", "类型", "空值", "空值占比"],
-        reportData.quality.missingByField.map((item) => [item.field, item.type, item.missingCount, item.missingRate])
-      )
-      : "无字段质量结果。",
-    "",
-    ...numberSectionLines,
-    ...formatSectionLines,
-    ...placeholderSectionLines,
-    "### 偏大或偏小的值",
-    "",
-    reportData.quality.outliers.length
-      ? buildMarkdownTable(
-        ["字段", "偏大或偏小的个数", "下界", "上界"],
-        reportData.quality.outliers.map((item) => [fieldLabel(item.field), item.outlierCount, item.lowerBound, item.upperBound])
-      )
-      : "未识别到数值字段，暂无可用数值统计。",
-    "",
-    ...idSectionLines,
-    "## 数值字段描述性统计",
-    "",
-    reportData.numericStats.length
-      ? buildMarkdownTable(
-        ["字段", "有效数量", "认不出", "平均值", "中位数", "最小值", "最大值", "标准差"],
-        reportData.numericStats.map((item) => [fieldLabel(item.field), item.count, item.invalidCount, item.mean, item.median, item.min, item.max, item.standardDeviation])
-      )
-      : "未识别到数值字段，暂无可用数值统计。",
-    "",
-    "## 分类字段 Top 10",
-    ""
-  ];
-
-  if (reportData.categoryStats.length) {
-    reportData.categoryStats.forEach((category) => {
-      lines.push(
-        `### ${escapeMarkdownText(category.field)}`,
-        "",
-        category.top.length
-          ? buildMarkdownTable(
-            ["类别", "数量", "占比"],
-            category.top.map((item) => [item.name, item.count, item.ratio])
-          )
-          : "该分类字段没有可统计的非空值。",
-        ""
-      );
-    });
-  } else {
-    lines.push("无适用的分类字段。", "");
-  }
-
-  lines.push("## 日期趋势摘要", "");
-  if (reportData.dateTrends.length) {
-    reportData.dateTrends.forEach((trend) => {
-      lines.push(`- ${escapeMarkdownText(trend.summary)}`);
-    });
-  } else {
-    lines.push("无适用的日期字段。");
-  }
-
-  lines.push("", "## 自定义分组分析结果", "");
-  if (reportData.customAnalysis.completed) {
-    lines.push(
-      `- 指标字段：${escapeMarkdownText(fieldLabel(reportData.customAnalysis.metricField))}`,
-      `- 分组字段：${escapeMarkdownText(reportData.customAnalysis.groupField)}`,
-      ...(reportData.customAnalysis.aggregateLabel ? [`- 聚合方式：${escapeMarkdownText(reportData.customAnalysis.aggregateLabel)}`] : []),
-      ...(reportData.customAnalysis.dateField ? [`- 日期字段：${escapeMarkdownText(reportData.customAnalysis.dateField)}`] : []),
-      ...(reportData.customAnalysis.trendSummary ? [`- ${escapeMarkdownText(reportData.customAnalysis.trendSummary)}`] : []),
-      "",
-      buildMarkdownTable(
-        [reportData.customAnalysis.groupField, "记录数", "求和", "平均值", "中位数", "最小值", "最大值"],
-        reportData.customAnalysis.rows.map((row) => [row.group, row.count, row.sum, row.average, row.median, row.minimum, row.maximum])
-      )
-    );
-  } else {
-    lines.push(escapeMarkdownText(reportData.customAnalysis.message));
-  }
-
-  lines.push("", "## 自动分析结论", "");
-  if (reportData.insights.length) {
-    reportData.insights.forEach((insight, index) => {
-      lines.push(`${index + 1}. ${escapeMarkdownText(insight)}`);
-    });
-  } else {
-    lines.push("暂无自动分析结论。");
-  }
-  lines.push("", `> 由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer) ${escapeMarkdownText(reportData.version)} 在浏览器本地生成；数据未上传。`, "");
-  return lines.join("\n");
-}
-
-function buildMarkdownTable(headers, rows) {
-  const headerLine = `| ${headers.map(escapeMarkdownCell).join(" | ")} |`;
-  const separatorLine = `| ${headers.map(() => "---").join(" | ")} |`;
-  const bodyLines = rows.map((row) => `| ${row.map(escapeMarkdownCell).join(" | ")} |`);
-  return [headerLine, separatorLine, ...bodyLines].join("\n");
-}
-
-function escapeMarkdownCell(value) {
-  // Escape ASCII punctuation so table data cannot become inline Markdown,
-  // autolinks or raw HTML. Add only our own line-break markup afterwards.
-  return String(value ?? "")
-    .replace(/[!-/:-@\[-`{-~]/g, (character) => {
-      if (character === "&") return "&amp;";
-      if (character === "<") return "&lt;";
-      if (character === ">") return "&gt;";
-      return `\\${character}`;
-    })
-    .replace(/\r\n|[\r\n]/g, "<br>");
-}
-
-function escapeMarkdownText(value) {
-  return String(value ?? "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/([*_`#[\]])/g, "\\$1")
-    // Add our own line-break markup only after user text is escaped.
-    .replace(/\r\n|[\r\n]/g, "<br>");
-}
-
+// v3.2.0: always .html; the extension parameter stays so the callers do not change.
 function buildReportFileName(extension, now = new Date()) {
-  const safeExtension = String(extension || "html").replace(/^\./, "").toLowerCase() === "md"
-    ? "md"
-    : "html";
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data-report";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data-report";
-  return `${sanitizeFileName(stem)}-${formatReportFileTimestamp(now)}.${safeExtension}`;
+  return `${sanitizeFileName(stem)}-${formatReportFileTimestamp(now)}.html`;
 }
 
 function buildDataExportFileName(mode, now = new Date()) {

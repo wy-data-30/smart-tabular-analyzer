@@ -761,30 +761,14 @@ assert.match(reportHtml, /https:\/\/github\.com\/wy-data-30\/smart-tabular-analy
 assert.doesNotMatch(reportHtml, legacyProductNamePattern);
 assert.doesNotMatch(reportHtml, /<(?:script|link)[^>]+(?:src|href)=["']https?:/i);
 
-const reportMarkdown = evaluate("buildMarkdownReport(__reportData)");
-assert.match(reportMarkdown, /^# .+/);
-assert.match(reportMarkdown, /销售 数据\.xlsx/);
-assert.match(reportMarkdown, /华东&lt;明细&gt;/);
-assert.match(reportMarkdown, /## 字段类型结果/);
-assert.match(reportMarkdown, /## 数据质量报告/);
-assert.match(reportMarkdown, /## 数值字段描述性统计/);
-assert.match(reportMarkdown, /## 分类字段 Top 10/);
-assert.match(reportMarkdown, /## 日期趋势摘要/);
-assert.match(reportMarkdown, /## 自定义分组分析结果/);
-assert.match(reportMarkdown, /## 自动分析结论/);
-assert.match(reportMarkdown, /\| 销售额 \|/);
-assert.match(reportMarkdown, /^> 由\[表格体检\]\(https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer\) /m);
-assert.match(reportMarkdown, /https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer/);
-assert.doesNotMatch(reportMarkdown, legacyProductNamePattern);
-
 assert.match(
   evaluate('buildReportFileName("html", new Date(2026, 6, 17, 14, 30, 5))'),
   /^销售 数据(?:\.xlsx)?[-_].*20260717.*143005.*\.html$/
 );
 evaluate('state.sourceFileName = "客户:销售?.xlsx"');
-const markdownFileName = evaluate('buildReportFileName("md", new Date(2026, 6, 17, 14, 30, 5))');
-assert.match(markdownFileName, /20260717.*143005.*\.md$/);
-assert.doesNotMatch(markdownFileName, /[<>:"/\\|?*]/);
+const unsafeHtmlFileName = evaluate('buildReportFileName("html", new Date(2026, 6, 17, 14, 30, 5))');
+assert.match(unsafeHtmlFileName, /20260717.*143005.*\.html$/);
+assert.doesNotMatch(unsafeHtmlFileName, /[<>:"/\\|?*]/);
 evaluate('state.sourceFileName = "report\\u202Egnp.exe.csv"');
 const bidiSafeFileName = evaluate('buildDataExportFileName("filtered", new Date(2026, 6, 17))');
 assert.doesNotMatch(bidiSafeFileName, /[\u202A-\u202E\u2066-\u2069]/);
@@ -793,13 +777,15 @@ evaluate('state.sourceFileName = "销售 数据.xlsx"');
 assert.equal(evaluate("canExportReport()"), true);
 evaluate("updateExportButtons()");
 assert.equal(elements.get("exportHtmlReport").disabled, false);
-assert.equal(elements.get("exportMarkdownReport").disabled, false);
 
 evaluate("state.analysisCompletedAt = null");
 assert.equal(evaluate("canExportReport()"), false);
 evaluate("updateExportButtons()");
 assert.equal(elements.get("exportHtmlReport").disabled, true);
-assert.equal(elements.get("exportMarkdownReport").disabled, true);
+// v3.2.0: one report. The fake getElementById answers any id, so only the page source can tell.
+assert.ok(!htmlSource.includes('id="exportMarkdownReport"'));
+assert.ok(htmlSource.includes('disabled>导出报告</button>'));
+assert.equal(typeof context.buildMarkdownReport, "undefined");
 evaluate("state.analysisCompletedAt = new Date(2026, 6, 17, 14, 30, 5); state.rows = []");
 assert.equal(evaluate("canExportReport()"), false);
 
@@ -833,7 +819,6 @@ assert.equal(noNumericReport.dateTrends.length, 1);
 assert.deepEqual(noNumericReport.dateTrends[0].labels, ["2026-01-01", "2026-01-02"]);
 context.__noNumericReport = noNumericReport;
 assert.doesNotThrow(() => evaluate("buildHtmlReport(__noNumericReport, [])"));
-assert.doesNotThrow(() => evaluate("buildMarkdownReport(__noNumericReport)"));
 
 // Report renderers must keep working when no optional analytical section has
 // data. This covers category-only files, empty trends and no custom analysis.
@@ -865,10 +850,7 @@ const emptySectionsReport = {
 };
 context.__emptySectionsReport = emptySectionsReport;
 assert.doesNotThrow(() => evaluate("buildHtmlReport(__emptySectionsReport, [])"));
-assert.doesNotThrow(() => evaluate("buildMarkdownReport(__emptySectionsReport)"));
 assert.match(evaluate("buildHtmlReport(__emptySectionsReport, [])"), /未识别到数值字段|无可用数值统计/);
-assert.match(evaluate("buildMarkdownReport(__emptySectionsReport)"), /未识别到数值字段|无可用数值统计/);
 assert.doesNotThrow(() => evaluate('buildHtmlReport({fileName:"空数据.csv", dataScale:{rows:0, fields:0}}, [])'));
-assert.doesNotThrow(() => evaluate('buildMarkdownReport({fileName:"空数据.csv", dataScale:{rows:0, fields:0}})'));
 
 console.log("core tests passed");

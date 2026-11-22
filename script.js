@@ -135,8 +135,6 @@ dom.exportStandardizedChanges.addEventListener("click", () => exportStandardized
 
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 
-dom.exportMarkdownReport.addEventListener("click", exportMarkdownReport);
-
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
 dom.excelSheetSelect.addEventListener("change", () => {

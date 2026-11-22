@@ -262,7 +262,7 @@ test("English dates keep the correct calendar day in profiling and inclusive fil
 });
 
 for (const method of ["median", "sum", "avg"]) {
-  test(`${method} custom analysis preserves statistics and exports median in both report formats`, () => {
+  test(`${method} custom analysis preserves statistics and exports median in the report`, () => {
     const { context, evaluate } = createScriptContext();
     context.__rows = [1, 10, 100].map(amount => ({ group: "A", amount: String(amount) }));
     evaluate('commitTabularData(["group", "amount"], __rows, "report.csv", beginImport())');
@@ -277,70 +277,8 @@ for (const method of ["median", "sum", "avg"]) {
     const html = evaluate("buildHtmlReport(__report, [])").split("自定义分组分析结果")[1];
     assert.match(html, /<th>中位数<\/th>/);
     assert.match(html, /<td>A<\/td>\s*<td>3<\/td>\s*<td>111<\/td>\s*<td>37<\/td>\s*<td>10<\/td>\s*<td>1<\/td>\s*<td>100<\/td>/);
-    const md = evaluate("buildMarkdownReport(__report)").split("## 自定义分组分析结果")[1];
-    assert.ok(md.includes("| group | 记录数 | 求和 | 平均值 | 中位数 | 最小值 | 最大值 |"));
-    assert.ok(md.includes("| A | 3 | 111 | 37 | 10 | 1 | 100 |"));
   });
 }
-
-test("Markdown table cells escape inline syntax and preserve ordinary text", () => {
-  const { context, evaluate } = createScriptContext();
-  const cases = [
-    ["![x](https://example.com/a.png)", String.raw`\!\[x\]\(https\:\/\/example\.com\/a\.png\)`],
-    ["[x](javascript:alert(1))", String.raw`\[x\]\(javascript\:alert\(1\)\)`],
-    ["**bold** _em_ ~~strike~~ `code`", String.raw`\*\*bold\*\* \_em\_ \~\~strike\~\~ \`code\``],
-    ["中文 English 123", "中文 English 123"],
-    ["第一行\r\n第二行\n第三行\r第四行|末列", "第一行<br>第二行<br>第三行<br>第四行\\|末列"],
-    [String.raw`C:\data\[x]`, String.raw`C\:\\data\\\[x\]`],
-    ["<img src=x>&copy;", "&lt;img src\\=x&gt;&amp;copy\\;"],
-    ["www.example.com https://example.com", String.raw`www\.example\.com https\:\/\/example\.com`]
-  ];
-  for (const [input, expected] of cases) {
-    context.__cell = input;
-    assert.equal(evaluate("escapeMarkdownCell(__cell)"), expected, input);
-    assert.equal(evaluate("buildMarkdownTable([__cell], [[__cell]])"), `| ${expected} |\n| --- |\n| ${expected} |`);
-  }
-});
-
-test("Markdown report text converts every line ending, including a lone CR", () => {
-  const { context, evaluate } = createScriptContext();
-  const cases = [
-    ["a\r---", "a\n---"],
-    ["第一行\r\n第二行\r第三行", "第一行\n第二行\n第三行"]
-  ];
-  for (const [input, lfOnly] of cases) {
-    context.__text = input;
-    context.__lfOnly = lfOnly;
-    const escaped = evaluate("escapeMarkdownText(__text)");
-    assert.ok(!/[\r\n]/.test(escaped), JSON.stringify(input));
-    assert.equal(escaped, evaluate("escapeMarkdownText(__lfOnly)"), JSON.stringify(input));
-  }
-
-  // Our own <br> markup is added after escaping, so it stays a real line break
-  // while user-supplied angle brackets remain escaped.
-  const exact = [
-    ["a\r---", "a<br>---"],
-    ["第一行\r\n第二行\n第三行\r第四行", "第一行<br>第二行<br>第三行<br>第四行"],
-    ["<b>x</b>\n<br>", "&lt;b&gt;x&lt;/b&gt;<br>&lt;br&gt;"]
-  ];
-  for (const [input, expected] of exact) {
-    context.__text = input;
-    assert.equal(evaluate("escapeMarkdownText(__text)"), expected, JSON.stringify(input));
-  }
-});
-
-test("Markdown report exports untrusted field names and values as inert table text", () => {
-  const { context, evaluate } = createScriptContext();
-  context.__field = "[field](https://example.com)";
-  context.__value = "![pixel](https://example.com/pixel.png) **bold** `code`";
-  evaluate('commitTabularData([__field, "amount"], [{[__field]:__value, amount:"10"}], "report.csv", beginImport())');
-  const report = evaluate("buildMarkdownReport(buildReportData())");
-  assert.ok(report.includes(evaluate("escapeMarkdownCell(__field)")));
-  assert.ok(report.includes(evaluate("escapeMarkdownCell(__value)")));
-  assert.ok(!report.includes(context.__field));
-  assert.ok(!report.includes(context.__value));
-  assert.ok(report.includes("由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer)"));
-});
 
 test("public current version markers agree on v3.1.0", () => {
   const root = path.join(__dirname, "..");

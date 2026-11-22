@@ -277,7 +277,6 @@ const dom = {
   exportStandardizedChanges: document.getElementById("exportStandardizedChanges"),
   standardizedExportStatus: document.getElementById("standardizedExportStatus"),
   exportHtmlReport: document.getElementById("exportHtmlReport"),
-  exportMarkdownReport: document.getElementById("exportMarkdownReport"),
   reportExportStatus: document.getElementById("reportExportStatus")
 };
 

@@ -526,14 +526,12 @@ test("reports carry unconvertible counts and escaped samples", () => {
   put(scope.context, "__report", report);
   const html = scope.evaluate("buildHtmlReport(__report, [])");
   assert.match(html.split("数值字段描述性统计")[1], /<th>有效数量<\/th><th>认不出<\/th>/);
+  // The whole header row, in order (the Markdown report pinned it until v3.2.0).
+  assert.match(html.split("数值字段描述性统计")[1], /<th>字段<\/th><th>有效数量<\/th><th>认不出<\/th><th>平均值<\/th><th>中位数<\/th><th>最小值<\/th><th>最大值<\/th><th>标准差<\/th>/);
   assert.match(html.split("数值字段描述性统计")[1], /<td>金额<\/td><td>12<\/td><td>3<\/td>/);
   assert.match(html, /<td>3（&lt;b&gt;x&lt;\/b&gt;\|y、待定、约500）<\/td>/);
   assert.doesNotMatch(html, /<b>x<\/b>/);
 
-  const markdown = scope.evaluate("buildMarkdownReport(__report)");
-  assert.ok(markdown.includes("| 字段 | 有效数量 | 认不出 | 平均值 | 中位数 | 最小值 | 最大值 | 标准差 |"));
-  // escapeMarkdownCell backslash-escapes ASCII punctuation, so "/" and "|" both carry a backslash.
-  assert.ok(markdown.includes("3（&lt;b&gt;x&lt;\\/b&gt;\\|y、待定、约500）"));
 
   const legacy = {
     numericStats: [{ field: "金额", count: 2, mean: "1", median: "1", min: "1", max: "1", standardDeviation: "0" }],
@@ -546,7 +544,6 @@ test("reports carry unconvertible counts and escaped samples", () => {
   assert.deepEqual(normalized.fieldTypes[0].conversionFailureSamples, []);
   assert.equal(normalized.customAnalysis.metricInvalidCount, 0);
   assert.doesNotThrow(() => scope.evaluate("buildHtmlReport(__legacy, [])"));
-  assert.doesNotThrow(() => scope.evaluate("buildMarkdownReport(__legacy)"));
 });
 
 // sample-data 订单日期 spans Jan-Jun 2025, so trends are grouped by month.
@@ -827,6 +824,9 @@ function applyFilterState(scope, filters) {
   })()`);
 }
 
+// A literal text inside a RegExp (v3.2.0: the HTML assertions that took over from the Markdown ones).
+const regExpText = (text) => String(text).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
 // Every marker is in the text, each one after the one before (v2.12.0): a bare
 // indexOf(a) < indexOf(b) also passes when a is missing.
 function assertInOrder(text, markers) {
@@ -842,25 +842,22 @@ function reportOf(scope) {
   put(scope.context, "__filterReport", report);
   return {
     report,
-    html: scope.evaluate("buildHtmlReport(__filterReport, [])"),
-    markdown: scope.evaluate("buildMarkdownReport(__filterReport)")
+    html: scope.evaluate("buildHtmlReport(__filterReport, [])")
   };
 }
 
 test("reports say when no filter is applied", () => {
   const scope = createChartContext();
   commitExampleCsv(scope, "sample-data.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.filters, []);
-  for (const text of [html, markdown]) {
+  for (const text of [html]) {
     assert.ok(text.includes("筛选条件"));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
     assert.ok(text.includes(QUALITY_SCOPE_SENTENCE));
   }
   assert.ok(html.indexOf("<h2>数据规模</h2>") < html.indexOf("<h2>筛选条件</h2>"));
   assert.ok(html.indexOf("<h2>筛选条件</h2>") < html.indexOf("<h2>字段类型结果</h2>"));
-  assert.ok(markdown.indexOf("## 数据规模") < markdown.indexOf("## 筛选条件"));
-  assert.ok(markdown.indexOf("## 筛选条件") < markdown.indexOf("## 字段类型结果"));
 });
 
 test("reports list applied category, numeric and date filters in order", () => {
@@ -871,7 +868,7 @@ test("reports list applied category, numeric and date filters in order", () => {
     numeric: { field: "销售额", min: 1000, max: 5000 },
     date: { field: "订单日期", start: "2025-01-01", end: "2025-03-31" }
   });
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.filters, [
     { type: "category", field: "地区", keptCount: 3, totalCount: 6, keptValues: ["华北", "华东", "华南"], description: "地区：保留 3 / 共 6 个类别（华北、华东、华南）" },
     { type: "numeric", field: "销售额", min: 1000, max: 5000, description: "销售额：1,000 至 5,000" },
@@ -888,12 +885,6 @@ test("reports list applied category, numeric and date filters in order", () => {
   assert.ok(html.includes("<td>订单日期</td><td>订单日期：2025-01-01 至 2025-03-31</td>"));
   assert.ok(!html.includes(NO_FILTER_SENTENCE));
   assert.ok(html.includes(QUALITY_SCOPE_SENTENCE));
-  assert.ok(markdown.includes("| 字段 | 条件 |"));
-  assert.ok(markdown.includes("| 地区 | 地区：保留 3 \\/ 共 6 个类别（华北、华东、华南） |"));
-  // escapeMarkdownCell backslash-escapes ASCII punctuation, including "," "/" and "-".
-  assert.ok(markdown.includes("| 销售额 | 销售额：1\\,000 至 5\\,000 |"));
-  assert.ok(markdown.includes("| 订单日期 | 订单日期：2025\\-01\\-01 至 2025\\-03\\-31 |"));
-  assert.ok(markdown.includes(QUALITY_SCOPE_SENTENCE));
 });
 
 test("report category filters show at most ten kept values and empty values", () => {
@@ -940,25 +931,21 @@ test("report filters ignore unapplied drafts and clear with the filters", () => 
   assert.deepEqual(reportOf(scope).report.filters, []);
 });
 
-test("report filter descriptions are escaped in HTML and Markdown", () => {
+test("report filter descriptions are escaped in HTML", () => {
   const scope = createScriptContext();
   commitRows(scope, ["备注"], ["<b>x</b>|y", "第一行\n第二行", "其他"].map((note) => ({ 备注: note })), "escape.csv");
   applyFilterState(scope, { category: { field: "备注", values: ["<b>x</b>|y", "第一行\n第二行"] } });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   // The same values also appear as field samples, so look only at the filter section.
   const htmlSection = html.split("<h2>筛选条件</h2>")[1]?.split("<h2>字段类型结果</h2>")[0] ?? "";
-  const markdownSection = markdown.split("## 筛选条件")[1]?.split("## 字段类型结果")[0] ?? "";
   assert.ok(htmlSection.includes("<td>备注</td><td>备注：保留 2 / 共 3 个类别（&lt;b&gt;x&lt;/b&gt;|y、第一行\n第二行）</td>"));
   assert.ok(!html.includes("<b>x</b>"));
-  assert.ok(markdownSection.includes("| 备注 | 备注：保留 2 \\/ 共 3 个类别（&lt;b&gt;x&lt;\\/b&gt;\\|y、第一行<br>第二行） |"));
-  assert.ok(!markdown.includes("<b>x</b>"));
 });
 
 test("legacy report snapshots without filters still render", () => {
   const scope = createScriptContext();
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).filters)")), []);
   assert.ok(scope.evaluate("buildHtmlReport({}, [])").includes(NO_FILTER_SENTENCE));
-  assert.ok(scope.evaluate("buildMarkdownReport({})").includes(NO_FILTER_SENTENCE));
 });
 
 test("field inference recognizes ID, numeric, date and category columns", () => {
@@ -1511,10 +1498,9 @@ test("the header note follows the parse-warning status too", () => {
 test("reports carry the header note and a later first-row import clears it", async () => {
   const scope = await importStage3Fixture("门店报表.xlsx");
   put(scope.context, "__headerNote", STORE_HEADER_NOTE);
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.headerDetection, JSON.parse(scope.evaluate("JSON.stringify(state.headerDetection)")));
   assert.ok(html.includes(`<div><dt>表头位置</dt><dd>${scope.evaluate("escapeHtml(__headerNote)")}</dd></div>`));
-  assert.ok(markdown.includes(`- 表头位置：${scope.evaluate("escapeMarkdownText(__headerNote)")}`));
 
   const orders = await importStage3Fixture("订单表.csv");
   assert.equal(orders.evaluate("state.headerDetection"), null);
@@ -1522,7 +1508,6 @@ test("reports carry the header note and a later first-row import clears it", asy
   const after = reportOf(orders);
   assert.equal(after.report.headerDetection, null);
   assert.doesNotMatch(after.html, /表头位置/);
-  assert.doesNotMatch(after.markdown, /表头位置/);
 
   // The same scope importing again also replaces the previous detection.
   const sameScope = await importStage3Fixture("门店报表.xlsx");
@@ -1547,7 +1532,6 @@ test("legacy report snapshots without header detection still render", () => {
   const scope = createScriptContext();
   assert.equal(scope.evaluate("normalizeReportSnapshot({}).headerDetection"), null);
   assert.doesNotMatch(scope.evaluate("buildHtmlReport({}, [])"), /表头位置/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport({})"), /表头位置/);
 });
 
 test("header errors add the title hint only when skipping was tried", async () => {
@@ -2106,19 +2090,15 @@ test("ID duplicate details show without numeric fields, escape data and note lon
 
 test("reports add an ID duplicate section after the outliers and count it in the summary", async () => {
   const roster = await importStage3Fixture("花名册.xlsx");
-  const { report, html, markdown } = reportOf(roster);
+  const { report, html } = reportOf(roster);
   assert.deepEqual(report.quality.idDuplicates, idDuplicates(roster.evaluate));
   assert.ok(html.includes("；读取时有疑问：<strong>0</strong> 处；编号重复：<strong>3</strong> 个字段；日期写法混用：<strong>1</strong> 个字段。</p>"));
   const htmlSection = html.slice(html.indexOf("<h3>编号重复</h3>"), html.indexOf("数值字段描述性统计"));
   assertInOrder(html, ["<h3>偏大或偏小的值</h3>", "<h3>编号重复</h3>"]);
   assert.match(htmlSection, /<th>字段<\/th><th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
   assert.ok(htmlSection.includes("<td>工号</td><td>E1012</td><td>3</td><td>13、14、25</td><td>其中 2 行内容完全相同</td>"));
+  assertInOrder(html, ["<h3>编号重复</h3>", "<h2>数值字段描述性统计</h2>"]);
 
-  assert.ok(markdown.includes("- 读取时有疑问：0 处\n- 编号重复：3 个字段\n"));
-  assertInOrder(markdown, ["### 偏大或偏小的值", "### 编号重复"]);
-  assertInOrder(markdown, ["### 编号重复", "## 数值字段描述性统计"]);
-  assert.ok(markdown.includes("| 字段 | 重复值 | 出现次数 | 文件行号 | 说明 |"));
-  assert.ok(markdown.includes("| 工号 | E1012 | 3 | 13、14、25 | 其中 2 行内容完全相同 |"));
 });
 
 test("report ID duplicates show mostly repeated fields, overflow, clean fields and no ID fields", async () => {
@@ -2127,7 +2107,6 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   put(behavior.context, "__hintItem", idDuplicates(behavior.evaluate)[1]);
   const hint = behavior.evaluate("formatMostlyRepeatedIdHint(__hintItem)");
   assert.ok(behaviorReport.html.includes(`<td>用户ID</td><td>—</td><td>—</td><td>—</td><td>${behavior.evaluate("escapeHtml(formatMostlyRepeatedIdHint(__hintItem))")}</td>`));
-  assert.ok(behaviorReport.markdown.includes(`| 用户ID | — | — | — | ${behavior.evaluate(`escapeMarkdownCell(${JSON.stringify(hint)})`)} |`));
   assert.ok(behaviorReport.html.includes("<td>事件ID</td><td>EV-00026</td><td>2</td><td>27、120</td><td>其中 2 行内容完全相同</td>"));
   assert.ok(behaviorReport.html.includes("；编号重复：<strong>1</strong> 个字段。"));
 
@@ -2138,13 +2117,11 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   ];
   const long = reportOf(await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`));
   assert.ok(long.html.includes("<p>「学号」共 12 个重复值，只列出前 10 个</p>"));
-  assert.ok(long.markdown.includes("「学号」共 12 个重复值，只列出前 10 个"));
 
   const grades = reportOf(await importStage3Fixture("成绩表.csv"));
   const gradeSection = grades.html.slice(grades.html.indexOf("<h3>编号重复</h3>"), grades.html.indexOf("数值字段描述性统计"));
   assert.ok(gradeSection.includes("<p>类型为 ID 的字段没有编号重复（已检查：学号、姓名）</p>"));
   assert.doesNotMatch(gradeSection, /<table>/);
-  assert.ok(grades.markdown.includes("### 编号重复\n\n类型为 ID 的字段没有编号重复（已检查：学号、姓名）\n"));
   assert.ok(grades.html.includes("；编号重复：<strong>0</strong> 个字段。"));
 
   const none = createScriptContext();
@@ -2152,18 +2129,16 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   const noneReport = reportOf(none);
   assert.deepEqual(noneReport.report.quality.idDuplicates, []);
   assert.ok(noneReport.html.includes("<p>未识别到 ID 字段。</p>"));
-  assert.ok(noneReport.markdown.includes("### 编号重复\n\n未识别到 ID 字段。\n"));
+  assert.match(noneReport.html, /<h3>编号重复<\/h3>\s*<p>未识别到 ID 字段。<\/p>/);
 });
 
-test("report ID duplicate values are escaped for HTML and Markdown", () => {
+test("report ID duplicate values are escaped for HTML", () => {
   const scope = createScriptContext();
   const value = "<b>x</b>|y\nz";
   commitRows(scope, ["编号", "姓名"], [{ 编号: value, 姓名: "甲" }, { 编号: value, 姓名: "乙" }], "escape.csv");
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<td>编号</td><td>&lt;b&gt;x&lt;/b&gt;|y\nz</td><td>2</td><td>—</td><td></td>"));
   assert.doesNotMatch(html, /<b>x<\/b>/);
-  assert.ok(markdown.includes(`| 编号 | ${scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`)} | 2 | — |  |`));
-  assert.ok(markdown.includes("&lt;b&gt;x&lt;\\/b&gt;\\|y<br>z"));
 });
 
 test("legacy report snapshots without ID duplicates leave the section out", () => {
@@ -2172,13 +2147,9 @@ test("legacy report snapshots without ID duplicates leave the section out", () =
   const legacy = { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0, outliers: [{ field: "金额", outlierCount: 1, lowerBound: "1", upperBound: "9" }] } };
   put(scope.context, "__legacyQuality", legacy);
   const html = scope.evaluate("buildHtmlReport(__legacyQuality, [])");
-  const markdown = scope.evaluate("buildMarkdownReport(__legacyQuality)");
   assert.doesNotMatch(html, /<h3>编号重复<\/h3>|；编号重复：/);
-  assert.doesNotMatch(markdown, /### 编号重复|- 编号重复：/);
   assert.ok(html.includes("；读取时有疑问：<strong>0</strong> 处。</p>"));
   assert.ok(html.includes("<td>金额</td><td>1</td><td>1</td><td>9</td>"));
-  assert.ok(markdown.includes("- 读取时有疑问：0 处\n\n### 各字段空值情况"));
-  assert.ok(markdown.includes("| 金额 | 1 | 1 | 9 |"));
 });
 
 // Placeholder missing values (stage 3 item 3): candidates from the original rows.
@@ -2702,11 +2673,7 @@ test("reports list confirmed and pending placeholders after the missing values a
   assertInOrder(before.html, ["<h3>各字段空值情况</h3>", "<h3>像是空值的写法</h3>"]);
   assert.match(htmlSection, /<th>字段<\/th><th>写法<\/th><th>档位<\/th><th>出现次数<\/th><th>文件行号<\/th><th>按空值处理后的影响<\/th>/);
   assert.ok(htmlSection.includes("<td>金额</td><td>「N/A」</td><td>常见</td><td>1</td><td>15</td><td>按空值处理后，空值 0 → 1，类型仍为数值</td>"));
-  assert.ok(before.markdown.includes("- 编号重复：1 个字段\n- 像是空值的写法：4 个字段\n"));
-  assertInOrder(before.markdown, ["### 各字段空值情况", "### 像是空值的写法"]);
-  assertInOrder(before.markdown, ["### 像是空值的写法", "### 偏大或偏小的值"]);
-  const cell = (value) => orders.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
-  assert.ok(before.markdown.includes(`| 金额 | ${cell("「N/A」")} | 常见 | 1 | 15 | 按空值处理后，空值 0 → 1，类型仍为数值 |`));
+  assertInOrder(before.html, ["<h3>像是空值的写法</h3>", "<h3>偏大或偏小的值</h3>"]);
 
   orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "N/A")');
   orders.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
@@ -2718,43 +2685,30 @@ test("reports list confirmed and pending placeholders after the missing values a
   assert.ok(after.html.includes("；像是空值的写法：<strong>2</strong> 个字段。</p>"));
   assert.ok(after.html.includes("<td>金额</td><td>「N/A」</td><td>1</td><td>已按空值处理</td>"));
   assert.ok(after.html.includes("<td>备注</td><td>「N/A」</td><td>1</td><td>已按空值处理（字段已忽略）</td>"));
-  assert.ok(after.markdown.includes(`| 备注 | ${cell("「N/A」")} | 1 | 已按空值处理（字段已忽略） |`));
 });
 
 test("report placeholder summaries appear only with candidates, and legacy snapshots leave the section out", async () => {
   for (const scope of [await importStage3Fixture("花名册.xlsx"), await importStage3Fixture("成绩表.csv"), await importCsvFile(behaviorCsv(), "sample-user-behavior.csv")]) {
-    const { report, html, markdown } = reportOf(scope);
+    const { report, html } = reportOf(scope);
     assert.deepEqual(report.quality.placeholders, { confirmed: [], pending: [] });
     assert.doesNotMatch(html, /像是空值的写法：/);
-    assert.doesNotMatch(markdown, /像是空值的写法：/);
     assert.ok(html.includes("<p>没有发现像是空值的写法。</p>"));
-    assert.ok(markdown.includes("### 像是空值的写法\n\n没有发现像是空值的写法。\n"));
   }
   const scope = createScriptContext();
   assert.equal(scope.evaluate("normalizeReportSnapshot({}).quality.placeholders"), null);
   assert.equal(scope.evaluate("normalizeReportSnapshot({ quality: { placeholders: { confirmed: [] } } }).quality.placeholders"), null);
   put(scope.context, "__legacyPlaceholders", { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0 } });
   assert.doesNotMatch(scope.evaluate("buildHtmlReport(__legacyPlaceholders, [])"), /<h3>像是空值的写法<\/h3>|；像是空值的写法：/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__legacyPlaceholders)"), /### 像是空值的写法|- 像是空值的写法：/);
 });
 
-test("report placeholder sections escape field names and keep Markdown lines from starting with user text", () => {
+test("report placeholder sections escape field names", () => {
   const scope = commitColumns({ "<b>备注</b>|x": ["N/A", "好", "-", "好"], "-前缀": ["—", "甲", "乙", "丙"] });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   const section = html.slice(html.indexOf("<h3>像是空值的写法</h3>"), html.indexOf("<h3>偏大或偏小的值</h3>"));
   assert.ok(section.includes("<td>&lt;b&gt;备注&lt;/b&gt;|x</td><td>「N/A」</td>"));
   assert.ok(section.includes("<td>-前缀</td><td>「—」</td>"));
   assert.doesNotMatch(html, /<b>备注<\/b>/);
   assert.ok(section.includes(`<p>说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。</p>`));
-  const markdownSection = markdown.slice(markdown.indexOf("### 像是空值的写法"), markdown.indexOf("### 偏大或偏小的值"));
-  const cell = (value) => scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
-  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「N/A」")} |`));
-  assert.ok(markdownSection.includes(`| ${cell("-前缀")} | ${cell("「—」")} |`));
-  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「-」")} | 可能是有效值 |`));
-  for (const line of markdownSection.split("\n")) {
-    assert.ok(!line.startsWith("-") && !line.startsWith("<"), line);
-  }
-  assert.ok(markdownSection.includes(scope.evaluate(`escapeMarkdownText(${JSON.stringify(`说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`)})`)));
 });
 
 // v2.5.0 number strategies: each field reads units, 万/亿 and full-width digits
@@ -3115,7 +3069,7 @@ test("the quality page renders the number subsections even without numeric field
 test("reports carry number units, conversions and numeric-looking fields like the quality page", async () => {
   const orders = await importStage3Fixture("订单表.csv");
   orders.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "avg"; dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "大区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
-  const { report, html, markdown } = reportOf(orders);
+  const { report, html } = reportOf(orders);
   assert.deepEqual(report.fieldTypes.map((field) => field.numberUnit), ["", "", "", "", "", "", "元", ""]);
   assert.deepEqual(report.quality.numberConversions, [
     { field: "金额", unit: "元", unitCount: 2, unitSamples: ["2200元", "3500元"], magnitudeCount: 0, fullwidthCount: 0, conflictUnits: [] }
@@ -3129,11 +3083,6 @@ test("reports carry number units, conversions and numeric-looking fields like th
   assert.ok(html.includes("<td>金额（元）</td><td>29</td><td>1</td>"));
   assert.ok(html.includes("<td>金额（元）</td><td>1</td><td>-4,275</td><td>9,925</td>"));
   assert.ok(html.includes("<strong>指标字段：</strong>金额（元）"));
-  assert.doesNotMatch(markdown, /- 按单位读取：/);
-  assert.doesNotMatch(markdown, /像是数字的文本列/);
-  assert.ok(markdown.includes(`### 按单位读取的数字\n\n- ${orders.evaluate(`escapeMarkdownText(${JSON.stringify(ORDER_AMOUNT_CONVERSION_TEXT)})`)}\n\n`));
-  assert.ok(markdown.includes("| 金额（元） | 29 | 1 |"));
-  assert.ok(markdown.includes("- 指标字段：金额（元）"));
 
   const scope = commitColumns(UNIT_SECTION_COLUMNS);
   const constructed = reportOf(scope);
@@ -3142,10 +3091,6 @@ test("reports carry number units, conversions and numeric-looking fields like th
   assert.doesNotMatch(constructed.html, /按单位读取：<strong>/);
   assert.ok(constructed.html.includes(`<h3>按单位读取的数字</h3>\n    <ul class="summary-list"><li>${WEIGHT_CONFLICT_TEXT}</li><li>${SALES_CONVERSION_TEXT}</li></ul>`));
   assert.ok(constructed.html.includes(`<h3>像是数字的文本列</h3>\n    <ul class="summary-list"><li>${FLOOR_HINT_TEXT}</li></ul>`));
-  assert.ok(constructed.markdown.includes("- 编号重复：0 个字段\n- 像是数字的文本列：1 个字段\n"));
-  assert.doesNotMatch(constructed.markdown, /- 按单位读取：/);
-  assert.ok(constructed.markdown.includes("### 按单位读取的数字\n\n- "));
-  assert.ok(constructed.markdown.includes(`### 像是数字的文本列\n\n- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(FLOOR_HINT_TEXT)})`)}\n\n`));
 });
 
 test("legacy report snapshots without number units or hints leave both sections and counts out", () => {
@@ -3161,31 +3106,21 @@ test("legacy report snapshots without number units or hints leave both sections 
   };
   put(scope.context, "__legacyNumbers", legacy);
   const html = scope.evaluate("buildHtmlReport(__legacyNumbers, [])");
-  const markdown = scope.evaluate("buildMarkdownReport(__legacyNumbers)");
   assert.doesNotMatch(html, /按单位读取|像是数字的文本列/);
-  assert.doesNotMatch(markdown, /按单位读取|像是数字的文本列/);
   assert.ok(html.includes("<td>金额</td><td>3</td>"));
-  assert.ok(markdown.includes("| 金额 | 3 |"));
   // Present but empty lists: no section and no count either.
   put(scope.context, "__emptyNumbers", { ...legacy, quality: { ...legacy.quality, numberConversions: [], numericLooking: [] } });
   assert.doesNotMatch(scope.evaluate("buildHtmlReport(__emptyNumbers, [])"), /按单位读取|像是数字的文本列/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__emptyNumbers)"), /按单位读取|像是数字的文本列/);
 });
 
-test("number sections and unit labels escape field names in HTML and Markdown", () => {
+test("number sections and unit labels escape field names in HTML", () => {
   const field = "<b>重\n量</b>|x";
   const scope = commitColumns({ [field]: ["5kg", "6kg", "7kg", "8kg", "9kg"], "-楼层": ["1", "2", "3", "B1", "B2"] });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<td>&lt;b&gt;重\n量&lt;/b&gt;|x（kg）</td><td>5</td>"));
   assert.ok(html.includes(`<li>${scope.evaluate(`escapeHtml(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}</li>`));
   assert.ok(scope.elements.get("numberConversionDetails").innerHTML.includes("「&lt;b&gt;重\n量&lt;/b&gt;|x」"));
   assert.ok(scope.elements.get("numericLookingDetails").innerHTML.includes("「-楼层」"));
-  const conversionLine = `- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}`;
-  assert.ok(markdown.includes(conversionLine));
-  assert.ok(conversionLine.includes("<br>") && !conversionLine.includes("<b>"));
-  for (const line of markdown.split("\n")) {
-    assert.ok(!line.startsWith("<") && !line.startsWith("-楼层") && !line.startsWith("量"), line);
-  }
 });
 
 // v2.6.0: the checks behind the quality counts, shared with the problem-row lists.
@@ -4392,11 +4327,12 @@ test("v2.7.0 conclusions: they do not depend on Chart.js being loaded", () => {
 test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 when there are none, and old snapshots as they were", () => {
   const scope = createScriptContext();
   commitRows(scope, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.insights, [conclusions(scope).category, conclusions(scope).trend]);
   assert.ok(html.includes("<h2>自动分析结论</h2>"));
   assert.ok(html.includes("<li>" + conclusions(scope).category + "</li>"));
-  assert.ok(markdown.includes("1. " + conclusions(scope).category + "\n2. "));
+  // Both sentences, the category one first and the trend one right after it.
+  assert.ok(html.includes('<ol class="insights"><li>' + conclusions(scope).category + "</li><li>" + conclusions(scope).trend + "</li></ol>"));
   // one sentence only
   scope.evaluate('dom.dateChartField.value = ""; renderTrendInsight()');
   assert.deepEqual(reportOf(scope).report.insights, [conclusions(scope).category]);
@@ -4405,7 +4341,6 @@ test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 whe
   const none = reportOf(scope);
   assert.deepEqual(none.report.insights, []);
   assert.ok(none.html.includes("暂无自动分析结论。"));
-  assert.ok(none.markdown.includes("暂无自动分析结论。"));
   // an old snapshot with the six v2.6.1 sentences is printed as it is; one without the field prints 暂无
   const old = ["数据集包含 30 行，当前分析使用全部记录。", "当前有 4 个字段参与分析。", "缺失值 0 个。", "数值字段「金额」的平均值为 1。", "分类字段「部门」中占比最高的类别是「A」。", "基于日期字段「签约日期」观察。"];
   put(scope.context, "__oldInsights", old);
@@ -5095,39 +5030,32 @@ test("only a successful status without a note is hidden once results show", () =
 
 test("v2.8.0 report: sections and summary counts only when there is something, old snapshots without them", async () => {
   const store = await importStage3Fixture("门店报表.xlsx");
-  const { report, html, markdown } = reportOf(store);
+  const { report, html } = reportOf(store);
   assert.equal(report.quality.suspectedTotals.length, 1);
   assert.ok(html.includes("；疑似合计 / 小计行：<strong>1</strong> 行。"));
   assert.ok(html.includes("<h3>疑似合计 / 小计行</h3>"));
   assert.ok(html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
   assertInOrder(html, ["<h3>疑似合计 / 小计行</h3>", "<h3>各字段空值情况</h3>"]);
-  assert.ok(markdown.includes("- 疑似合计 / 小计行：1 行"));
-  assert.ok(markdown.includes("### 疑似合计 / 小计行"));
-  assert.ok(markdown.includes("- 第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。"));
-  assertInOrder(markdown, ["### 疑似合计 / 小计行", "### 各字段空值情况"]);
-  assert.doesNotMatch(html + markdown, /公式错误/);
+  assert.doesNotMatch(html, /公式错误/);
 
   const errors = await importStage3Fixture("公式错误.xlsx");
   const errorReport = reportOf(errors);
   assert.ok(errorReport.html.includes("；公式错误：<strong>7</strong> 个单元格。"));
   assert.ok(errorReport.html.includes("<h3>公式错误单元格</h3>"));
   assert.ok(errorReport.html.includes("<li>「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。</li>"));
-  assert.ok(errorReport.markdown.includes("- 公式错误：7 个单元格"));
-  assert.ok(errorReport.markdown.includes("### 公式错误单元格"));
-  assert.ok(errorReport.markdown.includes("- 「利润率」：3 个（\\#DIV/0! 2 个、\\#REF! 1 个），第 3、5、9 行。"));
-  assert.doesNotMatch(errorReport.html + errorReport.markdown, /疑似合计/);
+  assert.doesNotMatch(errorReport.html, /疑似合计/);
   errors.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
   assert.match(reportOf(errors).html, /「利润率」（字段已忽略）：3 个/);
 
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
   assert.deepEqual([clean.report.quality.suspectedTotals, clean.report.quality.formulaErrors], [[], []]);
-  assert.doesNotMatch(clean.html + clean.markdown, /疑似合计|公式错误/);
+  assert.doesNotMatch(clean.html, /疑似合计|公式错误/);
 
   delete report.quality.suspectedTotals;
   delete report.quality.formulaErrors;
   put(store.context, "__old", report);
   assert.equal(store.evaluate("JSON.stringify([normalizeReportSnapshot(__old).quality.suspectedTotals, normalizeReportSnapshot(__old).quality.formulaErrors])"), "[null,null]");
-  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])") + store.evaluate("buildMarkdownReport(__old)"), /疑似合计|公式错误/);
+  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])"), /疑似合计|公式错误/);
 });
 
 test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
@@ -5139,21 +5067,18 @@ test("v2.8.0 report: the note matches the page, at most 20 totals, the counts an
   const atLimit = reportOf(exact);
   assert.equal(atLimit.report.quality.suspectedTotals.length, 20);
   assert.ok(atLimit.html.includes(`<p>${note}</p>`));
-  assert.ok(atLimit.markdown.includes(note));
-  assert.doesNotMatch(atLimit.html + atLimit.markdown, /只列出/);
+  assert.doesNotMatch(atLimit.html, /只列出/);
 
   const over = reportOf(await importCsvFile(subtotalsCsv(21)));
   assert.equal(over.report.quality.suspectedTotals.length, 21);
   assert.ok(over.html.includes("；疑似合计 / 小计行：<strong>21</strong> 行"));
-  assert.ok(over.markdown.includes("- 疑似合计 / 小计行：21 行"));
-  for (const output of [over.html, over.markdown]) {
+  for (const output of [over.html]) {
     assert.ok(output.includes("第 41 行「A19小计」"));
     assert.ok(!output.includes("第 43 行「A20小计」"));
     assert.ok(output.includes("共 21 行，只列出前 20 行。"));
     assert.doesNotMatch(output, /全部行请点/);
   }
   assert.equal([...over.html.matchAll(/<li>第 \d+ 行「A\d+小计」/g)].length, 20);
-  assert.equal([...over.markdown.matchAll(/^- 第 \d+ 行「A\d+小计」/gm)].length, 20);
 });
 
 test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothing with state", async () => {
@@ -5175,15 +5100,11 @@ test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothin
 
 test("v2.8.0 report: labels and fields are escaped for each output", async () => {
   const scope = await importCsvFile('名,<i>额|x</i>\r\nA,10\r\n"<b>y|\n小计",10\r\n');
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<li>第 3 行「&lt;b&gt;y|\n小计」：&lt;i&gt;额|x&lt;/i&gt;等于第 2 行（只有 1 行）。</li>"));
   assert.ok(!html.includes("<b>y"));
-  const line = markdown.split("\n").find((text) => text.startsWith("- 第 3 行"));
-  assert.ok(line.includes("「&lt;b&gt;y\\|<br>小计」"), line);
-  assert.ok(!markdown.split("\n").some((text) => text.startsWith("小计")));
   const errors = reportOf(await importWorkbookFile(buildErrorWorkbook([["名", "<i>额"], ["A", 1], ["B", { e: 7 }], ["C", 2]])));
   assert.ok(errors.html.includes("<li>「&lt;i&gt;额」：1 个（#DIV/0! 1 个），第 3 行。</li>"));
-  assert.ok(errors.markdown.includes("- 「&lt;i&gt;额」：1 个（\\#DIV/0! 1 个），第 3 行。"));
 });
 
 test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
@@ -5192,13 +5113,12 @@ test("v2.8.0 report: the formula error note matches the page and comes before th
   const note = errors.evaluate("FORMULA_ERROR_NOTE");
   assert.equal(note, "这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。");
   assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
-  const { html, markdown } = reportOf(errors);
+  const { html } = reportOf(errors);
   assert.ok(html.includes(`<h3>公式错误单元格</h3>\n    <p>${note}</p>\n    <ul class="summary-list"><li>「数量」`));
-  assert.ok(markdown.includes(`### 公式错误单元格\n\n${note}\n\n- 「数量」`));
   const totalsOnly = reportOf(await importStage3Fixture("门店报表.xlsx"));
-  assert.ok(!(totalsOnly.html + totalsOnly.markdown).includes(note));
+  assert.ok(!totalsOnly.html.includes(note));
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
-  assert.ok(!(clean.html + clean.markdown).includes(note));
+  assert.ok(!clean.html.includes(note));
 });
 
 // v2.8.1: SheetJS applies a date number format to text and boolean cells under
@@ -6052,49 +5972,43 @@ test("v2.9.0 reports: three sections with content, two summary counts, constant 
   const roster = reportOf(await importStage3Fixture("花名册.xlsx"));
   assert.ok(roster.html.includes("<h3>日期写法混用</h3>\n    <p>这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>"));
   assert.ok(roster.html.includes("<li>「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。</li>"));
-  assert.ok(roster.markdown.includes("- 编号重复：3 个字段\n- 日期写法混用：1 个字段\n"));
-  assert.ok(!(roster.html + roster.markdown).includes("整列只有一个值"));
+  assert.ok(!roster.html.includes("整列只有一个值"));
 
-  const errors = reportOf(await importStage3Fixture("公式错误.xlsx"));
+  const errorsScope = await importStage3Fixture("公式错误.xlsx");
+  const errors = reportOf(errorsScope);
   assert.ok(errors.html.includes("<li>「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。</li>"));
-  assert.ok(errors.markdown.includes("### 整列只有一个值\n\n这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。\n\n- 「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。\n"));
-  assert.ok(!errors.markdown.includes("- 整列只有一个值"));
+  // The note right under the heading, then the list.
+  assert.match(errors.html, new RegExp(`<h3>整列只有一个值<\\/h3>\\s*<p>${regExpText(errorsScope.evaluate("CONSTANT_FIELD_NOTE"))}<\\/p>\\s*<ul[^>]*>\\s*<li>「备注」`));
   assert.ok(!errors.html.includes("整列只有一个值：<strong>"));
 
   const writing = reportOf(await importStage3Fixture("写法不一致.csv"));
   assert.ok(writing.html.includes("；日期写法混用：<strong>1</strong> 个字段；同一个值，写法不一样：<strong>3</strong> 个字段。</p>"));
-  assert.ok(writing.markdown.includes("- 日期写法混用：1 个字段\n- 同一个值，写法不一样：3 个字段\n"));
   // The section shows whitespace and invisible characters by name; Top 10 and the sample values
   // still print cells as they are.
   const section = writing.html.slice(writing.html.indexOf("<h3>同一个值，写法不一样</h3>"), writing.html.indexOf("<h3>像是空值的写法</h3>"));
   assert.ok(section.includes("「华东[零宽字符]」1 个"));
   assert.ok(section.includes("（如「SKU-002␣」）"));
   assert.ok(!section.includes("\u200B"));
-  assert.ok(writing.markdown.includes("「华东\\[零宽字符\\]」1 个"));
   // Order: after the numeric-looking section's place, before the placeholders, in both outputs.
   const order = (text, titles) => titles.map((title) => text.indexOf(title));
   const htmlOrder = order(writing.html, ["<h3>各字段空值情况</h3>", "<h3>日期写法混用</h3>", "<h3>整列只有一个值</h3>", "<h3>同一个值，写法不一样</h3>", "<h3>像是空值的写法</h3>"]);
   assert.ok(htmlOrder.every((position, index) => position >= 0 && (index === 0 || position > htmlOrder[index - 1])), htmlOrder.join());
-  const markdownOrder = order(writing.markdown, ["### 各字段空值情况", "### 日期写法混用", "### 整列只有一个值", "### 同一个值，写法不一样", "### 像是空值的写法"]);
-  assert.ok(markdownOrder.every((position, index) => position >= 0 && (index === 0 || position > markdownOrder[index - 1])), markdownOrder.join());
 
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
   assert.deepEqual([clean.report.quality.dateStyles, clean.report.quality.constantFields, clean.report.quality.lookAlikes], [[], [], []]);
-  for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!(clean.html + clean.markdown).includes(title), title);
+  for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!clean.html.includes(title), title);
 });
 
 test("v2.9.0 reports: cells of nothing but invisible characters, escaped field names and values", async () => {
   const field = "<b>备注|*</b>";
   const scope = await importCsvFile(`"${field}",序\r\n\u200B,1\r\n<i>x</i>,2\r\n<I>X</I>,3\r\n`, "r.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.equal(report.quality.lookAlikes[0].invisibleOnlyCount, 1);
   assert.ok(html.includes("只有不可见字符 1 格"));
-  assert.ok(markdown.includes("只有不可见字符 1 格"));
   assert.ok(html.includes("「&lt;b&gt;备注|*&lt;/b&gt;」共 3 行"));
   assert.ok(html.includes("「&lt;i&gt;x&lt;/i&gt;」1 个"));
   assert.ok(html.includes("<h3>同一个值，写法不一样</h3>"));
   assert.doesNotMatch(html.slice(html.indexOf("<h3>同一个值，写法不一样</h3>")), /<i>x|<b>备注/);
-  assert.ok(markdown.includes("「&lt;b&gt;备注\\|\\*&lt;/b&gt;」共 3 行"));
 });
 
 test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot shares nothing with state", async () => {
@@ -6106,7 +6020,7 @@ test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot sha
   put(store.context, "__old", old);
   // null itself: JSON.stringify would write undefined in an array as null too.
   assert.equal(store.evaluate("(() => { const quality = normalizeReportSnapshot(__old).quality; return quality.dateStyles === null && quality.constantFields === null && quality.lookAlikes === null; })()"), true);
-  const oldOutput = store.evaluate("buildMarkdownReport(__old)") + store.evaluate("buildHtmlReport(__old, [])");
+  const oldOutput = store.evaluate("buildHtmlReport(__old, [])");
   for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!oldOutput.includes(title), title);
   store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
   const shared = JSON.parse(store.evaluate(`JSON.stringify([
@@ -6968,7 +6882,6 @@ function findOldWordsInImport(scope, name, hits) {
   findOldWordsInElements(scope, `${name} import`, hits);
   const first = reportOf(scope);
   findOldInterfaceWords(`${name} html report`, first.html, hits);
-  findOldInterfaceWords(`${name} markdown report`, first.markdown, hits);
   const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
   categories.forEach((category, index) => {
     put(scope.context, "__oldWordsCategory", category);
@@ -6990,7 +6903,6 @@ function findOldWordsInImport(scope, name, hits) {
   findOldInterfaceWords(`${name} change list`, scope.evaluate("buildStandardizedChangesCsvContent(state.standardizedExport, state.rows, state.fields, getSourceRowNumber)"), hits);
   const confirmed = reportOf(scope);
   findOldInterfaceWords(`${name} confirmed html report`, confirmed.html, hits);
-  findOldInterfaceWords(`${name} confirmed markdown report`, confirmed.markdown, hits);
 
   const numeric = scope.evaluate('getProfilesByType("numeric").map((profile) => profile.field)')[0];
   const dateField = scope.evaluate('getProfilesByType("date").map((profile) => profile.field)')[0];
@@ -7005,7 +6917,7 @@ function findOldWordsInImport(scope, name, hits) {
   findOldInterfaceWords(`${name} trend title`, title, hits);
   if (title && !title.endsWith("（求和）")) hits.push(`${name} trend title: ${title}`);
   const trend = reportOf(scope);
-  findOldInterfaceWords(`${name} trend report`, trend.html + trend.markdown, hits);
+  findOldInterfaceWords(`${name} trend report`, trend.html, hits);
   return title ? 1 : 0;
 }
 
@@ -7070,9 +6982,8 @@ test("v2.12.0: charts, insights and the report say 认得出 when a filtered ran
     const texts = () => JSON.parse(scope.evaluate("JSON.stringify(__emptyChartTexts)"));
     assert.ok(texts().some(([id, text]) => id === "dateTrendChart" && text === "该字段没有认得出的日期"), JSON.stringify(texts()));
     assert.equal(scope.evaluate("state.chartInsights.trend"), "日期字段「日期」里没有认得出的日期，因此未生成趋势结论。");
-    const { html, markdown } = reportOf(scope);
+    const { html } = reportOf(scope);
     assert.ok(html.includes("日期字段「日期」里没有认得出的日期。"));
-    assert.ok(markdown.includes("日期字段「日期」里没有认得出的日期。"));
 
     // fieldHasNumericData() drops 金额 from #numericChartField once the filtered range has no
     // numbers (in a browser too), so the page shows 没有可用的数值字段; this sentence is the
@@ -7224,7 +7135,7 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
 // blanked, is the v2.12.0 text with only the name changed: neither the v3.0.0 shell nor the
 // v3.0.1 rename touches any other word. v3.0.1 renamed the product and the report title; the
 // new hash was taken by replacing just those words in the old text and comparing byte for byte.
-const GUARD_REPORT_SHA256 = "593ed289f311170989fb8976d1cb21680d4116c1cbe331faa3710153b9886204";
+const GUARD_REPORT_SHA256 = "e32ff801425545fb38b8e2822f132e39cbda05d554202529d9af44f2b8f21421";
 test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the name changed", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const version = orders.evaluate("buildReportData().version");
@@ -7236,7 +7147,7 @@ test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the n
       report[key] = "T";
     });
     put(orders.context, "__guardReport", report);
-    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"), orders.evaluate("buildMarkdownReport(__guardReport)"));
+    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"));
   };
   orders.evaluate(GUARD_CUSTOM_ANALYSIS);
   snapshot();
@@ -8658,25 +8569,22 @@ test("v3.0.1 rename: the old product name and report title never appear; the new
   findOldWordsInProductScope(orders, hits);
   orders.evaluate(GUARD_CUSTOM_ANALYSIS);
   orders.evaluate(GUARD_EAST_FILTER);
-  const { html: reportHtml, markdown } = reportOf(orders);
+  const { html: reportHtml } = reportOf(orders);
   findOldProductWords("html report", reportHtml, hits);
-  findOldProductWords("markdown report", markdown, hits);
   assert.equal((reportHtml.match(/<title>([^<]*)<\/title>/) || [])[1], "sample-orders.csv - 表格体检报告");
   assert.deepEqual(reportHtml.match(/<h1>[^<]*<\/h1>/g), ["<h1>表格体检报告</h1>"]);
-  assert.equal(markdown.split("\n")[0], "# 表格体检报告");
   assert.equal((reportHtml.match(/<footer>由<a href="([^"]*)">([^<]*)<\/a> /) || []).slice(1).join(" "), `${RENAME_REPO_URL} 表格体检`);
-  assert.equal((markdown.match(/^> 由\[([^\]]*)\]\(([^)]*)\) /m) || []).slice(1).join(" "), `表格体检 ${RENAME_REPO_URL}`);
-  for (const text of [html, reportHtml, markdown]) assert.ok(text.includes(RENAME_REPO_URL));
+  for (const text of [html, reportHtml]) assert.ok(text.includes(RENAME_REPO_URL));
 
   const names = [
-    orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`), orders.evaluate(`buildReportFileName("md", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`),
     orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`),
     orders.evaluate(`buildStandardizedFileName("data", new Date(2026, 10, 15))`), orders.evaluate(`buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)`),
     ...JSON.parse(orders.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
   ];
   assert.ok(names.length > 6);
-  // v3.1.0: 21 names, the deduplicated export is gone.
-  assert.equal(names.length, 21);
+  // v3.1.0: 21 names, the deduplicated export is gone; v3.2.0: 20, the Markdown report is gone.
+  assert.equal(names.length, 20);
   for (const name of names) {
     assert.ok(name.startsWith("sample-orders"), name);
     findOldProductWords("file name", name, hits);
@@ -9204,8 +9112,8 @@ test("v3.1.0 status bar: the totals sentence offers to leave them out and never 
   assert.equal(textOf(orders, "statusPanel"), "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   const oldEnding = "目前仍计入统计，详情见“数据质量”";
   orders.evaluate('setRowExclusion("suspectedTotal", true)');
-  const { html, markdown } = reportOf(orders);
-  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html, markdown]) {
+  const { html } = reportOf(orders);
+  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html]) {
     assert.ok(!text.includes(oldEnding));
   }
   const region = await importStage3Fixture("分区小计表.csv");
@@ -9372,7 +9280,7 @@ const scaleCard = (label, value) => `<div class="scale-card"><div class="label">
 
 test("v3.1.0 report: the rows left out are named in the data scale, the filters, the quality part and the totals section", async () => {
   const orders = await sampleWithExclusions();
-  const { report, html, markdown } = reportOf(orders);
+  const { report, html } = reportOf(orders);
   assert.deepEqual([report.dataScale.rows, report.dataScale.originalRows, report.dataScale.filteredOutRows, report.dataScale.excludedRows], [40, 42, 0, 2]);
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] }, overlap: null });
   assert.deepEqual(report.quality.excludedScope, { totalRows: 42, excludedRows: 2, excludedMissing: 6 });
@@ -9389,12 +9297,6 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   assert.match(html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${scope}<\\/p>\\s*<p>空值总数：`));
   assert.match(html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${excludedNote}<\\/p>`));
   assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
-  // Markdown: the same four places.
-  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 不计入分析行数 | 2 |\n| 字段总数 | 9 |"));
-  assert.ok(markdown.includes(`${noFilter}\n\n${left}\n\n数据质量部分始终基于原始数据，不受筛选影响。`));
-  assert.ok(markdown.includes(`## 数据质量报告\n\n${scope}\n\n- 空值总数：`));
-  assert.ok(markdown.includes(`### 疑似合计 / 小计行\n\n${excludedNote}\n\n- 第 44 行`));
-  assert.ok(!markdown.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
   // The page shows the same sentences.
   assert.equal(textOf(orders, "qualityScopeNote"), scope);
   assert.equal(textOf(orders, "suspectedTotalExcludedNote"), excludedNote);
@@ -9409,14 +9311,15 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   // One kind only: only that kind; the totals section keeps its usual note.
   const repeats = await sampleWithExclusions({ totals: false });
   const one = reportOf(repeats);
-  assert.ok(one.markdown.includes("\n不计入分析：重复的行 1 行（第 21 行）。\n"));
-  assert.ok(one.markdown.includes(`### 疑似合计 / 小计行\n\n${repeats.evaluate("SUSPECTED_TOTAL_NOTE")}\n`));
-  assert.ok(one.markdown.includes(`## 数据质量报告\n\n${textOf(repeats, "qualityScopeNote")}\n\n`));
   assert.equal(textOf(repeats, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
   // The same words as the filter panel without a filter.
-  assert.ok(one.markdown.includes("\n未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。\n"));
+  // HTML: the same four places.
+  assert.ok(one.html.includes("<p>不计入分析：重复的行 1 行（第 21 行）。</p>"));
+  assert.match(one.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(repeats.evaluate("SUSPECTED_TOTAL_NOTE"))}<\\/p>`));
+  assert.match(one.html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${regExpText(textOf(repeats, "qualityScopeNote"))}<\\/p>`));
+  assert.ok(one.html.includes("<p>未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。</p>"));
   assert.equal(textOf(repeats, "filterMessage"), "当前分析使用全部 41 行（不含不计入分析的 1 行）。");
-  assert.ok(!one.markdown.includes("完整数据") && !one.html.includes("完整数据"));
+  assert.ok(!one.html.includes("完整数据"));
 });
 
 test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", async () => {
@@ -9426,7 +9329,7 @@ test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", a
   assert.equal(plain.report.exclusions, null);
   assert.equal(plain.report.quality.excludedScope, null);
   assert.equal(plain.report.quality.suspectedTotalsExcluded, 0);
-  for (const text of [plain.html, plain.markdown]) {
+  for (const text of [plain.html]) {
     assert.ok(!text.includes("不计入分析"), text.slice(0, 80));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
   }
@@ -9445,14 +9348,13 @@ test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", a
   const normalized = JSON.parse(excluded.evaluate("JSON.stringify(normalizeReportSnapshot(__oldReport))"));
   assert.deepEqual([normalized.dataScale.excludedRows, normalized.exclusions, normalized.quality.excludedScope, normalized.quality.suspectedTotalsExcluded, normalized.quality.suspectedTotalExtras], [0, null, null, 0, null]);
   const html = excluded.evaluate("buildHtmlReport(__oldReport, [])");
-  const markdown = excluded.evaluate("buildMarkdownReport(__oldReport)");
-  for (const text of [html, markdown]) {
+  for (const text of [html]) {
     assert.ok(!text.includes("不计入分析"));
     assert.ok(!text.includes("质量页检查的是"));
     assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE")));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
   }
-  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 字段总数 | 9 |"));
+  assert.ok(html.includes(`${scaleCard("筛除行数", 0)}${scaleCard("字段总数", 9)}`));
 });
 
 test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no line number", () => {
@@ -9470,30 +9372,29 @@ test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no lin
   scope.evaluate('setRowExclusion("suspectedTotal", true)');
   const report = JSON.parse(scope.evaluate("JSON.stringify(buildReportData())"));
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] }, overlap: null });
-  assert.ok(scope.evaluate("buildMarkdownReport(buildReportData())").includes("\n不计入分析：疑似合计行 2 行。\n"));
+  assert.ok(scope.evaluate("buildHtmlReport(buildReportData(), [])").includes("<p>不计入分析：疑似合计行 2 行。</p>"));
 });
 
 test("v3.1.0 report: a row of both kinds is counted once, and named, in the 不计入分析 line", async () => {
   const both = await importCsvFile("编号,名称,金额\n1,甲,10\n2,乙,20\n2,乙,20\n3,丙,30\n,合计,80\n,合计,80\n", "totals-and-repeats.csv");
   both.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
-  const { report, html, markdown } = reportOf(both);
+  const { report, html } = reportOf(both);
   assert.equal(report.dataScale.excludedRows, 3);
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } });
   const line = "不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行），共 3 行（第 7 行两类都是）。";
   assert.ok(html.includes(`<p>${line}</p>`));
-  assert.ok(markdown.includes(`\n${line}\n`));
   assert.ok(html.includes(`${scaleCard("不计入分析行数", 3)}`));
 
   // Without overlap the sentence is unchanged, and the snapshot says null.
   const sample = reportOf(await sampleWithExclusions());
   assert.equal(sample.report.exclusions.overlap, null);
-  assert.ok(sample.markdown.includes("\n不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。\n"));
+  assert.ok(sample.html.includes("<p>不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。</p>"));
   // An old snapshot (no overlap key) gets null and the sentence without 共.
   const old = JSON.parse(both.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
   delete old.exclusions.overlap;
   put(both.context, "__oldOverlap", old);
   assert.equal(both.evaluate("normalizeReportSnapshot(__oldOverlap).exclusions.overlap"), null);
-  assert.ok(both.evaluate("buildMarkdownReport(__oldOverlap)").includes("\n不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。\n"));
+  assert.ok(both.evaluate("buildHtmlReport(__oldOverlap, [])").includes("<p>不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。</p>"));
 
   // More than 20 rows of both kinds end in 等; without line numbers only 共 N 行.
   const sentence = (exclusions) => both.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
@@ -9512,24 +9413,22 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
   assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
   const regionReport = reportOf(region);
   assert.ok(regionReport.html.includes(`<p>${single}</p>`));
-  assert.ok(regionReport.markdown.includes(`\n${single}\n`));
   // Left out: the excluded note and still the same sentence.
   region.evaluate('setRowExclusion("suspectedTotal", true)');
   const excludedReport = reportOf(region);
-  assert.ok(excludedReport.markdown.includes(`### 疑似合计 / 小计行\n\n${textOf(region, "suspectedTotalExcludedNote")}\n`));
-  assert.ok(excludedReport.markdown.includes("不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。"));
-  assert.ok(excludedReport.markdown.includes(`\n${single}\n`));
+  assert.match(excludedReport.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(textOf(region, "suspectedTotalExcludedNote"))}<\\/p>`));
+  assert.ok(excludedReport.html.includes("<p>不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。</p>"));
+  assert.ok(excludedReport.html.includes(`<p>${single}</p>`));
 
   const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
   const tasksReport = reportOf(tasks);
   for (const sentence of ["另有 89 行也带这类字样，但数字对不上，没有列出。", "其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
     assert.ok(htmlText(tasks, "suspectedTotalDetails").includes(sentence));
     assert.ok(tasksReport.html.includes(`<p>${sentence}</p>`), sentence);
-    assert.ok(tasksReport.markdown.includes(`\n${sentence}\n`), sentence);
   }
   // The sample has neither.
-  const { html, markdown } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
-  for (const text of [html, markdown]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
+  const { html } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
+  for (const text of [html]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
 });
 
 test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
