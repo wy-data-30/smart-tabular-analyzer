@@ -135,11 +135,16 @@ test("empty Excel sheets fail and multi-sheet workbooks enter selection state", 
   })()`);
   assert.match(emptyMessage, /为空/);
 
-  context.__qaWorkbook = { SheetNames: ["销售", "库存"], Sheets: { 销售: {}, 库存: {} } };
+  // v3.2.1: the waiting state keeps the file's bytes and the names, never a parsed workbook.
+  evaluate("globalThis.__qaBytes = new ArrayBuffer(8)");
   const importId = evaluate("beginImport()");
   context.__qaImportId = importId;
-  evaluate('showExcelSheetSelection(__qaWorkbook, "multi.xlsx", ["销售", "库存"], __qaImportId)');
+  evaluate('showExcelSheetSelection(__qaBytes, "multi.xlsx", ["销售", "库存"], __qaImportId)');
   assert.equal(evaluate("state.pendingExcel.fileName"), "multi.xlsx");
+  assert.equal(evaluate("state.pendingExcel.bytes === __qaBytes"), true);
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.pendingExcel.sheetNames)")), ["销售", "库存"]);
+  assert.equal(evaluate("state.pendingExcel.importId === __qaImportId"), true);
+  assert.equal(evaluate('"workbook" in state.pendingExcel'), false);
   assert.equal(elements.get("excelSheetSelect").options.length, 2);
   assert.deepEqual(elements.get("excelSheetSelect").options.map((option) => option.value), ["销售", "库存"]);
 });

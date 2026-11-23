@@ -50,36 +50,64 @@ async function parseExcelFile(file) {
     if (!isCurrentImport(importId)) return;
     setStatus(L(`正在解析 ${file.name} ...`, `Reading ${file.name} ...`));
     validateExcelFileSignature(buffer, file.name);
-    let workbook;
-    try {
-      workbook = readExcelWorkbook(buffer);
-    } catch {
-      throw languageError(Lp("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。", "The Excel file is malformed or damaged and cannot be read. Make sure it is a valid XLSX or XLS file."));
-    }
-
-    const sheetNames = Array.isArray(workbook.SheetNames) ? workbook.SheetNames.filter(Boolean) : [];
+    // v3.2.1: the names first (bookSheets parses no cell), then only the sheet to analyze. A single
+    // sheet is read this way too, so every Excel import reads the file twice.
+    const sheetNames = readExcelSheetNames(buffer);
     if (!sheetNames.length) throw languageError(Lp("Excel 文件中没有可读取的工作表。", "The Excel file has no worksheet to read."));
 
     if (sheetNames.length > 1) {
-      showExcelSheetSelection(workbook, file.name, sheetNames, importId);
+      showExcelSheetSelection(buffer, file.name, sheetNames, importId);
       return;
     }
 
-    importExcelSheet(workbook, file.name, sheetNames[0], importId);
+    importExcelSheet(readExcelSheet(buffer, sheetNames[0]), file.name, sheetNames[0], importId);
   } catch (error) {
     showError(errorMessageBuilder(error), importId);
   }
 }
 
-function readExcelWorkbook(buffer) {
-  // cellNF keeps each cell's number format string (cell.z) for format hints.
-  return XLSX.read(buffer, { type: "array", cellDates: true, cellNF: true });
+const EXCEL_MALFORMED_ERROR = Lp("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。", "The Excel file is malformed or damaged and cannot be read. Make sure it is a valid XLSX or XLS file.");
+
+// v3.2.1: the worksheet names alone. bookSheets stops after the workbook part, so a large file shows
+// its list of worksheets without parsing a cell.
+function readExcelSheetNames(buffer) {
+  let names;
+  try {
+    names = XLSX.read(buffer, { type: "array", bookSheets: true }).SheetNames;
+  } catch {
+    throw languageError(EXCEL_MALFORMED_ERROR);
+  }
+  return Array.isArray(names) ? names.filter(Boolean) : [];
 }
 
-function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
+// v3.2.1: one worksheet of the file's bytes, read and checked the way an import reads it; every
+// Excel import uses it. Throws a languageError on an empty sheet and on every check of
+// readExcelSheetTable(); changes nothing in the state. cellNF keeps each cell's number format
+// string (cell.z) for format hints; sheets: parses that sheet only (SheetJS 0.20.3 still parses
+// every sheet of an .xls, with the same result).
+function readExcelSheet(buffer, sheetName) {
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: "array", cellDates: true, cellNF: true, sheets: sheetName });
+  } catch {
+    throw languageError(EXCEL_MALFORMED_ERROR);
+  }
+  const worksheet = workbook.Sheets?.[sheetName];
+  if (!worksheet || !worksheet["!ref"]) {
+    throw languageError(Lp(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`, `The worksheet “${sheetName}” is empty; choose one with a header row and data.`));
+  }
+  return readExcelSheetTable(worksheet, sheetName);
+}
+
+// One frame for the browser to draw a message before a long synchronous task.
+function yieldToBrowser() {
+  return new Promise((resolve) => window.requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+function showExcelSheetSelection(bytes, fileName, sheetNames, importId) {
   if (!isCurrentImport(importId)) return;
   setImportBusy(false);
-  state.pendingExcel = { workbook, fileName, importId };
+  state.pendingExcel = { bytes, fileName, sheetNames, importId };
   dom.excelWorkbookName.textContent = L(`${fileName} · 共 ${sheetNames.length} 个工作表`, `${fileName} · ${sheetNames.length} worksheets`);
   dom.excelSheetSelect.innerHTML = "";
   sheetNames.forEach((sheetName) => {
@@ -94,7 +122,7 @@ function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
   clearStatusMessage();
 }
 
-function analyzeSelectedExcelSheet() {
+async function analyzeSelectedExcelSheet() {
   const pending = state.pendingExcel;
   if (!pending || !isCurrentImport(pending.importId)) {
     showError(() => L("Excel 工作簿状态已失效，请重新上传文件。", "The Excel workbook is no longer available; upload the file again."));
@@ -107,23 +135,38 @@ function analyzeSelectedExcelSheet() {
     return;
   }
 
+  // v3.2.1: reading the chosen sheet is the long task now; say so first and let the page draw it.
+  setImportBusy(true);
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", () => formatSheetReading(sheetName));
+  await yieldToBrowser();
+  // A file dropped meanwhile began another import.
+  if (state.pendingExcel !== pending || !isCurrentImport(pending.importId)) return;
+  let table;
   try {
-    importExcelSheet(pending.workbook, pending.fileName, sheetName, pending.importId);
+    table = readExcelSheet(pending.bytes, sheetName);
   } catch (error) {
-    showSheetSelectionError(error.message);
+    setImportBusy(false);
+    showSheetSelectionError(errorMessageBuilder(error));
+    // The button was disabled while the sheet was read, which takes the focus away from it.
+    dom.confirmSheetSelection.focus();
+    return;
+  }
+  // An unexpected error in the commit ends the import with the error (nothing is left loading).
+  try {
+    importExcelSheet(table, pending.fileName, sheetName, pending.importId);
+  } catch (error) {
+    showError(errorMessageBuilder(error), pending.importId);
   }
 }
 
-function importExcelSheet(workbook, fileName, sheetName, importId) {
+// table: what readExcelSheet() returned.
+function importExcelSheet(table, fileName, sheetName, importId) {
   if (!isCurrentImport(importId)) return;
-  const worksheet = workbook.Sheets?.[sheetName];
-  if (!worksheet || !worksheet["!ref"]) {
-    throw languageError(Lp(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`, `The worksheet “${sheetName}” is empty; choose one with a header row and data.`));
-  }
-
-  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null, dateCells = null } = readExcelSheetTable(worksheet, sheetName);
+  const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null, dateCells = null } = table;
 
   state.pendingExcel = null;
+  // v3.2.1: the list's message (“正在读取并分析…”) goes with the list.
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", "");
   dom.sheetSelectionPanel.classList.add("hidden");
   setStatus(L(`正在分析 ${fileName} · ${sheetName} ...`, `Analyzing ${fileName} · ${sheetName} ...`));
   commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers, formulaErrors, dateCells);

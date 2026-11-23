@@ -47,7 +47,7 @@ function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = tru
   put(context, "__newImport", newImport);
   evaluate(`(() => {
     const importId = __newImport ? beginImport() : state.activeImportId;
-    importExcelSheet(readExcelWorkbook(__xlsxBuffer), "formats.xlsx", __xlsxSheet, importId);
+    importExcelSheet(readExcelSheet(__xlsxBuffer, __xlsxSheet), "formats.xlsx", __xlsxSheet, importId);
   })()`);
 }
 
@@ -1347,8 +1347,7 @@ test("Excel header row numbers count leading blank rows and the !ref start", () 
   XLSX.utils.book_append_sheet(workbook, worksheet, "S1");
   put(context, "__offsetBuffer", XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
   const table = JSON.parse(evaluate(`JSON.stringify((() => {
-    const sheet = readExcelWorkbook(__offsetBuffer).Sheets.S1;
-    return readExcelSheetTable(sheet, "S1");
+    return readExcelSheet(__offsetBuffer, "S1");
   })())`));
   assert.deepEqual(table.fields, STAGE3_ATTENDANCE_HEADER);
   assert.equal(table.rows.length, 3);
@@ -1561,7 +1560,10 @@ test("the title hint appears in the sheet selection panel for multi-sheet workbo
     { name: "数据", rows: [["成绩单"], ["姓名"], ["学生1", 61], ["学生2", 75], ["学生3", 82], ["学生4", 90], ["学生5", 68]] }
   ]));
   scope.elements.get("excelSheetSelect").value = "数据";
-  scope.evaluate("analyzeSelectedExcelSheet()");
+  // v3.2.1: the sheet is read after the list says so.
+  const reading = scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.elements.get("sheetSelectionMessage").textContent, "正在读取并分析工作表「数据」...");
+  await reading;
   assert.equal(scope.elements.get("sheetSelectionMessage").textContent,
     `工作表「数据」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
 });
@@ -1606,7 +1608,7 @@ test("Excel row numbers follow the !ref start and skip blank rows inside the dat
 
   const { context, evaluate } = createExcelContext();
   put(context, "__offsetBuffer", buffer);
-  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheetTable(readExcelWorkbook(__offsetBuffer).Sheets.S1, \"S1\"))"));
+  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheet(__offsetBuffer, \"S1\"))"));
   assert.deepEqual(table.rowNumbers, [6, 7, 9, 10]);
 
   const imported = await importWorkbookFile(buffer);
@@ -5311,7 +5313,7 @@ test("v2.9.0 Excel: date cells are recorded per row and column, with title rows 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "S");
   put(scope.context, "__buffer", XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
-  scope.evaluate('importExcelSheet(readExcelWorkbook(__buffer), "s.xlsx", "S", beginImport())');
+  scope.evaluate('importExcelSheet(readExcelSheet(__buffer, "S"), "s.xlsx", "S", beginImport())');
   const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [getSourceRowNumber(row), state.sourceDateCells.get(row) || null, row.日期, row.文本日期]))"));
   assert.deepEqual(read.map(([line, cells]) => [line, cells && Object.keys(cells).sort()]), [[6, ["日期"]], [8, ["文本日期"]], [9, ["日期"]]]);
   // A date cell and a text with the same characters read alike but are told apart.
@@ -11709,4 +11711,168 @@ test("v3.2.0 commit 13: the same file in Chinese and in English gives the same n
   // The bracket case is really there: the blank value sorts first in both (（ is after ( in zh-CN order).
   const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
   assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label]))')).slice(0, 2), [["", "(Blank)"], ["(A)", "(A)"]]);
+});
+
+// ---- v3.2.1 commit 1: read one worksheet at a time ----
+
+// Puts a counting XLSX into the context: every XLSX.read call's options, in order.
+function countXlsxReads(scope) {
+  const reads = [];
+  const counting = Object.assign(Object.create(XLSX), {
+    read(data, options) {
+      reads.push({ ...options });
+      return XLSX.read(data, options);
+    }
+  });
+  put(scope.context, "XLSX", counting);
+  scope.context.window.XLSX = counting;
+  return reads;
+}
+
+// A workbook file as parseDataFile() gets it.
+function putWorkbookFile(scope, buffer, fileName) {
+  const bytes = Buffer.from(buffer);
+  put(scope.context, "__workbookFile", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+}
+
+const V321_GOOD_ROWS = [["编号", "金额"], ["A-1", 10], ["A-2", 20], ["A-3", 30]];
+const v321TwoSheets = () => buildXlsxBuffer([{ name: "说明", rows: [["本工作簿为虚构数据"], ["第二行"]] }, { name: "数据", rows: V321_GOOD_ROWS }]);
+
+test("v3.2.1 commit 1: a multi-sheet file reads its names first and then only the chosen sheet; a single sheet reads twice", async () => {
+  const multi = createExcelContext();
+  const reads = countXlsxReads(multi);
+  putWorkbookFile(multi, v321TwoSheets(), "two.xlsx");
+  await multi.evaluate("parseDataFile(__workbookFile)");
+  // The list of worksheets shows after one read of the names alone.
+  assert.equal(multi.evaluate("Boolean(state.pendingExcel)"), true);
+  assert.deepEqual(reads, [{ type: "array", bookSheets: true }]);
+  multi.elements.get("excelSheetSelect").value = "数据";
+  await multi.evaluate("analyzeSelectedExcelSheet()");
+  assert.deepEqual(reads, [{ type: "array", bookSheets: true }, { type: "array", cellDates: true, cellNF: true, sheets: "数据" }]);
+  assert.equal(multi.evaluate("state.rows.length"), 3);
+  // A single sheet: the names, then that sheet.
+  const single = createExcelContext();
+  const singleReads = countXlsxReads(single);
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.deepEqual(singleReads, [{ type: "array", bookSheets: true }, { type: "array", cellDates: true, cellNF: true, sheets: "S1" }]);
+  assert.equal(single.evaluate("state.rows.length"), 3);
+  // The waiting state keeps the file's bytes and names, never a parsed workbook.
+  assert.deepEqual(JSON.parse(multi.evaluate("JSON.stringify(Object.keys(state.pendingExcel || {}))")), []);
+  const waiting = createExcelContext();
+  countXlsxReads(waiting);
+  const waitingBook = Buffer.from(v321TwoSheets());
+  putWorkbookFile(waiting, waitingBook, "two.xlsx");
+  await waiting.evaluate("parseDataFile(__workbookFile)");
+  assert.deepEqual(JSON.parse(waiting.evaluate("JSON.stringify(Object.keys(state.pendingExcel).sort())")), ["bytes", "fileName", "importId", "sheetNames"]);
+  // (The buffer comes from the test's realm, so instanceof ArrayBuffer would be false in the VM.)
+  assert.equal(waiting.evaluate("Object.prototype.toString.call(state.pendingExcel.bytes)"), "[object ArrayBuffer]");
+  assert.equal(waiting.evaluate("state.pendingExcel.bytes.byteLength"), waitingBook.length);
+  assert.deepEqual(JSON.parse(waiting.evaluate("JSON.stringify(state.pendingExcel.sheetNames)")), ["说明", "数据"]);
+  // A CSV never reads a workbook.
+  const csv = createExcelContext();
+  const csvReads = countXlsxReads(csv);
+  put(csv.context, "Papa", Papa);
+  csv.context.window.Papa = Papa;
+  csv.evaluate('parseCsvText("编号,金额\\nA-1,10\\nA-2,20", "a.csv")');
+  assert.equal(csv.evaluate("state.rows.length"), 2);
+  assert.deepEqual(csvReads, []);
+});
+
+test("v3.2.1 commit 1: reading one sheet gives exactly what reading the whole workbook gives, errors too, in both languages", () => {
+  const scope = createExcelContext();
+  const wide = [Array.from({ length: 201 }, (_, index) => `列${index + 1}`), Array.from({ length: 201 }, (_, index) => index)];
+  const books = [
+    ...["en-formula-errors.xlsx", "公式错误.xlsx", "花名册.xlsx", "门店报表.xlsx"].map((name) => [name, fs.readFileSync(path.join(STAGE3_FIXTURES, name))]),
+    ["excel-import-test.xlsx", fs.readFileSync(path.join(__dirname, "fixtures", "excel-import-test.xlsx"))],
+    ["checks.xlsx", Buffer.from(buildXlsxBuffer([
+      { name: "好表", rows: V321_GOOD_ROWS },
+      { name: "空表", rows: [] },
+      { name: "只有表头", rows: [["编号", "金额"]] },
+      { name: "没有表头", rows: [[1, 2], [3, 4]] },
+      { name: "表头重复", rows: [["编号", "金额", "金额"], ["a", 1, 2]] },
+      { name: "超列", rows: wide },
+      { name: "有标题行", rows: [["2025 年订单"], [], ["编号", "金额"], ["T-1", 10], ["T-2", 20]] }
+    ]))]
+  ];
+  let compared = 0;
+  for (const [name, bytes] of books) {
+    put(scope.context, "__bytes", bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length));
+    const whole = XLSX.read(scope.context.__bytes, { type: "array", cellDates: true, cellNF: true });
+    put(scope.context, "__whole", whole);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(readExcelSheetNames(__bytes))")), whole.SheetNames, name);
+    for (const sheetName of whole.SheetNames) {
+      put(scope.context, "__sheetName", sheetName);
+      for (const language of ["zh", "en"]) {
+        const [one, all] = JSON.parse(scope.evaluate(`(() => {
+          currentLanguage = ${JSON.stringify(language)};
+          const run = (read) => { try { return JSON.stringify(read()); } catch (error) { return "error: " + error.message; } };
+          const one = run(() => readExcelSheet(__bytes, __sheetName));
+          const all = run(() => {
+            const worksheet = __whole.Sheets[__sheetName];
+            if (!worksheet || !worksheet["!ref"]) throw languageError(Lp(\`工作表「\${__sheetName}」为空，请选择包含表头和数据的工作表。\`, \`The worksheet “\${__sheetName}” is empty; choose one with a header row and data.\`));
+            return readExcelSheetTable(worksheet, __sheetName);
+          });
+          currentLanguage = "zh";
+          return JSON.stringify([one, all]);
+        })()`));
+        assert.equal(one, all, `${name} / ${sheetName} / ${language}`);
+        compared += 1;
+      }
+    }
+  }
+  // 4 single sheets, 4 sheets of excel-import-test.xlsx and 7 of checks.xlsx, twice each.
+  assert.equal(compared, 30);
+});
+
+test("v3.2.1 commit 1: the chosen sheet says it is being read; a sheet that fails leaves the list waiting, the error rewritable", async () => {
+  const scope = createExcelContext();
+  putWorkbookFile(scope, buildXlsxBuffer([{ name: "好表", rows: V321_GOOD_ROWS }, { name: "表头重复", rows: [["编号", "金额", "金额"], ["a", 1, 2]] }]), "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  let focused = 0;
+  scope.elements.get("confirmSheetSelection").focus = () => { focused += 1; };
+  scope.elements.get("excelSheetSelect").value = "表头重复";
+  const pending = scope.evaluate("state.pendingExcel");
+  const done = scope.evaluate("analyzeSelectedExcelSheet()");
+  // Before the read: the message, the page busy, the switches locked.
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "正在读取并分析工作表「表头重复」...");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+  assert.equal(scope.elements.get("languageSwitch").disabled, true);
+  await done;
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "工作表「表头重复」包含重复表头「金额」，请修改后重新上传。");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.evaluate("state.pendingExcel") === pending, true);
+  assert.equal(focused, 1);
+  // The error is kept as a function: written again in English (the switch itself is locked while
+  // a sheet waits, so the rewrite is called directly).
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "The worksheet “表头重复” has the header “金额” more than once; change it and upload the file again.");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  // A good sheet afterwards: analyzed, and the message is gone, also from the rewrite list.
+  scope.elements.get("excelSheetSelect").value = "好表";
+  await scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.evaluate("state.rows.length"), 3);
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  assert.equal(scope.evaluate("oneOffMessages.has(dom.sheetSelectionMessage)"), false);
+});
+
+test("v3.2.1 commit 1: an unexpected error while the chosen sheet is committed ends the import with the error", async () => {
+  const scope = createExcelContext();
+  putWorkbookFile(scope, v321TwoSheets(), "two.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  scope.evaluate('countDuplicateRows = () => { throw new Error("commit broke"); }');
+  scope.elements.get("excelSheetSelect").value = "数据";
+  let rejected = null;
+  await scope.evaluate("analyzeSelectedExcelSheet()").catch((error) => { rejected = error; });
+  assert.equal(rejected, null);
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.elements.get("csvFile").disabled, false);
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  assert.equal(textOf(scope, "statusPanel"), "commit broke");
+  assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
 });

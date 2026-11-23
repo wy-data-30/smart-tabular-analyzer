@@ -807,6 +807,12 @@ function formatReturnToAnalysis(sourceName) {
   return L(`回到「${sourceName}」的分析`, `Back to the analysis of “${sourceName}”`);
 }
 
+// v3.2.1: while a worksheet is read and analyzed (chosen from the list of a new file). The name is
+// the user's, shown as it is.
+function formatSheetReading(sheetName) {
+  return L(`正在读取并分析工作表「${sheetName}」...`, `Reading and analyzing the worksheet “${sheetName}” ...`);
+}
+
 // One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
 function formatFormulaError({ field, count, byError, lines, fieldIgnored = false }) {
   const errors = Object.entries(byError);
