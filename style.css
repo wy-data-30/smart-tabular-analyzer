@@ -256,7 +256,8 @@ body.has-results.nav-wrap .header-inner {
 }
 
 body.has-results.nav-wrap .module-nav {
-  flex: 1 0 100%;
+  flex: 0 1 auto;
+  max-width: 100%;
   justify-content: flex-start;
   order: 3;
   margin: 0;

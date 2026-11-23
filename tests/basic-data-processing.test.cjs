@@ -10862,6 +10862,7 @@ test("v3.2.0 navigation: a second row only when the links overflow, measured wit
   // style.css: the second row, and the fallback scroll of .module-nav stays.
   const css = repoFile("style.css");
   assert.match(css, /body\.has-results\.nav-wrap \.header-inner \{\s*flex-wrap: wrap;/);
-  assert.match(css, /body\.has-results\.nav-wrap \.module-nav \{\s*flex: 1 0 100%;/);
+  // The second row's track is only as wide as its links (fix after commit 9), never wider than the row.
+  assert.match(css, /body\.has-results\.nav-wrap \.module-nav \{\s*flex: 0 1 auto;\s*max-width: 100%;/);
   assert.match(css, /\.module-nav \{[^}]*overflow-x: auto;/);
 });
