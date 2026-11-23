@@ -26,10 +26,10 @@
 | 5 | `quality.js` | 数据质量：类型转换失败计数与样例、精确重复行判断和多出来的行（`findRepeatedRowIndexes()`）、编号重复、像是空值的写法、按单位读取的数字、像是数字的文本列、疑似合计 / 小计行、公式错误单元格、日期写法混用、整列只有一个值、“同一个值，写法不一样”的汇总、缺失率等级、质量页使用的原始数据数值统计，以及每类质量计数背后的问题行列表。 |
 | 6 | `app.js` | 应用状态与界面：state 和 dom 映射、导入 / 筛选 / 字段配置三条刷新路径，以及概览（含分页的数据预览）、字段、质量（含问题行查看区）、统计、图表（含图表下的分类 / 趋势结论）和自定义分析的渲染，还有写法统一的表的检查表显示和作废。 |
 | 7 | `importer.js` | 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，记下日期单元格，最后交给 commitTabularData() 提交。 |
-| 8 | `report.js` | 报告与导出：报告快照、HTML / Markdown 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。 |
+| 8 | `report.js` | 报告与导出：报告快照、HTML 报告生成、处理后 CSV 导出、问题行 CSV 导出和写法统一的表的导出（整表检查、写法统一的 CSV 和改动清单）、导出门禁、文件名和下载。 |
 | 9 | `script.js` | 启动入口（最后加载）：启动自检、Chart.js 全局样式、页面导航和全部事件绑定。所有加载时立即执行的代码都只放在这里。 |
 
-- 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。前 8 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
+- 所有加载时立即执行的代码（启动自检、Chart.js 全局样式、导航设置和全部事件绑定）只放在最后的 `script.js`。唯一的例外是 v3.2.0 `index.html` `<head>` 里定语言的内联脚本，边界见“界面语言（v3.2.0）”。前 8 个文件只声明函数和常量，加载时唯一的 DOM 操作是 `app.js` 构造 `dom` 映射时调用 `getElementById()`。
 - `parsing.js`、`profiling.js`、`format.js`、`stats.js`、`quality.js` 是纯逻辑层，不直接访问 DOM 或第三方全局对象；但其中部分函数会在调用时读取 `state`（例如经由 `getFieldProfile()`）和 `getAnalysisRows()`（两者都定义在 `app.js`），所以还不是纯函数。
 - 经典脚本共享全局作用域：重复的顶层 `const` / `let` 会让后加载的整个文件无法执行，重复的函数声明会静默覆盖前一个。`tests/core.test.cjs` 会检查全部应用脚本的顶层名字不重复。
 
@@ -47,7 +47,7 @@
 ├── style.css                   # 页面样式与响应式规则
 ├── parsing.js                  # 缺失判断与疑似缺失值清单，数值和日期解析，日期写法和写法细节的 key，单元格的标准化写法
 ├── profiling.js                # 字段类型识别和字段 profile
-├── format.js                   # 显示格式化、表头位置 / 编号重复 / 像是空值的写法 / 读取时有疑问 / 问题行 / 格式一致性 / 写法统一的表文字、HTML 转义
+├── format.js                   # 界面语言（L()、Lp()、I18N_EN）、显示格式化、表头位置 / 编号重复 / 像是空值的写法 / 读取时有疑问 / 问题行 / 格式一致性 / 写法统一的表文字、HTML 转义
 ├── stats.js                    # 描述统计、IQR、分组、趋势、直方图
 ├── quality.js                  # 转换失败、重复行、编号重复、像是空值的写法、格式一致性、缺失率等级、问题行列表
 ├── app.js                      # state / dom、三条刷新路径、页面渲染（含预览分页、问题行查看区和写法统一的表的检查表）
@@ -60,7 +60,8 @@
 ├── vendor/                     # 自行托管的 PapaParse、Chart.js、SheetJS（文件名带版本号）
 │   └── licenses/               # 三个库的原始许可证文件
 ├── examples/
-│   └── sample-orders.csv       # “使用示例数据”加载的虚构订单表（故意放了几类问题，v2.11.0）
+│   ├── sample-orders.csv       # 中文界面“使用示例数据”加载的虚构订单表（故意放了几类问题，v2.11.0）
+│   └── sample-orders-en.csv    # 英文界面 “Use sample data” 加载的英文版（同样的订单和问题，v3.2.0）
 ├── assets/                     # README 截图
 ├── tests/
 │   ├── test-context.cjs        # VM + 轻量假 DOM 测试环境
@@ -68,6 +69,7 @@
 │   ├── basic-data-processing.test.cjs
 │   ├── destructive-qa.test.cjs
 │   ├── core.test.cjs
+│   ├── i18n-guard.cjs          # v3.2.0 静态护栏的分词器和规则（由 basic-data-processing.test.cjs 读取）
 │   └── fixtures/               # 测试夹具；stage3/ 是表头检测的验收夹具，examples/ 放其余 6 个示例 CSV（只给测试用，含 v2.11.0 前的按钮示例 sample-data.csv）
 ├── docs/                       # 开发者维护文档
 └── .github/workflows/ci.yml    # push / PR 自动回归测试
@@ -254,7 +256,7 @@ flowchart LR
 
 **输入 / 输出**
 
-- 文件入口输入浏览器 `File`；示例入口输入 `fetch("examples/sample-orders.csv")` 返回的文本（这份文件带标题行，走表头检测的重试，`Papa.parse` 共 4 次）。
+- 文件入口输入浏览器 `File`；示例入口输入 `` fetch(`examples/${sampleName}`) `` 返回的文本（中文界面 `sample-orders.csv`，英文界面 `sample-orders-en.csv`，v3.2.0；两份都带标题行，走表头检测的重试，`Papa.parse` 共 4 次）。
 - CSV 解析的标准输出是 `fields: string[]`、无原型 `rows: object[]` 和可选 `parseWarnings`。
 - 成功路径没有直接返回值，而是调用 `commitTabularData()`；失败路径通过 `showError()` 清空结果并显示错误。
 
@@ -465,7 +467,7 @@ XLSX.utils.sheet_to_json(worksheet, {
   - “按单位读取的数字”来自 `buildNumberConversionSummary(profiles)`：未忽略、并且策略有开关或单位冲突的字段，`[{ field, unit, unitCount, unitSamples, magnitudeCount, fullwidthCount, conflictUnits }]`。`formatNumberConversion()` 写成“「金额」：按"元"读取了 2 个值（2200元、3500元）”，有的部分才写，用“；”连接：“按万/亿换算了 N 个值”“N 个全角数字已按半角读取”；单位冲突时写“同时出现 kg（5 个）和 千克（1 个），没有按单位读取，这些值不能读成数字。”，各单位按个数降序，个数相同按第一次出现。冲突字段常常是分类或 ID，所以不说“算作认不出的数字”。
   - “像是数字的文本列”来自 `state.numericLooking`，`formatNumericLookingHint()` 写成“「楼层」：去掉空值和像是空值的写法后，5 个值里有 3 个能读成数字（60.0%），其余的如 B1、B2。如果这一列应该是数字，请修正这些值，或在字段配置里把类型改成数值。”，百分比用 `formatPercent()`。
   - 不新增 pill。
-- **报告**：快照新增 `fieldTypes[i].numberUnit`（无单位为 `""`）、`quality.numberConversions`（`buildNumberConversionSummary()` 的结果）和 `quality.numericLooking`（`state.numericLooking` 的副本）。`normalizeReportSnapshot()` 对旧快照补 `""` 和 `null`。HTML / Markdown 报告在“各字段空值情况”之后、“像是空值的写法”之前加“按单位读取的数字”和“像是数字的文本列”两节（Markdown 用 `### `），文字和质量页相同，HTML 经 `escapeHtml()`，Markdown 每行写成 `- ` 加 `escapeMarkdownText()` 的结果；列表为空或快照为 `null` 时整节不输出。报告摘要只列问题的计数：有“像是数字的文本列：N 个字段”（N > 0 时，HTML 追加在质量摘要句末尾，Markdown 加一条计数行），没有“按单位读取”。报告从快照渲染，字段标签由 `buildReportFieldLabeler()` 按 `fieldTypes[].numberUnit` 生成；`dateTrends[].summary` 这类写进快照的字符串在 `buildReportData()` 时就带上单位。
+- **报告**：快照新增 `fieldTypes[i].numberUnit`（无单位为 `""`）、`quality.numberConversions`（`buildNumberConversionSummary()` 的结果）和 `quality.numericLooking`（`state.numericLooking` 的副本）。`normalizeReportSnapshot()` 对旧快照补 `""` 和 `null`。报告在“各字段空值情况”之后、“像是空值的写法”之前加“按单位读取的数字”和“像是数字的文本列”两节，文字和质量页相同，经 `escapeHtml()`；列表为空或快照为 `null` 时整节不输出。报告摘要只列问题的计数：有“像是数字的文本列：N 个字段”（N > 0 时追加在质量摘要句末尾），没有“按单位读取”。报告从快照渲染，字段标签由 `buildReportFieldLabeler()` 按 `fieldTypes[].numberUnit` 生成；`dateTrends[].summary` 这类写进快照的字符串在 `buildReportData()` 时就带上单位。
 - **已知限制**：字段名写“万元”、值又写“1.2万”时，值按元换算成 12000，不做特殊处理；标签按上面的结尾规则生成，“金额（万元）”显示为“金额（万元）（元）”，“金额万元”结尾是“元”，不再加。会计格式的“-”仍是第二档疑似缺失值，不当 0。
 
 ## 6. Data Quality（数据质量）
@@ -591,7 +593,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **关闭和焦点**：“关闭”按钮（`closeProblemView()`）把焦点还给打开查看区的那个“查看”按钮（`state.problemViewOpener`）；它已被重新渲染掉时，找同一类别新的按钮；都没有就不移动焦点。重新取数时类别消失、导入重置用的是不动焦点的 `hideProblemView()`。
 - **数据预览分页**：`renderPreview()` 用同一个 `buildRowTableHtml()`（文件行号列 + 全部字段，行号为空写“—”，普通单元格是不带属性的 `<td>值</td>`），每页 `ROW_TABLE_PAGE_SIZE`（50）行，“第 X / Y 页，共 N 行”和首页 / 上一页 / 下一页 / 末页（`goToPreviewPage()`），仍跟随筛选。`state.previewPage` 由 `getRowPage()` 夹到有效范围（不是数字时当第 1 页），所以没有分页 state 时也能工作；导入、筛选变化和字段配置回到第 1 页。
 - **导出**：“导出这一类”（`exportProblemRows()`，`report.js`）导出整类全部行，不是当前页，见“报告与数据导出”。
-- **不做**：HTML / Markdown 报告里的问题行明细；“全部问题行”汇总视图。
+- **不做**：报告里的问题行明细；“全部问题行”汇总视图。
 
 ### 疑似合计 / 小计行（v2.8.0）
 
@@ -633,7 +635,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
   - 只有不可见字符的格：`trim()` 去不掉，所以不是缺失，`lookAlikeKey()` 却为空。单独计数 `invisibleOnlyCount`（文案“只有不可见字符 N 格”，零个时不写），不进任何组。
   - 计算：逐格只做一次 `Map` 计数（按原文），缺失、疑似缺失值、首尾空格、key 都在不同的原文上算一次。`rowCount` 是并集：带首尾空格、只有不可见字符或在组里的行，每行一次。组按行数降序、写法按个数降序，相同时按首次出现；最多列 `LOOK_ALIKE_GROUP_LIMIT`（10）组、每组 `LOOK_ALIKE_VARIANT_LIMIT`（10）种，超出写“只列出前 10 组”“等 N 种”，问题行不受限。`state.lookAlikes = [{ field, edgeSpaceCount, edgeSample, invisibleOnlyCount, groups: [{ variants: [{ text, count }], variantCount, reasons, rowCount }], groupCount, rowCount }]`。
   - 和 ID 重复值互不影响：“E1012”和“E1012 ”去首尾空格后相同，算编号重复，同时报首尾空格；“E1012”和“e1012”不算编号重复，报写法不一样。
-- **显示写法**（`formatVisibleText()`）：半角空格在两端或连续时显示“␣”（中间单个空格不动），其他空白和不可见字符写名字：[全角空格]、[不换行空格]、[零宽字符]、[软连字符]、[方向符]、[制表符]、[换行]，其余 [空白]。页面、问题行说明和报告共用，写入前再 `escapeHtml()` / `escapeMarkdownText()`。
+- **显示写法**（`formatVisibleText()`）：半角空格在两端或连续时显示“␣”（中间单个空格不动），其他空白和不可见字符写名字：[全角空格]、[不换行空格]、[零宽字符]、[软连字符]、[方向符]、[制表符]、[换行]，其余 [空白]。页面、问题行说明和报告共用，写入前再 `escapeHtml()`。
 - **刷新路径**：`refreshFormatConsistency()` 在 `commitTabularData()` 里（公式错误汇总之后）和 `rebuildAnalysisFromProfiles()` 开头调用，所以导入、字段配置（应用 / 恢复）和疑似缺失值确认 / 撤销都会重算；`refreshFilteredAnalysis()` 不碰，基于原始数据。
 - **扫描缓存**（`state.formatScans`，`createFormatScans()`）：一个字段的写法只取决于它的单元格（疑似缺失值写法无论是否确认都排除），日期写法只取决于单元格、日期单元格和日期策略，而不按年份读的字段策略在确认前后不变（疑似缺失值不提供 order 证据，契约 17）。所以每个字段只在导入后第一次需要时扫一遍，重建复用，做法和 `state.totalLabelRows` 一样；字段被改成新类型时才第一次扫。没有缓存时，10 万 × 20 列的字段配置重建要 +9.3%（审查原型实测），有缓存时 +0.7%。`commitTabularData()` 和 `resetAnalysisState()` 换成新的。
 - **质量页**：三个静态小节 `#dateStyleSection`、`#constantFieldSection`、`#lookAlikeSection`（详情 `#dateStyleDetails`、`#constantFieldDetails`、`#lookAlikeDetails`）在“像是数字的文本列”之后、“像是空值的写法”之前，为空时隐藏。日期写法和写法不一样每个字段一行一个“查看”（`renderRowNoteSection()`），整列只有一个值没有按钮（`renderNumberNoteSection()`）。按钮只带 `data-problem-index`，由 `#qualitySection` 的委托 click 处理。`resetAnalysisState()` 也清空三个小节的内容。说明句写在 `index.html`，和 `format.js` 的 `DATE_STYLE_NOTE`、`CONSTANT_FIELD_NOTE`、`LOOK_ALIKE_NOTE` 相同（测试固定）。
@@ -804,7 +806,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 
 - 导出当前分析的行（筛选后的行，不含不计入分析的行；v3.1.0 删去了去重后的导出）。
 - 检查并导出写法统一的表和它的改动清单（v2.10.0 起）。
-- 生成 HTML 或 Markdown 分析报告。
+- 生成 HTML 分析报告（报告里有当前图表，可以在浏览器里打印成 PDF；v3.2.0 删去了 Markdown 报告）。
 - 保持字段顺序、UTF-8 BOM、文件名安全和内容转义。
 - 阻止未完成分析或未应用字段配置时导出报告。
 
@@ -874,43 +876,44 @@ exportStandardizedData("changes") → buildStandardizedChangesCsvContent(…, li
 - **两份导出**：都经过 `buildCsvTableContent()`（公式中和照旧，改动清单的“原值”列也中和），UTF-8 BOM、CRLF。改动清单列为“文件行号、字段、原值、导出值、处理”，行号查不到为空；最多 `STANDARDIZED_CHANGE_LIMIT`（1,048,575，Excel 一张表的行数减表头）条，超出时只导出前 N 条，文件名 `<原文件名>_写法统一改动清单_前1048575条_<yyyymmdd>.csv`、状态行“只导出了前 1,048,575 条，共 M 条”，检查表计数仍是全部。写法统一的表是 `<原文件名>_写法统一_<yyyymmdd>.csv`，全部原始行、原字段顺序、原表头（单位不写进表头）。
 - **性能**（本机 Node 24、假 DOM，10 万行 × 20 列）：刷新路径与 v2.9.0 交替各 5 次取中位数，导入 +0.4%、筛选 +1.1%、重建 −0.2%（不在刷新路径里）。检查约 1.6 s（干净数据：纯数字和标准日期）、约 3.9 s（最坏情况：每格都要改写或保持原值，200 万格）；最坏情况检查结果约占 108 MB，导出改动清单（到上限 1,048,575 条，约 60 MB）约 2.55 s，峰值 RSS 约 1.22 GB（不设上限时 200 万条约 5.5 s、1.89 GB）。
 
-### HTML / Markdown 报告
+### HTML 报告
 
 ```text
-exportHtmlReport() / exportMarkdownReport()
-→ exportAnalysisReport(format)
+exportHtmlReport()
+→ exportAnalysisReport()
 → buildReportData()
-→ HTML: captureCurrentChartImages() + buildHtmlReport()
-→ Markdown: buildMarkdownReport()
-→ buildReportFileName()
+→ captureCurrentChartImages() + buildHtmlReport()
+→ buildReportFileName("html")
 → downloadUtf8TextFile()
 ```
+
+v3.2.0 删去了 Markdown 报告（`buildMarkdownReport()`、`buildMarkdownTable()`、`escapeMarkdownCell()`、`escapeMarkdownText()`、`exportMarkdownReport()` 和按钮），`buildReportFileName()` 保留 `extension` 参数、总是写 `.html`。报告的句子、`<html lang>` 和文件名跟导出那一刻的界面语言。
 
 **主要函数**
 
 - `canExportReport()` / `canExportProcessedData()`：导出门禁。
-- `buildReportData()`：从当前状态建立两种报告共用的快照。v3.1.0 的不计入分析字段见“不计入分析的行（v3.1.0）”。
+- `buildReportData()`：从当前状态建立报告快照（句子按导出那一刻的语言写）。v3.1.0 的不计入分析字段见“不计入分析的行（v3.1.0）”。
 - `buildReportDateTrends()` / `buildReportCustomAnalysis()`：补充报告分析部分。`buildReportDateTrends()` 对每个日期字段使用趋势图下拉框的当前选择（记录数、`<字段>平均值` 或 `<字段>求和`），不再取 `numericStats[0]`。`buildReportCustomAnalysis()` 只读 `state.customAnalysis`：报告里的“自定义分组分析结果”一节只在生成过自定义分析之后才有，否则写“当前没有可导出的自定义分组分析结果。”（v2.7.0 起不再有从下拉框回推的默认值）。
-- 报告快照的 `insights` 是 `[state.chartInsights.category, state.chartInsights.trend].filter(Boolean)`，也就是导出时页面上显示的 0–2 句；一句都没有时 HTML / Markdown 的“自动分析结论”节写“暂无自动分析结论。”。`normalizeReportSnapshot()` 对旧快照不改：`insights` 不是数组时为 `[]`，是数组（例如 v2.6.1 的 6 句）就原样输出。
+- 报告快照的 `insights` 是 `[state.chartInsights.category, state.chartInsights.trend].filter(Boolean)`，也就是导出时页面上显示的 0–2 句；一句都没有时报告的“自动分析结论”节写“暂无自动分析结论。”。`normalizeReportSnapshot()` 对旧快照不改：`insights` 不是数组时为 `[]`，是数组（例如 v2.6.1 的 6 句）就原样输出。
 - `normalizeReportSnapshot()`：为缺少可选部分的快照提供默认结构。
 - `captureCurrentChartImages()` / `isSafeChartDataUrl()`：捕获当前可见图表并校验图片 Data URL。
-- `buildHtmlReport()` / `buildMarkdownReport()`：生成最终文本。
-- `escapeHtml()`、Markdown 转义函数和 `sanitizeFileName()`：处理输出边界。
+- `buildHtmlReport()`：生成最终文本。
+- `escapeHtml()` 和 `sanitizeFileName()`：处理输出边界。
 - `downloadUtf8TextFile()`：通过 Blob、Object URL 和临时 `<a>` 触发本地下载。
 
 **输入 / 输出**
 
 - 数据导出输入为原始或当前筛选 rows；输出为带 BOM 的 CSV 下载。
-- 报告输入为当前分析快照，HTML 还包括可见图表图片；输出为带 BOM 的 `.html` 或 `.md` 下载。
+- 报告输入为当前分析快照，HTML 还包括可见图表图片；输出为带 BOM 的 `.html` 下载。
 - 报告质量部分使用原始范围，统计、趋势和自定义分析使用当前分析范围。
-- 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。HTML / Markdown 的数值统计表含“认不出”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
-- 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。HTML / Markdown 报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
-- 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，HTML 报告在数据来源信息里“工作表名称”之后加一项“表头位置”，Markdown 报告加一行“- 表头位置：…”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并分别转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
-- 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。HTML / Markdown 报告在“偏大或偏小的值”之后加“编号重复”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。HTML 质量摘要句末尾追加“；编号重复：N 个字段”，Markdown 在“读取时有疑问”后加一条“- 编号重复：N 个字段”。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
-- 报告快照的 `quality.placeholders` 由 `buildReportPlaceholders()` 生成：`{ confirmed: [{ field, key, rawValues, count, fieldIgnored }], pending: [{ field, key, tier, rawValues, count, rowNumbers, effect }] }`，`effect` 是质量页上同样的“按空值处理后，空值 0 → 1，类型仍为数值”文字。HTML / Markdown 报告在“各字段空值情况”之后加“像是空值的写法”一节：由 `buildReportPlaceholderSection()` 生成同一份内容，已确认的写成“字段 / 写法 / 出现次数 / 状态”表（被忽略的字段状态为“已按空值处理（字段已忽略）”），待确认的写成“字段 / 写法 / 档位 / 出现次数 / 文件行号 / 按空值处理后的影响”表，有第二档写法时表后加一条以“说明：”开头的提示；快照存在但没有检出时写“没有发现像是空值的写法。”。只有有检出或有确认时，HTML 质量摘要句才追加“；像是空值的写法：N 个字段”，Markdown 在“编号重复”后加一条“- 像是空值的写法：N 个字段”（N 同质量页 pill）。表格分别经 `buildHtmlReportTable()` / `buildMarkdownTable()` 转义，Markdown 的说明文字经 `escapeMarkdownText()`，每行都以固定文字开头，不以用户的字段名或值开头。`normalizeReportSnapshot()` 遇到缺少这个字段或 `confirmed` / `pending` 不是数组的快照取 `null`，这一节和摘要里的这一项都不输出。
+- 报告快照中，`fieldTypes[].conversionFailureSamples` 来自原始数据；`numericStats[].invalidCount` 和 `customAnalysis.metricInvalidCount` 来自当前分析行。报告的数值统计表含“认不出”列，字段类型表的转换失败格附带样例；`normalizeReportSnapshot()` 对旧快照缺少的这些字段补 0 或空数组。
+- 报告快照的 `filters` 由 `buildReportFilters()` 基于已应用的 `state.filters` 生成（面板上未应用的草稿不进入报告），没有筛选时为 `[]`，顺序固定为分类、数值、日期：分类项 `{ type: "category", field, keptCount, totalCount, keptValues, description }`，`totalCount` 是原始数据中该字段的不同值个数（含“（空值）”，与筛选面板一致），`keptValues` 按筛选面板的显示顺序最多取 10 个；数值项 `{ type: "numeric", field, min, max, description }`，百分比字段的 `min` / `max` 是小数，`description` 用 `formatFieldNumber()` 显示；日期项 `{ type: "date", field, start, end, description }`。报告在“数据规模”后新增“筛选条件”一节：有筛选时为“字段 / 条件”表，否则写“未设置筛选，结果基于完整数据。”，两种情况末尾都写“数据质量部分始终基于原始数据，不受筛选影响。”。`normalizeReportSnapshot()` 对旧快照缺少的 `filters` 补 `[]`。
+- 报告快照的 `headerDetection` 复制自 `state.headerDetection`，没有跳过标题行时为 `null`。有值时，报告在数据来源信息里“工作表名称”之后加一项“表头位置”，内容与状态栏相同，由 `formatHeaderDetectionNote()` 生成并转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，报告里不写这一项。
+- 报告快照的 `quality.idDuplicates` 复制自 `state.idDuplicates`，没有 ID 字段时为 `[]`。报告在“偏大或偏小的值”之后加“编号重复”一节：由 `buildReportIdDuplicateSection()` 生成同一份内容，列出的值和疑似非唯一字段合成一张“字段 / 重复值 / 出现次数 / 文件行号 / 说明”表（疑似非唯一字段占一行，前三列写“—”，提示放在说明列），超出 10 个值和没有重复值的字段写在表后；没有 ID 字段时写“未识别到 ID 字段。”。质量摘要句末尾追加“；编号重复：N 个字段”。表格经 `buildHtmlReportTable()` 转义。`normalizeReportSnapshot()` 对没有这个字段的旧快照取 `null`，这一节和摘要里的这一项都不输出。
+- 报告快照的 `quality.placeholders` 由 `buildReportPlaceholders()` 生成：`{ confirmed: [{ field, key, rawValues, count, fieldIgnored }], pending: [{ field, key, tier, rawValues, count, rowNumbers, effect }] }`，`effect` 是质量页上同样的“按空值处理后，空值 0 → 1，类型仍为数值”文字。报告在“各字段空值情况”之后加“像是空值的写法”一节：由 `buildReportPlaceholderSection()` 生成同一份内容，已确认的写成“字段 / 写法 / 出现次数 / 状态”表（被忽略的字段状态为“已按空值处理（字段已忽略）”），待确认的写成“字段 / 写法 / 档位 / 出现次数 / 文件行号 / 按空值处理后的影响”表，有第二档写法时表后加一条以“说明：”开头的提示；快照存在但没有检出时写“没有发现像是空值的写法。”。只有有检出或有确认时，质量摘要句才追加“；像是空值的写法：N 个字段”（N 同质量页 pill）。表格经 `buildHtmlReportTable()` 转义。`normalizeReportSnapshot()` 遇到缺少这个字段或 `confirmed` / `pending` 不是数组的快照取 `null`，这一节和摘要里的这一项都不输出。
 - 报告快照的 `quality.suspectedTotals`（全部行，深拷贝）和 `quality.formulaErrors`（深拷贝，带 `fieldIgnored`）来自 `state`，不随筛选变化；旧快照为 `null`。`buildReportRowNoteSections()` 生成两节和摘要计数：“空值总数”那段之后加“疑似合计 / 小计行：N 行”“公式错误：N 个单元格”，“各字段空值情况”之前加两节，文字和质量页相同。没有命中时节和计数都不输出。疑似合计最多列 `SUSPECTED_TOTAL_LIST_LIMIT`（20）条，超出时写“共 N 行，只列出前 20 行。”，摘要计数写全部行数；报告没有“查看”，不写“全部行请点「查看」”。
 - 这两节的说明句放在列表之前，和页面同文：`format.js` 的 `SUSPECTED_TOTAL_NOTE`、`FORMULA_ERROR_NOTE` 给报告用，`index.html` 里是静态文字，两条测试固定两边相同。
-- 报告快照的 `quality.dateStyles`、`quality.constantFields`、`quality.lookAlikes`（v2.9.0，深拷贝，含 `invisibleOnlyCount`）来自 `state`，不随筛选变化；旧快照为 `null`。`buildReportFormatSections()` 给 HTML / Markdown 各三节，位置在“各字段空值情况”和“按单位读取的数字”之后、“像是空值的写法”之前，只在有内容时输出，说明句用 `DATE_STYLE_NOTE`、`CONSTANT_FIELD_NOTE`、`LOOK_ALIKE_NOTE`。摘要只计问题：“日期写法混用：N 个字段”“同一个值，写法不一样：N 个字段”（N > 0）；常量列不进摘要。
+- 报告快照的 `quality.dateStyles`、`quality.constantFields`、`quality.lookAlikes`（v2.9.0，深拷贝，含 `invisibleOnlyCount`）来自 `state`，不随筛选变化；旧快照为 `null`。`buildReportFormatSections()` 给报告加三节，位置在“各字段空值情况”和“按单位读取的数字”之后、“像是空值的写法”之前，只在有内容时输出，说明句用 `DATE_STYLE_NOTE`、`CONSTANT_FIELD_NOTE`、`LOOK_ALIKE_NOTE`。摘要只计问题：“日期写法混用：N 个字段”“同一个值，写法不一样：N 个字段”（N > 0）；常量列不进摘要。
 - 报告快照的 `fieldTypes[].numberUnit`、`quality.numberConversions` 和 `quality.numericLooking`，以及“按单位读取的数字”“像是数字的文本列”两节和带单位的字段标签，见“数字策略”。
 
 **与其他模块的关系**
@@ -1020,6 +1023,55 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 - 没有改名的：疑似合计 / 小计行、整行重复 / 重复行、公式错误（单元格）、日期写法混用、按单位读取的数字；字段类型名“ID”和“未识别到 ID 字段。”；“下界 / 上界”；启动自检的“脚本文件缺失 / 页面元素缺失”；`importer.js` 的“格式异常”“CSV 行结构异常”。代码注释和本文的节标题仍用旧名字（如“疑似缺失值（v2.4.0）”）。
 - 旧说法不再出现由 `basic-data-processing.test.cjs` 末尾的 v2.12.0 护栏固定，见 `docs/TESTING.md` 第 12 节。
 
+## 界面语言（v3.2.0）
+
+- **原则**：换语言只换文字。同一个文件在两种语言下，数字、行数、类型、问题行和行号、排序、图表的数据完全一样；用户的数据和字段名原样。检测规则不随语言变：合计字样、单位、空值写法仍是 v3.1.0 的规则（更完整地读英文表格在下一版）。数字格式和排序固定按 `zh-CN`（和 en-US 的输出逐字相同）。
+- **定语言**：`pickInterfaceLanguage(search, languages)`（`format.js`）：`?lang=zh` / `?lang=en`（只认小写）优先；否则 `navigator.languages[0]` 以 `zh` 开头（含 zh-TW、zh-HK）为中文，其余为英文；都拿不到（测试上下文）为中文（`readNavigatorLanguages()` 读浏览器）。不存 localStorage 或任何存储。`script.js` 启动时先定语言（`INITIAL_LANGUAGE`），先 `rememberStaticLanguage()`，英文才调 `setInterfaceLanguage("en")`。
+- **`<head>` 内联脚本（R5）**：样式表之前的一个 IIFE，只读 `location.search` 和 `navigator.languages`，规则与 `pickInterfaceLanguage()` 相同（测试逐项比较），英文时只给 `<html>` 加 `data-lang-pending`，不定义全局名字。这是“加载时执行的代码只放在 `script.js`”的唯一例外。`style.css` 的 `html[data-lang-pending] body` 隐藏页面，同时带一个 3 秒后显示的 CSS 动画（不靠脚本）：`script.js` 没能跑完时（文件缺失、vendor 加载失败、脚本报错），英文用户最多等 3 秒，不会白页。`script.js` 定好语言后去掉标记；启动自检失败的路径先去掉标记再显示刷新提示，提示按这个标记写中文或英文（`format.js` 可能正是没加载的那个文件）。
+- **切换**：两个按钮写对方的语言名（中文界面 “English”、英文界面“中文”，带对应的 `lang`）：上传页在顶栏右侧（`#languageSwitch`），导入以后在侧栏底部（`#sidebarLanguageSwitch`），不进顶栏。`switchInterfaceLanguage()` → `setInterfaceLanguage()`（换 `<html lang>` 为 zh-CN / en、静态文字和两个按钮、`updateNavFit()`，再 `rerenderForLanguage()`）→ `announceLanguageSwitch()` → `history.replaceState` 写 `?lang=`，保留 `#模块`。确认句的 `role="status"` 元素在第一次切换时才建（`#mainContent` 末尾），50 ms 后写 “Switched to English.” / “界面已切换为中文。”，5 秒后清空；从没切换过的页面一个元素都不多。导入进行中、等待选择工作表时 `isLanguageSwitchLocked()` 为真，两个按钮禁用（`syncLanguageSwitches()`，`script.js` 在 `#sheetSelectionPanel` 显示和隐藏时也调一次）。焦点留在按钮上。
+- **文字放哪**：脚本里 `L(中文, 英文)`（两个参数都会求值，不放进逐值、逐行的循环；问题行的说明按整张列表取一次语言）；常量用 `Lp(中文, 英文)` 成对冻结、`Lpick()` 读，常量名不变；带数量的英文用 `enCount(n, "row", "rows")`。`index.html` 的中文留在原处，文字用 `data-i18n="键"`、属性用 `data-i18n-attr="属性=键 …"`，英文在 `format.js` 的 `I18N_EN`；`<summary>` 的两个属性用 `data-i18n-` 开头的名字，`style.css` 读属性显示“收起 / 展开”。`rememberStaticLanguage()` 在启动时（两种语言都）读下页面自己的中文；`applyStaticLanguage()` 只改还保存着页面原文的文本节点和属性（脚本已经写过的不动），切回中文时逐字节写回。“下载示例 CSV”的链接用 `data-i18n-attr="href=upload.downloadHref"` 指向英文示例。
+- **语言无关的键（R3）**：空值分组键 `BLANK_GROUP_KEY = "（空值）"`（`stats.js`；显示经 `displayGroupName()` 写“（空值）” / “(Blank)”）、筛选选项的排序键（空值用 `BLANK_GROUP_KEY`，其余用原值，`localeCompare(…, "zh-CN")`）、公式错误兜底写法 `FORMULA_ERROR_FALLBACK = "#错误"`（`importer.js`，是单元格的数据，两种语言都原样显示）都不随语言变；否则并组和排序会跟着语言变。三个常量在静态护栏的白名单里。
+- **存成句子的东西（R9）**：
+  - `state.importStatus` 存数据（`tone`、`warningCount`、`affectedRows`、`sourceDisplayName`、`headerDetection`、`suspectedTotals`、`formulaErrors`），状态句显示时现拼，“换一个文件”后回到分析时也现拼。
+  - `state.parseWarnings[]` 存 `{ row, code, params, sourceMessage }`（PapaParse 原文的英文 message 留在 `sourceMessage`），状态栏、问题行说明和报告快照都用 `formatParseWarning()` 现拼。
+  - 趋势结论拆成“算”`computeTrendInsight()`（结果存在 `state.trendInsightData`，到下一次刷新为止）和“拼句”`formatTrendInsight()`；切换时用存下的数字拼句，不重算。分类结论 `renderCategoryInsight()` 只读 `state.categoryStats`。
+  - 状态栏：`setStatus()` / `showError()` 收字符串或生成函数，记下生成函数，切换时 `rewriteStatusMessage()` 重写，`clearStatusMessage()` 清掉。报错用 `languageError(Lp(…) 或函数)`（`format.js`）抛出，错误带着生成函数，`errorMessageBuilder(error)` 交给 `showError()`，`errorText(error)` 给拼进别的句子的地方；PapaParse、SheetJS 和浏览器自己的报错原样不动。CSV 表头检测重试的“第一次的报错”按语言各缓存一份。
+  - 一次性消息（字段配置、按空值处理、筛选、两类不计入分析、导出区和报告的状态行、问题行、写法统一的状态行、`#sheetSelectionMessage`、`#v2FieldPrompt` 等）经 `writeOneOffMessage(element, className, build, tone)` 写，存生成函数，切换时 `rewriteOneOffMessages()` 重调；取决于之前操作的文字（筛选范围句、分类筛选提示、`#reportTitle`）经 `writeLanguageText()` / `rewriteLanguageTexts()`。重建消息（按空值处理、应用字段配置等）在点击那一刻就把两种语言都生成好，之后切换显示的是点击时的数字。
+  - 报告快照在导出那一刻按当前语言建；旧快照里的句子原样输出，缺的兜底句按当前语言写。
+- **就地切换 `rerenderForLanguage()`（`app.js`）**：只重画、不重算（不经过三条刷新路径）。先记下屏幕上所有一次性消息，重写状态栏和语言文字，再按顺序重画：概览、范围句、预览（页码不动）、字段配置（草稿保留）、侧栏、筛选面板（`rerenderFilterPanelForLanguage()`：三个下拉框的第一项 `FILTER_NONE_LABELS`、“（空值）/ (Blank)”、类别列表，草稿和选中字段保留）、数据质量（打开着的问题行按新语言重列，页码写回）、数值和分类统计、`populateControls({ keepChartSelections: true })` 后把 9 个图表和自定义分析下拉框的值写回（浏览器的 `<select>` 改写选项后会丢掉选择）、`renderCharts()`（照契约 11 销毁重建）、两句结论、自定义分析（`drawV2Analysis()` 只用 `state.customAnalysis` 重画，不重新分组）、写法统一检查结果、导出区；最后把被重画清掉的一次性消息按新语言全部写回。筛选、不计入分析、当前模块、问题行类别和页码、预览页码、字段草稿、写法统一检查结果都保留。耗时：示例约 0.1 s；10 万行 × 20 列约 0.9 s，大半是图表重建时按行取数（v3.2.0 接受，契约 11 不开例外）。
+- **导航**：`updateNavFit()` 先去掉 `nav-wrap` 量导航的 `scrollWidth > clientWidth`，放不下时给 `<body>` 加 `nav-wrap`，导航单独占顶栏第二排，轨道只有链接那么宽（`flex: 0 1 auto; max-width: 100%`）。`script.js` 用 `ResizeObserver` 看 `.app-header` 和 `#moduleNav`，窗口大小变化和切换语言后都重新判断；`.module-nav` 的 `overflow-x: auto` 留作兜底。
+- **文件名和 CSV 列**：跟导出那一刻的语言。英文片段 `_in-analysis_`、`_problem-rows_<类别>`、`_standardized_`、`_standardized-changes`、`_first-N`；11 个类别词在 `PROBLEM_KIND_FILE_NAMES`（blank、unrecognized、high-or-low、duplicate-rows、duplicate-ids、blank-like、reading-issues、possible-totals、formula-errors、mixed-date-formats、variants）。问题行 CSV 工具加的列 `File row`、`Note`，和原表字段同名时加 “ (2)”；改动清单的列 `File row, Column, Original, Exported, Action`。报告的 `<html lang>` 跟着语言。
+- **长文件名（R1）**：日期和扩展名之前最多 `FILE_NAME_LIMIT`（80）个字符。不超过 80 的名字和以前逐字节相同（`sanitizeFileName()` 处理整个名字）；更长时 `buildLabeledFileName()` 只截原文件名、用户的字段名和写法这几段（每次从最长的那段截一个字符），`问题行` / `problem-rows`、类别词、`写法统一改动清单`、`前N条` / `first-N` 和日期都不截，所以同一个文件的各个导出不会同名。报告和当前分析的行这两个文件名本来就只有原文件名和一个词，仍是截原文件名。
+- **英文示例**：`examples/sample-orders-en.csv` 是中文示例逐行对应的英文版（同样的数量、金额、日期和问题位置，标题行 “H1 2025 sales orders” 正好 20 个字符，状态栏的标题预览不截断），英文界面的 “Use sample data” 加载它。`$5,400.00` 这类金额按现有规则是普通数字（`$` 和千分位不算单位），所以七类问题里只有六类有提示，只有写法统一的表会改写它们。两个英文夹具 `en-issues.csv`、`en-formula-errors.xlsx` 见 `docs/TESTING.md` 第 16 节。
+- **图表**：句子里的聚合词是小写（“record count”“sum”），纵轴标题另有一份首字母大写（`getDateChartAxisLabel()`、`getAggregateMethodAxisLabel()`）；中文两份相同。
+- **英文术语**（新写英文时按这张表）：
+
+| 中文 | 英文 |
+| --- | --- |
+| 字段 | column |
+| 导航：数据概览 / 字段配置 / 数据质量 / 数据筛选 / 统计 / 图表 / 自定义分析 / 导出 | Overview / Columns / Quality / Filter / Stats / Charts / Breakdown / Export（模块标题用全称，如 Data quality、Breakdown by group） |
+| 空值；筛选和分组里的“（空值）” | blank；“(Blank)” |
+| 像是空值的写法 | values that may mean blank（短称 blank-like，只用在文件名） |
+| 按空值处理 / 撤销；常见写法全部按空值处理（N 处） | Treat as blank / Undo；Treat all common ones as blank (N) |
+| 认不出 | not recognized（列头 Unrecognized） |
+| 偏大或偏小 | unusually high or low（短称 High/low） |
+| 整行重复 / 编号重复 / 多出来的行 | duplicate rows / duplicate IDs / extra copies |
+| 疑似合计行；小计 | possible total rows；subtotal |
+| 不计入分析 | exclude from analysis（状态 excluded，按钮 Exclude from analysis / Undo） |
+| 当前分析范围；当前分析的行 | In analysis；rows in analysis |
+| 读取时有疑问 | reading issues |
+| 同一个值，写法不一样 | same value, written differently（短称 Variants） |
+| 日期写法混用 / 整列只有一个值 / 像是数字的文本列 | mixed date formats / single-value columns / text columns that look numeric |
+| 写法统一的表 / 改动清单 | standardized table / change list |
+| 报告；导出报告 | report；Export report |
+| 查看 / 导出这一类 | View / Export these rows |
+| 换一个文件 | Change file |
+| 类型：数值 / 分类 / 日期 / ID / 忽略 | Number / Text / Date / ID / Ignored |
+| 表格体检 | Sheet Checkup（英文 `<title>`：“Sheet Checkup \| Check CSV and Excel files for data problems”） |
+
+- **句子规则**：每句的单复数都写对；**英文保留中文里出现的每个数字**（写 “1 row is excluded”，不写 This row / one / both / all）；括号和引号用半角，引号用弯引号 “ ”；「字段名」写成 “Column name”；“第 44 行”写 row 44；按钮动词开头、sentence case；数字格式和排序仍按 zh-CN。英文里不出现汉字和全角标点；引用数据写法时只列这一列实际找到的写法，不照抄中文那句的固定清单（R11）。
+- **护栏**（详见 `docs/TESTING.md` 第 16 节）：静态（`tests/i18n-guard.cjs` 的分词器：含汉字的字面量只能在 `L` / `Lp` 的中文参数里或白名单里，英文参数里没有汉字和全角标点，`index.html` 每段中文有键、每个键有英文，分词器自检“汉字全部落在注释或字面量里”）；动态（英文界面导入英文示例、两个英文夹具和测试里构造的文件，走主要操作，全部输出没有汉字，例外逐条写明）；原则 1（同一文件两种语言的数字、问题行、报告数字和筛选顺序逐项相等）；中→英→中之后整页逐字节和切换前相同。
+
 ## 当前脚本的技术债
 
 当前浏览器逻辑共约六千三百行（具体行数随维护变化），按职责分在 9 个经典脚本中，包含 37 个顶层 state 字段和 113 个集中式 DOM 引用。文件大小本身不是唯一问题，主要债务是边界不清和高扇入状态：
@@ -1029,10 +1081,9 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 3. **刷新编排重复。** 导入、筛选和字段配置三条路径维护不同版本的重算与渲染清单，新增面板时容易漏掉某条路径。
 4. **DOM 和第三方全局对象耦合。** 事件在脚本加载时绑定，业务函数直接读取控件，并依赖 `window.Papa`、`window.XLSX` 和 `window.Chart`。
 5. **Visualization 与 Export 存在反向依赖。** 报告导出需要读取 Chart registry、canvas 可见性和标题 DOM。
-6. **报告结构存在双份维护。** HTML 和 Markdown 分别维护完整章节；快照较早把部分数字格式化成字符串，数据模型与展示格式未完全分离。
-7. **缺少显式类型和模块接口。** 函数之间通过约定传递普通对象，状态字段依赖主要由测试和调用顺序保护。
-8. **主线程和内存压力集中。** CSV、Excel、统计和渲染均一次性执行；100,000 行上限是风险控制，不是流式架构。
-9. **测试与全局脚本形态绑定。** VM 测试把应用脚本按顺序加载进同一个上下文，再按全局函数名调用，依赖经典脚本共享的全局作用域；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
+6. **缺少显式类型和模块接口。** 函数之间通过约定传递普通对象，状态字段依赖主要由测试和调用顺序保护。
+7. **主线程和内存压力集中。** CSV、Excel、统计和渲染均一次性执行；100,000 行上限是风险控制，不是流式架构。
+8. **测试与全局脚本形态绑定。** VM 测试把应用脚本按顺序加载进同一个上下文，再按全局函数名调用，依赖经典脚本共享的全局作用域；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
 
 当前代码也有值得保留的基础：纯计算 helper 较多、函数命名明确、原始/筛选口径有保护、Chart 有销毁约定、导出有转义和公式注入防护，并且核心数据逻辑已有回归测试。未来拆分应保留这些行为，而不是重写业务规则。
 
@@ -1046,7 +1097,7 @@ v2.1.0 已正式发布，当前优先级是保持行为稳定。此时把单文�
 - 原始质量与当前筛选分析的口径。
 - 字段类型草稿、筛选清理和报告导出门禁。
 - Chart 创建、销毁和 HTML 报告截图。
-- CSV 公式注入防护、BOM、文件名安全及 HTML/Markdown 转义。
+- CSV 公式注入防护、BOM、文件名安全及 HTML 转义。
 - DOM 事件绑定、ARIA 状态、导航和浏览器下载。
 
 现有自动化测试对解析、字段识别、统计、筛选、报告文本和边界数据覆盖较强，但无法完全替代真实 Chart.js、Excel 文件、下载和完整浏览器交互回归。封版后进行大范围结构调整，用户可见收益有限，而回归面较大。
@@ -1078,7 +1129,7 @@ V3 应采用“保留兼容入口的渐进迁移”，不要一次性重写。�
 - 缺失值和字符串规范化。
 - 数值、百分比、货币和日期解析。
 - mean、median、standard deviation、quantile 和安全 sum。
-- HTML / Markdown 转义、文件名和时间格式化。
+- HTML 转义、文件名和时间格式化。
 
 这一阶段风险最低，也能建立明确的单元测试边界。
 
@@ -1098,7 +1149,6 @@ V3 应采用“保留兼容入口的渐进迁移”，不要一次性重写。�
 
 - `normalizeReportSnapshot()`
 - `buildHtmlReport()` / `buildHtmlReportTable()`
-- `buildMarkdownReport()` / `buildMarkdownTable()`
 - CSV 值安全处理
 - 文件名、时间和内容转义
 

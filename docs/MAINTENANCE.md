@@ -9,7 +9,8 @@
 5. 新增图表时使用唯一 canvas ID，把实例存入 `state.charts`，并在重绘前调用 `destroyChart(id)`。
 6. 新增用户内容到 `innerHTML` 或导出报告时必须经过对应转义函数。
 7. 为纯逻辑和主要边界增加测试，并运行 `npm run test:regression`。
-8. 更新 README 或 `docs/` 中受影响的行为说明。
+8. 更新 README 或 `docs/` 中受影响的行为说明（两份 README 一起改）。
+9. 新增或修改显示给用户的文字时中英文一起写（v3.2.0）：脚本里写 `L(中文, 英文)`，常量写 `Lp(中文, 英文)`、用 `Lpick()` 读，带数量的英文用 `enCount()`；`index.html` 的中文加 `data-i18n` / `data-i18n-attr`，英文写进 `format.js` 的 `I18N_EN`。英文按 `docs/ARCHITECTURE.md`“界面语言（v3.2.0）”的术语表和句子规则写，保留中文里的每个数字。不要把会随语言变的文字存进 `state` 或拿来当键：存数据或生成函数，显示时现拼。检测规则里必须保留的中文（如合计标签、单位、空值写法清单）写进静态护栏白名单（`tests/i18n-guard.cjs` 的 `I18N_WHITELIST`，登记“文件 + 声明名 + 字面量个数”），改了个数要同步。改完在英文界面走一遍（`docs/RELEASE_CHECKLIST.md` 第 7 节），无汉字护栏会扫英文示例和英文夹具的全部输出。
 
 浏览器逻辑按职责分在 9 个普通 `<script>` 文件里（加载顺序和各文件职责见 `docs/ARCHITECTURE.md` 的“应用脚本”表），没有打包器或模块系统，所有文件共享同一个全局作用域：
 
@@ -174,4 +175,4 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 
 ### GitHub Pages 上示例数据加载失败
 
-确认 `fetch("examples/sample-orders.csv")` 和所有静态资源仍为相对路径，并直接访问部署后的文件 URL。通过本地静态服务器测试，不要只双击 `index.html`。
+确认 `` fetch(`examples/${sampleName}`) ``（中文界面 `sample-orders.csv`、英文界面 `sample-orders-en.csv`）和所有静态资源仍为相对路径，并直接访问部署后的文件 URL。通过本地静态服务器测试，不要只双击 `index.html`。

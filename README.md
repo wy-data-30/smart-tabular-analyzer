@@ -12,12 +12,18 @@ English | [中文](./README.zh-CN.md)
 
 ## Live Demo
 
-- **Live Demo:** [Open Sheet Checkup](https://wy-data-30.github.io/smart-tabular-analyzer/)
+- **Live Demo:** [Open Sheet Checkup](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=en)
 - **Repository:** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
 
-Open the demo and choose **使用示例数据** ("Use Sample Data") to complete an analysis without preparing a file.
+Open the demo and choose **Use sample data** to complete an analysis without preparing a file. The interface is in English or Chinese (see Interface Language below); in English the button loads `examples/sample-orders-en.csv`, in Chinese it loads `examples/sample-orders.csv`.
 
-The sample is a fictional order list for the first half of 2025 with a few common problems put in on purpose — a title row above the header, a total row, a duplicated order, "N/A" and "—" placeholders, amounts written like "5400元", mixed date formats and trailing spaces — so the Data Quality page has something to show. The total row is still counted, which inflates the averages and the distribution chart.
+The sample is a fictional order list for the first half of 2025 with a few common problems put in on purpose — a title row above the header, a total row, a duplicated order, "N/A" and "—" placeholders, amounts written in a different way ("$5,400.00" in the English sample, "5400元" in the Chinese one), mixed date formats, and leading or trailing spaces — so the Data quality page has something to show. The two samples hold the same orders and the same numbers. The total row is still counted, which inflates the averages and the distribution chart. In the English sample the "$" amounts are read as plain numbers, so the Data quality page does not point them out; only the standardized export rewrites them.
+
+## Interface Language
+
+The interface is available in English and Chinese. The language follows the browser's first language (Chinese for any `zh` language, English otherwise); `?lang=en` or `?lang=zh` in the address takes precedence. Switch with the "中文" / "English" button at the top right of the upload page, or at the foot of the sidebar after a file is loaded; the switch keeps everything on the page (filters, rows left out of the analysis, the open module, chart and breakdown choices, the problem rows and their page, unapplied column settings) and writes the language into the address. Nothing is stored.
+
+Changing the language changes the words only: the same file gives the same numbers, rows, types, problem rows, order, and charts in both languages. Reports, exported file names, and the columns the tool adds to CSV files follow the language at the moment of export.
 
 ## About
 
@@ -29,7 +35,7 @@ The project is a static website with no backend service, database, account syste
 
 - Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages.
 - Skip title, note, and blank rows above the header automatically, and state in the status bar and reports which row the header was found on.
-- Describe CSV parse warnings (such as a row with fewer cells than the header) in Chinese with the file line they are on; the quality page shows how many warnings there are and how many lines they cover, and the “more data columns than the header” and “unclosed quote” errors name their line too. A file separated by semicolons, tabs, or bars that comes out as a single column gets a hint.
+- Describe CSV parse warnings (such as a row with fewer cells than the header) in the interface language with the file line they are on; the quality page shows how many warnings there are and how many lines they cover, and the “more data columns than the header” and “unclosed quote” errors name their line too. A file separated by semicolons, tabs, or bars that comes out as a single column gets a hint.
 - Preview the data page by page (50 rows a page, with the file row in the first column, following the filters) and summarize the dataset size, field composition, missing values, and duplicate rows.
 - Infer Numeric, Categorical, Date, and ID fields, with manual correction to Numeric, Categorical, Date, ID, or Ignore when needed.
 - Report missing values and rates, complete duplicate rows, IQR-based numeric outliers, and values that cannot be converted to numbers or dates, shown as format problems on the quality page with up to three samples per field and counted in the statistics table.
@@ -46,7 +52,7 @@ The project is a static website with no backend service, database, account syste
 - Show one data-grounded conclusion under the category chart and one under the date trend chart, each following the field selected in that chart and without inferring external business context; the trend conclusion compares record counts and flags a possibly incomplete last month or year, and the category conclusion says so instead of summarizing a field whose values are too scattered. Reports carry the same sentences.
 - Export the rows of the current analysis (the filtered rows, without the rows left out) to CSV in the browser, with a file name ending in “_当前分析_<date>” (current analysis), while preserving field order and neutralizing spreadsheet-formula prefixes.
 - Export with unified writing: first click “检查会改哪些格” (check which cells will change) to see, field by field, how many cells would be rewritten and which stay as written; then export every original row with dates written as YYYY-MM-DD, numbers without units, 万/亿, full-width characters, thousands separators, or currency signs, values confirmed as blank emptied, and edge whitespace removed from text. A change list can be exported too, naming every cell rewritten or kept as written (file row, field, original value, exported value, action).
-- Export the analysis as HTML or Markdown; reports also record the applied filters, and HTML reports embed the currently rendered charts for offline viewing.
+- Export the analysis as an HTML report (print it to PDF from the browser); the report records the applied filters and embeds the currently rendered charts for offline viewing.
 
 Detailed processing rules and data flows are documented in [Architecture](./docs/ARCHITECTURE.md).
 
@@ -95,8 +101,8 @@ The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repo
 
 ### Use the Live Demo
 
-1. Open the [Live Demo](https://wy-data-30.github.io/smart-tabular-analyzer/).
-2. Choose **使用示例数据** ("Use Sample Data"), or upload a `.csv`, `.xlsx`, or `.xls` file.
+1. Open the [Live Demo](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=en).
+2. Choose **Use sample data**, or upload a `.csv`, `.xlsx`, or `.xls` file.
 3. Review the inferred field types, correct them only when needed, and use the analysis navigation to explore or export the results.
 
 ### Run Locally
@@ -150,7 +156,7 @@ npm run test:regression
 ├── style.css
 ├── parsing.js                   # Missing values, number and date parsing
 ├── profiling.js                 # Field type detection and field profiles
-├── format.js                    # Display formatting and HTML escaping
+├── format.js                    # Display formatting, HTML escaping, interface language (L(), I18N_EN)
 ├── stats.js                     # Descriptive stats, IQR, grouping, trends
 ├── quality.js                   # Conversion failures, duplicates, ID duplicates, suspected totals, formula errors, missing rates, problem rows
 ├── app.js                       # State, DOM map, refresh paths, rendering
@@ -159,7 +165,8 @@ npm run test:regression
 ├── script.js                    # Startup: self-check and event bindings (loads last)
 ├── vendor/                      # PapaParse, Chart.js, SheetJS and their licenses
 ├── examples/
-│   └── sample-orders.csv        # Loaded by "Use Sample Data"
+│   ├── sample-orders-en.csv     # Loaded by "Use sample data" in English
+│   └── sample-orders.csv        # Loaded by "使用示例数据" in Chinese
 ├── assets/
 ├── docs/
 ├── tests/                       # Tests and fixtures (tests/fixtures/examples/ holds the other sample CSVs, including the former sample-data.csv)
@@ -200,7 +207,10 @@ npm run test:regression
 - The change list holds at most 1,048,575 cells (the rows of an Excel sheet minus the header). Beyond that only the first 1,048,575 are exported, and the file name and the status line say so; the check table still counts every cell.
 - When Excel opens an exported CSV directly, it drops leading zeros such as in 007 and loses the precision of numbers longer than 15 digits; the tool writes the original text.
 - CSV row numbers count text lines, as a plain-text editor shows them; data rows, parse warnings, and errors all name the line where the record starts. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
-- Problem rows can be viewed and exported on the quality page only; HTML and Markdown reports do not include the problem-row tables, and there is no view of all problem rows together.
+- Problem rows can be viewed and exported on the quality page only; the report does not include the problem-row tables, and there is no view of all problem rows together.
+- The English interface changes the words only. Tables are still read by the same rules in both languages: total labels, units, and values that may mean blank come from the lists above (mostly Chinese, plus Total, Subtotal, Sum and the Latin units); reading English tables more fully is planned for the next version.
+- Amounts written with "$" and thousands separators (such as $5,400.00) are read as plain numbers, so they are not pointed out on the Data quality page; the standardized export writes them without the sign and separators.
+- File names are cut to 80 characters before the date: only the original file name and the user's column or value in it are shortened, never the words the tool adds, so two exports of one file never get the same name.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.
