@@ -11876,3 +11876,81 @@ test("v3.2.1 commit 1: an unexpected error while the chosen sheet is committed e
   assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
   assert.equal(scope.evaluate("state.rows.length"), 0);
 });
+
+// ---- v3.2.1 commit 1b: the check after the frame in the sheet list ----
+
+// A multi-sheet file waiting in the list, with yieldToBrowser() held until release() is called.
+async function v321HeldSheetList(sheets) {
+  const scope = createExcelContext();
+  const reads = countXlsxReads(scope);
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  putWorkbookFile(scope, buildXlsxBuffer(sheets), "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(scope.evaluate("Boolean(state.pendingExcel)"), true);
+  scope.evaluate("globalThis.__realYield = yieldToBrowser; yieldToBrowser = () => new Promise((resolve) => { globalThis.__releaseYield = resolve; })");
+  return {
+    scope,
+    reads,
+    release: () => scope.evaluate("globalThis.__releaseYield()"),
+    restore: () => scope.evaluate("yieldToBrowser = globalThis.__realYield")
+  };
+}
+
+const V321_NEW_CSV = "城市,人数\n北京,1\n上海,2\n广州,3";
+
+test("v3.2.1 commit 1b: an import begun while a failing sheet waits for its frame is left alone", async () => {
+  const held = await v321HeldSheetList([{ name: "好表", rows: V321_GOOD_ROWS }, { name: "只有表头", rows: [["编号", "金额"]] }]);
+  const { scope, reads } = held;
+  try {
+    assert.equal(reads.length, 1);
+    scope.elements.get("excelSheetSelect").value = "只有表头";
+    const choosing = scope.evaluate("analyzeSelectedExcelSheet()");
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "正在读取并分析工作表「只有表头」...");
+    // Another file begins while the frame is drawn: still being read (loading), its own message.
+    put(scope.context, "__newCsv", V321_NEW_CSV);
+    const importId = scope.evaluate('globalThis.__newImport = beginImport(); setStatus("正在读取 new.csv ..."); __newImport');
+    held.release();
+    await choosing;
+    // The sheet was never read, and nothing of it reached the page or the new import.
+    assert.equal(reads.length, 1);
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+    assert.equal(textOf(scope, "statusPanel"), "正在读取 new.csv ...");
+    assert.doesNotMatch(scope.elements.get("statusPanel").className, /\berror\b/);
+    assert.equal(scope.evaluate("state.activeImportId"), importId);
+    // The new import finishes as its own.
+    scope.evaluate("parseCsvText(__newCsv, \"new.csv\", __newImport)");
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.rows.length"), 3);
+    assert.equal(textOf(scope, "statusPanel"), "new.csv 已成功载入，分析结果已生成。");
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  } finally {
+    held.restore();
+  }
+});
+
+test("v3.2.1 commit 1b: an import done while a readable sheet waits for its frame is not overwritten", async () => {
+  const held = await v321HeldSheetList([{ name: "说明", rows: [["本工作簿为虚构数据"], ["第二行"]] }, { name: "数据", rows: V321_GOOD_ROWS }]);
+  const { scope, reads } = held;
+  try {
+    scope.elements.get("excelSheetSelect").value = "数据";
+    const choosing = scope.evaluate("analyzeSelectedExcelSheet()");
+    put(scope.context, "__newCsv", V321_NEW_CSV);
+    scope.evaluate('parseCsvText(__newCsv, "new.csv")');
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    const status = textOf(scope, "statusPanel");
+    held.release();
+    await choosing;
+    assert.equal(reads.length, 1);
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.sourceSheetName"), "");
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.fields)")), ["城市", "人数"]);
+    assert.equal(scope.evaluate("state.rows.length"), 3);
+    assert.equal(textOf(scope, "statusPanel"), status);
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  } finally {
+    held.restore();
+  }
+});
