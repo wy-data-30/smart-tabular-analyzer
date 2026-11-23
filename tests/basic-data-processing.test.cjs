@@ -9556,11 +9556,20 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   const withoutAdditions = stripI18nAttributes(raw)
     .replace(/ {2}<!-- v3\.2\.0: the one script[\s\S]*?<\/script>\n/, "")
     .replace(/\n\s*<button id="(?:languageSwitch|sidebarLanguageSwitch)"[^>]*>English<\/button>/g, "");
+  // The ten cache parameters (?v=x.y.z of style.css and the nine scripts) are written as ?v=VERSION
+  // before hashing, as the report hash blanks the version: a release changes them and nothing else,
+  // and the version itself is pinned place by place by the version test (data-processing). So a
+  // release stays 17 places, and this hash still sees every other character of the page.
+  const cacheParameters = withoutAdditions.match(/\?v=\d+\.\d+\.\d+"/g) || [];
+  assert.equal(cacheParameters.length, 10);
+  const versionless = withoutAdditions.replace(/\?v=\d+\.\d+\.\d+"/g, "?v=VERSION\"");
   // sha256 of index.html at 1001bb9 with LF line endings was 75fc338d…46851. Commit 10 changed the
   // Chinese page on purpose: the note above statistics / charts / custom analysis moved out of the
-  // heading into a bar of its own (3 places), and the export's two counts became “共 N 行” (2 places).
-  // The new value is the old content with only those 5 replacements, not the new file hashed again.
-  assert.equal(crypto.createHash("sha256").update(withoutAdditions).digest("hex"), "7c3f1ed67621a6535edbada30173368570d36c1928dd2121407745e606538435");
+  // heading into a bar of its own (3 places), and the export's two counts became “共 N 行” (2 places);
+  // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
+  // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
+  // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "2a5cbc9497c04f4745ee6fcc0fc5119addb1659e1554e6c5db51b4fb0cf66031");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -10686,7 +10695,10 @@ test("v3.2.0 report.js: an English report has <html lang=\"en\">, no Chinese and
   assert.match(text, /The date column “Date” has \d+ points in time; the record count goes from \d+ in \d{4}-\d{2}(?:-\d{2})? to \d+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
   assert.match(text, /By “Date”, the sum of “Amount” goes from [\d,.]+ in \d{4}-\d{2}(?:-\d{2})? to [\d,.]+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
   assert.match(en.html, /<title>orders\.csv - Sheet Checkup report<\/title>/);
-  assert.match(en.html, /<footer>Created by <a href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">Sheet Checkup<\/a> v3\.1\.0 in your browser; no data was uploaded\.<\/footer>/);
+  // The version is the report's own (pinned by the version test), so a release does not touch this.
+  const reportVersion = en.report.version.replace(/\./g, "\\.");
+  assert.match(reportVersion, /^v\d+\\\.\d+\\\.\d+$/);
+  assert.match(en.html, new RegExp(`<footer>Created by <a href="https://github\\.com/wy-data-30/smart-tabular-analyzer">Sheet Checkup</a> ${reportVersion} in your browser; no data was uploaded\\.</footer>`));
   // The type names of the snapshot are those of the export's language; in Chinese, profile.type.
   assert.deepEqual(en.report.fieldTypes.map((field) => field.appliedType), ["ID", "Text", "Number", "Date", "Text"]);
   assert.deepEqual(zh.report.fieldTypes.map((field) => [field.inferredType, field.appliedType]), JSON.parse((await reportScenario("zh")).evaluate("JSON.stringify(state.profiles.map((profile) => [profile.inferredType, profile.type]))")));

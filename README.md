@@ -4,7 +4,7 @@
 
 Formerly Smart Tabular Analyzer. The repository name and URLs are unchanged.
 
-**Current release:** v3.1.0
+**Current release:** v3.2.0
 
 ## Language
 
