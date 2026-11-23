@@ -12433,3 +12433,22 @@ test("v3.2.1 commit 4: an upload page opened in English names the way back in En
   scope.evaluate('setInterfaceLanguage("zh")');
   assert.equal(textOf(scope, "returnToAnalysis"), "回到「orders.csv」的分析");
 });
+
+// ---- v3.2.1 commit 5: long names wrap in the way back to the analysis (R9) ----
+
+// The fake page has no layout: the browser check (no sideways scroll at 390 / 640 / 768 with long
+// names, short names as before) is in the commit's notes; this pins the rule that makes it so.
+test("v3.2.1 commit 5: 回到「…」的分析 may wrap, at any character, and never grows wider than the page", () => {
+  const css = repoFile("style.css");
+  // (Two classes: the shared button rule, later in the file, would win over one.)
+  const start = css.indexOf("\n.upload-hero .return-to-analysis {");
+  assert.ok(start >= 0);
+  const rule = css.slice(start, css.indexOf("}", start) + 1);
+  assert.match(rule, /\bmax-width: 100%;/);
+  assert.match(rule, /\bwhite-space: normal;/);
+  assert.match(rule, /\boverflow-wrap: anywhere;/);
+  // Only this button: the shared button rule still keeps every other button on one line, and the
+  // font is the buttons' own (no size or weight here).
+  assert.match(css.slice(css.indexOf("\n.secondary-button {"), css.indexOf("}", css.indexOf("\n.secondary-button {"))), /white-space: nowrap;/);
+  assert.doesNotMatch(rule, /font-(?:size|weight)/);
+});

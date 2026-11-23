@@ -368,6 +368,15 @@ body.has-results .sample-preview {
   margin-top: 16px;
 }
 
+/* v3.2.1 (R9): a long file or worksheet name wraps (at any character: a file name may have no
+   space) instead of making the page scroll sideways; a short name stays on one line, as before.
+   Two classes, so the buttons' own white-space: nowrap (later in this file) does not win. */
+.upload-hero .return-to-analysis {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .upload-panel {
   border: 1px solid var(--card-border);
   border-radius: var(--radius-card);
