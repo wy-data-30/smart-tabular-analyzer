@@ -104,14 +104,14 @@ function exportProcessedCsv(mode) {
     downloadUtf8TextFile(content, fileName, "text/csv;charset=utf-8");
     setDataExportStatus(() => L(`已导出当前分析的 ${formatInteger(rows.length)} 行：${fileName}`, `Exported ${enCount(rows.length, "row in analysis", "rows in analysis")}: ${fileName}`), "success");
   } catch (error) {
-    setDataExportStatus(() => L(`数据导出失败：${error.message}`, `The data export failed: ${error.message}`), "error");
+    setDataExportStatus(() => L(`数据导出失败：${errorText(error)}`, `The data export failed: ${errorText(error)}`), "error");
   }
 }
 
 function getProcessedExportRows(mode) {
   // v3.1.0: one data export, the rows of the current analysis (the one without repeats is gone).
   if (mode === "filtered") return getAnalysisRows();
-  throw new Error(L("不支持的数据导出类型。", "This data export type is not supported."));
+  throw languageError(Lp("不支持的数据导出类型。", "This data export type is not supported."));
 }
 
 function buildCsvExportContent(rows, fields) {
@@ -124,7 +124,7 @@ function buildCsvExportContent(rows, fields) {
 // current analysis), the problem-row export and both standardized exports write through here.
 function buildCsvTableContent(headers, cellRows) {
   if (!window.Papa || typeof window.Papa.unparse !== "function") {
-    throw new Error(L("CSV 导出组件未加载，请刷新页面重试。", "The CSV writer failed to load; refresh the page and try again."));
+    throw languageError(Lp("CSV 导出组件未加载，请刷新页面重试。", "The CSV writer failed to load; refresh the page and try again."));
   }
   return window.Papa.unparse(
     { fields: headers.map(sanitizeCsvExportValue), data: cellRows.map((cells) => cells.map(sanitizeCsvExportValue)) },
@@ -214,7 +214,7 @@ function exportProblemRows() {
     const count = view.list.items.length;
     setProblemRowsExportStatus(() => L(`已导出 ${formatInteger(count)} 条：${fileName}`, `Exported ${enCount(count, "row", "rows")}: ${fileName}`), "success");
   } catch (error) {
-    setProblemRowsExportStatus(() => L(`导出失败：${error.message}`, `The export failed: ${error.message}`), "error");
+    setProblemRowsExportStatus(() => L(`导出失败：${errorText(error)}`, `The export failed: ${errorText(error)}`), "error");
   }
 }
 
@@ -416,7 +416,7 @@ function exportStandardizedData(kind, limit = STANDARDIZED_CHANGE_LIMIT) {
     const rowCount = state.rows.length;
     setStandardizedExportStatus(() => L(`已导出写法统一的表 ${formatInteger(rowCount)} 行：${fileName}`, `Exported the standardized table, ${enCount(rowCount, "row", "rows")}: ${fileName}`), "success");
   } catch (error) {
-    setStandardizedExportStatus(() => L(`导出失败：${error.message}`, `The export failed: ${error.message}`), "error");
+    setStandardizedExportStatus(() => L(`导出失败：${errorText(error)}`, `The export failed: ${errorText(error)}`), "error");
   }
 }
 
@@ -462,7 +462,7 @@ function exportAnalysisReport() {
       ensureFieldConfigurationApplied(DRAFT_ACTION_REPORT);
       setReportExportStatus(() => L("字段配置有未应用的修改，请先应用配置后再导出。", "Column settings have changes that are not applied; apply them before exporting."), "warning");
     } else {
-      setStatus(L("请先完成数据分析，再导出报告。", "Finish the analysis before exporting the report."), "warning");
+      setStatus(() => L("请先完成数据分析，再导出报告。", "Finish the analysis before exporting the report."), "warning");
       setReportExportStatus(() => L("请先完成数据分析，再导出报告。", "Finish the analysis before exporting the report."), "warning");
     }
     updateExportButtons();
@@ -483,11 +483,11 @@ function exportAnalysisReport() {
     const content = buildHtmlReport(reportData, captureCurrentChartImages());
     const fileName = buildReportFileName("html", exportedAt);
     downloadUtf8TextFile(content, fileName, "text/html;charset=utf-8");
-    setStatus(L(`报告已生成：${fileName}`, `The report is ready: ${fileName}`), "success");
+    setStatus(() => L(`报告已生成：${fileName}`, `The report is ready: ${fileName}`), "success");
     setReportExportStatus(() => L(`报告已生成：${fileName}`, `The report is ready: ${fileName}`), "success");
   } catch (error) {
-    setStatus(L(`报告导出失败：${error.message}`, `The report export failed: ${error.message}`), "error");
-    setReportExportStatus(() => L(`报告导出失败：${error.message}`, `The report export failed: ${error.message}`), "error");
+    setStatus(() => L(`报告导出失败：${errorText(error)}`, `The report export failed: ${errorText(error)}`), "error");
+    setReportExportStatus(() => L(`报告导出失败：${errorText(error)}`, `The report export failed: ${errorText(error)}`), "error");
   } finally {
     buttons.forEach((button, index) => {
       button.textContent = labels[index];

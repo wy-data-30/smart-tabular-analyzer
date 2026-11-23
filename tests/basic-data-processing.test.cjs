@@ -10559,11 +10559,14 @@ test("v3.2.0 app.js: the trend figures are kept for a switch and cleared with th
   assert.ok(data && ["flat", "up", "down"].includes(data.kind), JSON.stringify(data));
   const chinese = scope.evaluate("state.chartInsights.trend");
   assert.equal(chinese, scope.evaluate("buildTrendInsight(dom.dateChartField.value)"));
-  // The rows are not read again: the sentence from the kept figures in English keeps the numbers.
-  scope.evaluate("globalThis.__realRows = getAnalysisRows; getAnalysisRows = () => { throw new Error(\"read\"); }");
+  // The figures are not computed again: the sentence from the kept figures in English keeps the
+  // numbers. (Commit 11: a switch draws the page again from the rows, so it is the trend's
+  // computation that must not run, not every read of the rows.)
+  scope.evaluate("globalThis.__realTrend = computeTrendInsight; computeTrendInsight = () => { throw new Error(\"computed\"); }");
   scope.evaluate('setInterfaceLanguage("en")');
   const english = scope.evaluate("formatTrendInsight(state.trendInsightData)");
-  scope.evaluate("getAnalysisRows = globalThis.__realRows");
+  assert.equal(scope.evaluate("state.chartInsights.trend"), english);
+  scope.evaluate("computeTrendInsight = globalThis.__realTrend");
   assert.ok(!ENGLISH_BAD.test(english), english);
   assert.deepEqual(numbersOf(english), numbersOf(chinese), `${english} / ${chinese}`);
   scope.evaluate("resetAnalysisState()");
@@ -10647,6 +10650,9 @@ async function reportScenario(language, csv = englishScenarioCsv(), fileName = "
     scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
   }
   scope.evaluate("checkStandardizedExport()");
+  // The analysis time is the clock of the import: the same for both languages, or the two reports
+  // differ by a second now and then (commit 11 found the number comparison flaky).
+  scope.evaluate('state.analysisCompletedAt = new Date("2026-10-25T08:00:00.000Z")');
   return scope;
 }
 
@@ -10911,4 +10917,141 @@ test("v3.2.0 commit 10: the export options say 共 42 行 / 42 rows, the number 
   assert.doesNotMatch(page, /当前分析行数|原始行数 </);
   const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
   assert.equal("export.analysisCount" in english || "export.originalCount" in english, false);
+});
+
+// ---- v3.2.0 commit 11: switch the language in place ----
+// The scenario's steps (filter, rows left out, field draft, custom analysis, standardized check,
+// a problem category open), ending on a state worth keeping; what a switch must keep.
+async function switchScenario(language) {
+  const { scope } = await runLanguageScenario(language);
+  scope.evaluate('setRowExclusion("duplicateRows", true)');
+  // (updateSchemaDraftRow() patches the row through DOM calls the fake page has not; the browser
+  // shows what renderSchema() draws, so the scenario draws it.)
+  scope.evaluate('stageFieldTypeChange("ID", "category"); renderSchema()');
+  scope.evaluate('openProblemView(state.problemCategories.find((category) => category.kind === "missing") || state.problemCategories[0])');
+  scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  return scope;
+}
+
+// The two language switches have no text in the fake page until a switch writes it.
+const withoutSwitches = (texts) => Object.fromEntries(Object.entries(texts).filter(([id]) => !["languageSwitch", "sidebarLanguageSwitch"].includes(id)));
+
+const KEPT_STATE = `JSON.stringify({
+  filters: state.filters, excluded: state.excludedRows, module: document.body.dataset.module ?? null,
+  problem: state.problemView && { category: state.problemView.category, page: state.problemView.page },
+  previewPage: state.previewPage, drafts: state.fieldTypeDrafts, standardized: Boolean(state.standardizedExport),
+  custom: state.customAnalysis && { metricField: state.customAnalysis.metricField, groupField: state.customAnalysis.groupField, grouped: state.customAnalysis.grouped.map((item) => [item.name, item.sum]) },
+  selects: [dom.numericChartField, dom.categoryChartField, dom.dateChartField, dom.dateChartMetric, dom.dateChartAggregate, dom.v2MetricField, dom.v2GroupField, dom.v2AggregateMethod, dom.v2DateField, dom.categoryFilterField, dom.numericFilterField, dom.dateFilterField].map((select) => select.value),
+  categoryDrafts: [...state.categoryFilterDraftValues]
+})`;
+
+test("v3.2.0 commit 11: Chinese → English → Chinese gives every element of the page back byte for byte and keeps the state", async () => {
+  await withRecordedAttributes(async () => {
+    const scope = await switchScenario("zh");
+    const before = withoutSwitches(elementTexts(scope));
+    const state = scope.evaluate(KEPT_STATE);
+    // A browser's <select> loses its choice when its options are written again; the fake one keeps
+    // it, so this does what the browser does (the switch must put every choice back).
+    scope.evaluate("globalThis.__realSetSelectOptions = setSelectOptions; setSelectOptions = (select, ...args) => { __realSetSelectOptions(select, ...args); select.value = \"\"; }");
+    scope.evaluate('setInterfaceLanguage("en")');
+    const english = elementTexts(scope);
+    assert.equal(scope.evaluate(KEPT_STATE), state, "the state after the switch to English");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const after = withoutSwitches(elementTexts(scope));
+    const changed = Object.keys(before).filter((id) => before[id] !== after[id]).map((id) => `${id}: ${String(before[id]).slice(0, 80)} → ${String(after[id]).slice(0, 80)}`);
+    assert.deepEqual(changed, []);
+    assert.equal(scope.evaluate(KEPT_STATE), state);
+    // The English page really was English: no element kept Chinese of the scripts.
+    const fragments = doneFileChineseFragments();
+    const leaks = Object.entries(english).filter(([, text]) => fragments.some((fragment) => text.includes(fragment))).map(([id, text]) => `${id}: ${text.slice(0, 100)}`);
+    assert.deepEqual(leaks, []);
+  });
+});
+
+test("v3.2.0 commit 11: Chinese switched to English shows what a page opened in English shows (no render function left out)", async () => {
+  await withRecordedAttributes(async () => {
+    const switched = await switchScenario("zh");
+    switched.evaluate('setInterfaceLanguage("en")');
+    const native = await switchScenario("en");
+    const a = elementTexts(switched);
+    const b = elementTexts(native);
+    // The status bar's fold and the language announcer come from the switch itself.
+    const differ = Object.keys(b).filter((id) => a[id] !== b[id]).map((id) => `${id}: ${String(a[id]).slice(0, 90)} ≠ ${String(b[id]).slice(0, 90)}`);
+    assert.deepEqual(differ, []);
+  });
+});
+
+test("v3.2.0 commit 11: the switch draws again without computing again: no grouping, no trend figures, charts destroyed and drawn", async () => {
+  const scope = await switchScenario("zh");
+  scope.evaluate(`globalThis.__calls = { grouped: 0, trend: 0, charts: 0, stats: 0 };
+    for (const [name, key] of [["buildV2GroupedStats", "grouped"], ["computeTrendInsight", "trend"], ["renderCharts", "charts"], ["buildCategoryStats", "stats"]]) {
+      const real = globalThis[name];
+      globalThis[name] = (...args) => { __calls[key] += 1; return real(...args); };
+    }`);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const calls = JSON.parse(scope.evaluate("JSON.stringify(__calls)"));
+  assert.deepEqual([calls.grouped, calls.trend, calls.stats], [0, 0, 0]);
+  // The charts are drawn again (renderCharts() destroys each first, 契约 11; the fake page has no
+  // Chart.js, so the count is of the calls).
+  assert.equal(calls.charts, 1);
+  // The open problem rows are listed again in English, on the same page.
+  assert.match(scope.evaluate("state.problemView.list.items[0].note"), /^[A-Z][a-z]/);
+});
+
+test("v3.2.0 commit 11: the problem-row viewer keeps its page; the notes are listed again in the new language", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["Name", "Amount"], Array.from({ length: 130 }, (_, index) => ({ Name: `n${index}`, Amount: index % 2 ? "" : String(index) })));
+  scope.evaluate('openProblemView({ kind: "missing", field: "Amount" }); state.problemView.page = 2; renderProblemView()');
+  const notes = () => JSON.parse(scope.evaluate("JSON.stringify([state.problemView.page, state.problemView.list.items[0].note])"));
+  assert.deepEqual(notes(), [2, "空值"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(notes(), [2, "Blank"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(notes(), [2, "空值"]);
+});
+
+test("v3.2.0 commit 11: the status bar, an import error and the worksheet message are written again after a switch", async () => {
+  // An error of the importer (a CSV with only a header row): built in both languages.
+  const scope = await importCsvInLanguage("a,b\n", "only-header.csv", "zh");
+  const chinese = textOf(scope, "statusPanel");
+  assert.match(chinese, /\p{Script=Han}/u);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = textOf(scope, "statusPanel");
+  assert.ok(english && !ENGLISH_BAD.test(english), english);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(scope, "statusPanel"), chinese);
+  // A message the report export writes into the status bar.
+  const done = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  captureDownloads(done);
+  done.evaluate("exportAnalysisReport()");
+  assert.match(textOf(done, "statusPanel"), /^报告已生成：orders-\d{8}-\d{6}\.html$/);
+  done.evaluate('setInterfaceLanguage("en")');
+  assert.match(textOf(done, "statusPanel"), /^The report is ready: orders-\d{8}-\d{6}\.html$/);
+  // The worksheet message (a one-off message since commit 11).
+  done.evaluate('showSheetSelectionError(() => L("请选择一个工作表后再继续。", "Choose a worksheet to continue."))');
+  assert.equal(textOf(done, "sheetSelectionMessage"), "Choose a worksheet to continue.");
+  done.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(done, "sheetSelectionMessage"), "请选择一个工作表后再继续。");
+  // An error whose message is not ours (PapaParse, the browser) stays as it is.
+  assert.equal(done.evaluate('errorMessageBuilder(new Error("plain"))'), "plain");
+  assert.equal(done.evaluate('typeof errorMessageBuilder(languageError(Lp("甲", "A")))'), "function");
+});
+
+test("v3.2.0 commit 11: a switch says so in a role=status element made at the first switch, written a moment later and taken away", async () => {
+  const scope = createScriptContext();
+  // A page never switched has no such element (the Chinese page is as before).
+  assert.equal(scope.evaluate("languageAnnouncer"), null);
+  scope.evaluate("switchInterfaceLanguage()");
+  const element = () => JSON.parse(scope.evaluate("JSON.stringify(languageAnnouncer && { text: languageAnnouncer.textContent, className: languageAnnouncer.className })"));
+  assert.deepEqual(element(), { text: "", className: "visually-hidden" });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(element().text, "Switched to English.");
+  scope.evaluate("switchInterfaceLanguage()");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(element().text, "界面已切换为中文。");
+  assert.equal(scope.evaluate("LANGUAGE_ANNOUNCE_CLEAR_MS"), 5000);
+  const app = repoFile("app.js");
+  assert.match(app, /languageAnnouncer\.setAttribute\("role", "status"\);/);
+  assert.match(app, /document\.getElementById\("mainContent"\)\?\.appendChild\(languageAnnouncer\);/);
+  assert.doesNotMatch(repoFile("script.js"), /languageAnnouncer/);
 });

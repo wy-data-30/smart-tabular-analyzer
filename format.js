@@ -45,6 +45,26 @@ function readNavigatorLanguages(browser) {
   return browser.language ? [browser.language] : [];
 }
 
+// v3.2.0 commit 11: an error whose message can be written again in the other language. source
+// is an Lp() pair or a function that writes the message in the current language.
+function languageError(source) {
+  const build = typeof source === "function" ? source : () => Lpick(source);
+  const error = new Error(build());
+  error.buildMessage = build;
+  return error;
+}
+
+// What the status bar shows for a caught error: a function for a languageError (written again
+// after a switch), the plain message for any other error (PapaParse, SheetJS, the browser).
+function errorMessageBuilder(error) {
+  return typeof error?.buildMessage === "function" ? error.buildMessage : String(error?.message ?? error ?? "");
+}
+
+// The message of a caught error in the current language.
+function errorText(error) {
+  return typeof error?.buildMessage === "function" ? error.buildMessage() : String(error?.message ?? error ?? "");
+}
+
 // The switch names the other language, in that language.
 const LANGUAGE_NAME_ZH = "中文";
 function languageSwitchLabel() {

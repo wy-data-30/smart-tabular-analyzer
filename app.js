@@ -381,6 +381,82 @@ function setInterfaceLanguage(language) {
   });
   // The navigation's words change width with the language.
   updateNavFit();
+  // v3.2.0 commit 11: the analysis on the page, drawn again in the new language.
+  rerenderForLanguage();
+}
+
+// v3.2.0 commit 11: everything the scripts wrote, written again in the current language from the
+// state, nothing computed again (契约 5 of the plan): the filters, the rows left out, the module,
+// the selects of the charts and the custom analysis, its result, the problem-row viewer's category
+// and page, the preview page, unapplied column drafts and the standardized check all stay. Order
+// as the refresh paths. Charts are destroyed and drawn again (契约 11).
+function rerenderForLanguage() {
+  // The messages on screen now: a render below may clear one (opening the problem rows again
+  // clears its export status), so they are all written back at the end.
+  const messages = new Map(oneOffMessages);
+  rewriteOneOffMessages();
+  rewriteStatusMessage();
+  rewriteLanguageTexts();
+  if (!state.rows.length || !state.analysisCompletedAt) return;
+  const selects = [dom.numericChartField, dom.categoryChartField, dom.dateChartField, dom.dateChartMetric, dom.dateChartAggregate, dom.v2MetricField, dom.v2GroupField, dom.v2AggregateMethod, dom.v2DateField];
+  const chosen = selects.map((select) => select.value);
+  const problemPage = state.problemView ? state.problemView.page : null;
+
+  renderOverview();
+  renderFilterCounts();
+  renderPreview();
+  renderSchema();
+  renderSidebar();
+  rerenderFilterPanelForLanguage();
+  renderQuality();
+  // renderQuality() lists the open category again (refreshProblemView()) and goes to page 1.
+  if (state.problemView && problemPage !== null) {
+    state.problemView.page = problemPage;
+    renderProblemView();
+  }
+  renderNumericStats();
+  renderCategoryStats();
+  populateControls({ keepChartSelections: true });
+  selects.forEach((select, index) => { select.value = chosen[index]; });
+  renderCharts();
+  renderCategoryInsight();
+  state.chartInsights.trend = state.trendInsightData ? formatTrendInsight(state.trendInsightData) : "";
+  setChartInsight(dom.dateChartInsight, state.chartInsights.trend);
+  if (state.customAnalysis && !dom.v2AnalysisResults.classList.contains("hidden")) drawV2Analysis();
+  if (state.standardizedExport) renderStandardizedExport();
+  updateExportButtons();
+  // The messages the render functions above cleared or wrote over, back in the new language.
+  messages.forEach(({ build, className, tone }, element) => writeOneOffMessage(element, className, build, tone));
+}
+
+// The filter panel's own texts: the first options of the three selects, the values' labels (the
+// empty one is “（空值）” / “(Blank)”) and their list; the drafts and the chosen fields stay.
+function rerenderFilterPanelForLanguage() {
+  // The first option is written again in the select's HTML (setSelectOptions() wrote it first),
+  // and the chosen field is put back (a new innerHTML resets it).
+  [[dom.categoryFilterField, FILTER_NONE_LABELS.category], [dom.numericFilterField, FILTER_NONE_LABELS.numeric], [dom.dateFilterField, FILTER_NONE_LABELS.date]].forEach(([select, label]) => {
+    const value = select.value;
+    select.innerHTML = String(select.innerHTML).replace(/^<option value="">[^<]*<\/option>/, () => `<option value="">${escapeHtml(Lpick(label))}</option>`);
+    select.value = value;
+  });
+  state.categoryFilterOptions.forEach((option) => {
+    if (!option.value) option.label = Lpick(BLANK_GROUP_LABEL);
+  });
+  renderCategoryFilterValues();
+}
+
+// v3.2.0 commit 11: texts of fixed elements written from the state or a past action (the filter
+// ranges, the category filter's hint), kept as functions so a switch writes them again.
+const languageTexts = new Map();
+
+function writeLanguageText(element, text) {
+  element.textContent = typeof text === "function" ? text() : text;
+  if (typeof text === "function") languageTexts.set(element, text);
+  else languageTexts.delete(element);
+}
+
+function rewriteLanguageTexts() {
+  languageTexts.forEach((build, element) => { element.textContent = build(); });
 }
 
 // v3.2.0 commit 9 (the review's 甲): when the eight module links do not fit beside the brand and
@@ -396,10 +472,41 @@ function updateNavFit() {
   if (nav.scrollWidth > nav.clientWidth + 1) document.body.classList.add("nav-wrap");
 }
 
+// v3.2.0 commit 11: the switch's confirmation for screen readers (“Switched to English.”), in a
+// role="status" element made at the first switch, at the end of <main> (always shown). A page
+// never switched has no such element, as before; the sentence is written a moment after the
+// element is there (so it is read out) and taken away after a few seconds.
+let languageAnnouncer = null;
+const languageAnnounceTimers = { write: null, clear: null };
+const LANGUAGE_ANNOUNCE_DELAY_MS = 50;
+const LANGUAGE_ANNOUNCE_CLEAR_MS = 5000;
+
+function announceLanguageSwitch() {
+  if (!languageAnnouncer) {
+    languageAnnouncer = document.createElement("p");
+    languageAnnouncer.className = "visually-hidden";
+    languageAnnouncer.setAttribute("role", "status");
+    languageAnnouncer.setAttribute("aria-live", "polite");
+    document.getElementById("mainContent")?.appendChild(languageAnnouncer);
+  }
+  const element = languageAnnouncer;
+  const sentence = L("界面已切换为中文。", "Switched to English.");
+  clearTimeout(languageAnnounceTimers.write);
+  clearTimeout(languageAnnounceTimers.clear);
+  element.textContent = "";
+  languageAnnounceTimers.write = setTimeout(() => {
+    element.textContent = sentence;
+    languageAnnounceTimers.clear = setTimeout(() => { element.textContent = ""; }, LANGUAGE_ANNOUNCE_CLEAR_MS);
+    languageAnnounceTimers.clear?.unref?.();
+  }, LANGUAGE_ANNOUNCE_DELAY_MS);
+  languageAnnounceTimers.write?.unref?.();
+}
+
 // The switch: the other language, written into the address as ?lang= (the #module stays).
 function switchInterfaceLanguage() {
   if (isLanguageSwitchLocked()) return;
   setInterfaceLanguage(currentLanguage === "en" ? "zh" : "en");
+  announceLanguageSwitch();
   if (window.location && window.history && typeof URL === "function") {
     const url = new URL(window.location.href);
     url.searchParams.set("lang", currentLanguage);
@@ -535,11 +642,11 @@ function refreshFormatConsistency() {
 function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [], sheetName = "", numberFormatHints = null, headerDetection = null, rowNumbers = null, formulaErrors = null, dateCells = null) {
   if (!isCurrentImport(importId)) return;
   if (!fields.length || !rows.length) {
-    showError(L("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", "The file has no data to analyze. Make sure it has a header row and at least one row of data."), importId);
+    showError(() => L("文件中没有可分析的数据。请确认数据包含表头和至少一行数据。", "The file has no data to analyze. Make sure it has a header row and at least one row of data."), importId);
     return;
   }
   if (fields.length > IMPORT_LIMITS.maxColumns || rows.length > IMPORT_LIMITS.maxRows) {
-    showError(L(`数据超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行或 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请拆分后重试。`, `The data is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows or ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; split it and try again.`), importId);
+    showError(() => L(`数据超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行或 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请拆分后重试。`, `The data is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows or ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; split it and try again.`), importId);
     return;
   }
 
@@ -1371,6 +1478,13 @@ function resetFilterState() {
   state.categoryFilterDraftValues = new Set();
 }
 
+// The first option of the three filter selects (v3.2.0 commit 11: also written on a switch).
+const FILTER_NONE_LABELS = Object.freeze({
+  category: Lp("不筛选分类字段", "Don’t filter by text"),
+  numeric: Lp("不筛选数值字段", "Don’t filter by number"),
+  date: Lp("不筛选日期字段", "Don’t filter by date")
+});
+
 function initializeFilterControls() {
   const categoryFields = getProfilesByType("category").map((profile) => profile.field);
   const numericFields = getProfilesByType("numeric")
@@ -1380,9 +1494,9 @@ function initializeFilterControls() {
     .filter((profile) => fieldHasDateData(profile.field, getIncludedRows()))
     .map((profile) => profile.field);
 
-  setSelectOptions(dom.categoryFilterField, categoryFields, L("不筛选分类字段", "Don’t filter by text"), true);
-  setSelectOptions(dom.numericFilterField, numericFields, L("不筛选数值字段", "Don’t filter by number"), true);
-  setSelectOptions(dom.dateFilterField, dateFields, L("不筛选日期字段", "Don’t filter by date"), true);
+  setSelectOptions(dom.categoryFilterField, categoryFields, Lpick(FILTER_NONE_LABELS.category), true);
+  setSelectOptions(dom.numericFilterField, numericFields, Lpick(FILTER_NONE_LABELS.numeric), true);
+  setSelectOptions(dom.dateFilterField, dateFields, Lpick(FILTER_NONE_LABELS.date), true);
   dom.categoryFilterField.disabled = categoryFields.length === 0;
   dom.numericFilterField.disabled = numericFields.length === 0;
   dom.dateFilterField.disabled = dateFields.length === 0;
@@ -1427,9 +1541,9 @@ function updateCategoryFilterField() {
   );
   dom.categoryFilterControls.classList.toggle("hidden", !field);
   dom.categoryFilterEmpty.classList.toggle("hidden", Boolean(field));
-  dom.categoryFilterEmpty.textContent = dom.categoryFilterField.disabled
+  writeLanguageText(dom.categoryFilterEmpty, () => dom.categoryFilterField.disabled
     ? L("没有可用的分类字段。", "No text columns available.")
-    : L("请选择分类字段。", "Choose a text column.");
+    : L("请选择分类字段。", "Choose a text column."));
   renderCategoryFilterValues();
 }
 
@@ -1501,13 +1615,13 @@ function updateNumericFilterField() {
   if (!enabled) {
     dom.numericFilterMin.value = "";
     dom.numericFilterMax.value = "";
-    dom.numericFilterRange.textContent = formatFilterRangeEmpty(dom.numericFilterField.disabled);
+    writeLanguageText(dom.numericFilterRange, () => formatFilterRangeEmpty(dom.numericFilterField.disabled));
     return;
   }
   const { min, max } = numericExtents(values);
   dom.numericFilterMin.value = String(min);
   dom.numericFilterMax.value = String(max);
-  dom.numericFilterRange.textContent = formatFilterRange(formatFieldNumber(field, min), formatFieldNumber(field, max));
+  writeLanguageText(dom.numericFilterRange, () => formatFilterRange(formatFieldNumber(field, min), formatFieldNumber(field, max)));
 }
 
 function updateDateFilterField() {
@@ -1521,14 +1635,14 @@ function updateDateFilterField() {
   if (!enabled) {
     dom.dateFilterStart.value = "";
     dom.dateFilterEnd.value = "";
-    dom.dateFilterRange.textContent = formatFilterRangeEmpty(dom.dateFilterField.disabled);
+    writeLanguageText(dom.dateFilterRange, () => formatFilterRangeEmpty(dom.dateFilterField.disabled));
     return;
   }
   const start = dates[0].toISOString().slice(0, 10);
   const end = dates[dates.length - 1].toISOString().slice(0, 10);
   dom.dateFilterStart.value = start;
   dom.dateFilterEnd.value = end;
-  dom.dateFilterRange.textContent = formatFilterRange(start, end);
+  writeLanguageText(dom.dateFilterRange, () => formatFilterRange(start, end));
 }
 
 function readFilterConfig() {
@@ -1896,7 +2010,7 @@ function refreshFilterPanelForIncludedRows() {
   const numbers = numericField ? getNumericValues(numericField, getIncludedRows()) : [];
   if (numbers.length) {
     const { min, max } = numericExtents(numbers);
-    dom.numericFilterRange.textContent = formatFilterRange(formatFieldNumber(numericField, min), formatFieldNumber(numericField, max));
+    writeLanguageText(dom.numericFilterRange, () => formatFilterRange(formatFieldNumber(numericField, min), formatFieldNumber(numericField, max)));
     if (state.filters.numeric?.field !== numericField) {
       dom.numericFilterMin.value = String(min);
       dom.numericFilterMax.value = String(max);
@@ -1907,7 +2021,7 @@ function refreshFilterPanelForIncludedRows() {
   if (dates.length) {
     const start = dates[0].toISOString().slice(0, 10);
     const end = dates[dates.length - 1].toISOString().slice(0, 10);
-    dom.dateFilterRange.textContent = formatFilterRange(start, end);
+    writeLanguageText(dom.dateFilterRange, () => formatFilterRange(start, end));
     if (state.filters.date?.field !== dateField) {
       dom.dateFilterStart.value = start;
       dom.dateFilterEnd.value = end;
@@ -2620,8 +2734,7 @@ function resetV2AnalysisState() {
   destroyChart("v2SelectedTrendChart");
   state.customAnalysis = null;
   dom.v2AnalysisResults.classList.add("hidden");
-  dom.v2FieldPrompt.className = "analysis-prompt";
-  dom.v2FieldPrompt.textContent = L("请选择指标字段、分组维度和聚合方式，再点击“生成自定义分析”。时间字段为可选。", "Choose a metric column, a column to group by and an aggregation, then click “Create breakdown”. A date column is optional.");
+  writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => L("请选择指标字段、分组维度和聚合方式，再点击“生成自定义分析”。时间字段为可选。", "Choose a metric column, a column to group by and an aggregation, then click “Create breakdown”. A date column is optional."));
 }
 
 function renderV2Analysis() {
@@ -2638,8 +2751,7 @@ function renderV2Analysis() {
   if (validationMessage) {
     state.customAnalysis = null;
     dom.v2AnalysisResults.classList.add("hidden");
-    dom.v2FieldPrompt.className = "analysis-prompt warning";
-    dom.v2FieldPrompt.textContent = validationMessage;
+    writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => getV2ValidationMessage(metricField, groupField, dateField), "warning");
     return;
   }
 
@@ -2647,16 +2759,9 @@ function renderV2Analysis() {
   if (!grouped.length) {
     state.customAnalysis = null;
     dom.v2AnalysisResults.classList.add("hidden");
-    dom.v2FieldPrompt.className = "analysis-prompt warning";
-    dom.v2FieldPrompt.textContent = L("所选字段没有可计算的有效记录，请重新选择字段后再分析。", "The chosen columns have no valid rows to compute; choose other columns and try again.");
+    writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => L("所选字段没有可计算的有效记录，请重新选择字段后再分析。", "The chosen columns have no valid rows to compute; choose other columns and try again."), "warning");
     return;
   }
-
-  dom.v2FieldPrompt.className = "analysis-prompt";
-  dom.v2FieldPrompt.textContent = dateField
-    ? L(`已生成分组${aggregateLabel}汇总和时间趋势。`, `Created the ${aggregateLabel} by group and its trend over time.`)
-    : L(`已生成分组${aggregateLabel}汇总；未选择时间字段，因此不生成时间趋势图。`, `Created the ${aggregateLabel} by group; no date column was chosen, so there is no trend chart.`);
-  dom.v2AnalysisResults.classList.remove("hidden");
 
   const metricInvalidCount = countInvalidNumericValues(metricField, getAnalysisRows());
   state.customAnalysis = {
@@ -2668,6 +2773,20 @@ function renderV2Analysis() {
     grouped: grouped.map((item) => ({ ...item })),
     trend: dateField ? buildMetricDateTrend(dateField, metricField, aggregateMethod) : null
   };
+  drawV2Analysis(grouped);
+}
+
+// v3.2.0 commit 11: the drawing part of renderV2Analysis(), from state.customAnalysis; a language
+// switch calls it alone (the groups are not computed again). grouped: the groups to draw.
+function drawV2Analysis(grouped = state.customAnalysis.grouped) {
+  const { metricField, groupField, aggregateMethod, dateField, metricInvalidCount } = state.customAnalysis;
+  const aggregateLabel = getAggregateMethodLabel(aggregateMethod);
+  destroyChart("v2TopGroupChart");
+  destroyChart("v2SelectedTrendChart");
+  writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => (dateField
+    ? L(`已生成分组${getAggregateMethodLabel(aggregateMethod)}汇总和时间趋势。`, `Created the ${getAggregateMethodLabel(aggregateMethod)} by group and its trend over time.`)
+    : L(`已生成分组${getAggregateMethodLabel(aggregateMethod)}汇总；未选择时间字段，因此不生成时间趋势图。`, `Created the ${getAggregateMethodLabel(aggregateMethod)} by group; no date column was chosen, so there is no trend chart.`)));
+  dom.v2AnalysisResults.classList.remove("hidden");
 
   renderV2SummaryCards(metricField, groupField, aggregateMethod, dateField, grouped);
   renderV2AggregationTables(metricField, groupField, grouped);
@@ -2980,11 +3099,12 @@ function resetAnalysisState() {
   syncSidebarToggle();
   resetStatusNote();
   dom.statusNoteSummary.textContent = "";
+  statusMessage = null;
   state.importStatus = null;
   state.returnModule = null;
   dom.returnToAnalysis.classList.add("hidden");
   dom.returnToAnalysis.textContent = "";
-  dom.reportTitle.textContent = L("数据分析工作区", "Analysis workspace");
+  writeLanguageText(dom.reportTitle, () => L("数据分析工作区", "Analysis workspace"));
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
@@ -3012,11 +3132,11 @@ function resetAnalysisState() {
   dom.numericFilterField.innerHTML = "";
   dom.numericFilterMin.value = "";
   dom.numericFilterMax.value = "";
-  dom.numericFilterRange.textContent = formatFilterRangeEmpty(false);
+  writeLanguageText(dom.numericFilterRange, () => formatFilterRangeEmpty(false));
   dom.dateFilterField.innerHTML = "";
   dom.dateFilterStart.value = "";
   dom.dateFilterEnd.value = "";
-  dom.dateFilterRange.textContent = formatFilterRangeEmpty(false);
+  writeLanguageText(dom.dateFilterRange, () => formatFilterRangeEmpty(false));
   dom.filterOriginalCount.textContent = "0";
   dom.filterCurrentCount.textContent = "0";
   dom.filterExcludedCount.textContent = "0";
@@ -3059,11 +3179,9 @@ function resetAnalysisState() {
   dom.categoryStats.innerHTML = "";
   dom.excelWorkbookName.textContent = "";
   dom.excelSheetSelect.innerHTML = "";
-  dom.sheetSelectionMessage.textContent = "";
-  dom.sheetSelectionMessage.className = "sheet-selection-message";
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", "");
   dom.sheetSelectionPanel.classList.add("hidden");
-  dom.v2FieldPrompt.textContent = "";
-  dom.v2FieldPrompt.className = "analysis-prompt";
+  writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", "");
   dom.v2SummaryCards.innerHTML = "";
   dom.v2ResultSummary.textContent = "";
   dom.v2PrimaryTable.innerHTML = "";
@@ -3127,16 +3245,34 @@ function buildImportStatus({ sourceDisplayName, warningCount, affectedRows, head
 }
 
 function showImportStatus(status) {
-  const { message, tone, hasNote, summary } = buildImportStatus(status);
-  setStatus(message, tone, hasNote);
+  const { tone, hasNote, summary } = buildImportStatus(status);
+  setStatus(() => buildImportStatus(status).message, tone, hasNote, () => buildImportStatus(status).summary);
   dom.statusNoteSummary.textContent = summary;
 }
 
+// v3.2.0 commit 11: the status bar's message (and the folded summary of an import) as functions,
+// so a language switch writes them again (rewriteStatusMessage()); null when the bar is empty.
+let statusMessage = null;
+
+function clearStatusMessage() {
+  statusMessage = null;
+  dom.statusPanel.textContent = "";
+}
+
+function rewriteStatusMessage() {
+  if (!statusMessage) return;
+  dom.statusPanel.textContent = statusMessage.build();
+  if (statusMessage.summary) dom.statusNoteSummary.textContent = statusMessage.summary();
+  dom.statusNoteToggle.textContent = dom.statusNote.classList.contains("is-collapsed") ? L("看说明", "Show notes") : L("收起", "Collapse");
+}
+
 // hasNote keeps a successful status on screen once results show (style.css): its message
-// says something the page does not say at the top.
-function setStatus(message, tone = "", hasNote = false) {
+// says something the page does not say at the top. message: a text or a function writing it.
+function setStatus(message, tone = "", hasNote = false, summary = null) {
+  const build = typeof message === "function" ? message : () => message;
+  statusMessage = { build, summary };
   dom.statusPanel.className = `status-panel${tone ? ` ${tone}` : ""}${hasNote ? " has-note" : ""}`;
-  dom.statusPanel.textContent = message;
+  dom.statusPanel.textContent = build();
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));
   setImportBusy(!tone);
@@ -3164,12 +3300,16 @@ function toggleStatusNote() {
   dom.statusNoteToggle.textContent = collapse ? L("看说明", "Show notes") : L("收起", "Collapse");
 }
 
+// message: a text or a function writing it (an error built in both languages is written again
+// after a language switch).
 function showError(message, importId = state.activeImportId) {
   if (!isCurrentImport(importId)) return;
   resetAnalysisState();
   setImportBusy(false);
+  const build = typeof message === "function" ? message : () => message;
+  statusMessage = { build, summary: null };
   dom.statusPanel.className = "status-panel error";
-  dom.statusPanel.textContent = message;
+  dom.statusPanel.textContent = build();
   dom.statusPanel.setAttribute("role", "alert");
   dom.statusPanel.setAttribute("aria-busy", "false");
   dom.statusNote.dataset.tone = "error";

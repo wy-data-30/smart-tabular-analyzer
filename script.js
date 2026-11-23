@@ -84,12 +84,12 @@ dom.loadSample.addEventListener("click", async () => {
   try {
     setStatus(L("正在加载 sample-orders.csv ...", "Loading sample-orders.csv ..."));
     const response = await fetch("examples/sample-orders.csv");
-    if (!response.ok) throw new Error(L("示例数据加载失败", "The sample data could not be loaded"));
+    if (!response.ok) throw languageError(Lp("示例数据加载失败", "The sample data could not be loaded"));
     const text = await response.text();
     if (!isCurrentImport(importId)) return;
     parseCsvText(text, "sample-orders.csv", importId);
   } catch (error) {
-    showError(error.message, importId);
+    showError(errorMessageBuilder(error), importId);
   }
 });
 
@@ -153,6 +153,7 @@ dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
 [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
 
+
 // v3.2.0 commit 9: the navigation gets its own row when it does not fit (updateNavFit(), app.js).
 window.addEventListener("resize", updateNavFit);
 // The navigation too: it appears with an import (display: none → flex) without the top bar
@@ -169,8 +170,7 @@ if (typeof MutationObserver === "function") {
 }
 
 dom.excelSheetSelect.addEventListener("change", () => {
-  dom.sheetSelectionMessage.className = "sheet-selection-message";
-  dom.sheetSelectionMessage.textContent = "";
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", "");
 });
 
 dom.previewFirstPage.addEventListener("click", () => goToPreviewPage("first"));
@@ -247,8 +247,7 @@ updateExportButtons();
 [dom.v2MetricField, dom.v2GroupField, dom.v2DateField].forEach((control) => {
   control.addEventListener("change", () => {
     if (state.rows.length) {
-      dom.v2FieldPrompt.className = "analysis-prompt";
-      dom.v2FieldPrompt.textContent = L("字段已更新，点击“生成自定义分析”生成新的结果。", "The columns changed; click “Create breakdown” for new results.");
+      writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => L("字段已更新，点击“生成自定义分析”生成新的结果。", "The columns changed; click “Create breakdown” for new results."));
     }
   });
 });
@@ -315,7 +314,7 @@ function showUploadPage() {
   document.body.classList.remove("has-results");
   dom.results.classList.add("hidden");
   dom.statusPanel.className = "status-panel hidden";
-  dom.statusPanel.textContent = "";
+  clearStatusMessage();
   dom.statusPanel.removeAttribute("aria-busy");
   resetStatusNote();
   setImportBusy(false);
