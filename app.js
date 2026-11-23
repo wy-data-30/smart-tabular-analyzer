@@ -3233,7 +3233,7 @@ function resetAnalysisState() {
   state.importStatus = null;
   state.returnModule = null;
   dom.returnToAnalysis.classList.add("hidden");
-  dom.returnToAnalysis.textContent = "";
+  writeLanguageText(dom.returnToAnalysis, "");
   writeLanguageText(dom.reportTitle, () => L("数据分析工作区", "Analysis workspace"));
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");

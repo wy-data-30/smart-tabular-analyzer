@@ -12397,3 +12397,39 @@ test("v3.2.1 commit 3: the sidebar's markup: the note above the list, every text
   const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
   assert.match(phone.slice(0, phone.indexOf("\n}\n")), /\.sheet-switch-list \{\s*max-height: none;/);
 });
+
+// ---- v3.2.1 commit 4: the way back to the analysis follows the language (R8) ----
+
+test("v3.2.1 commit 4: 回到「…」的分析 on the upload page is written again in the other language, and back byte for byte", async () => {
+  for (const [file, name] of [["csv", "orders.csv"], ["xlsx", "book.xlsx · Orders"]]) {
+    const scope = file === "csv"
+      ? await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh")
+      : (await v321ImportSheet("Orders")).scope;
+    scope.evaluate("showUploadPage()");
+    const chinese = textOf(scope, "returnToAnalysis");
+    assert.equal(chinese, `回到「${name}」的分析`);
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), `Back to the analysis of “${name}”`);
+    scope.evaluate('setInterfaceLanguage("zh")');
+    assert.equal(textOf(scope, "returnToAnalysis"), chinese);
+    // Back to the analysis: the entry is gone, and a later switch does not write it back.
+    scope.evaluate("returnToAnalysis()");
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    // A new import clears it too, for good.
+    scope.evaluate("showUploadPage(); beginImport()");
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+  }
+});
+
+test("v3.2.1 commit 4: an upload page opened in English names the way back in English, and a switch writes it in Chinese", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  scope.evaluate("showUploadPage()");
+  assert.equal(textOf(scope, "returnToAnalysis"), "Back to the analysis of “orders.csv”");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(scope, "returnToAnalysis"), "回到「orders.csv」的分析");
+});

@@ -329,7 +329,8 @@ function showUploadPage() {
   resetStatusNote();
   setImportBusy(false);
   const sourceDisplayName = state.sourceSheetName ? `${state.sourceFileName} · ${state.sourceSheetName}` : state.sourceFileName;
-  dom.returnToAnalysis.textContent = canReturn ? formatReturnToAnalysis(sourceDisplayName) : "";
+  // v3.2.1 (R8): kept as a function, so a language switch writes it again (rewriteLanguageTexts()).
+  writeLanguageText(dom.returnToAnalysis, canReturn ? () => formatReturnToAnalysis(sourceDisplayName) : "");
   dom.returnToAnalysis.classList.toggle("hidden", !canReturn);
   window.scrollTo({ top: 0, behavior: "instant" });
   if (canReturn) dom.returnToAnalysis.focus();
@@ -341,7 +342,7 @@ function showUploadPage() {
 function returnToAnalysis() {
   if (!state.rows.length || !state.importStatus) return;
   dom.returnToAnalysis.classList.add("hidden");
-  dom.returnToAnalysis.textContent = "";
+  writeLanguageText(dom.returnToAnalysis, "");
   document.body.classList.add("has-results");
   dom.results.classList.remove("hidden");
   // v3.2.0: the message is written again from its figures, in the current language.
