@@ -9571,7 +9571,7 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "2a5cbc9497c04f4745ee6fcc0fc5119addb1659e1554e6c5db51b4fb0cf66031");
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "71260d2e87130964b270f516849709769c0bdd38e073226b81fb77d043830ee6");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -11953,4 +11953,258 @@ test("v3.2.1 commit 1b: an import done while a readable sheet waits for its fram
   } finally {
     held.restore();
   }
+});
+
+// ---- v3.2.1 commit 2: keep a multi-sheet file and switch worksheets ----
+
+// The English scenario's orders as a worksheet (text cells, as the CSV reads them), a second sheet
+// with other orders, and sheets that fail.
+function v321ScenarioRows(shift) {
+  const rows = Papa.parse(englishScenarioCsv().trim(), { header: false }).data;
+  if (!shift) return rows;
+  return rows.map((row, index) => (index === 0 || row[0] === "Total" ? row : row.map((cell, column) => (column === 2 && /^\d+$/.test(cell) ? String(Number(cell) + shift) : cell))));
+}
+const v321ScenarioBook = () => buildXlsxBuffer([
+  { name: "Orders", rows: v321ScenarioRows(0) },
+  { name: "Second", rows: v321ScenarioRows(7) },
+  { name: "Empty", rows: [] },
+  { name: "HeaderOnly", rows: [["ID", "Amount"]] },
+  { name: "Doubled", rows: [["ID", "Amount", "Amount"], ["a", 1, 2]] }
+]);
+const V321_FIXED_TIME = "new Date(2026, 10, 23, 12, 0, 0)";
+
+// A context with the scenario workbook imported and one sheet chosen through the list.
+async function v321ImportSheet(sheetName, { buffer = v321ScenarioBook(), language } = {}) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
+  const reads = countXlsxReads(scope);
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  putWorkbookFile(scope, buffer, "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  scope.elements.get("excelSheetSelect").value = sheetName;
+  await scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.evaluate("state.sourceSheetName"), sheetName);
+  return { scope, reads };
+}
+
+// Everything a user could set on an analysis: blanks, both exclusions, a filter, a column type, a
+// breakdown, the standardized check and an open category of problem rows.
+function v321ApplyScenario(scope) {
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  scope.evaluate(`["suspectedTotal", "duplicateRows"].forEach((kind) => handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: kind, exclusionOn: "true" } }) } }))`);
+  // (Applying column settings clears the filters, so the type goes first.)
+  scope.evaluate('stageFieldTypeChange("Rep", "ignore"); applyFieldConfiguration()');
+  scope.evaluate(`(() => {
+    const values = getCategoryFilterOptions("Region").map((option) => option.value);
+    dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+    state.categoryFilterDraftValues = new Set(values.slice(0, 2));
+    applyFilters();
+  })()`);
+  scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  scope.evaluate("checkStandardizedExport()");
+  scope.evaluate("openProblemView(state.problemCategories[0])");
+  // Every one of them took: the comparison below can tell a switch that kept any of them.
+  const set = JSON.parse(scope.evaluate(`JSON.stringify({
+    placeholders: Object.keys(state.placeholderConfirmations).length,
+    excluded: state.excludedRows.suspectedTotal.length + state.excludedRows.duplicateRows.length,
+    filter: state.filters.category ? state.filters.category.values.length : 0,
+    types: Object.keys(state.manualFieldTypes).length,
+    custom: Boolean(state.customAnalysis), standardized: Boolean(state.standardizedExport), problems: Boolean(state.problemView)
+  })`));
+  assert.deepEqual(set, { placeholders: 1, excluded: 2, filter: 2, types: 1, custom: true, standardized: true, problems: true });
+}
+
+// What the page shows of an analysis: the report (time fixed), the status bar, the sidebar, the
+// file names and the figures.
+function v321Snapshot(scope) {
+  scope.evaluate(`state.analysisCompletedAt = ${V321_FIXED_TIME}`);
+  return JSON.parse(scope.evaluate(`JSON.stringify({
+    report: buildHtmlReport(buildReportData(${V321_FIXED_TIME}), []),
+    status: dom.statusPanel.textContent, summary: dom.statusNoteSummary.textContent,
+    sourceName: dom.sourceName.textContent, title: dom.sourceName.title, topbar: dom.topbarFileName.textContent,
+    size: dom.sidebarFileSize.textContent,
+    names: [buildReportFileName("html", ${V321_FIXED_TIME}), buildDataExportFileName("filtered", ${V321_FIXED_TIME}), buildStandardizedFileName("data", ${V321_FIXED_TIME}), buildStandardizedFileName("changes", ${V321_FIXED_TIME}), buildProblemRowsFileName(state.problemCategories[0] || { kind: "missing", field: "x" }, ${V321_FIXED_TIME})],
+    fields: state.fields, rows: state.rows.length, types: state.profiles.map((profile) => profile.typeKey),
+    module: document.body.dataset.module ?? null,
+    // The one-off messages of the old analysis (and the switch's own) must be gone as after an import.
+    messages: ["sidebarSheetMessage", "uploadSheetMessage", "placeholderMessage", "fieldConfigMessage", "filterMessage", "problemRowsMessage", "duplicateExclusionMessage", "suspectedTotalMessage", "standardizedExportStatus", "dataExportStatus", "reportExportStatus"].map((id) => [id, document.getElementById(id).textContent])
+  })`));
+}
+
+// The snapshot without the worksheet lists' own messages (a failed switch writes its error there).
+const v321WithoutSheetMessages = (snapshot) => ({ ...snapshot, messages: snapshot.messages.filter(([id]) => !/SheetMessage$/.test(id)) });
+
+test("v3.2.1 commit 2: switching worksheets gives exactly what importing the file and choosing that sheet gives", async () => {
+  for (const language of ["zh", "en"]) {
+    const { scope } = await v321ImportSheet("Orders", { language });
+    v321ApplyScenario(scope);
+    await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+    const fresh = await v321ImportSheet("Second", { language });
+    assert.deepEqual(v321Snapshot(scope), v321Snapshot(fresh.scope), language);
+    assert.equal(scope.evaluate("state.sourceSheetName"), "Second");
+  }
+});
+
+test("v3.2.1 commit 2: a switch clears the filter, the rows left out, the blanks, the column types and the rest", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  v321ApplyScenario(scope);
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  const after = JSON.parse(scope.evaluate(`JSON.stringify({
+    filters: state.filters, excluded: state.excludedRows, placeholders: state.placeholderConfirmations,
+    types: state.manualFieldTypes, drafts: state.fieldTypeDrafts, inferred: Object.fromEntries(state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])),
+    problems: state.problemView, standardized: state.standardizedExport, custom: state.customAnalysis,
+    module: document.body.dataset.module, previewPage: state.previewPage
+  })`));
+  assert.deepEqual(after.filters, JSON.parse(scope.evaluate("JSON.stringify(createEmptyFilterConfig())")));
+  assert.deepEqual(after.excluded, { suspectedTotal: [], duplicateRows: [] });
+  assert.deepEqual(after.placeholders, {});
+  assert.deepEqual(after.types, {});
+  assert.deepEqual(after.drafts, after.inferred);
+  assert.equal(after.problems, null);
+  assert.equal(after.standardized, null);
+  assert.equal(after.custom, null);
+  assert.equal(after.module, "overviewSection");
+  assert.equal(after.previewPage, 1);
+});
+
+test("v3.2.1 commit 2: a sheet that fails leaves the current analysis as it was, the error under the list in both languages", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  v321ApplyScenario(scope);
+  const before = v321Snapshot(scope);
+  const kept = scope.evaluate("state.keptExcel");
+  const importId = scope.evaluate("state.activeImportId");
+  const filters = scope.evaluate("JSON.stringify(state.filters)");
+  const errors = {
+    Empty: ["工作表「Empty」为空，请选择包含表头和数据的工作表。", "The worksheet “Empty” is empty; choose one with a header row and data."],
+    HeaderOnly: ["工作表「HeaderOnly」只有表头，没有可分析的数据行。", "The worksheet “HeaderOnly” has only a header row and no data to analyze."],
+    Doubled: ["工作表「Doubled」包含重复表头「Amount」，请修改后重新上传。", "The worksheet “Doubled” has the header “Amount” more than once; change it and upload the file again."]
+  };
+  for (const [sheet, [zh, en]] of Object.entries(errors)) {
+    const readsBefore = reads.length;
+    await scope.evaluate(`switchExcelSheet(${JSON.stringify(sheet)}, "sidebar")`);
+    assert.equal(reads.length, readsBefore + 1, sheet);
+    assert.equal(textOf(scope, "sidebarSheetMessage"), zh);
+    assert.match(scope.elements.get("sidebarSheetMessage").className, /\berror\b/);
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), en);
+    scope.evaluate('setInterfaceLanguage("zh")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), zh);
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [false, false]);
+    assert.equal(scope.evaluate("state.keptExcel") === kept, true);
+    assert.equal(scope.evaluate("state.activeImportId"), importId);
+    assert.equal(scope.evaluate("JSON.stringify(state.filters)"), filters);
+    assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before), sheet);
+  }
+  // From the upload page the error goes under that list.
+  await scope.evaluate('switchExcelSheet("Empty", "upload")');
+  assert.equal(textOf(scope, "uploadSheetMessage"), errors.Empty[0]);
+  assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before));
+});
+
+test("v3.2.1 commit 2: only a file with more than one sheet keeps its bytes, until the next import of any kind", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  const kept = JSON.parse(scope.evaluate("JSON.stringify({ keys: Object.keys(state.keptExcel).sort(), fileName: state.keptExcel.fileName, sheetNames: state.keptExcel.sheetNames, tag: Object.prototype.toString.call(state.keptExcel.bytes) })"));
+  assert.deepEqual(kept, { keys: ["bytes", "fileName", "sheetNames"], fileName: "book.xlsx", sheetNames: ["Orders", "Second", "Empty", "HeaderOnly", "Doubled"], tag: "[object ArrayBuffer]" });
+  scope.evaluate("globalThis.__keptBytes = state.keptExcel.bytes");
+  // A switch, a failed switch: the same bytes.
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate("state.keptExcel.bytes === __keptBytes"), true);
+  await scope.evaluate('switchExcelSheet("Empty", "sidebar")');
+  assert.equal(scope.evaluate("state.keptExcel.bytes === __keptBytes"), true);
+  // A CSV (the sample button does this too), a single-sheet file, an import error: gone.
+  const again = async (action) => {
+    const next = await v321ImportSheet("Orders");
+    await action(next.scope);
+    return next.scope.evaluate("state.keptExcel");
+  };
+  assert.equal(await again((other) => other.evaluate('parseCsvText("城市,人数\\n北京,1\\n上海,2", "new.csv", beginImport())')), null);
+  assert.equal(await again(async (other) => { putWorkbookFile(other, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx"); await other.evaluate("parseDataFile(__workbookFile)"); }), null);
+  assert.equal(await again(async (other) => { putWorkbookFile(other, Buffer.from("not a zip"), "bad.xlsx"); await other.evaluate("parseDataFile(__workbookFile)"); }), null);
+  // A single-sheet file never keeps them.
+  const single = createExcelContext();
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(single.evaluate("state.rows.length"), 3);
+  assert.equal(single.evaluate("state.keptExcel"), null);
+});
+
+test("v3.2.1 commit 2: while a sheet is read the page is busy and the language locked; a switch reads only that sheet", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  const readsBefore = reads.length;
+  const switching = scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [true, true]);
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "正在读取并分析工作表「Second」...");
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  // A click on another sheet meanwhile does nothing: the message stays the first one's.
+  const second = scope.evaluate('switchExcelSheet("HeaderOnly", "sidebar")');
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "正在读取并分析工作表「Second」...");
+  await second;
+  await switching;
+  assert.deepEqual(reads.slice(readsBefore), [{ type: "array", cellDates: true, cellNF: true, sheets: "Second" }]);
+  assert.equal(scope.evaluate("state.sourceSheetName"), "Second");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [false, false]);
+  // The current sheet and a name not in the file: nothing.
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  await scope.evaluate('switchExcelSheet("Nope", "sidebar")');
+  assert.equal(reads.length, readsBefore + 1);
+});
+
+test("v3.2.1 commit 2: an import begun while a switch waits for its frame wins; the switch reads nothing", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  const readsBefore = reads.length;
+  scope.evaluate("globalThis.__realYield = yieldToBrowser; yieldToBrowser = () => new Promise((resolve) => { globalThis.__releaseYield = resolve; })");
+  try {
+    const switching = scope.evaluate('switchExcelSheet("Second", "sidebar")');
+    scope.evaluate('parseCsvText("城市,人数\\n北京,1\\n上海,2", "new.csv", beginImport())');
+    const status = textOf(scope, "statusPanel");
+    scope.evaluate("__releaseYield()");
+    await switching;
+    assert.equal(reads.length, readsBefore);
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.rows.length"), 2);
+    assert.equal(scope.evaluate("state.keptExcel"), null);
+    assert.equal(textOf(scope, "statusPanel"), status);
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  } finally {
+    scope.evaluate("yieldToBrowser = __realYield");
+  }
+});
+
+test("v3.2.1 commit 2: a reset clears the worksheet lists and their messages for good", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  await scope.evaluate('switchExcelSheet("Empty", "sidebar")');
+  await scope.evaluate('switchExcelSheet("Empty", "upload")');
+  assert.notEqual(textOf(scope, "sidebarSheetMessage"), "");
+  assert.notEqual(textOf(scope, "uploadSheetMessage"), "");
+  scope.evaluate("beginImport()");
+  for (const place of ["sidebar", "upload"]) {
+    assert.equal(textOf(scope, `${place}SheetMessage`), "", place);
+    assert.equal(scope.evaluate(`oneOffMessages.has(dom.${place}SheetMessage)`), false, place);
+    assert.equal(scope.elements.get(`${place}SheetList`).innerHTML, "", place);
+    assert.equal(scope.elements.get(`${place}SheetPanel`).classList.contains("hidden"), true, place);
+    assert.equal(scope.elements.get(`${place}SheetToggle`).classList.contains("hidden"), true, place);
+  }
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+  assert.equal(scope.evaluate("state.keptExcel"), null);
+});
+
+test("v3.2.1 commit 2: an unexpected error while the other sheet is committed ends the import with the error", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  scope.evaluate('countDuplicateRows = () => { throw new Error("commit broke"); }');
+  let rejected = null;
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")').catch((error) => { rejected = error; });
+  assert.equal(rejected, null);
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.elements.get("csvFile").disabled, false);
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  assert.equal(textOf(scope, "statusPanel"), "commit broke");
+  assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.evaluate("state.keptExcel"), null);
 });

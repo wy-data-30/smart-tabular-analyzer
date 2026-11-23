@@ -69,6 +69,11 @@
       <p id="sidebarFileSize" class="sidebar-file-size"></p>
     </div>
     <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone" data-i18n="changeFile">换一个文件</a>
+    <button id="sidebarSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="sidebarSheetPanel"></button>
+    <div id="sidebarSheetPanel" class="sheet-switch-panel hidden">
+      <ul id="sidebarSheetList" class="sheet-switch-list"></ul>
+      <p id="sidebarSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>
+    </div>
     <div class="sidebar-section">
       <button id="sidebarFieldsToggle" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="sidebarFieldList" data-i18n="sidebar.fields">字段 <span id="sidebarFieldCount"></span></button>
       <ul id="sidebarFieldList" class="sidebar-field-list"></ul>
@@ -91,6 +96,11 @@
       <h1 id="heroTitle" data-i18n="hero.title">上传表格，先做一次体检</h1>
       <p class="product-description" data-i18n="hero.description">不用安装，表格不会离开这台电脑。</p>
       <button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>
+      <button id="uploadSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="uploadSheetPanel"></button>
+      <div id="uploadSheetPanel" class="sheet-switch-panel hidden">
+        <ul id="uploadSheetList" class="sheet-switch-list"></ul>
+        <p id="uploadSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>
+      </div>
     </div>
 
     <div class="workspace-intro">

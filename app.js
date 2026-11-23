@@ -84,6 +84,9 @@ const state = {
   problemViewOpener: null,
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
+  // v3.2.1: { bytes, fileName, sheetNames } of the Excel file with more than one worksheet under
+  // analysis, for 换一个工作表; null for a CSV, a single-sheet file and after every reset.
+  keptExcel: null,
   activeFileReader: null,
   activeImportId: 0,
   charts: {},
@@ -286,7 +289,17 @@ const dom = {
   reportExportStatus: document.getElementById("reportExportStatus"),
   // v3.2.0: the language switch, in the top bar of the upload page and at the sidebar's foot.
   languageSwitch: document.getElementById("languageSwitch"),
-  sidebarLanguageSwitch: document.getElementById("sidebarLanguageSwitch")
+  sidebarLanguageSwitch: document.getElementById("sidebarLanguageSwitch"),
+  // v3.2.1 换一个工作表: one button and list in the sidebar and one on the upload page (the same
+  // markup, ids prefixed by the place).
+  sidebarSheetToggle: document.getElementById("sidebarSheetToggle"),
+  sidebarSheetPanel: document.getElementById("sidebarSheetPanel"),
+  sidebarSheetList: document.getElementById("sidebarSheetList"),
+  sidebarSheetMessage: document.getElementById("sidebarSheetMessage"),
+  uploadSheetToggle: document.getElementById("uploadSheetToggle"),
+  uploadSheetPanel: document.getElementById("uploadSheetPanel"),
+  uploadSheetList: document.getElementById("uploadSheetList"),
+  uploadSheetMessage: document.getElementById("uploadSheetMessage")
 };
 
 // A category field with more distinct values than this is too scattered for
@@ -554,6 +567,56 @@ function renderSidebar() {
   const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
   dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
   dom.sidebarPlaceholderValue.textContent = confirmedCount ? L(`${formatInteger(confirmedCount)} 处`, formatInteger(confirmedCount)) : "";
+}
+
+// ---- 换一个工作表 (v3.2.1) ----
+// place: "sidebar" or "upload", the list a switch was started from.
+const SHEET_SWITCH_PLACES = Object.freeze(["sidebar", "upload"]);
+
+function sheetSwitchElements(place) {
+  return {
+    toggle: dom[`${place}SheetToggle`],
+    panel: dom[`${place}SheetPanel`],
+    list: dom[`${place}SheetList`],
+    message: dom[`${place}SheetMessage`]
+  };
+}
+
+function setSheetSwitchOpen(place, open) {
+  const { toggle, panel } = sheetSwitchElements(place);
+  toggle.setAttribute("aria-expanded", String(open));
+  panel.classList.toggle("hidden", !open);
+}
+
+// While a sheet is read the list says it is busy. Its buttons stay enabled (disabling the focused
+// one would drop the focus); switchExcelSheet() ignores clicks while the page is loading.
+function setSheetSwitchBusy(place, busy) {
+  sheetSwitchElements(place).list.setAttribute("aria-busy", String(busy));
+}
+
+// The reading message and a switch's error, under the list; a one-off message, so a language
+// switch writes it again.
+function writeSheetSwitchMessage(place, message, tone = "") {
+  writeOneOffMessage(sheetSwitchElements(place).message, "sheet-switch-message", message, tone);
+}
+
+// After a failed switch: the item that was clicked, or the list's button.
+function focusSheetSwitchItem(place, sheetName) {
+  const { toggle, list } = sheetSwitchElements(place);
+  const index = state.keptExcel ? state.keptExcel.sheetNames.indexOf(sheetName) : -1;
+  const item = index >= 0 ? list.querySelector?.(`[data-sheet-index="${index}"]`) : null;
+  (item || toggle).focus();
+}
+
+function clearSheetSwitches() {
+  SHEET_SWITCH_PLACES.forEach((place) => {
+    const { toggle, list } = sheetSwitchElements(place);
+    setSheetSwitchOpen(place, false);
+    toggle.classList.add("hidden");
+    list.innerHTML = "";
+    list.removeAttribute("aria-busy");
+    writeSheetSwitchMessage(place, "");
+  });
 }
 
 // Open by default from 1100 px, closed below; once the user opens or closes it, body carries
@@ -3076,6 +3139,10 @@ function resetAnalysisState() {
   state.problemCategories = [];
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
+  // v3.2.1: the kept bytes go with the analysis (another file, the sample, an import error);
+  // switchExcelSheet() holds them across its own reset and gives them back.
+  state.keptExcel = null;
+  clearSheetSwitches();
   state.sourceFileName = "";
   state.sourceSheetName = "";
   state.sourceType = "";

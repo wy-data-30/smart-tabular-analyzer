@@ -99,6 +99,41 @@ function readExcelSheet(buffer, sheetName) {
   return readExcelSheetTable(worksheet, sheetName);
 }
 
+// v3.2.1 换一个工作表: another sheet of the file under analysis, read and checked first. Only a sheet
+// that passes starts a new import (beginImport() resets the analysis and the kept bytes, so they
+// are held here and given back by importExcelSheet()); the result is what uploading the file and
+// choosing that sheet gives. A sheet that fails leaves the analysis as it is, the error under the
+// list it was clicked in (place: "sidebar" or "upload") and the focus on that item.
+async function switchExcelSheet(sheetName, place) {
+  const kept = state.keptExcel;
+  if (!kept || !kept.sheetNames.includes(sheetName) || sheetName === state.sourceSheetName) return;
+  if (document.body.classList.contains("is-loading") || state.pendingExcel) return;
+  const importIdBefore = state.activeImportId;
+  setImportBusy(true);
+  setSheetSwitchBusy(place, true);
+  writeSheetSwitchMessage(place, () => formatSheetReading(sheetName));
+  await yieldToBrowser();
+  // A file dropped meanwhile began another import; this switch is over.
+  if (state.activeImportId !== importIdBefore || state.keptExcel !== kept) return;
+  let table;
+  try {
+    table = readExcelSheet(kept.bytes, sheetName);
+  } catch (error) {
+    setImportBusy(false);
+    setSheetSwitchBusy(place, false);
+    writeSheetSwitchMessage(place, errorMessageBuilder(error), "error");
+    focusSheetSwitchItem(place, sheetName);
+    return;
+  }
+  const importId = beginImport();
+  // An unexpected error in the commit ends the import with the error (nothing is left loading).
+  try {
+    importExcelSheet(table, kept.fileName, sheetName, importId, kept);
+  } catch (error) {
+    showError(errorMessageBuilder(error), importId);
+  }
+}
+
 // One frame for the browser to draw a message before a long synchronous task.
 function yieldToBrowser() {
   return new Promise((resolve) => window.requestAnimationFrame(() => setTimeout(resolve, 0)));
@@ -153,18 +188,21 @@ async function analyzeSelectedExcelSheet() {
   }
   // An unexpected error in the commit ends the import with the error (nothing is left loading).
   try {
-    importExcelSheet(table, pending.fileName, sheetName, pending.importId);
+    importExcelSheet(table, pending.fileName, sheetName, pending.importId, { bytes: pending.bytes, fileName: pending.fileName, sheetNames: pending.sheetNames });
   } catch (error) {
     showError(errorMessageBuilder(error), pending.importId);
   }
 }
 
-// table: what readExcelSheet() returned.
-function importExcelSheet(table, fileName, sheetName, importId) {
+// table: what readExcelSheet() returned. kept: { bytes, fileName, sheetNames } of the file, kept
+// for 换一个工作表 when it has more than one worksheet (v3.2.1); null otherwise.
+function importExcelSheet(table, fileName, sheetName, importId, kept = null) {
   if (!isCurrentImport(importId)) return;
   const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null, dateCells = null } = table;
 
   state.pendingExcel = null;
+  // Before the commit: what it draws may show the worksheets, and a commit that fails resets it.
+  state.keptExcel = kept && kept.sheetNames.length > 1 ? kept : null;
   // v3.2.1: the list's message (“正在读取并分析…”) goes with the list.
   writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", "");
   dom.sheetSelectionPanel.classList.add("hidden");
