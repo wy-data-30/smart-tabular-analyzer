@@ -2712,7 +2712,7 @@ function renderDateTrendChart() {
         ...trendLineStyle(CHART_THEME.primary)
       }]
     },
-    options: chartOptions(numericAxisLabel(numericField, aggregationLabel), numericField)
+    options: chartOptions(numericAxisLabel(numericField, getDateChartAxisLabel(aggregate)), numericField)
   });
 }
 
@@ -2727,6 +2727,11 @@ function getDateChartSelection() {
 
 function getDateChartAggregateLabel(aggregate) {
   return L({ count: "记录数", avg: "平均值", sum: "求和" }[aggregate] || "记录数", { count: "record count", avg: "average", sum: "sum" }[aggregate] || "record count");
+}
+
+// The y-axis title: the same Chinese, the English with a capital (the words above are for sentences).
+function getDateChartAxisLabel(aggregate) {
+  return L({ count: "记录数", avg: "平均值", sum: "求和" }[aggregate] || "记录数", { count: "Record count", avg: "Average", sum: "Sum" }[aggregate] || "Record count");
 }
 
 function resetV2AnalysisState() {
@@ -2905,7 +2910,7 @@ function renderV2TopGroupChart(metricField, groupField, grouped, aggregateMethod
         backgroundColor: CHART_THEME.primary
       }]
     },
-    options: chartOptions(numericAxisLabel(metricField, aggregateLabel), metricField)
+    options: chartOptions(numericAxisLabel(metricField, getAggregateMethodAxisLabel(aggregateMethod)), metricField)
   });
 }
 
@@ -2934,12 +2939,17 @@ function renderV2TrendChart(metricField, dateField, aggregateMethod = "sum") {
         ...trendLineStyle(CHART_THEME.secondary)
       }]
     },
-    options: chartOptions(numericAxisLabel(metricField, aggregateLabel), metricField)
+    options: chartOptions(numericAxisLabel(metricField, getAggregateMethodAxisLabel(aggregateMethod)), metricField)
   });
 }
 
 function getAggregateMethodLabel(method) {
   return L({ sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和", { sum: "sum", avg: "average", median: "median" }[method] || "sum");
+}
+
+// The y-axis title: the same Chinese, the English with a capital (the words above are for sentences).
+function getAggregateMethodAxisLabel(method) {
+  return L({ sum: "求和", avg: "平均值", median: "中位数" }[method] || "求和", { sum: "Sum", avg: "Average", median: "Median" }[method] || "Sum");
 }
 
 // v3.0.0: a trend is a straight line with white points outlined in the line's colour, no fill.

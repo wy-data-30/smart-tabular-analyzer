@@ -11055,3 +11055,38 @@ test("v3.2.0 commit 11: a switch says so in a role=status element made at the fi
   assert.match(app, /document\.getElementById\("mainContent"\)\?\.appendChild\(languageAnnouncer\);/);
   assert.doesNotMatch(repoFile("script.js"), /languageAnnouncer/);
 });
+
+// ---- fix after commit 11: the English y-axis titles start with a capital ----
+test("v3.2.0 fix: English chart axis titles are capitalized; the words in sentences and the Chinese stay as they were", async () => {
+  const axisTitles = async (language) => {
+    const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+    const charts = withFakeCharts(scope);
+    const titles = [];
+    for (const [metric, aggregate] of [["", "count"], ["Amount", "avg"], ["Amount", "sum"]]) {
+      charts.length = 0;
+      scope.evaluate(`populateControls(); dom.dateChartField.value = "Date"; dom.dateChartMetric.value = ${JSON.stringify(metric)}; dom.dateChartAggregate.value = ${JSON.stringify(aggregate)}; renderDateTrendChart()`);
+      titles.push(charts.at(-1).options.scales.y.title.text);
+    }
+    for (const method of ["sum", "avg", "median"]) {
+      charts.length = 0;
+      scope.evaluate(`dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = ${JSON.stringify(method)}; dom.v2DateField.value = "Date"; renderV2Analysis()`);
+      assert.equal(charts.length, 2, method);
+      titles.push(charts.map((config) => config.options.scales.y.title.text));
+    }
+    return { scope, titles };
+  };
+  const english = await axisTitles("en");
+  assert.deepEqual(english.titles, ["Record count", "Average", "Sum", ["Sum", "Sum"], ["Average", "Average"], ["Median", "Median"]]);
+  // The sentences keep the lower-case words (the chart titles, the breakdown message).
+  assert.deepEqual(JSON.parse(english.scope.evaluate('JSON.stringify([getDateChartAggregateLabel("count"), getDateChartAggregateLabel("sum"), getAggregateMethodLabel("avg"), getAggregateMethodLabel("median")])')),
+    ["record count", "sum", "average", "median"]);
+  assert.match(english.scope.evaluate("dom.v2TrendTitle.textContent"), /^Amount by date \(median\)$/);
+  assert.match(english.scope.evaluate("dom.v2TopGroupTitle.textContent"), /\(median\)$/);
+  // A unit or a percent column keeps its words after the capital.
+  assert.equal(english.scope.evaluate('numericAxisLabel("Amount", getAggregateMethodAxisLabel("sum"))'), "Sum");
+  // Chinese: the same words as before, in the titles and in the sentences.
+  const chinese = await axisTitles("zh");
+  assert.deepEqual(chinese.titles, ["记录数", "平均值", "求和", ["求和", "求和"], ["平均值", "平均值"], ["中位数", "中位数"]]);
+  assert.deepEqual(JSON.parse(chinese.scope.evaluate('JSON.stringify([getDateChartAggregateLabel("count"), getDateChartAggregateLabel("sum"), getAggregateMethodLabel("avg"), getAggregateMethodLabel("median"), getDateChartAxisLabel("avg"), getAggregateMethodAxisLabel("median")])')),
+    ["记录数", "求和", "平均值", "中位数", "平均值", "中位数"]);
+});
