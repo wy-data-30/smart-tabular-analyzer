@@ -107,6 +107,7 @@ const I18N_EN = Object.freeze({
   "upload.encodingAuto": "Detect automatically",
   "upload.encodingHint": "If unsure, keep “Detect automatically”",
   "upload.download": "Download sample CSV",
+  "upload.downloadHref": "examples/sample-orders-en.csv",
   "details.open": "Collapse",
   "details.closed": "Expand",
   // v3.2.0 commit 9: the rest of the page.

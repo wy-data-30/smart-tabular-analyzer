@@ -313,6 +313,67 @@ const writingRows = [
 ];
 fs.writeFileSync(path.join(OUT, "写法不一致.csv"),
   Buffer.from(`${BOM}${[writingHeader, ...writingRows].map(csvLine).join("\r\n")}\r\n`, "utf8"));
+
+// ---------- 8. en-issues.csv（v3.2.0）：英文表，UTF-8 BOM、CRLF，表头在第 1 行 ----------
+// 示例覆盖不到的几类：按单位读取（kg）、像是数字的文本列（Floor）、整列只有一个值（Status）、
+// 写法不一样和只有不可见字符的格（Team、Note）、读取时有疑问（少两格的一行、引号不对的一格）。
+// 不可见字符一律写 \u 转义。行号 = 下标 + 2；第 13 行少两格，第 16 行的 Note 是 "ab"c"（引号后面紧跟了字符，再用一个引号收尾，读取不会中断），都直接写原文。
+const enIssuesHeader = ["ID", "Name", "Team", "Weight", "Floor", "Status", "Note"];
+const enIssuesRows = [
+  ["E01", "Mia Clark", "Sales", "12 kg", "3", "Active", ""],
+  ["E02", "Leo Hall", "Support", "15 kg", "B1", "Active", "Call back"],
+  ["E03", "Ivy Moore", "sales", "11 kg", "4", "Active", ""],
+  ["E04", "Sam Price", "Finance", "18 kg", "G", "Active", ""],
+  ["E05", "Zoe Reed", "Sales", "14 kg", "2", "Active", ""],
+  ["E06", "Max Young", "Sales\u200B", "16 kg", "5", "Active", ""],
+  ["E07", "Ada Ward", "Support", "13 kg", "B1", "Active", ""],
+  ["E08", "Eli Brooks", "Finance", "17 kg", "1", "Active", ""],
+  ["E09", "Nia Ford", "Sales", "12 kg", "B2", "Active", "\u200B"],
+  ["E10", "Kai Stone", "Support", "19 kg", "6", "Active", ""],
+  ["E11", "Mia Clark", "Finance", "14 kg", "G", "Active", ""],
+  ["E12", "Ray Lane", "Sales", "15 kg", "3"],
+  ["E13", "Uma Fox", "Support", "16 kg", "B2", "Active", ""],
+  ["E14", "Ben Cole", "Finance", "13 kg", "4", "Active", ""],
+  ["E15", "Gus Dean", "Sales", "18 kg", "2", "Active", "\"ab\"c\""],
+  ["E16", "Joy Mills", "Support", "11 kg", "G", "Active", ""],
+  ["E17", "Ted Rowe", "Finance", "17 kg", "5", "Active", ""],
+  ["E18", "Amy Lowe", "Sales", "14 kg", "B1", "Active", ""],
+  ["E19", "Dan West", "Support", "16 kg", "6", "Active", ""],
+  ["E20", "Fay Nash", "Finance", "15 kg", "1", "Active", ""]
+];
+// 引号不对的那一格原样写出，不经过 csvCell()（否则会被转义成合法的引号）。
+const enIssuesLine = (cells) => cells.map((cell) => (cell === "\"ab\"c\"" ? cell : csvCell(cell))).join(",");
+fs.writeFileSync(path.join(OUT, "en-issues.csv"),
+  Buffer.from(`${BOM}${[enIssuesHeader, ...enIssuesRows].map(enIssuesLine).join("\r\n")}\r\n`, "utf8"));
+
+// ---------- 9. en-formula-errors.xlsx（v3.2.0）：英文表头在第 1 行，Margin 里有公式错误，最后一行 Subtotal ----------
+// 除了 Subtotal 行让 Qty 多 1 个偏大或偏小的值，没有别的提示（Price 都在上下界以内）。
+{
+  const E = { DIV0: 0x07, REF: 0x17 };
+  const err = (code) => ({ err: code });
+  const aoa = [
+    ["Item", "Qty", "Price", "Margin"],
+    ["Pens", 12, 1.5, 0.2],
+    ["Paper", 30, 4, err(E.DIV0)],
+    ["Stapler", 5, 8, 0.25],
+    ["Folders", 20, 2.5, err(E.DIV0)],
+    ["Tape", 15, 3, 0.18],
+    ["Markers", 8, 6, err(E.REF)],
+    ["Notebooks", 25, 3.5, 0.3],
+    ["Envelopes", 40, 0.8, err(E.DIV0)],
+    ["Labels", 18, 5, 0.22],
+    ["Scissors", 6, 9, 0.27],
+    ["Subtotal", 179, null, null]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(aoa.map((row) => row.map((v) => (v && typeof v === "object" ? null : v))));
+  aoa.forEach((row, r) => row.forEach((v, c) => {
+    if (v && typeof v === "object") ws[XLSX.utils.encode_cell({ r, c })] = { t: "e", v: v.err };
+  }));
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: 3 } });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Orders");
+  fs.writeFileSync(path.join(OUT, "en-formula-errors.xlsx"), XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}
 console.log(`fixtures written to ${OUT}`);
 for (const name of fs.readdirSync(OUT).sort()) {
   console.log(`${name}\t${fs.statSync(path.join(OUT, name)).size} bytes`);

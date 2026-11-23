@@ -81,13 +81,15 @@ dom.fileInput.addEventListener("change", (event) => {
 
 dom.loadSample.addEventListener("click", async () => {
   const importId = beginImport();
+  // v3.2.0: the English interface loads the English sample (the same orders and problems).
+  const sampleName = L("sample-orders.csv", "sample-orders-en.csv");
   try {
-    setStatus(L("正在加载 sample-orders.csv ...", "Loading sample-orders.csv ..."));
-    const response = await fetch("examples/sample-orders.csv");
+    setStatus(L(`正在加载 ${sampleName} ...`, `Loading ${sampleName} ...`));
+    const response = await fetch(`examples/${sampleName}`);
     if (!response.ok) throw languageError(Lp("示例数据加载失败", "The sample data could not be loaded"));
     const text = await response.text();
     if (!isCurrentImport(importId)) return;
-    parseCsvText(text, "sample-orders.csv", importId);
+    parseCsvText(text, sampleName, importId);
   } catch (error) {
     showError(errorMessageBuilder(error), importId);
   }

@@ -34,8 +34,8 @@ function buildXlsxBuffer(sheets) {
   return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
 }
 
-function createExcelContext() {
-  const scope = createScriptContext();
+function createExcelContext(options = {}) {
+  const scope = createScriptContext(options);
   scope.context.XLSX = XLSX;
   scope.context.window.XLSX = XLSX;
   return scope;
@@ -2185,12 +2185,13 @@ test("the grade fixtures and the bundled examples have no placeholder candidates
     assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
   }
   const examples = listExampleCsvFiles();
-  assert.equal(examples.length, 7);
+  assert.equal(examples.length, 8);
   for (const fileName of examples) {
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     assert.ok(scope.evaluate("state.rows.length") > 0, fileName);
     const fieldsAndKeys = placeholderEntries(scope.evaluate).map(([field, key]) => [field, key]);
-    assert.deepEqual(fieldsAndKeys, fileName === "sample-orders.csv" ? [["金额", "N/A"], ["销售代表", "\u2014"]] : [], fileName);
+    const expected = { "sample-orders.csv": [["金额", "N/A"], ["销售代表", "\u2014"]], "sample-orders-en.csv": [["Amount", "N/A"], ["Sales rep", "\u2014"]] }[fileName] || [];
+    assert.deepEqual(fieldsAndKeys, expected, fileName);
   }
 });
 
@@ -3155,7 +3156,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 15);
+  assert.equal(scopes.length, 18);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3273,7 +3274,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 15);
+  assert.equal(scopes.length, 18);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -4165,12 +4166,12 @@ test("a field-configuration rebuild keeps a chosen category field that is still 
 const REPO_ROOT = path.join(__dirname, "..");
 
 test("v2.7.0 examples: examples/ keeps only the file the sample button loads, the other six are test fixtures (v2.11.0)", () => {
-  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")), ["sample-orders.csv"]);
+  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")).sort(), ["sample-orders-en.csv", "sample-orders.csv"]);
   assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "tests", "fixtures", "examples")).sort(), [
     "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
   assert.deepEqual(["examples", path.join("tests", "fixtures", "examples")].flatMap((dir) => fs.readdirSync(path.join(REPO_ROOT, dir))).sort(), [
-    "sample-data.csv", "sample-orders.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+    "sample-data.csv", "sample-orders-en.csv", "sample-orders.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
 });
 
@@ -4623,8 +4624,8 @@ test("v2.8.0 fixtures: the store report's row 33 and the region table match know
 
 test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error (v2.11.0: the sample button's file has one total)", async () => {
   const scopes = await importEveryQualityFile();
-  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx", "sample-orders.csv"]);
-  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["公式错误.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "公式错误.xlsx"]);
 });
 
 test("v2.8.0 totals: the three ranges, each tried in order", async () => {
@@ -5275,7 +5276,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
   const actual = {};
   for (const fileName of STAGE3_IMPORT_FILES) {
-    if (fileName === "写法不一致.csv") continue;
+    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx"].includes(fileName)) continue;
     const scope = await importStage3Fixture(fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5283,7 +5284,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   }
   for (const fileName of EXAMPLE_CSV_FILES) {
     // v2.11.0: the new sample is newer than the guard, like 写法不一致.csv above.
-    if (fileName === "sample-orders.csv") continue;
+    if (["sample-orders.csv", "sample-orders-en.csv"].includes(fileName)) continue;
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5451,7 +5452,7 @@ test("v2.9.0 date styles: the fixture, the roster and the sample button's file (
       { key: "ymdDot", count: 2, sample: "2021.03.05", firstLine: 15 }
     ]
   }]);
-  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
 });
 
 test("v2.9.0 date styles: the most frequent style is the main one, ties go to the first seen", async () => {
@@ -5571,7 +5572,7 @@ test("v2.9.0 constant columns: the fixture and the formula-error sheet, and no o
   const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
   assert.deepEqual(constantsOf(errors), [{ field: "备注", value: "正常", count: 6, missingCount: 3 }]);
   assert.equal(errors.evaluate("formatConstantField(state.constantFields[0])"), "「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。");
-  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["公式错误.xlsx", "写法不一致.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["en-issues.csv", "公式错误.xlsx", "写法不一致.csv"]);
   assert.equal(scopes.find(([name]) => name === "写法不一致.csv")[1].evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（24 行）。");
 });
 
@@ -5726,7 +5727,7 @@ test("v2.9.0 look-alike values: the fixture and the sample button's file (v2.11.
     groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
   })), knownIssues["写法不一致.csv"].lookAlikes);
   assert.ok(summary.every((item) => item.invisibleOnlyCount === 0));
-  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["en-issues.csv", "写法不一致.csv", "sample-orders-en.csv", "sample-orders.csv"]);
   // ID duplicates and look-alikes count apart: SKU-002 with a space is a duplicate value and
   // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
   assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
@@ -6333,8 +6334,8 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
     assert.equal(types(again), types(scope), name);
   }
   assert.deepEqual(totals, {
-    "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
-    "sample-data.csv": 0, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
+    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
+    "sample-data.csv": 0, "sample-orders-en.csv": 12, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
   });
 });
 
@@ -6670,7 +6671,7 @@ const sampleOrdersShownSections = (scope) => SAMPLE_ORDERS_HINT_SECTIONS.filter(
 
 // Clicks the real "使用示例数据" handler of script.js. The fake DOM ignores addEventListener, so
 // the shared element prototype records the listeners while one context loads, then is restored.
-async function clickSampleButton(fetchedText) {
+async function clickSampleButton(fetchedText, language) {
   const probe = createScriptContext();
   const proto = Object.getPrototypeOf(probe.context.document.getElementById("loadSample"));
   const original = proto.addEventListener;
@@ -6681,7 +6682,7 @@ async function clickSampleButton(fetchedText) {
   };
   let scope;
   try {
-    scope = createExcelContext();
+    scope = createExcelContext(language === undefined ? {} : { language });
   } finally {
     proto.addEventListener = original;
   }
@@ -6736,7 +6737,8 @@ test("v2.11.0 sample: the file holds the planned rows, title and total line", ()
 
 test("v2.11.0 sample: the button fetches the new file and names the import after it, like an upload", async () => {
   const script = repoFile("script.js");
-  assert.match(script, /fetch\("examples\/sample-orders\.csv"\)/);
+  assert.match(script, /fetch\(`examples\/\$\{sampleName\}`\)/);
+  assert.match(script, /const sampleName = L\("sample-orders\.csv", "sample-orders-en\.csv"\);/);
   assert.doesNotMatch(script, /sample-data\.csv/);
   assert.match(indexHtmlSource(), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
   const clicked = await clickSampleButton(sampleOrdersFetchedText());
@@ -11089,4 +11091,274 @@ test("v3.2.0 fix: English chart axis titles are capitalized; the words in senten
   assert.deepEqual(chinese.titles, ["记录数", "平均值", "求和", ["求和", "求和"], ["平均值", "平均值"], ["中位数", "中位数"]]);
   assert.deepEqual(JSON.parse(chinese.scope.evaluate('JSON.stringify([getDateChartAggregateLabel("count"), getDateChartAggregateLabel("sum"), getAggregateMethodLabel("avg"), getAggregateMethodLabel("median"), getDateChartAxisLabel("avg"), getAggregateMethodAxisLabel("median")])')),
     ["记录数", "求和", "平均值", "中位数", "平均值", "中位数"]);
+});
+
+// ---- v3.2.0 commit 12: the English sample and two English fixtures ----
+// examples/sample-orders-en.csv: the Chinese sample row by row in English (the same quantities,
+// amounts, dates and places of the problems). The English interface's sample button loads it and
+// the download link points at it; the Chinese interface is as before.
+const SAMPLE_ORDERS_EN = "sample-orders-en.csv";
+// Compared after dropping the CR of every CRLF, like SAMPLE_ORDERS_LF_SHA256.
+const SAMPLE_ORDERS_EN_LF_SHA256 = "0b79436e00095497f163a5e69d42ea66e07fefc356a203f2035319a786031479";
+const sampleOrdersEnLfText = () => fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8").replace(/\r\n/g, "\n");
+const sampleOrdersEnLines = () => sampleOrdersEnLfText().slice(1, -1).split("\n");
+const PILLS_ZERO_EN = ["Blanks: 0", "Duplicate rows: 0", "Numbers or dates not recognized: 0 values", "Unusually high or low values: 0 columns", "Duplicate IDs: 0 columns", "Values that may mean blank: 0 columns"];
+const SAMPLE_ORDERS_EN_TYPES = ["id", "date", "category", "category", "category", "category", "numeric", "numeric", "category"];
+
+test("v3.2.0 commit 12: the English sample holds the planned rows, title and total line; the total adds the duplicate too", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN));
+  assert.deepEqual([...raw.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = sampleOrdersEnLfText();
+  assert.equal(crypto.createHash("sha256").update(text, "utf8").digest("hex"), SAMPLE_ORDERS_EN_LF_SHA256);
+  assert.equal(Buffer.byteLength(text, "utf8"), 3306);
+  assert.ok(text.endsWith("\n"));
+  const lines = sampleOrdersEnLines();
+  assert.equal(lines.length, 44);
+  // 20 characters: the status line's preview of a skipped row (SKIPPED_ROW_PREVIEW_LENGTH) shows it whole.
+  assert.equal(lines[0], "H1 2025 sales orders,,,,,,,,");
+  assert.equal(lines[0].replace(/,+$/, "").length, createScriptContext().evaluate("SKIPPED_ROW_PREVIEW_LENGTH"));
+  assert.equal(lines[1], "Order ID,Order date,Region,Category,Product,Customer type,Quantity,Amount,Sales rep");
+  assert.equal(lines[43], "Total,,,,,,800,123440,");
+  assert.equal(lines[19], lines[20]);
+  assert.match(lines[19], /^SO-1018,/);
+  // The total is every readable quantity and amount above it, the repeated SO-1018 included and the
+  // N/A left out (so both columns match; without the duplicate the amount would be 119540).
+  const cells = (line) => Papa.parse(line).data[0];
+  const data = lines.slice(2, 43).map(cells);
+  assert.equal(data.length, 41);
+  assert.equal(data.reduce((sum, row) => sum + Number(row[6]), 0), 800);
+  const amounts = data.map((row) => Number(row[7].replace(/[$,]/g, ""))).filter(Number.isFinite);
+  assert.equal(amounts.length, 40);
+  assert.equal(amounts.reduce((sum, value) => sum + value, 0), 123440);
+  // The Chinese sample has the same numbers, row by row.
+  const chinese = sampleOrdersLines().slice(2, 43).map(cells);
+  assert.deepEqual(data.map((row) => row[6]), chinese.map((row) => row[6]));
+  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
+});
+
+test("v3.2.0 commit 12: the sample button and the download link follow the language; the Chinese ones are as before", async () => {
+  const script = repoFile("script.js");
+  assert.match(script, /fetch\(`examples\/\$\{sampleName\}`\)/);
+  const english = await clickSampleButton(new TextDecoder("utf-8").decode(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN))), "en");
+  assert.deepEqual(english.fetched, ["examples/sample-orders-en.csv"]);
+  assert.deepEqual(english.parsedNames, [SAMPLE_ORDERS_EN, SAMPLE_ORDERS_EN]);
+  const uploaded = await importCsvInLanguage(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8"), SAMPLE_ORDERS_EN, "en");
+  assert.equal(sampleOrdersSnapshot(english), sampleOrdersSnapshot(uploaded));
+  const chinese = await clickSampleButton(sampleOrdersFetchedText(), "zh");
+  assert.deepEqual(chinese.fetched, ["examples/sample-orders.csv"]);
+  assert.deepEqual(chinese.parsedNames, [SAMPLE_ORDERS, SAMPLE_ORDERS]);
+  // The loading line names the file being loaded.
+  assert.match(script, /setStatus\(L\(`正在加载 \$\{sampleName\} \.\.\.`, `Loading \$\{sampleName\} \.\.\.`\)\);/);
+  // The link: the Chinese page is unchanged; the English address is in the English table and is a real
+  // file. (The static guard's test requires every English key to be used in index.html, so the link
+  // carries upload.downloadHref; the switch below is what the key does.)
+  assert.match(indexHtmlSource(),/<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
+  const table = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(table["upload.downloadHref"], "examples/sample-orders-en.csv");
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, table["upload.downloadHref"])));
+  // Switched in place: English, then Chinese again (applyStaticLanguage() over the link alone).
+  const scope = createScriptContext();
+  const link = i18nElement({ href: "examples/sample-orders.csv", download: "", "data-i18n": "upload.download", "data-i18n-attr": "href=upload.downloadHref" }, ["下载示例 CSV"]);
+  put(scope.context, "__i18nElements", [link]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  scope.evaluate('rememberStaticLanguage(); setInterfaceLanguage("en")');
+  assert.deepEqual([link.getAttribute("href"), link.childNodes[0].nodeValue], ["examples/sample-orders-en.csv", "Download sample CSV"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual([link.getAttribute("href"), link.childNodes[0].nodeValue], ["examples/sample-orders.csv", "下载示例 CSV"]);
+});
+
+test("v3.2.0 commit 12: the upload page's English rows are rows 10, 12, 20, 21, 29 and 44 of the English sample", () => {
+  const html = indexHtmlSource();
+  const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
+  assert.ok(start >= 0);
+  const section = html.slice(start, html.indexOf("</section>", start));
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  // The Chinese table's cells (the page as the Chinese interface shows it), with the cells that
+  // have words replaced by their English: the six translated cells and their keys, by place.
+  const rows = [...section.matchAll(/<tr>(<td[\s\S]*?)<\/tr>/g)].map((match) => [...match[1].matchAll(/<td(?: class="[^"]*")?>([\s\S]*?)<\/td>/g)]
+    .map((cell) => cell[1].replace(/<span class="visible-space" aria-hidden="true">␣<\/span>/g, "")));
+  const translated = { "0,3": "sample.south", "1,2": "sample.otherDate", "1,3": "sample.southwest", "2,3": "sample.south", "3,3": "sample.south", "4,3": "sample.northwest", "5,1": "sample.total" };
+  Object.entries(translated).forEach(([place, key]) => {
+    const [row, column] = place.split(",").map(Number);
+    rows[row][column] = english[key];
+  });
+  const lines = sampleOrdersEnLines().map((line) => Papa.parse(line).data[0]);
+  const header = lines[1];
+  assert.deepEqual(rows.map((cells) => cells[0]), ["10", "12", "20", "21", "29", "44"]);
+  rows.forEach((cells) => {
+    const values = lines[Number(cells[0]) - 1];
+    // The marked trailing space of "South " is drawn as ␣ on the page, not in the words.
+    ["Order ID", "Order date", "Region", "Amount"].forEach((field, index) => assert.equal(cells[index + 1], values[header.indexOf(field)].trim(), `${cells[0]} ${field}`));
+  });
+  assert.equal(lines[9][header.indexOf("Region")], "South ");
+  // Every other cell is the same in both samples (order IDs, ISO dates, amounts): no key needed.
+  assert.equal(Object.keys(english).filter((key) => /^sample\.(south|otherDate|southwest|northwest|total)$/.test(key)).length, 5);
+});
+
+// The English sample without its problems, as in the v2.11.0 test: each fix takes one problem out.
+// SO-1026 is 6 headphones at 260 each (1560); every other East order is Emma Chen's.
+const SAMPLE_ORDERS_EN_FIXES = {
+  title: (lines) => lines.slice(1),
+  total: (lines) => lines.filter((line) => !line.startsWith("Total,")),
+  duplicate: (lines) => lines.filter((line, index) => !(line.startsWith("SO-1018,") && line === lines[index - 1])),
+  na: (lines) => lines.map((line) => (line.startsWith("SO-1026,") ? line.replace(",N/A,", ",1560,") : line)),
+  dash: (lines) => lines.map((line) => (line.startsWith("SO-1014,") ? line.replace(/,\u2014$/, ",Emma Chen") : line)),
+  money: (lines) => lines.map((line) => line.replace(/,"?\$([\d,]+)\.00"?,/, (match, number) => `,${number.replace(/,/g, "")},`)),
+  date: (lines) => lines.map((line) => line
+    .replace(/^(SO-\d+),(\d{2})\/(\d{2})\/(\d{4}),/, "$1,$4-$2-$3,")
+    .replace(/^(SO-\d+),"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})",/, (match, id, month, day, year) => `${id},${year}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun"].indexOf(month) + 1).padStart(2, "0")}-${day.padStart(2, "0")},`)),
+  space: (lines) => lines.map((line) => line.replace(/ +,/g, ",").replace(/^(SO-1034,[^,]*),east,/, "$1,East,").replace(/, (Emma Chen)$/, ",$1"))
+};
+
+// The total line of the "total only" case adds the rows that are left, like the sample's own total
+// (the duplicate and N/A fixes change what it adds up to).
+function sampleOrdersEnVariant(keep) {
+  let lines = sampleOrdersEnLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_EN_FIXES)) if (name !== keep) lines = fix(lines);
+  if (keep === "total") {
+    const data = lines.slice(1, -1).map((line) => line.split(","));
+    const sum = (column) => data.reduce((total, row) => total + Number(row[column]), 0);
+    lines[lines.length - 1] = `Total,,,,,,${sum(6)},${sum(7)},`;
+  }
+  return "\uFEFF" + lines.join("\n") + "\n";
+}
+
+test("v3.2.0 commit 12: without its problems the English sample flags nothing, and each problem alone flags only itself", async () => {
+  const pills = (changes) => PILLS_ZERO_EN.map((pill) => changes[pill.split(":")[0]] ?? pill);
+  const cases = {
+    clean: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 0 },
+    title: { pills: PILLS_ZERO_EN, sections: [], note: true, cells: 0 },
+    total: { pills: pills({ Blanks: "Blanks: 6", "Unusually high or low values": "Unusually high or low values: 2 columns" }), sections: ["suspectedTotalSection"], note: true, cells: 0 },
+    duplicate: { pills: pills({ "Duplicate rows": "Duplicate rows: 1", "Duplicate IDs": "Duplicate IDs: 1 column" }), sections: [], note: false, cells: 0 },
+    na: { pills: pills({ "Numbers or dates not recognized": "Numbers or dates not recognized: 1 value", "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 1 },
+    dash: { pills: pills({ "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 0 },
+    // $5,400.00, $900.00 and $1,050.00 are plain numbers to the current rules ($ and the thousands
+    // separator are read without a unit, unlike 5400元), so the quality page has nothing to say;
+    // only the standardized table writes them as 5400.00, 900.00 and 1050.00. Six of the seven
+    // problems put in the sample are flagged.
+    money: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 3 },
+    date: { pills: PILLS_ZERO_EN, sections: ["dateStyleSection"], note: false, cells: 5 },
+    space: { pills: PILLS_ZERO_EN, sections: ["lookAlikeSection"], note: false, cells: 3 }
+  };
+  for (const [name, expected] of Object.entries(cases)) {
+    const scope = await importCsvInLanguage(sampleOrdersEnVariant(name === "clean" ? null : name), SAMPLE_ORDERS_EN, "en");
+    assert.deepEqual(sampleOrdersPills(scope), expected.pills, name);
+    assert.deepEqual(sampleOrdersShownSections(scope), expected.sections, name);
+    assert.equal(scope.elements.get("statusPanel").className.includes("has-note"), expected.note, name);
+    assert.equal(scope.evaluate("state.placeholders.length"), ["na", "dash"].includes(name) ? 1 : 0, name);
+    assert.equal(scope.evaluate("state.parseWarnings.length"), 0, name);
+    assert.equal(scope.evaluate("state.problemCategories.length") === 0, name === "clean" || name === "title" || name === "money", name);
+    scope.evaluate("checkStandardizedExport()");
+    assert.equal(scope.evaluate("state.standardizedExport.cellCount"), expected.cells, name);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), SAMPLE_ORDERS_EN_TYPES, name);
+    // The total alone matches on both columns.
+    if (name === "total") assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals.map((item) => item.matches[0].fields))")), [["Quantity", "Amount"]]);
+  }
+  const full = sampleOrdersEnLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_EN_FIXES)) assert.notDeepEqual(fix(full), full, name);
+  assert.equal(sampleOrdersEnVariant(null).split("\n").length, 1 + 40 + 1);
+  // Each fix takes its whole problem out: the money fix all three amounts, the date fix all five dates.
+  assert.equal(SAMPLE_ORDERS_EN_FIXES.money(full).filter((line) => line.includes("$")).length, 0);
+  assert.equal(SAMPLE_ORDERS_EN_FIXES.date(full).filter((line) => /^SO-\d+,(?!\d{4}-\d{2}-\d{2},)/.test(line)).length, 0);
+});
+
+test("v3.2.0 commit 12: the English sample in English: the status line, the six pills, every hint with its rows and the two conclusions", async () => {
+  const scope = await importCsvInLanguage(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8"), SAMPLE_ORDERS_EN, "en");
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success has-note");
+  assert.equal(scope.elements.get("statusPanel").textContent,
+    "sample-orders-en.csv is loaded and the analysis is ready. The header is on row 2; 1 row above it was skipped: “H1 2025 sales orders”. Row 44 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))")), [
+    ["Order ID", "id"], ["Order date", "date"], ["Region", "category"], ["Category", "category"], ["Product", "category"],
+    ["Customer type", "category"], ["Quantity", "numeric"], ["Amount", "numeric"], ["Sales rep", "category"]
+  ]);
+  assert.deepEqual(sampleOrdersPills(scope), ["Blanks: 6", "Duplicate rows: 1", "Numbers or dates not recognized: 1 value", "Unusually high or low values: 2 columns", "Duplicate IDs: 1 column", "Values that may mean blank: 2 columns"]);
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "dateStyleSection", "lookAlikeSection"]);
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, "In “Region”, the most common value is “East”: 9 times, 22.0%.");
+  assert.equal(scope.elements.get("dateChartInsight").textContent, "By the date column “Order date”, the record count rises from 2025-01 to 2025-06, by about 66.7%.");
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "Region");
+  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "Row 44 “Total”: Quantity, Amount equal the sum of rows 3\u201343 (41 rows). View Exclude from analysis");
+  assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
+    "“Order date”: the main format is text YYYY-MM-DD: 36 (e.g. 2025-01-03); 5 other rows use other formats: text MM/DD/YYYY: 3 (e.g. 02/18/2025), text with English month names: 2 (e.g. Apr 16, 2025). View");
+  assert.equal(sampleOrdersText(scope, "lookAlikeDetails"),
+    "“Region”, 11 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
+  assert.deepEqual(placeholderEntries(scope.evaluate), [["Amount", "N/A", "common", 1, [29]], ["Sales rep", "\u2014", "common", 1, [16]]]);
+  assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["Order ID", [["SO-1018", 2, [20, 21]]]]]);
+  const { names, mismatches } = problemRowCheck(scope);
+  assert.deepEqual(mismatches, []);
+  assert.deepEqual(names, [
+    "missing / Order date = 1", "missing / Region = 1", "missing / Category = 1", "missing / Product = 1", "missing / Customer type = 1", "missing / Sales rep = 1",
+    "conversion / Amount = 1", "dateStyle / Order date = 5", "outlier / Quantity = 1", "outlier / Amount = 1", "duplicateRows = 2", "suspectedTotal = 1",
+    "idDuplicate / Order ID = 2", "lookAlike / Region = 11", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
+  ]);
+  // The same rows as the Chinese sample, except the case variant "east" (row 37), which the Chinese
+  // sample has not: its 地区 group is two trailing spaces only.
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")), [
+    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [3, 7, 11, 16, 22, 27, 31, 32, 37, 42, 10], [42], [29], [16]
+  ]);
+});
+
+// en-issues.csv and en-formula-errors.xlsx (tests/fixtures/stage3/, made by gen-fixtures.cjs): what
+// the English sample cannot show, against the hand-written known-issues.json.
+test("v3.2.0 commit 12: en-issues.csv: types, reading issues, the kg column, the numeric-looking column, the single value and the variants", async () => {
+  const scope = await importStage3Fixture("en-issues.csv");
+  const expected = knownIssues["en-issues.csv"];
+  const summary = importedSummary(scope.evaluate);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.rows, expected.dataRows);
+  assert.equal(summary.duplicateRows, expected.expectedTotals.duplicateRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.headerDetection"), null);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ line: warning.row, code: warning.code })))")), expected.parseWarnings);
+  assert.deepEqual(constantsOf(scope), expected.constantFields);
+  assert.deepEqual(lookAlikesOf(scope).map(({ field, edgeSpaceCount, invisibleOnlyCount, groupCount, rowCount, groups }) => ({
+    field, edgeSpaceCount, invisibleOnlyCount, groupCount, rowCount,
+    groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
+  })), expected.lookAlikes);
+  assert.equal(scope.evaluate('getFieldProfile("Weight").numberStrategy.unit'), "kg");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.numericLooking.map((item) => item.field))")), ["Floor"]);
+  assert.deepEqual(sampleOrdersShownSections(scope), ["numberConversionSection", "numericLookingSection", "constantFieldSection", "lookAlikeSection"]);
+  assert.deepEqual(scope.evaluate("state.dateStyles.length"), 0);
+  // The fixture's whole point: every one of these is a problem-row category with the rows above.
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
+    ["missing", "Status", [13]], ["missing", "Note", [2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21]],
+    ["lookAlike", "Team", expected.issues.find((issue) => issue.id === "N4").fileLines], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
+  ]);
+});
+
+test("v3.2.0 commit 12: en-formula-errors.xlsx: the Margin errors and the English subtotal match known-issues.json", async () => {
+  const scope = await importStage3Fixture("en-formula-errors.xlsx");
+  const expected = knownIssues["en-formula-errors.xlsx"];
+  assert.deepEqual(formulaErrors(scope), expected.formulaErrors);
+  assert.deepEqual(suspectedTotals(scope).map((item) => ({ line: item.line, label: item.label, field: item.field, matches: item.matches })), expected.suspectedTotals);
+  const summary = importedSummary(scope.evaluate);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.rows, expected.dataRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "2,3,4,5,6,7,8,9,10,11,12");
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "formulaErrorSection"]);
+  // Nothing else is flagged: the only high or low value is the subtotal's Qty (no Price).
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
+    ["missing", "Price", [12]], ["missing", "Margin", [3, 5, 7, 9, 12]], ["formulaError", "Margin", [3, 5, 7, 9]], ["outlier", "Qty", [12]], ["suspectedTotal", "", [12]]
+  ]);
+});
+
+// The two fixtures are made by the generator, byte for byte, twice the same.
+test("v3.2.0 commit 12: gen-fixtures.cjs writes the two English fixtures byte for byte, and the others as they are", () => {
+  const out = fs.mkdtempSync(path.join(require("os").tmpdir(), "stage3-"));
+  try {
+    const run = require("child_process").spawnSync(process.execPath, [path.join(STAGE3_FIXTURES, "gen-fixtures.cjs"), out], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    for (const name of STAGE3_IMPORT_FILES) {
+      assert.ok(fs.readFileSync(path.join(out, name)).equals(fs.readFileSync(path.join(STAGE3_FIXTURES, name))), name);
+    }
+    assert.ok(STAGE3_IMPORT_FILES.includes("en-issues.csv") && STAGE3_IMPORT_FILES.includes("en-formula-errors.xlsx"));
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+  // The invisible character is written as an escape in the generator (CLAUDE.md), and is in the file.
+  const generator = fs.readFileSync(path.join(STAGE3_FIXTURES, "gen-fixtures.cjs"), "utf8");
+  assert.doesNotMatch(generator, /\u200B/);
+  assert.ok(fs.readFileSync(path.join(STAGE3_FIXTURES, "en-issues.csv"), "utf8").includes("Sales\u200B,"));
 });
