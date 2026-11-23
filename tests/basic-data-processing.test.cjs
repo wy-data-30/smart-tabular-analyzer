@@ -1244,8 +1244,8 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
 // imported through parseDataFile() with the real PapaParse and SheetJS.
 const STAGE3_FIXTURES = path.join(__dirname, "fixtures", "stage3");
 
-async function importStage3Fixture(fileName) {
-  const scope = createExcelContext();
+async function importStage3Fixture(fileName, language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
   let papaCalls = 0;
   const papaHeaderOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
@@ -1302,8 +1302,8 @@ test("a header in the first row of the roster fixture imports as before", async 
   });
 });
 
-async function importWorkbookFile(buffer, fileName = "t.xlsx") {
-  const scope = createExcelContext();
+async function importWorkbookFile(buffer, fileName = "t.xlsx", language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
   const bytes = Buffer.from(buffer);
   put(scope.context, "__workbookFile", {
     name: fileName,
@@ -9750,6 +9750,10 @@ test("v3.2.0 static guard: index.html has a key for every Chinese text and attri
   const { problems, keys } = i18nGuard.checkIndexHtml(raw, english);
   assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.kind}: ${problem.text}`), []);
   assert.equal(keys.size, Object.keys(english).length);
+  // Commit 13: the product name's three places use the keys the name test checks in English.
+  assert.match(raw, /<title data-i18n="page\.title">表格体检 \| 检查 CSV、Excel 表格的数据问题<\/title>/);
+  assert.match(raw, /<a class="brand" href="#mainContent" aria-label="表格体检首页" data-i18n-attr="aria-label=brand\.label">/);
+  assert.match(raw, /<strong data-i18n="brand\.name">表格体检<\/strong>/);
   const summary = raw.match(/<summary [^>]*>/)[0];
   assert.match(summary, /data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details\.open data-i18n-closed=details\.closed"/);
   // The same check finds a Chinese text without a key, an attribute not named and a key without English.
@@ -11361,4 +11365,336 @@ test("v3.2.0 commit 12: gen-fixtures.cjs writes the two English fixtures byte fo
   const generator = fs.readFileSync(path.join(STAGE3_FIXTURES, "gen-fixtures.cjs"), "utf8");
   assert.doesNotMatch(generator, /\u200B/);
   assert.ok(fs.readFileSync(path.join(STAGE3_FIXTURES, "en-issues.csv"), "utf8").includes("Sales\u200B,"));
+});
+
+// ---- v3.2.0 commit 13: one name per language, no Chinese in the English interface, same numbers ----
+
+// (1) The product name: the Chinese interface says 表格体检 only, the English one Sheet Checkup only;
+// the old names in neither. (The Chinese half is the v3.0.1 test above; this adds the English half
+// and that the English name never reaches a Chinese page, report or file name.)
+test("v3.2.0 commit 13: each language shows only its own product name, and the old names in neither", async () => {
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(english["page.title"], "Sheet Checkup | Check CSV and Excel files for data problems");
+  assert.equal(english["brand.label"], "Sheet Checkup home");
+  assert.equal(english["brand.name"], "Sheet Checkup");
+  const hits = [];
+  for (const [key, value] of Object.entries(english)) {
+    findOldProductWords(`I18N_EN ${key}`, value, hits);
+    if (value.includes("表格体检")) hits.push(`I18N_EN ${key}: ${value}`);
+  }
+  const names = {};
+  for (const language of ["zh", "en"]) {
+    const own = language === "zh" ? "表格体检" : "Sheet Checkup";
+    const other = language === "zh" ? "Sheet Checkup" : "表格体检";
+    const file = language === "zh" ? "sample-orders.csv" : "sample-orders-en.csv";
+    const scope = await importCsvInLanguage(readExampleCsv(file), file, language);
+    const outputs = [];
+    const take = (where, text) => {
+      outputs.push([where, String(text)]);
+      findOldProductWords(`${language} ${where}`, text, hits);
+      if (String(text).includes(other)) hits.push(`${language} ${where}: ${String(text).slice(0, 120)}`);
+    };
+    for (const [id, text] of Object.entries(elementTexts(scope))) take(`#${id}`, text);
+    const { html } = reportOf(scope);
+    take("report", html);
+    const fileNames = [
+      scope.evaluate('buildReportFileName("html", new Date(2026, 10, 15))'),
+      scope.evaluate('buildDataExportFileName("filtered", new Date(2026, 10, 15))'),
+      scope.evaluate('buildStandardizedFileName("data", new Date(2026, 10, 15))'), scope.evaluate('buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)'),
+      ...JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
+    ];
+    // The report, the data, the two standardized files and one per problem category (16 / 17).
+    assert.equal(fileNames.length, language === "zh" ? 20 : 21, language);
+    for (const name of fileNames) {
+      take("file name", name);
+      assert.ok(!name.includes(own), name);
+    }
+    names[language] = fileNames;
+    // The report names the product in its own language: title, heading and footer.
+    const title = (html.match(/<title>([^<]*)<\/title>/) || [])[1];
+    const heading = html.match(/<h1>[^<]*<\/h1>/g);
+    const footer = (html.match(/<footer>([\s\S]*?)<\/footer>/) || [])[1];
+    if (language === "zh") {
+      assert.equal(title, "sample-orders.csv - 表格体检报告");
+      assert.deepEqual(heading, ["<h1>表格体检报告</h1>"]);
+      assert.match(footer, new RegExp(`^由<a href="${RENAME_REPO_URL}">表格体检</a> `));
+    } else {
+      assert.equal(title, "sample-orders-en.csv - Sheet Checkup report");
+      assert.deepEqual(heading, ["<h1>Sheet Checkup report</h1>"]);
+      assert.match(footer, new RegExp(`^Created by <a href="${RENAME_REPO_URL}">Sheet Checkup</a> `));
+    }
+    assert.ok(outputs.some(([, text]) => text.includes(own)), `${language}: the own name shows somewhere`);
+  }
+  assert.deepEqual(hits.slice(0, 20), [], `${hits.length} hits`);
+});
+
+// (2) No Chinese in the English interface. Every output of the main operations, in English, on the
+// English sample and the two English fixtures, plus three small files built here for what the
+// fixtures do not reach. The only Chinese allowed, each for its reason:
+//   1. the two switches to Chinese say “中文” (lang="zh-CN"): their text, nothing else on them;
+//   2. FORMULA_ERROR_FALLBACK (#错误): the text of an Excel error cell with no readable code, a value
+//      of the file, shown as written in both languages (R3);
+//   3. BLANK_GROUP_KEY (（空值）), the internal key of the blank group, would be allowed only where it
+//      is never shown; it reaches no output at all (pinned below), so no exception is made for it.
+// Any other Han character or full-width punctuation fails.
+const CHINESE_OR_FULLWIDTH = /[\p{Script=Han}\u3000-\u303F\uFF00-\uFFEF]/u;
+const ALL_PROBLEM_KINDS = ["missing", "formulaError", "conversion", "dateStyle", "outlier", "duplicateRows", "suspectedTotal", "idDuplicate", "lookAlike", "placeholder", "parseWarnings"];
+
+function chineseLeftInEnglish(place, text) {
+  const scope = chineseLeftInEnglish.constants;
+  let rest = String(text);
+  if (/^#(languageSwitch|sidebarLanguageSwitch)$/.test(place)) rest = rest.split(" ¦ ").filter((part) => part !== "中文").join(" ¦ ");
+  rest = rest.split(scope.fallback).join("");
+  const found = rest.match(new RegExp(CHINESE_OR_FULLWIDTH.source, "gu"));
+  return found ? `${place}: ${[...new Set(found)].join("")} in …${rest.slice(Math.max(0, rest.search(CHINESE_OR_FULLWIDTH) - 40), rest.search(CHINESE_OR_FULLWIDTH) + 40)}…` : "";
+}
+
+// Runs the main operations on an English page and hands every output to take(place, text). Returns
+// the problem kinds it opened, each with the operation that reached it.
+function walkEnglishOutputs(scope, name, take) {
+  const downloads = [];
+  put(scope.context, "__downloads", downloads);
+  scope.evaluate("downloadUtf8TextFile = (content, fileName) => { __downloads.push([fileName, content]); }");
+  const charts = withFakeCharts(scope);
+  const reached = {};
+  const snapshot = (operation) => {
+    for (const [id, text] of Object.entries(elementTexts(scope))) take(`#${id}`, text, `${name} ${operation}`);
+    for (const config of charts.splice(0)) take("chart", JSON.stringify([config.data.datasets.map((set) => set.label), Object.values(config.options.scales || {}).map((axis) => axis.title?.text)]), `${name} ${operation}`);
+  };
+  const flushDownloads = (operation) => {
+    for (const [fileName, content] of downloads.splice(0)) {
+      take("file name", fileName, `${name} ${operation}`);
+      take(`file ${fileName}`, content, `${name} ${operation}`);
+    }
+  };
+  const problemRows = (operation) => {
+    const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+    categories.forEach((category) => {
+      reached[category.kind] ??= `${name}: ${operation}`;
+      put(scope.context, "__walkCategory", category);
+      take("category label", scope.evaluate("formatProblemCategoryLabel(__walkCategory)"), `${name} ${operation}`);
+      take("category aria", scope.evaluate("formatProblemViewLabel(__walkCategory)"), `${name} ${operation}`);
+      take("category notes", scope.evaluate("JSON.stringify(listProblemRows(__walkCategory).items.map((item) => item.note))"), `${name} ${operation}`);
+      scope.evaluate("openProblemView(__walkCategory); exportProblemRows()");
+      flushDownloads(`${operation} ${category.kind}`);
+      snapshot(`${operation} ${category.kind}`);
+    });
+  };
+  const fields = (type) => JSON.parse(scope.evaluate(`JSON.stringify(getProfilesByType(${JSON.stringify(type)}).map((profile) => profile.field))`));
+  // A breakdown by the first text column (its blank group too, before any row is left out).
+  const breakdown = (operation, method) => {
+    const [metric] = fields("numeric");
+    const [group] = fields("category");
+    if (!metric || !group) return;
+    put(scope.context, "__walkMetric", metric);
+    put(scope.context, "__walkGroup", group);
+    put(scope.context, "__walkDate", fields("date")[0] || "");
+    scope.evaluate(`dom.v2MetricField.value = __walkMetric; dom.v2GroupField.value = __walkGroup; dom.v2AggregateMethod.value = ${JSON.stringify(method)}; dom.v2DateField.value = __walkDate; renderV2Analysis()`);
+    snapshot(operation);
+  };
+
+  snapshot("import");
+  breakdown("breakdown at import", "sum");
+  scope.evaluate("exportAnalysisReport()");
+  flushDownloads("report");
+  snapshot("report");
+  problemRows("problem rows");
+  // A filter: the first text column keeps the first half of its values.
+  const category = fields("category")[0];
+  if (category) {
+    put(scope.context, "__walkField", category);
+    scope.evaluate(`(() => {
+      const values = getCategoryFilterOptions(__walkField).map((option) => option.value);
+      dom.categoryFilterField.value = __walkField; updateCategoryFilterField();
+      state.categoryFilterDraftValues = new Set(values.slice(0, Math.max(1, Math.ceil(values.length / 2))));
+      applyFilters();
+    })()`);
+    snapshot("filter");
+  }
+  scope.evaluate('exportProcessedCsv("filtered")');
+  flushDownloads("data export");
+  // Both kinds left out, where the file has them; the notes of the problem rows say so.
+  scope.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  snapshot("exclude");
+  problemRows("problem rows after excluding");
+  // Treat as blank: all, then one undone.
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  snapshot("treat as blank");
+  scope.evaluate("(() => { const entry = state.placeholders.find((item) => item.confirmed); if (entry) undoPlaceholderConfirmation(entry.field, entry.key); })()");
+  snapshot("undo blank");
+  problemRows("problem rows after blanks");
+  // Column settings: a draft (the gates say so), applied (a placeholder of an ignored column), restored.
+  const draftField = JSON.parse(scope.evaluate("JSON.stringify(state.placeholders[0]?.field || state.fields[state.fields.length - 1])"));
+  put(scope.context, "__walkDraft", draftField);
+  scope.evaluate('stageFieldTypeChange(__walkDraft, "ignore"); exportAnalysisReport()');
+  snapshot("column draft");
+  scope.evaluate("applyFieldConfiguration()");
+  snapshot("column applied");
+  problemRows("problem rows with an ignored column");
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  snapshot("columns restored");
+  // The standardized table and its change list.
+  scope.evaluate('checkStandardizedExport(); exportStandardizedData("data"); exportStandardizedData("changes")');
+  flushDownloads("standardized");
+  snapshot("standardized");
+  // A breakdown and the trend summed by a number, where the file has the columns.
+  breakdown("breakdown", "median");
+  const [metric] = fields("numeric");
+  const [dateField] = fields("date");
+  if (metric && dateField) {
+    put(scope.context, "__walkMetric", metric);
+    put(scope.context, "__walkDate", dateField);
+    scope.evaluate('dom.dateChartField.value = __walkDate; dom.dateChartMetric.value = __walkMetric; dom.dateChartAggregate.value = "sum"; renderDateTrendChart()');
+    snapshot("trend");
+  }
+  scope.evaluate("exportAnalysisReport()");
+  flushDownloads("report at the end");
+  scope.evaluate("clearAllFilters()");
+  snapshot("filters cleared");
+  return reached;
+}
+
+// The three small files: what the English fixtures do not reach.
+//   single-column.csv: a reading issue without a row (UndetectableDelimiter, separator “;”);
+//   errors-and-dates.xlsx: an error cell with no code (FORMULA_ERROR_FALLBACK) and Excel date cells
+//   mixed with text dates (the Excel date cell format of mixed date formats).
+function englishExtraFiles() {
+  const serial = (y, m, d) => (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000;
+  const cells = {
+    A1: { t: "s", v: "Item" }, B1: { t: "s", v: "Date" }, C1: { t: "s", v: "Value" }
+  };
+  const rows = [["A", serial(2025, 1, 3), 10], ["B", serial(2025, 1, 6), 12], ["C", "2025/1/9", { e: 255 }], ["D", serial(2025, 1, 14), 9], ["E", serial(2025, 1, 20), 11], ["F", "2025/1/25", 13]];
+  rows.forEach(([item, date, value], index) => {
+    const r = index + 2;
+    cells[`A${r}`] = { t: "s", v: item };
+    cells[`B${r}`] = typeof date === "number" ? { t: "n", v: date, z: "yyyy-mm-dd" } : { t: "s", v: date };
+    cells[`C${r}`] = typeof value === "object" ? { t: "e", v: value.e } : { t: "n", v: value };
+  });
+  return {
+    "single-column.csv": "Name;Team\nAnn;Sales\nBob;Support\nCy;Sales\n",
+    "errors-and-dates.xlsx": buildCellSheetBuffer(cells, "A1:C7")
+  };
+}
+
+test("v3.2.0 commit 13: in English, no output of any operation on any English file has Chinese, except the three allowed and named", async () => {
+  const constants = createScriptContext();
+  chineseLeftInEnglish.constants = { fallback: constants.evaluate("FORMULA_ERROR_FALLBACK"), blankKey: constants.evaluate("BLANK_GROUP_KEY") };
+  assert.deepEqual(chineseLeftInEnglish.constants, { fallback: "#错误", blankKey: "（空值）" });
+  const problems = [];
+  const reached = {};
+  const allowedSeen = { switches: 0, fallback: 0, blankKey: 0 };
+  let outputs = 0;
+  const take = (where, text, operation) => {
+    outputs += 1;
+    const value = String(text);
+    if (/^#(languageSwitch|sidebarLanguageSwitch)$/.test(where) && value.split(" ¦ ").includes("中文")) allowedSeen.switches += 1;
+    if (value.includes(chineseLeftInEnglish.constants.fallback)) allowedSeen.fallback += 1;
+    if (value.includes(chineseLeftInEnglish.constants.blankKey)) allowedSeen.blankKey += 1;
+    const left = chineseLeftInEnglish(where, value);
+    if (left) problems.push(`${operation} ${left}`);
+  };
+  await withRecordedAttributes(async () => {
+    const files = [
+      [SAMPLE_ORDERS_EN, () => importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "en")],
+      ["en-issues.csv", () => importStage3Fixture("en-issues.csv", "en")],
+      ["en-formula-errors.xlsx", () => importStage3Fixture("en-formula-errors.xlsx", "en")],
+      // Blank values among ordinary rows (not only on a total row), and a value starting with a bracket.
+      ["orders.csv", () => importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en")],
+      ...Object.entries(englishExtraFiles()).map(([name, content]) => [name, () => (typeof content === "string" ? importCsvInLanguage(content, name, "en") : importWorkbookFile(content, name, "en"))])
+    ];
+    for (const [name, open] of files) {
+      const scope = await open();
+      assert.equal(scope.evaluate("currentLanguage"), "en", name);
+      assert.ok(scope.evaluate("state.rows.length") > 0, name);
+      for (const [kind, where] of Object.entries(walkEnglishOutputs(scope, name, take))) reached[kind] ??= where;
+    }
+  });
+  assert.deepEqual(problems.slice(0, 15), [], `${problems.length} outputs with Chinese`);
+  assert.ok(outputs > 5000, `${outputs} outputs`);
+  // Every kind of problem rows was opened (its label, notes, viewer and exported file looked at).
+  assert.deepEqual(Object.keys(reached).sort(), [...ALL_PROBLEM_KINDS].sort());
+  assert.deepEqual(reached, {
+    missing: "sample-orders-en.csv: problem rows",
+    conversion: "sample-orders-en.csv: problem rows",
+    dateStyle: "sample-orders-en.csv: problem rows",
+    outlier: "sample-orders-en.csv: problem rows",
+    duplicateRows: "sample-orders-en.csv: problem rows",
+    suspectedTotal: "sample-orders-en.csv: problem rows",
+    idDuplicate: "sample-orders-en.csv: problem rows",
+    lookAlike: "sample-orders-en.csv: problem rows",
+    placeholder: "sample-orders-en.csv: problem rows",
+    parseWarnings: "en-issues.csv: problem rows",
+    formulaError: "en-formula-errors.xlsx: problem rows"
+  });
+  // The allowed ones were really met (the rules are not empty words): the switches on every page,
+  // the fallback in the built workbook; the blank group's key nowhere, not even in an attribute.
+  assert.ok(allowedSeen.switches > 0 && allowedSeen.fallback > 0, JSON.stringify(allowedSeen));
+  assert.equal(allowedSeen.blankKey, 0);
+});
+
+// (3) Principle 1: changing the language changes words only. The same file in both languages gives
+// the same state, problem rows and line numbers, the same report snapshot once its strings are
+// taken out, the same numbers in every element and the same filter order.
+const SAME_IN_BOTH_STATE = `JSON.stringify({
+  rows: state.rows.length, fields: state.fields, totalMissing: state.totalMissing, duplicateRows: state.duplicateRows,
+  profiles: state.profiles, qualityNumericStats: state.qualityNumericStats, numericStats: state.numericStats, categoryStats: state.categoryStats,
+  idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking, suspectedTotals: state.suspectedTotals,
+  formulaErrors: state.formulaErrors, parseWarnings: state.parseWarnings, dateStyles: state.dateStyles, constantFields: state.constantFields,
+  lookAlikes: state.lookAlikes, headerDetection: state.headerDetection, trend: state.trendInsightData, categoryChartField: dom.categoryChartField.value,
+  problems: listProblemCategories().map((category) => [category, listProblemRows(category).items.map((item) => [item.line, item.rowIndex])]),
+  filterOrder: getProfilesByType("category").map((profile) => [profile.field, getCategoryFilterOptions(profile.field).map((option) => [option.value, option.count])]),
+  standardized: state.standardizedExport && { counts: state.standardizedExport.counts, cells: state.standardizedExport.cells },
+  custom: state.customAnalysis && state.customAnalysis.grouped
+})`;
+// A breakdown by the first number and text columns (with the date column when there is one).
+const SAME_IN_BOTH_BREAKDOWN = `(() => {
+  const [metric] = getProfilesByType("numeric"); const [group] = getProfilesByType("category"); const [date] = getProfilesByType("date");
+  if (!metric || !group) return;
+  dom.v2MetricField.value = metric.field; dom.v2GroupField.value = group.field; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = date ? date.field : "";
+  renderV2Analysis();
+})()`;
+const withoutStrings = (value) => (typeof value === "string" ? "" : Array.isArray(value) ? value.map(withoutStrings)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutStrings(item)])) : value);
+
+test("v3.2.0 commit 13: the same file in Chinese and in English gives the same numbers, rows, report figures and filter order", async () => {
+  const files = [
+    ...STAGE3_IMPORT_FILES.map((name) => [name, (language) => importStage3Fixture(name, language)]),
+    ...["sample-orders.csv", SAMPLE_ORDERS_EN].map((name) => [name, (language) => importCsvInLanguage(readExampleCsv(name), name, language)]),
+    // Values that start with a bracket next to blanks: the filter's sort key must be the Chinese one in
+    // both languages (R3), or “(Blank)” and “（空值）” sort to different places.
+    ["orders.csv", (language) => importCsvInLanguage(englishScenarioCsv(), "orders.csv", language)]
+  ];
+  assert.equal(files.length, 13);
+  const gaps = [];
+  await withRecordedAttributes(async () => {
+  for (const [name, open] of files) {
+    const [zh, en] = [await open("zh"), await open("en")];
+    const steps = [["import", ""], ["breakdown", SAME_IN_BOTH_BREAKDOWN], ["blanks and standardized", "confirmAllCommonPlaceholders(); checkStandardizedExport()"]];
+    for (const [step, expression] of steps) {
+      for (const scope of [zh, en]) if (expression) scope.evaluate(expression);
+      if (zh.evaluate(SAME_IN_BOTH_STATE) !== en.evaluate(SAME_IN_BOTH_STATE)) {
+        const a = JSON.parse(zh.evaluate(SAME_IN_BOTH_STATE));
+        const b = JSON.parse(en.evaluate(SAME_IN_BOTH_STATE));
+        gaps.push(`${name} ${step} state: ${Object.keys(a).filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key])).join(", ")}`);
+      }
+      // The report writes the time of the analysis, each import's own clock: the same moment for both.
+      for (const scope of [zh, en]) scope.evaluate('state.analysisCompletedAt = new Date("2026-10-25T08:00:00.000Z")');
+      const reports = [zh, en].map((scope) => reportOf(scope));
+      if (JSON.stringify(withoutStrings(reports[0].report)) !== JSON.stringify(withoutStrings(reports[1].report))) gaps.push(`${name} ${step} report snapshot`);
+      const reportNumbers = reports.map(({ html }) => numbersOf(html.replace(/<[^>]+>/g, " ")).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" "));
+      if (reportNumbers[0] !== reportNumbers[1]) gaps.push(`${name} ${step} report numbers`);
+      const zhTexts = elementTexts(zh);
+      const enTexts = elementTexts(en);
+      for (const id of Object.keys({ ...zhTexts, ...enTexts })) {
+        const a = numbersOf(zhTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" ");
+        const b = numbersOf(enTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" ");
+        if (a !== b) gaps.push(`${name} ${step} #${id}: ${a.slice(0, 80)} / ${b.slice(0, 80)}`);
+      }
+    }
+  }
+  });
+  assert.deepEqual(gaps.slice(0, 15), [], `${gaps.length} differences`);
+  // The bracket case is really there: the blank value sorts first in both (（ is after ( in zh-CN order).
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label]))')).slice(0, 2), [["", "(Blank)"], ["(A)", "(A)"]]);
 });
