@@ -53,6 +53,8 @@ function ensureDomElementsPresent() {
 // first language. Chinese needs nothing (the page is written in it); the English page has been
 // hidden by the inline script in <head> until now.
 const INITIAL_LANGUAGE = pickInterfaceLanguage(window.location?.search, readNavigatorLanguages(typeof navigator === "undefined" ? null : navigator));
+// The page's own Chinese, read now in both languages (commit 9): later switches write it back.
+rememberStaticLanguage();
 if (INITIAL_LANGUAGE !== "zh") setInterfaceLanguage(INITIAL_LANGUAGE);
 document.documentElement?.removeAttribute("data-lang-pending");
 
@@ -150,6 +152,16 @@ dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
 [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
+
+// v3.2.0 commit 9: the navigation gets its own row when it does not fit (updateNavFit(), app.js).
+window.addEventListener("resize", updateNavFit);
+// The navigation too: it appears with an import (display: none → flex) without the top bar
+// changing its size, so watching the top bar alone misses a page opened narrow.
+if (typeof ResizeObserver === "function" && document.querySelector?.(".app-header")) {
+  const navFitObserver = new ResizeObserver(updateNavFit);
+  navFitObserver.observe(document.querySelector(".app-header"));
+  navFitObserver.observe(document.getElementById("moduleNav"));
+}
 
 // The switches are disabled while a worksheet waits to be chosen: follow the list's panel.
 if (typeof MutationObserver === "function") {

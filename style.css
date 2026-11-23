@@ -246,6 +246,22 @@ body.has-results .header-actions .nav-new-analysis {
   white-space: nowrap;
 }
 
+/* v3.2.0 commit 9: when the module links do not fit beside the brand (body.nav-wrap, set by
+   updateNavFit() from the real widths), the navigation takes a second row, as on a phone; the
+   brand and 换一个文件 stay in the first. overflow-x: auto of .module-nav stays as a fallback. */
+body.has-results.nav-wrap .header-inner {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-bottom: 6px;
+}
+
+body.has-results.nav-wrap .module-nav {
+  flex: 1 0 100%;
+  justify-content: flex-start;
+  order: 3;
+  margin: 0;
+}
+
 /* v3.2.0: the language switch, a small secondary button. The upload page shows it in the top bar;
    after an import it sits at the foot of the sidebar, under the privacy sentence. */
 .language-switch {

@@ -228,9 +228,8 @@ const I18N_WHITELIST = Object.freeze([
   ["script.js", "ensureDomElementsPresent", 4, "启动自检失败的提示：format.js 可能没加载，不能用 L()；语言看 data-lang-pending"]
 ]);
 
-// The files whose interface text is all in L() / Lp() (rule 1 applies). Only grows; when all nine
-// are here the list goes and rule 1 applies to every file.
-const I18N_DONE_FILES = Object.freeze(["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js", "report.js", "parsing.js"]);
+// v3.2.0 commit 9: every script's interface text is in L() / Lp(), so rule 1 applies to all nine
+// (the list of finished files that switched it on file by file is gone).
 
 const isChineseLiteral = (token) => (token.type === "str" || token.type === "tmpl" || token.type === "regex") && (HAN.test(token.value) || CJK_PUNCT_STRICT.test(token.value));
 
@@ -272,7 +271,8 @@ function checkScriptTokens(file, tokens, whitelist, { rule1 = true } = {}) {
 }
 
 // index.html: a small tag scanner. Text belongs to the innermost open tag. `within(offset)` says
-// which parts are checked (v3.2.0 commit 4: only the blocks that have keys so far).
+// which parts are checked (commit 4 checked only the blocks that had keys; since commit 9 the
+// whole page, the default).
 function checkIndexHtml(html, english, within = () => true) {
   const source = html.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, " "));
   const problems = [];
@@ -343,7 +343,6 @@ module.exports = {
   CJK_PUNCT_STRICT,
   APP_SCRIPT_NAMES,
   I18N_WHITELIST,
-  I18N_DONE_FILES,
   isChineseLiteral,
   lexerSelfCheck,
   checkScriptTokens,

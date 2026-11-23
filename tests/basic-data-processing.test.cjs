@@ -9712,14 +9712,13 @@ test("v3.2.0 static guard: the whitelist names declarations that exist, with exa
   }
 });
 
-test("v3.2.0 static guard: rule 2 everywhere (no Chinese in an English argument), rule 1 in the files that are done", () => {
+test("v3.2.0 static guard: rules 1 and 2 in every script (no Chinese outside L(), none in an English argument)", () => {
   const whitelist = i18nWhitelist();
-  // commit 5: format.js; commit 6: app.js; commit 7: importer, stats, quality, profiling and script.
-  // v3.2.0 commit 8: all nine (parsing.js has only whitelisted data); commit 9 removes the list.
-  assert.deepEqual(i18nGuard.I18N_DONE_FILES, ["format.js", "app.js", "importer.js", "stats.js", "quality.js", "profiling.js", "script.js", "report.js", "parsing.js"]);
-  assert.deepEqual([...i18nGuard.I18N_DONE_FILES].sort(), [...i18nGuard.APP_SCRIPT_NAMES].sort());
+  // Commit 9: the list of finished files (commits 5–8 added them one by one) is gone.
+  assert.equal("I18N_DONE_FILES" in i18nGuard, false);
+  assert.equal(i18nGuard.APP_SCRIPT_NAMES.length, 9);
   for (const file of i18nGuard.APP_SCRIPT_NAMES) {
-    const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist, { rule1: i18nGuard.I18N_DONE_FILES.includes(file) });
+    const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist);
     assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
   }
 });
@@ -9736,19 +9735,11 @@ test("v3.2.0 static guard catches each kind of missed text (the review's 13 case
   assert.notEqual(broken.inTokens, broken.all);
 });
 
-// The parts of index.html that have their keys so far (commit 4): <head>, the skip link, the top
-// bar, the sidebar, the upload page; the preview's <summary> for its two words.
-const I18N_HTML_BLOCKS = [["<head>", "</head>"], ['<a class="skip-link"', "</a>"], ['<header class="app-header">', "</header>"], ['<aside id="appSidebar"', "</aside>"], ['<div class="upload-hero">', '<div id="statusNote"']];
-
-test("v3.2.0 static guard: index.html, where it has keys, has a key for every Chinese text and attribute, and every key has English", () => {
+test("v3.2.0 static guard: index.html has a key for every Chinese text and attribute, and every key has English", () => {
   const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8");
   const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
-  const ranges = I18N_HTML_BLOCKS.map(([start, end]) => {
-    const from = raw.indexOf(start);
-    assert.ok(from >= 0, start);
-    return [from, raw.indexOf(end, from) + end.length];
-  });
-  const { problems, keys } = i18nGuard.checkIndexHtml(raw, english, (offset) => ranges.some(([from, to]) => offset >= from && offset < to));
+  // Commit 9: the whole page (commit 4 checked only the top bar, the sidebar and the upload page).
+  const { problems, keys } = i18nGuard.checkIndexHtml(raw, english);
   assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.kind}: ${problem.text}`), []);
   assert.equal(keys.size, Object.keys(english).length);
   const summary = raw.match(/<summary [^>]*>/)[0];
@@ -9757,9 +9748,7 @@ test("v3.2.0 static guard: index.html, where it has keys, has a key for every Ch
   const bad = i18nGuard.checkIndexHtml('<p data-i18n="hero.title">甲</p><p>乙</p><b aria-label="丙">x</b><i data-i18n="no.such">丁</i>', english);
   assert.deepEqual(bad.problems.filter((problem) => problem.line > 0).map((problem) => problem.kind), ["text without data-i18n", "attribute aria-label not in data-i18n-attr"]);
   assert.ok(bad.problems.some((problem) => problem.kind === "key not in I18N_EN" && problem.text === "no.such"));
-  // The rest of the page has no keys yet (commit 9).
-  const rest = i18nGuard.checkIndexHtml(raw, english);
-  assert.ok(rest.problems.length > 100, `${rest.problems.length}`);
+  assert.ok(keys.size > 180, `${keys.size} keys`);
 });
 
 const LANGUAGE_CASES = [
@@ -9903,6 +9892,70 @@ test("v3.2.0 language: the static text switches by its own text nodes and attrib
   assert.equal(snapshot(), chinese);
   scope.evaluate('setInterfaceLanguage("en"); setInterfaceLanguage("en"); setInterfaceLanguage("zh")');
   assert.equal(snapshot(), chinese);
+});
+
+test("v3.2.0 language: the page's Chinese is read at startup, so a switch leaves the text and attributes a script wrote", () => {
+  const scope = createScriptContext();
+  const scopeText = i18nElement({ "data-i18n": "scope.none" }, ["尚未加载数据"]);
+  const title = i18nElement({ "data-i18n": "charts.numeric" }, ["数值字段分布（记录频数）"]);
+  const canvas = i18nElement({ "aria-label": "数值字段分布图", "data-i18n-attr": "aria-label=charts.numericChart" }, []);
+  const untouched = i18nElement({ "data-i18n": "filter.apply", "aria-label": "类别值", "data-i18n-attr": "aria-label=filter.values" }, ["应用筛选"]);
+  put(scope.context, "__i18nElements", [scopeText, title, canvas, untouched]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  scope.evaluate("rememberStaticLanguage()");
+  // After an import the scripts write their own text (textContent puts a new text node in) and
+  // the chart's aria-label.
+  scopeText.childNodes = [{ nodeType: 3, nodeValue: "40 行" }];
+  title.childNodes = [{ nodeType: 3, nodeValue: "Amount（元） 数值分布（记录频数）" }];
+  canvas.setAttribute("aria-label", "Amount（元） 数值分布（记录频数）");
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scopeText.childNodes[0].nodeValue, "40 行");
+  assert.equal(title.childNodes[0].nodeValue, "Amount（元） 数值分布（记录频数）");
+  assert.equal(canvas.attributes["aria-label"], "Amount（元） 数值分布（记录频数）");
+  assert.deepEqual([untouched.childNodes[0].nodeValue, untouched.attributes["aria-label"]], ["Apply filters", "Values"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual([scopeText.childNodes[0].nodeValue, canvas.attributes["aria-label"], untouched.childNodes[0].nodeValue, untouched.attributes["aria-label"]], ["40 行", "Amount（元） 数值分布（记录频数）", "应用筛选", "类别值"]);
+  // script.js reads it before the first switch, in both languages.
+  const script = repoFile("script.js");
+  assert.ok(script.indexOf("rememberStaticLanguage();") > 0 && script.indexOf("rememberStaticLanguage();") < script.indexOf("if (INITIAL_LANGUAGE !== \"zh\") setInterfaceLanguage(INITIAL_LANGUAGE);"));
+});
+
+test("v3.2.0 language: every key of the page has English that keeps its numbers, and the notes are those of format.js", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8");
+  const scope = createScriptContext();
+  const english = JSON.parse(scope.evaluate("JSON.stringify(I18N_EN)"));
+  const pairs = [];
+  for (const match of raw.matchAll(/<([a-z0-9]+)\b([^>]*)>([^<]*)/g)) {
+    const attrs = Object.fromEntries([...match[2].matchAll(/([^\s=]+)="([^"]*)"/g)].map((item) => [item[1], item[2]]));
+    if (attrs["data-i18n"]) pairs.push([attrs["data-i18n"], match[3].trim()]);
+    for (const [name, key] of String(attrs["data-i18n-attr"] || "").split(/\s+/).filter(Boolean).map((pair) => pair.split("="))) pairs.push([key, attrs[name]]);
+  }
+  assert.ok(pairs.length > 200, `${pairs.length}`);
+  for (const [key, chinese] of pairs) {
+    if (!chinese) continue;
+    assert.ok(english[key] && !ENGLISH_BAD.test(english[key]), `${key}: ${english[key]}`);
+    // The one exception: the sample's date written as the English sample writes it (02/18/2025).
+    if (key !== "sample.otherDate") assert.deepEqual(numbersOf(english[key]).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)), numbersOf(chinese).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)), `${key}: ${chinese} / ${english[key]}`);
+  }
+  // One key, one Chinese text: a key used twice names the same words.
+  const byKey = new Map();
+  for (const [key, chinese] of pairs) {
+    if (!chinese) continue;
+    if (byKey.has(key)) assert.equal(byKey.get(key), chinese, key);
+    byKey.set(key, chinese);
+  }
+  for (const [key, name] of [["quality.totalsNote", "SUSPECTED_TOTAL_NOTE"], ["quality.formulaNote", "FORMULA_ERROR_NOTE"], ["quality.dateStyleNote", "DATE_STYLE_NOTE"], ["quality.constantNote", "CONSTANT_FIELD_NOTE"], ["quality.lookAlikeNote", "LOOK_ALIKE_NOTE"]]) {
+    assert.equal(english[key], scope.evaluate(`${name}[1]`), key);
+  }
+  // The names the scripts write into the same places.
+  assert.equal(english["export.check"], "Check which cells will change");
+  assert.equal(english["custom.create"], "Create breakdown");
+  assert.equal(english["schema.apply"], "Apply column settings");
+  // The eight module titles say what the Chinese title says, not the navigation's short names.
+  assert.deepEqual(["overview", "schema", "quality", "filter", "statistics", "charts", "custom", "export"].map((name) => english[`${name}.title`]),
+    ["Size and preview", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
+  assert.equal(english["sample.row"], "#");
+  assert.equal(english["note.expand"], scope.evaluate('(() => { const button = { getAttribute: () => "true", setAttribute() {}, previousElementSibling: { classList: { toggle() {} } } }; setInterfaceLanguage("en"); toggleSectionNote({ target: { closest: () => button } }); return button.textContent; })()'));
 });
 
 test("v3.2.0 language: the switch names the other language, sets <html lang> and ?lang=, keeps the module, and waits during an import", () => {
@@ -10247,16 +10300,16 @@ async function withRecordedAttributes(action) {
   }
 }
 
-// The Chinese of the files that are done (I18N_DONE_FILES of the guard), in pieces of two or more
-// Han characters, without the pieces the files still in Chinese or the data also use.
+// The Chinese of the scripts' L() / Lp() calls, in pieces of two or more Han characters, without
+// the pieces the whitelisted data literals also hold (“空值” of BLANK_GROUP_KEY, say).
 function doneFileChineseFragments() {
   const pieces = (file, chineseArgumentOnly) => new Set(i18nGuard.lex(repoFile(file))
     .filter((token) => (token.type === "str" || token.type === "tmpl") && (!chineseArgumentOnly || (token.lFrame && token.lFrame.arg === 0)))
     .flatMap((token) => token.value.match(/\p{Script=Han}{2,}/gu) || []));
-  const done = new Set(i18nGuard.I18N_DONE_FILES.flatMap((file) => [...pieces(file, true)]));
-  for (const file of i18nGuard.APP_SCRIPT_NAMES.filter((name) => !i18nGuard.I18N_DONE_FILES.includes(name))) {
-    // Also a piece inside one of their texts (“按空值处理” in quality.js's “已按空值处理”).
-    const texts = i18nGuard.lex(repoFile(file)).filter((token) => token.type === "str" || token.type === "tmpl").map((token) => token.value);
+  const done = new Set(i18nGuard.APP_SCRIPT_NAMES.flatMap((file) => [...pieces(file, true)]));
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    // Also a piece inside one of the data literals outside L().
+    const texts = i18nGuard.lex(repoFile(file)).filter((token) => (token.type === "str" || token.type === "tmpl") && !token.lFrame).map((token) => token.value);
     for (const piece of [...done]) if (texts.some((text) => text.includes(piece))) done.delete(piece);
   }
   return [...done];
@@ -10774,4 +10827,41 @@ test("v3.2.0 app.js English wording: the chart's value conclusion and an empty f
   assert.deepEqual(texts.en, ["In “Region”, the most common value is “West”: 20 times, 50.0%.", '<p class="filter-value-empty">No matching values.</p>']);
   // The problem category's sentence keeps category (it is a category of problem rows).
   assert.match(repoFile("app.js"), /"This category has no problem rows any more\."/);
+});
+
+test("v3.2.0 navigation: a second row only when the links overflow, measured without that row; a language switch measures again", () => {
+  const scope = createScriptContext();
+  // A navigation that overflows in one row (900 > 800) and fits in its own (900 ≤ 1200).
+  scope.evaluate(`globalThis.__nav = { get scrollWidth() { return 900; }, get clientWidth() { return document.body.classList.contains("nav-wrap") ? 1200 : globalThis.__navWidth; } };
+    document.getElementById = ((original) => (id) => (id === "moduleNav" ? globalThis.__nav : original(id)))(document.getElementById);`);
+  const wraps = (width, results) => scope.evaluate(`(() => {
+    globalThis.__navWidth = ${width};
+    document.body.classList.${results ? "add" : "remove"}("has-results");
+    updateNavFit();
+    return document.body.classList.contains("nav-wrap");
+  })()`);
+  assert.equal(wraps(800, true), true);
+  // Measured without the class: a navigation that fits in one row loses its second row.
+  assert.equal(wraps(950, true), false);
+  // One pixel of rounding is allowed (scrollWidth is a whole number).
+  assert.equal(wraps(899, true), false);
+  assert.equal(wraps(898, true), true);
+  // The upload page (no results) never wraps.
+  assert.equal(wraps(800, false), false);
+  // A language switch measures again: the English words overflow where the Chinese did not.
+  wraps(950, true);
+  scope.evaluate("globalThis.__navWidth = 800; setInterfaceLanguage(\"en\")");
+  assert.equal(scope.evaluate('document.body.classList.contains("nav-wrap")'), true);
+  // script.js measures on every size change of the top bar and of the window.
+  const script = repoFile("script.js");
+  assert.match(script, /window\.addEventListener\("resize", updateNavFit\);/);
+  assert.match(script, /const navFitObserver = new ResizeObserver\(updateNavFit\);/);
+  assert.match(script, /navFitObserver\.observe\(document\.querySelector\("\.app-header"\)\);/);
+  // The navigation itself: a page opened narrow gets its links with the import, the top bar keeps its size.
+  assert.match(script, /navFitObserver\.observe\(document\.getElementById\("moduleNav"\)\);/);
+  // style.css: the second row, and the fallback scroll of .module-nav stays.
+  const css = repoFile("style.css");
+  assert.match(css, /body\.has-results\.nav-wrap \.header-inner \{\s*flex-wrap: wrap;/);
+  assert.match(css, /body\.has-results\.nav-wrap \.module-nav \{\s*flex: 1 0 100%;/);
+  assert.match(css, /\.module-nav \{[^}]*overflow-x: auto;/);
 });

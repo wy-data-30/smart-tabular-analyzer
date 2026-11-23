@@ -319,20 +319,34 @@ function readI18nAttributePairs(element) {
   return String(element.getAttribute("data-i18n-attr") || "").split(/\s+/).filter(Boolean).map((pair) => pair.split("="));
 }
 
+function rememberStaticText(element) {
+  if (staticChineseText.has(element)) return staticChineseText.get(element);
+  const key = element.getAttribute("data-i18n");
+  const textNode = key ? Array.from(element.childNodes || []).find((node) => node.nodeType === 3 && node.nodeValue.trim()) : null;
+  const chinese = {
+    textNode,
+    text: textNode ? textNode.nodeValue : null,
+    attributes: Object.fromEntries(readI18nAttributePairs(element).map(([name]) => [name, element.getAttribute(name)]))
+  };
+  staticChineseText.set(element, chinese);
+  return chinese;
+}
+
+// v3.2.0 commit 9: script.js reads the Chinese of the page at startup in both languages, before any
+// script writes into it. A first switch after an import then never takes a script's text (a
+// count, “收起”) for the page's own.
+function rememberStaticLanguage() {
+  if (typeof document.querySelectorAll !== "function") return;
+  document.querySelectorAll("[data-i18n], [data-i18n-attr]").forEach(rememberStaticText);
+}
+
 function applyStaticLanguage() {
   if (typeof document.querySelectorAll !== "function") return;
   document.querySelectorAll("[data-i18n], [data-i18n-attr]").forEach((element) => {
     const key = element.getAttribute("data-i18n");
-    const attributes = readI18nAttributePairs(element);
-    if (!staticChineseText.has(element)) {
-      const textNode = key ? Array.from(element.childNodes || []).find((node) => node.nodeType === 3 && node.nodeValue.trim()) : null;
-      staticChineseText.set(element, {
-        textNode,
-        text: textNode ? textNode.nodeValue : null,
-        attributes: Object.fromEntries(attributes.map(([name]) => [name, element.getAttribute(name)]))
-      });
-    }
-    const chinese = staticChineseText.get(element);
+    const chinese = rememberStaticText(element);
+    // A text node a script has replaced is no longer in the element: writing it changes nothing
+    // on the page, and the script's text stays (commit 11 writes that again).
     if (chinese.textNode) {
       const english = currentLanguage === "en" ? I18N_EN[key] : undefined;
       // Keep the white space around the words, so the Chinese comes back byte for byte.
@@ -340,7 +354,11 @@ function applyStaticLanguage() {
         ? chinese.text
         : chinese.text.replace(chinese.text.trim(), () => english);
     }
-    attributes.forEach(([name, attributeKey]) => {
+    readI18nAttributePairs(element).forEach(([name, attributeKey]) => {
+      // Only an attribute that still holds the page's own text (a chart's aria-label is the
+      // script's once it is drawn).
+      const current = element.getAttribute(name);
+      if (current !== chinese.attributes[name] && current !== I18N_EN[attributeKey]) return;
       const english = currentLanguage === "en" ? I18N_EN[attributeKey] : undefined;
       element.setAttribute(name, english === undefined ? chinese.attributes[name] : english);
     });
@@ -357,6 +375,21 @@ function setInterfaceLanguage(language) {
     button.textContent = languageSwitchLabel();
     button.setAttribute("lang", currentLanguage === "en" ? "zh-CN" : "en");
   });
+  // The navigation's words change width with the language.
+  updateNavFit();
+}
+
+// v3.2.0 commit 9 (the review's 甲): when the eight module links do not fit beside the brand and
+// 换一个文件, the navigation takes a row of its own (body.nav-wrap, style.css) instead of hiding
+// its last items. Measured on the real widths, so no breakpoint depends on the words: take the
+// class off, measure, put it back only if the links overflow. script.js calls this on every size
+// change of the top bar (ResizeObserver) and of the window.
+function updateNavFit() {
+  const nav = document.getElementById("moduleNav");
+  if (!nav || !document.body?.classList) return;
+  document.body.classList.remove("nav-wrap");
+  if (!document.body.classList.contains("has-results")) return;
+  if (nav.scrollWidth > nav.clientWidth + 1) document.body.classList.add("nav-wrap");
 }
 
 // The switch: the other language, written into the address as ?lang= (the #module stays).
