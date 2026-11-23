@@ -9571,7 +9571,7 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "71260d2e87130964b270f516849709769c0bdd38e073226b81fb77d043830ee6");
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "7331133ec3879129a5cf897381947eeeb51efe58331f8c345615de085dab7a8d");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -12207,4 +12207,193 @@ test("v3.2.1 commit 2: an unexpected error while the other sheet is committed en
   assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
   assert.equal(scope.evaluate("state.rows.length"), 0);
   assert.equal(scope.evaluate("state.keptExcel"), null);
+});
+
+// ---- v3.2.1 commit 3: the worksheet list in the sidebar ----
+
+// The fake page has no getAttribute / querySelector and records no focus; these give every fake
+// element (they share one prototype) what the worksheet list needs, for one action:
+// setAttribute / getAttribute keep the values (as withRecordedAttributes() does), focus() is
+// recorded, and querySelector('[data-sheet-index="N"]') answers an item whose focus() is recorded
+// with the list it came from. Restored afterwards.
+async function withSheetListDom(action) {
+  const proto = Object.getPrototypeOf(createScriptContext().evaluate("dom.languageSwitch"));
+  const saved = { setAttribute: proto.setAttribute, getAttribute: proto.getAttribute, querySelector: proto.querySelector, focus: proto.focus };
+  const focused = [];
+  proto.setAttribute = function setAttribute(name, value) { (this.__attributes ??= {})[name] = String(value); };
+  proto.getAttribute = function getAttribute(name) { return this.__attributes && name in this.__attributes ? this.__attributes[name] : null; };
+  proto.focus = function focus() { focused.push({ element: this }); };
+  proto.querySelector = function querySelector(selector) {
+    const list = this;
+    const index = /^\[data-sheet-index="(\d+)"\]$/.exec(selector)?.[1];
+    if (index === undefined || !String(list.innerHTML).includes(`data-sheet-index="${index}"`)) return null;
+    return { focus() { focused.push({ list, item: Number(index) }); } };
+  };
+  try {
+    return await action(focused);
+  } finally {
+    Object.assign(proto, saved);
+  }
+}
+
+const EN_MULTI_SHEET = path.join(__dirname, "fixtures", "en-multi-sheet.xlsx");
+
+test("v3.2.1 commit 3: a failed switch puts the focus back on the item that was clicked, in either list", async () => {
+  await withSheetListDom(async (focused) => {
+    for (const place of ["sidebar", "upload"]) {
+      const { scope } = await v321ImportSheet("Orders");
+      // Empty is the third sheet (index 2); the list draws it as a button.
+      assert.match(scope.elements.get(`${place}SheetList`).innerHTML, /data-sheet-index="2"/, place);
+      focused.length = 0;
+      await scope.evaluate(`switchExcelSheet("Empty", "${place}")`);
+      assert.equal(textOf(scope, `${place}SheetMessage`), "工作表「Empty」为空，请选择包含表头和数据的工作表。");
+      assert.equal(focused.length, 1, place);
+      assert.equal(focused[0].list, scope.elements.get(`${place}SheetList`), place);
+      assert.equal(focused[0].item, 2, place);
+    }
+  });
+});
+
+test("v3.2.1 commit 3: with more than one sheet the sidebar names the file alone and the worksheet below it; one sheet as before", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  assert.equal(textOf(scope, "sourceName"), "book.xlsx");
+  assert.equal(scope.elements.get("sourceName").title, "book.xlsx");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "工作表：Orders（共 5 个）");
+  assert.equal(scope.elements.get("sidebarSheetLine").classList.contains("hidden"), false);
+  assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+  // The top bar, the import message and the report keep “file · sheet”.
+  assert.equal(textOf(scope, "topbarFileName"), "book.xlsx · Orders");
+  assert.match(textOf(scope, "statusPanel"), /^book\.xlsx · Orders 已成功载入/);
+  assert.match(scope.evaluate(`buildHtmlReport(buildReportData(${V321_FIXED_TIME}), [])`), /book\.xlsx/);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(textOf(scope, "sidebarSheetLine"), "Worksheet: Orders (5 in this file)");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(textOf(scope, "sourceName"), "book.xlsx");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "工作表：Second（共 5 个）");
+  // A new import of any kind takes the line away at once (before anything is drawn again).
+  scope.evaluate("beginImport()");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "");
+  assert.equal(scope.elements.get("sidebarSheetLine").classList.contains("hidden"), true);
+  // A single sheet: “file · sheet” and no worksheet line or button.
+  const single = createExcelContext();
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(textOf(single, "sourceName"), "one.xlsx · S1");
+  assert.equal(textOf(single, "sidebarSheetLine"), "");
+  assert.equal(single.elements.get("sidebarSheetLine").classList.contains("hidden"), true);
+  assert.equal(single.elements.get("sidebarSheetToggle").classList.contains("hidden"), true);
+  assert.equal(single.elements.get("sidebarSheetList").innerHTML, "");
+});
+
+test("v3.2.1 commit 3: the list marks the sheet open now, makes the others buttons and escapes the names", async () => {
+  const buffer = buildXlsxBuffer([{ name: "a<b>&c", rows: V321_GOOD_ROWS }, { name: "订单", rows: V321_GOOD_ROWS }, { name: "说明", rows: [["备注"]] }]);
+  const { scope } = await v321ImportSheet("a<b>&c", { buffer });
+  const list = scope.elements.get("sidebarSheetList").innerHTML;
+  assert.equal(list, [
+    '<li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">a&lt;b&gt;&amp;c</span><span class="sheet-switch-now">正在分析</span></li>',
+    '<li><button class="sheet-switch-item" type="button" data-sheet-index="1"><span class="sheet-switch-name">订单</span></button></li>',
+    '<li><button class="sheet-switch-item" type="button" data-sheet-index="2"><span class="sheet-switch-name">说明</span></button></li>'
+  ].join(""));
+  assert.equal(scope.elements.get("uploadSheetList").innerHTML, list);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.match(scope.elements.get("sidebarSheetList").innerHTML, /<span class="sheet-switch-now">Current<\/span>/);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  // A click on an item switches to it (the index, not the name, is in the markup).
+  await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "1" } }) } }, "sidebar")');
+  assert.equal(scope.evaluate("state.sourceSheetName"), "订单");
+  assert.match(scope.elements.get("sidebarSheetList").innerHTML, /^<li><button[^>]*data-sheet-index="0"><span class="sheet-switch-name">a&lt;b&gt;&amp;c<\/span><\/button><\/li><li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">订单<\/span>/);
+  // Clicks on the current sheet's line or around the items do nothing.
+  await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => null } }, "sidebar")');
+  assert.equal(scope.evaluate("state.sourceSheetName"), "订单");
+});
+
+test("v3.2.1 commit 3: the button opens and closes the list; Escape closes it, gives the focus back and stops there", async () => {
+  await withSheetListDom(async (focused) => {
+    const { scope } = await v321ImportSheet("Orders");
+    const toggle = scope.elements.get("sidebarSheetToggle");
+    const panel = scope.elements.get("sidebarSheetPanel");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(panel.classList.contains("hidden"), true);
+    scope.evaluate('toggleSheetSwitch("sidebar")');
+    assert.deepEqual([toggle.getAttribute("aria-expanded"), panel.classList.contains("hidden")], ["true", false]);
+    const event = { key: "Escape", stopped: 0, prevented: 0, stopPropagation() { this.stopped += 1; }, preventDefault() { this.prevented += 1; } };
+    put(scope.context, "__escape", event);
+    focused.length = 0;
+    scope.evaluate('handleSheetSwitchKeydown(__escape, "sidebar")');
+    assert.deepEqual([toggle.getAttribute("aria-expanded"), panel.classList.contains("hidden")], ["false", true]);
+    assert.deepEqual([event.stopped, event.prevented], [1, 1]);
+    assert.equal(focused.length, 1);
+    assert.equal(focused[0].element, toggle);
+    // Closed: Escape is left to the sidebar (the overlay closes on the next one).
+    scope.evaluate('handleSheetSwitchKeydown(__escape, "sidebar")');
+    assert.deepEqual([event.stopped, event.prevented], [1, 1]);
+    // Other keys do nothing.
+    scope.evaluate('toggleSheetSwitch("sidebar")');
+    put(scope.context, "__enter", { key: "Enter", stopPropagation() { throw new Error("stopped"); }, preventDefault() { throw new Error("prevented"); } });
+    scope.evaluate('handleSheetSwitchKeydown(__enter, "sidebar")');
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    // The list stays open across a language switch and a new render of the sidebar.
+    scope.evaluate('setInterfaceLanguage("en"); renderSidebar()');
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(panel.classList.contains("hidden"), false);
+  });
+});
+
+test("v3.2.1 commit 3: the English multi-sheet fixture is what its generator writes", () => {
+  const bytes = fs.readFileSync(EN_MULTI_SHEET);
+  assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), "1e7e1e61b264d08a95bf933914b5bf5c26e6554d7ce3a6554083675bd77eb32f");
+  const folder = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "en-multi-sheet-"));
+  try {
+    require("node:child_process").execFileSync(process.execPath, [path.join(__dirname, "fixtures", "gen-en-multi-sheet.cjs"), folder]);
+    assert.deepEqual(fs.readFileSync(path.join(folder, "en-multi-sheet.xlsx")), bytes);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+  const names = XLSX.read(bytes, { type: "buffer", bookSheets: true }).SheetNames;
+  assert.deepEqual(names, ["Orders", "Customers", "Notes"]);
+});
+
+test("v3.2.1 commit 3: an English file in English shows no Chinese in the worksheet list, and Chinese → English → Chinese gives it back", async () => {
+  await withSheetListDom(async () => {
+    const buffer = fs.readFileSync(EN_MULTI_SHEET);
+    const { scope } = await v321ImportSheet("Orders", { buffer });
+    scope.evaluate('setSheetSwitchOpen("sidebar", true)');
+    await scope.evaluate('switchExcelSheet("Notes", "sidebar")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "工作表「Notes」只有表头，没有可分析的数据行。");
+    const before = elementTexts(scope);
+    scope.evaluate('setInterfaceLanguage("en")');
+    for (const id of ["sidebarSheetLine", "sidebarSheetList", "sidebarSheetMessage", "sourceName"]) {
+      const element = scope.elements.get(id);
+      assert.doesNotMatch(`${element.textContent} ${element.innerHTML}`, ENGLISH_BAD, id);
+    }
+    assert.equal(textOf(scope, "sidebarSheetLine"), "Worksheet: Orders (3 in this file)");
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "The worksheet “Notes” has only a header row and no data to analyze.");
+    assert.match(scope.elements.get("sidebarSheetList").innerHTML, /Current/);
+    assert.equal(scope.elements.get("sidebarSheetToggle").getAttribute("aria-expanded"), "true");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const after = elementTexts(scope);
+    const changed = Object.keys(before).filter((id) => before[id] !== after[id] && !["languageSwitch", "sidebarLanguageSwitch"].includes(id));
+    assert.deepEqual(changed, []);
+  });
+});
+
+test("v3.2.1 commit 3: the sidebar's markup: the note above the list, every text with an English key", () => {
+  // (The data-i18n keys themselves are checked by the static guard: every Chinese text of the page
+  // has a key and every key an English text.)
+  const html = indexHtmlSource();
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assertInOrder(sidebar, ['<p id="sourceName"', '<p id="sidebarSheetLine"', '<p id="sidebarFileSize"', '<div class="sidebar-file-actions">', '<button id="sidebarSheetToggle"', 'class="nav-new-analysis secondary-button sidebar-new-analysis"', '<div id="sidebarSheetPanel"', '<p class="sheet-switch-note"', '<ul id="sidebarSheetList"', '<p id="sidebarSheetMessage"']);
+  assert.match(sidebar, /<button id="sidebarSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="sidebarSheetPanel"><span>换一个工作表<\/span><svg [^>]*aria-hidden="true">/);
+  assert.ok(sidebar.includes('<ul id="sidebarSheetList" class="sheet-switch-list" aria-label="本文件的工作表"></ul>'));
+  assert.ok(sidebar.includes('<p class="sheet-switch-note">换表会重新分析那张表，现在的筛选、不计入分析、按空值处理和改过的字段类型都不会保留。</p>'));
+  assert.ok(sidebar.includes('<p id="sidebarSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>'));
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(english["sheetSwitch.toggle"], "Change worksheet");
+  assert.equal(english["sheetSwitch.list"], "Worksheets in this file");
+  assert.equal(english["sheetSwitch.note"], "Switching analyzes that worksheet from scratch: the filter, excluded rows, cells treated as blank and column types you changed here are not kept.");
+  // R6: on phones the list does not scroll inside the scrolling sidebar.
+  const css = repoFile("style.css");
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
+  assert.match(phone.slice(0, phone.indexOf("\n}\n")), /\.sheet-switch-list \{\s*max-height: none;/);
 });

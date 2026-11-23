@@ -915,6 +915,130 @@ body.has-results .app-sidebar {
   display: none;
 }
 
+/* v3.2.1 换一个工作表: the line under the file name, the button (next to 换一个文件 on phones)
+   and its list. */
+.sheet-line {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.sidebar-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Without a worksheet button the row is no box at all (CSV, single-sheet files): 换一个文件
+   lays out as before and no gap is added. */
+.sidebar-file-actions:not(:has(> .sheet-switch-toggle:not(.hidden))) {
+  display: contents;
+}
+
+.sheet-switch-toggle {
+  gap: 4px;
+  padding-right: 10px;
+}
+
+/* R12: the arrow never shrinks (in a narrow button flex-shrink took it to 0 px). */
+.sheet-switch-toggle svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-right: 0;
+  transition: transform 0.15s ease;
+}
+
+.sheet-switch-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.sheet-switch-panel {
+  min-width: 0;
+}
+
+.sheet-switch-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  list-style: none;
+}
+
+.sheet-switch-list li {
+  display: flex;
+  min-width: 0;
+}
+
+.sheet-switch-item,
+.sheet-switch-current {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+.sheet-switch-item {
+  background: transparent;
+  color: var(--text);
+}
+
+.sheet-switch-item:hover {
+  border-color: transparent;
+  background: var(--fill);
+  color: var(--text);
+}
+
+.sheet-switch-current {
+  background: var(--fill);
+  color: var(--text-secondary);
+}
+
+.sheet-switch-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sheet-switch-now {
+  flex: none;
+  font-size: 12px;
+}
+
+/* The note comes before the list (read before a click), the reading message and errors after it. */
+.sheet-switch-note {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sheet-switch-message {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sheet-switch-message:empty {
+  display: none;
+}
+
+.sheet-switch-message.error {
+  color: var(--danger);
+}
+
 .sidebar-section {
   min-width: 0;
 }
@@ -2979,6 +3103,29 @@ select:focus-visible,
   body.has-results .sidebar-new-analysis {
     display: inline-flex;
     justify-content: center;
+  }
+
+  /* v3.2.1: 换一个工作表 and 换一个文件 side by side, only while the first is shown (without it
+     the row is display: contents and 换一个文件 must stay as it was). */
+  body.has-results .sidebar-file-actions {
+    flex-wrap: nowrap;
+  }
+
+  body.has-results .sidebar-file-actions:has(> .sheet-switch-toggle:not(.hidden)) > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* R12: half the panel is too narrow for “Change worksheet” and its arrow on one line; the words
+     wrap instead of pushing the arrow out. */
+  .sidebar-file-actions > .sheet-switch-toggle {
+    text-align: center;
+    white-space: normal;
+  }
+
+  /* R6: the phone sidebar scrolls as a whole; the list does not scroll inside it. */
+  .sheet-switch-list {
+    max-height: none;
   }
 
   .app-shell {

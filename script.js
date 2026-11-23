@@ -153,6 +153,14 @@ dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
+// v3.2.1 换一个工作表: each list's button, its items (one delegated listener) and Escape.
+SHEET_SWITCH_PLACES.forEach((place) => {
+  const { toggle, panel, list } = sheetSwitchElements(place);
+  toggle.addEventListener("click", () => toggleSheetSwitch(place));
+  list.addEventListener("click", (event) => handleSheetSwitchClick(event, place));
+  [toggle, panel].forEach((element) => element.addEventListener("keydown", (event) => handleSheetSwitchKeydown(event, place)));
+});
+
 [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
 
 

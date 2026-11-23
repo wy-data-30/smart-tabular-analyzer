@@ -66,12 +66,16 @@
     </div>
     <div class="sidebar-file">
       <p id="sourceName" class="source-name"></p>
+      <p id="sidebarSheetLine" class="sheet-line hidden"></p>
       <p id="sidebarFileSize" class="sidebar-file-size"></p>
     </div>
-    <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone" data-i18n="changeFile">换一个文件</a>
-    <button id="sidebarSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="sidebarSheetPanel"></button>
+    <div class="sidebar-file-actions">
+      <button id="sidebarSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="sidebarSheetPanel"><span data-i18n="sheetSwitch.toggle">换一个工作表</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></button>
+      <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone" data-i18n="changeFile">换一个文件</a>
+    </div>
     <div id="sidebarSheetPanel" class="sheet-switch-panel hidden">
-      <ul id="sidebarSheetList" class="sheet-switch-list"></ul>
+      <p class="sheet-switch-note" data-i18n="sheetSwitch.note">换表会重新分析那张表，现在的筛选、不计入分析、按空值处理和改过的字段类型都不会保留。</p>
+      <ul id="sidebarSheetList" class="sheet-switch-list" aria-label="本文件的工作表" data-i18n-attr="aria-label=sheetSwitch.list"></ul>
       <p id="sidebarSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>
     </div>
     <div class="sidebar-section">

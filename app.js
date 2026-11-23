@@ -296,6 +296,7 @@ const dom = {
   sidebarSheetPanel: document.getElementById("sidebarSheetPanel"),
   sidebarSheetList: document.getElementById("sidebarSheetList"),
   sidebarSheetMessage: document.getElementById("sidebarSheetMessage"),
+  sidebarSheetLine: document.getElementById("sidebarSheetLine"),
   uploadSheetToggle: document.getElementById("uploadSheetToggle"),
   uploadSheetPanel: document.getElementById("uploadSheetPanel"),
   uploadSheetList: document.getElementById("uploadSheetList"),
@@ -567,9 +568,56 @@ function renderSidebar() {
   const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
   dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
   dom.sidebarPlaceholderValue.textContent = confirmedCount ? L(`${formatInteger(confirmedCount)} 处`, formatInteger(confirmedCount)) : "";
+  renderSheetSwitches();
 }
 
 // ---- 换一个工作表 (v3.2.1) ----
+
+// The sidebar's worksheet line and both lists, from state.keptExcel (nothing shows without it).
+// Items carry their index in the file, never the name. Whether a list is open and its message
+// stay as they are, so a language switch (which draws the sidebar again) keeps them. The upload
+// page's button shows with 回到「…」的分析 (a later commit); its list is drawn already.
+function renderSheetSwitches() {
+  const kept = state.keptExcel;
+  dom.sidebarSheetLine.textContent = kept ? formatSheetLine(state.sourceSheetName, kept.sheetNames.length) : "";
+  dom.sidebarSheetLine.classList.toggle("hidden", !kept);
+  SHEET_SWITCH_PLACES.forEach((place) => {
+    const { toggle, list } = sheetSwitchElements(place);
+    toggle.classList.toggle("hidden", !kept || place !== "sidebar");
+    if (!kept) {
+      setSheetSwitchOpen(place, false);
+      list.innerHTML = "";
+      return;
+    }
+    list.innerHTML = kept.sheetNames.map((name, index) => (name === state.sourceSheetName
+      ? `<li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">${escapeHtml(name)}</span><span class="sheet-switch-now">${escapeHtml(Lpick(SHEET_SWITCH_OPEN_NOW))}</span></li>`
+      : `<li><button class="sheet-switch-item" type="button" data-sheet-index="${index}"><span class="sheet-switch-name">${escapeHtml(name)}</span></button></li>`)).join("");
+  });
+}
+
+function toggleSheetSwitch(place) {
+  setSheetSwitchOpen(place, sheetSwitchElements(place).toggle.getAttribute("aria-expanded") !== "true");
+}
+
+// A click on another sheet of a list (one delegated listener per list, script.js). Returns the
+// switch's promise (or undefined) so a test can wait for it.
+function handleSheetSwitchClick(event, place) {
+  const button = event.target.closest?.("[data-sheet-index]");
+  if (!button || !state.keptExcel) return undefined;
+  const sheetName = state.keptExcel.sheetNames[Number(button.dataset.sheetIndex)];
+  return sheetName === undefined ? undefined : switchExcelSheet(sheetName, place);
+}
+
+// Escape closes an open list and gives the focus back to its button. It stops there, so the
+// phone and narrow sidebar (which closes on Escape) closes only on the next one.
+function handleSheetSwitchKeydown(event, place) {
+  const { toggle } = sheetSwitchElements(place);
+  if (event.key !== "Escape" || toggle.getAttribute("aria-expanded") !== "true") return;
+  event.preventDefault();
+  event.stopPropagation();
+  setSheetSwitchOpen(place, false);
+  toggle.focus();
+}
 // place: "sidebar" or "upload", the list a switch was started from.
 const SHEET_SWITCH_PLACES = Object.freeze(["sidebar", "upload"]);
 
@@ -609,6 +657,8 @@ function focusSheetSwitchItem(place, sheetName) {
 }
 
 function clearSheetSwitches() {
+  dom.sidebarSheetLine.textContent = "";
+  dom.sidebarSheetLine.classList.add("hidden");
   SHEET_SWITCH_PLACES.forEach((place) => {
     const { toggle, list } = sheetSwitchElements(place);
     setSheetSwitchOpen(place, false);
@@ -785,9 +835,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryStats = buildCategoryStats(state.filteredRows);
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
-  // The sidebar's file name (v3.0.0); report.js reads its title for the report.
-  dom.sourceName.textContent = sourceDisplayName;
-  dom.sourceName.title = sourceDisplayName;
+  // The sidebar's file name (v3.0.0). report.js names the report after state.sourceFileName and
+  // reads this title only when that is empty. v3.2.1: a file with more than one worksheet shows the
+  // file alone here; the worksheet has its own line below (renderSheetSwitches()).
+  const sidebarSourceName = state.keptExcel ? sourceName : sourceDisplayName;
+  dom.sourceName.textContent = sidebarSourceName;
+  dom.sourceName.title = sidebarSourceName;
   dom.topbarFileName.textContent = sourceDisplayName;
   dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
