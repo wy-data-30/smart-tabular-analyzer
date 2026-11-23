@@ -332,6 +332,8 @@ function showUploadPage() {
   // v3.2.1 (R8): kept as a function, so a language switch writes it again (rewriteLanguageTexts()).
   writeLanguageText(dom.returnToAnalysis, canReturn ? () => formatReturnToAnalysis(sourceDisplayName) : "");
   dom.returnToAnalysis.classList.toggle("hidden", !canReturn);
+  // v3.2.1: 换一个工作表 comes with the way back (a multi-sheet file only).
+  renderSheetSwitches();
   window.scrollTo({ top: 0, behavior: "instant" });
   if (canReturn) dom.returnToAnalysis.focus();
   else dom.fileInput.focus();
@@ -343,6 +345,8 @@ function returnToAnalysis() {
   if (!state.rows.length || !state.importStatus) return;
   dom.returnToAnalysis.classList.add("hidden");
   writeLanguageText(dom.returnToAnalysis, "");
+  // v3.2.1: and the upload page's 换一个工作表 goes, its list closed and its message cleared.
+  renderSheetSwitches();
   document.body.classList.add("has-results");
   dom.results.classList.remove("hidden");
   // v3.2.0: the message is written again from its figures, in the current language.

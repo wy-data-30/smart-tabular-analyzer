@@ -99,10 +99,13 @@
     <div class="upload-hero">
       <h1 id="heroTitle" data-i18n="hero.title">上传表格，先做一次体检</h1>
       <p class="product-description" data-i18n="hero.description">不用安装，表格不会离开这台电脑。</p>
-      <button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>
-      <button id="uploadSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="uploadSheetPanel"></button>
+      <div class="return-row">
+        <button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>
+        <button id="uploadSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="uploadSheetPanel"><span data-i18n="sheetSwitch.toggle">换一个工作表</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></button>
+      </div>
       <div id="uploadSheetPanel" class="sheet-switch-panel hidden">
-        <ul id="uploadSheetList" class="sheet-switch-list"></ul>
+        <p class="sheet-switch-note" data-i18n="sheetSwitch.note">换表会重新分析那张表，现在的筛选、不计入分析、按空值处理和改过的字段类型都不会保留。</p>
+        <ul id="uploadSheetList" class="sheet-switch-list" aria-label="本文件的工作表" data-i18n-attr="aria-label=sheetSwitch.list"></ul>
         <p id="uploadSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>
       </div>
     </div>

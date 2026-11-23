@@ -9571,7 +9571,7 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "7331133ec3879129a5cf897381947eeeb51efe58331f8c345615de085dab7a8d");
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "95ef087e9a2ba62a35d30d4c9a6e5635bc22f4bfd9f32491b55bdc4a049ca866");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -12451,4 +12451,123 @@ test("v3.2.1 commit 5: 回到「…」的分析 may wrap, at any character, and 
   // font is the buttons' own (no size or weight here).
   assert.match(css.slice(css.indexOf("\n.secondary-button {"), css.indexOf("}", css.indexOf("\n.secondary-button {"))), /white-space: nowrap;/);
   assert.doesNotMatch(rule, /font-(?:size|weight)/);
+});
+
+// ---- v3.2.1 commit 6: the worksheet list on the upload page ----
+
+const v321ReportHash = (scope) => crypto.createHash("sha256").update(scope.evaluate(`buildHtmlReport(buildReportData(${V321_FIXED_TIME}), [])`)).digest("hex");
+const v321UploadSwitch = (scope) => ({
+  toggleHidden: scope.elements.get("uploadSheetToggle").classList.contains("hidden"),
+  expanded: scope.elements.get("uploadSheetToggle").getAttribute("aria-expanded"),
+  panelHidden: scope.elements.get("uploadSheetPanel").classList.contains("hidden")
+});
+
+test("v3.2.1 commit 6 (T14): the upload page's worksheet button comes with 回到「…」的分析 and goes with it", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    const closed = { toggleHidden: false, expanded: "false", panelHidden: true };
+    // In the analysis it is not there (the sidebar has its own).
+    assert.equal(scope.elements.get("uploadSheetToggle").classList.contains("hidden"), true);
+    assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+    scope.evaluate("showUploadPage()");
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+    assert.deepEqual(v321UploadSwitch(scope), closed);
+    assert.match(scope.elements.get("uploadSheetList").innerHTML, /data-sheet-index="1"><span class="sheet-switch-name">Second</);
+    scope.evaluate('toggleSheetSwitch("upload")');
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    // A language switch keeps it there and open.
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    scope.evaluate('setInterfaceLanguage("zh")');
+    // Back to the analysis: gone and closed; the next upload page shows it closed.
+    scope.evaluate("returnToAnalysis()");
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+    assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+    scope.evaluate("showUploadPage()");
+    assert.deepEqual(v321UploadSwitch(scope), closed);
+    // No way back, no button: a sheet being chosen, an import going on.
+    scope.evaluate("returnToAnalysis(); state.pendingExcel = { fileName: \"c.xlsx\" }; showUploadPage()");
+    assert.deepEqual([scope.elements.get("returnToAnalysis").classList.contains("hidden"), v321UploadSwitch(scope).toggleHidden], [true, true]);
+    scope.evaluate("state.pendingExcel = null; showUploadPage(); returnToAnalysis(); document.body.classList.add(\"is-loading\"); showUploadPage()");
+    assert.deepEqual([scope.elements.get("returnToAnalysis").classList.contains("hidden"), v321UploadSwitch(scope).toggleHidden], [true, true]);
+
+    // A CSV and a single-sheet file: the way back, no worksheet button.
+    const csv = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+    const single = createExcelContext();
+    putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+    await single.evaluate("parseDataFile(__workbookFile)");
+    for (const other of [csv, single]) {
+      other.evaluate("showUploadPage()");
+      assert.equal(other.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+      assert.equal(other.elements.get("uploadSheetToggle").classList.contains("hidden"), true);
+      assert.equal(other.elements.get("uploadSheetList").innerHTML, "");
+    }
+  });
+});
+
+test("v3.2.1 commit 6: a failed switch on the upload page stays there; the way back goes to the same sheet, its report unchanged", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    v321ApplyScenario(scope);
+    scope.evaluate('showModule("qualitySection")');
+    const before = v321Snapshot(scope);
+    const hash = v321ReportHash(scope);
+    scope.evaluate("showUploadPage()");
+    const way = textOf(scope, "returnToAnalysis");
+    assert.equal(way, "回到「book.xlsx · Orders」的分析");
+    scope.evaluate('toggleSheetSwitch("upload")');
+    // Empty is the third sheet (index 2).
+    await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "2" } }) } }, "upload")');
+    assert.equal(textOf(scope, "uploadSheetMessage"), "工作表「Empty」为空，请选择包含表头和数据的工作表。");
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+    // Still the upload page, the way back as it was, nothing busy.
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), false);
+    assert.equal(scope.elements.get("results").classList.contains("hidden"), true);
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+    assert.equal(textOf(scope, "returnToAnalysis"), way);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.equal(scope.elements.get("csvFile").disabled, false);
+    // The way back: the same sheet, the same module, the same report; the list's error is gone.
+    scope.evaluate("returnToAnalysis()");
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), true);
+    assert.equal(scope.evaluate("state.sourceSheetName"), "Orders");
+    assert.equal(v321ReportHash(scope), hash);
+    assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before));
+    assert.equal(textOf(scope, "uploadSheetMessage"), "");
+    assert.equal(scope.evaluate("oneOffMessages.has(dom.uploadSheetMessage)"), false);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+  });
+});
+
+test("v3.2.1 commit 6: a switch from the upload page opens the other sheet's analysis, as importing it does", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    v321ApplyScenario(scope);
+    scope.evaluate('showUploadPage(); toggleSheetSwitch("upload")');
+    await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "1" } }) } }, "upload")');
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), true);
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), true);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+    const fresh = await v321ImportSheet("Second");
+    assert.deepEqual(v321Snapshot(scope), v321Snapshot(fresh.scope));
+  });
+});
+
+test("v3.2.1 commit 6: the upload page's markup is the sidebar's, next to 回到「…」的分析; a wrapped name is left-aligned", () => {
+  const html = indexHtmlSource();
+  const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div class="workspace-intro">'));
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assertInOrder(hero, ['<div class="return-row">', '<button id="returnToAnalysis"', '<button id="uploadSheetToggle"', "</div>", '<div id="uploadSheetPanel"']);
+  // (Indentation between the tags differs: the upload page's is two levels deeper.)
+  const part = (source, start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)) + end.length).replace(/>\s+</g, "><");
+  for (const [start, end] of [['<button id="{}SheetToggle"', "</button>"], ['<div id="{}SheetPanel"', "</div>"]]) {
+    const upload = part(hero, start.replace("{}", "upload"), end);
+    assert.ok(upload.length > end.length, start);
+    assert.equal(upload.replace(/upload(?=Sheet)/g, "sidebar"), part(sidebar, start.replace("{}", "sidebar"), end), start);
+  }
+  // Short names stay centred on one line; a wrapped long one reads from the left.
+  const css = repoFile("style.css");
+  const start = css.indexOf("\n.upload-hero .return-to-analysis {");
+  assert.match(css.slice(start, css.indexOf("}", start)), /\btext-align: left;/);
 });

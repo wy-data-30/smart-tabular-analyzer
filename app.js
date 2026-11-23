@@ -576,16 +576,21 @@ function renderSidebar() {
 // The sidebar's worksheet line and both lists, from state.keptExcel (nothing shows without it).
 // Items carry their index in the file, never the name. Whether a list is open and its message
 // stay as they are, so a language switch (which draws the sidebar again) keeps them. The upload
-// page's button shows with 回到「…」的分析 (a later commit); its list is drawn already.
+// page's button shows only with 回到「…」的分析 (showUploadPage() and returnToAnalysis() call this);
+// without it that list is closed and its message (a failed switch's error) gone.
 function renderSheetSwitches() {
   const kept = state.keptExcel;
   dom.sidebarSheetLine.textContent = kept ? formatSheetLine(state.sourceSheetName, kept.sheetNames.length) : "";
   dom.sidebarSheetLine.classList.toggle("hidden", !kept);
   SHEET_SWITCH_PLACES.forEach((place) => {
     const { toggle, list } = sheetSwitchElements(place);
-    toggle.classList.toggle("hidden", !kept || place !== "sidebar");
-    if (!kept) {
+    const shown = Boolean(kept) && (place === "sidebar" || !dom.returnToAnalysis.classList.contains("hidden"));
+    toggle.classList.toggle("hidden", !shown);
+    if (!shown) {
       setSheetSwitchOpen(place, false);
+      writeSheetSwitchMessage(place, "");
+    }
+    if (!kept) {
       list.innerHTML = "";
       return;
     }

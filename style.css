@@ -374,7 +374,30 @@ body.has-results .sample-preview {
 .upload-hero .return-to-analysis {
   max-width: 100%;
   overflow-wrap: anywhere;
+  text-align: left;
   white-space: normal;
+}
+
+/* v3.2.1: 换一个工作表 next to 回到「…」的分析 (below it when there is no room), its list under both.
+   Without either button the row is no box, so the page lays out as before. */
+.return-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.return-row .return-to-analysis {
+  margin-top: 0;
+}
+
+.return-row:not(:has(> :not(.hidden))) {
+  display: none;
+}
+
+.upload-hero .sheet-switch-panel {
+  max-width: 480px;
+  margin-top: 8px;
 }
 
 .upload-panel {
