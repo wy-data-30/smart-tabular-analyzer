@@ -208,9 +208,9 @@ npm run test:regression
 - When Excel opens an exported CSV directly, it drops leading zeros such as in 007 and loses the precision of numbers longer than 15 digits; the tool writes the original text.
 - CSV row numbers count text lines, as a plain-text editor shows them; data rows, parse warnings, and errors all name the line where the record starts. When a cell contains a line break, Excel or WPS shows the records after it on lower row numbers than the tool reports.
 - Problem rows can be viewed and exported on the quality page only; the report does not include the problem-row tables, and there is no view of all problem rows together.
-- The English interface changes the words only. Tables are still read by the same rules in both languages: total labels, units, and values that may mean blank come from the lists above (mostly Chinese, plus Total, Subtotal, Sum and the Latin units); reading English tables more fully is planned for the next version.
+- The English interface changes the words only; tables are read by the same rules in both languages. Total labels and units are mostly Chinese (the Latin ones are Total, Grand Total, Subtotal, Sub-total, Sum and kg, cm, mm, km), so English tables are only partly read; reading them more fully is planned for the next version.
 - Amounts written with "$" and thousands separators (such as $5,400.00) are read as plain numbers, so they are not pointed out on the Data quality page; the standardized export writes them without the sign and separators.
-- File names are cut to 80 characters before the date: only the original file name and the user's column or value in it are shortened, never the words the tool adds, so two exports of one file never get the same name.
+- File names are cut to 80 characters before the date: only the original file name and the user's column or value in it are shortened, never the words the tool adds, so different exports of one file never share a name.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.

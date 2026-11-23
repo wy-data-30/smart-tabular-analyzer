@@ -1025,6 +1025,8 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 
 ## 界面语言（v3.2.0）
 
+文中 R1、R3、R5、R9、R10、R11 是 v3.2.0 审查后处理的编号，原文在项目的计划文档里，不在仓库中。
+
 - **原则**：换语言只换文字。同一个文件在两种语言下，数字、行数、类型、问题行和行号、排序、图表的数据完全一样；用户的数据和字段名原样。检测规则不随语言变：合计字样、单位、空值写法仍是 v3.1.0 的规则（更完整地读英文表格在下一版）。数字格式和排序固定按 `zh-CN`（和 en-US 的输出逐字相同）。
 - **定语言**：`pickInterfaceLanguage(search, languages)`（`format.js`）：`?lang=zh` / `?lang=en`（只认小写）优先；否则 `navigator.languages[0]` 以 `zh` 开头（含 zh-TW、zh-HK）为中文，其余为英文；都拿不到（测试上下文）为中文（`readNavigatorLanguages()` 读浏览器）。不存 localStorage 或任何存储。`script.js` 启动时先定语言（`INITIAL_LANGUAGE`），先 `rememberStaticLanguage()`，英文才调 `setInterfaceLanguage("en")`。
 - **`<head>` 内联脚本（R5）**：样式表之前的一个 IIFE，只读 `location.search` 和 `navigator.languages`，规则与 `pickInterfaceLanguage()` 相同（测试逐项比较），英文时只给 `<html>` 加 `data-lang-pending`，不定义全局名字。这是“加载时执行的代码只放在 `script.js`”的唯一例外。`style.css` 的 `html[data-lang-pending] body` 隐藏页面，同时带一个 3 秒后显示的 CSS 动画（不靠脚本）：`script.js` 没能跑完时（文件缺失、vendor 加载失败、脚本报错），英文用户最多等 3 秒，不会白页。`script.js` 定好语言后去掉标记；启动自检失败的路径先去掉标记再显示刷新提示，提示按这个标记写中文或英文（`format.js` 可能正是没加载的那个文件）。
@@ -1049,7 +1051,7 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 | 中文 | 英文 |
 | --- | --- |
 | 字段 | column |
-| 导航：数据概览 / 字段配置 / 数据质量 / 数据筛选 / 统计 / 图表 / 自定义分析 / 导出 | Overview / Columns / Quality / Filter / Stats / Charts / Breakdown / Export（模块标题用全称，如 Data quality、Breakdown by group） |
+| 导航：数据概览 / 字段配置 / 数据质量 / 筛选 / 统计 / 图表 / 自定义分析 / 导出 | Overview / Columns / Quality / Filter / Stats / Charts / Breakdown / Export（模块标题照中文标题的意思写、不和导航重复：Size and preview / Check column types / Blanks, duplicates and other issues / Choose the rows to analyze / Number and text stats / Distributions and trends / Combine columns as you need / Save the data and the report） |
 | 空值；筛选和分组里的“（空值）” | blank；“(Blank)” |
 | 像是空值的写法 | values that may mean blank（短称 blank-like，只用在文件名） |
 | 按空值处理 / 撤销；常见写法全部按空值处理（N 处） | Treat as blank / Undo；Treat all common ones as blank (N) |
@@ -1081,9 +1083,10 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 3. **刷新编排重复。** 导入、筛选和字段配置三条路径维护不同版本的重算与渲染清单，新增面板时容易漏掉某条路径。
 4. **DOM 和第三方全局对象耦合。** 事件在脚本加载时绑定，业务函数直接读取控件，并依赖 `window.Papa`、`window.XLSX` 和 `window.Chart`。
 5. **Visualization 与 Export 存在反向依赖。** 报告导出需要读取 Chart registry、canvas 可见性和标题 DOM。
-6. **缺少显式类型和模块接口。** 函数之间通过约定传递普通对象，状态字段依赖主要由测试和调用顺序保护。
-7. **主线程和内存压力集中。** CSV、Excel、统计和渲染均一次性执行；100,000 行上限是风险控制，不是流式架构。
-8. **测试与全局脚本形态绑定。** VM 测试把应用脚本按顺序加载进同一个上下文，再按全局函数名调用，依赖经典脚本共享的全局作用域；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
+6. **报告快照的数据和展示没有完全分开。** 快照较早把部分数字格式化成字符串，v3.2.0 起句子还按导出那一刻的语言写进快照（旧快照的句子原样输出）；v3.2.0 删去 Markdown 后不再有两份报告要同时维护。
+7. **缺少显式类型和模块接口。** 函数之间通过约定传递普通对象，状态字段依赖主要由测试和调用顺序保护。
+8. **主线程和内存压力集中。** CSV、Excel、统计和渲染均一次性执行；100,000 行上限是风险控制，不是流式架构。
+9. **测试与全局脚本形态绑定。** VM 测试把应用脚本按顺序加载进同一个上下文，再按全局函数名调用，依赖经典脚本共享的全局作用域；真实 Chart 生命周期、浏览器下载、滚动导航和完整 DOM 生命周期的自动化覆盖相对有限。
 
 当前代码也有值得保留的基础：纯计算 helper 较多、函数命名明确、原始/筛选口径有保护、Chart 有销毁约定、导出有转义和公式注入防护，并且核心数据逻辑已有回归测试。未来拆分应保留这些行为，而不是重写业务规则。
 
