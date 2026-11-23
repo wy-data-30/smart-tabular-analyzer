@@ -1124,25 +1124,30 @@ body.has-results .app-sidebar {
   font-size: 13px;
 }
 
-/* v3.1.0: under the range sentence, on a line of its own, what the current analysis still
-   contains. The heading wraps only while the note shows; no gap between the two lines. */
-.section-heading:has(> .analysis-contains-note:not(.hidden)) {
-  flex-wrap: wrap;
-  row-gap: 0;
-}
-
+/* v3.1.0 (v3.2.0 commit 10: a bar of its own): under the module's heading, a white bar like the
+   page's other cards saying what the current analysis still contains; the sentence on the left
+   (13 / 400), 去数据质量处理 on the right (13 / 600). */
 .analysis-contains-note {
-  flex: 1 0 100%;
-  margin: 4px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 14px;
+  padding: 10px 16px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
   color: var(--text-secondary);
   font-size: 13px;
-  text-align: right;
+  font-weight: 400;
 }
 
 .analysis-contains-note .text-button {
+  flex: 0 0 auto;
   min-height: 28px;
   padding: 0 7px;
   font-size: 13px;
+  font-weight: 600;
 }
 
 /* v3.0.0: a module is not a card: its title and notes sit on the grey page, and the blocks of
@@ -3089,14 +3094,8 @@ select:focus-visible,
     flex-direction: column;
   }
 
-  .filter-scope,
-  .analysis-contains-note {
+  .filter-scope {
     text-align: left;
-  }
-
-  /* The column keeps its 16 px between the title and the range sentence. */
-  .section-heading:has(> .analysis-contains-note:not(.hidden)) > .filter-scope {
-    margin-top: 20px;
   }
 
   .section-block {

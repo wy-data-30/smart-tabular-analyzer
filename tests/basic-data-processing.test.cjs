@@ -8130,9 +8130,10 @@ test("v3.0.0 statistics: each frequency row has a bar as long as its share, and 
 test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
   const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  // v3.2.0 commit 10: the words around the number are written by the script (“共 42 行” / “42 rows”).
+  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count"><span id="dataExportFilteredBefore"><\/span><strong id="dataExportFilteredCount">0<\/strong><span id="dataExportFilteredAfter"><\/span><\/p>/);
   assert.doesNotMatch(options, /去重/);
-  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count"><span id="dataExportOriginalBefore"><\/span><strong id="dataExportOriginalCount">0<\/strong><span id="dataExportOriginalAfter"><\/span><\/p>/);
   assert.doesNotMatch(html, /数据导出记录统计/);
 });
 
@@ -8408,7 +8409,8 @@ test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry 
   assert.doesNotMatch(html, /系统已自动推断字段类型|本模块始终基于导入的原始数据计算|分类、数值和日期条件可以同时应用/);
   assert.equal((html.match(/class="section-aside"/g) || []).length, 3);
   // The other modules keep their paragraph (custom analysis) and the 当前分析范围 on the right.
-  assert.match(html, /<\/div>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
+  // v3.2.0 commit 10: heading → the note bar → the paragraph, in this order.
+  assert.match(html, /<\/div>\s*<p id="customContainsNote" class="analysis-contains-note hidden"><\/p>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
   assert.equal((html.match(/<p class="filter-scope">当前分析范围：/g) || []).length, 3);
 });
 
@@ -9251,9 +9253,10 @@ test("v3.1.0 modules: 去数据质量处理 opens the quality module at the subs
   for (const [section, id] of [["statisticsSection", "statisticsContainsNote"], ["chartsSection", "chartsContainsNote"], ["customSection", "customContainsNote"]]) {
     const start = html.indexOf(`<section id="${section}"`);
     const heading = html.slice(html.indexOf('<div class="section-heading">', start), html.indexOf(`id="${id}"`, start));
-    // Inside the heading, right under the range sentence, and the heading's last child.
-    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<p $/, section);
-    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<\/div>\s*<(div|p) class=/, section);
+    // v3.2.0 commit 10: a bar of its own right under the heading (the range sentence is the
+    // heading's last child), before the module's first content.
+    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<\/div>\s*<p $/, section);
+    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<(div|p) class=/, section);
   }
   assert.match(repoFile("script.js"), /\[dom\.statisticsContainsNote, dom\.chartsContainsNote, dom\.customContainsNote\]\.forEach\(\(note\) => note\.addEventListener\("click", handleAnalysisNoteClick\)\)/);
 });
@@ -9445,7 +9448,7 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
 test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
   const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
+  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count"><span id="dataExportFilteredBefore"><\/span><strong id="dataExportFilteredCount">0<\/strong><span id="dataExportFilteredAfter"><\/span><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
 
   const orders = await clickSampleButton(sampleOrdersFetchedText());
   const downloads = captureDownloads(orders);
@@ -9551,8 +9554,11 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   const withoutAdditions = stripI18nAttributes(raw)
     .replace(/ {2}<!-- v3\.2\.0: the one script[\s\S]*?<\/script>\n/, "")
     .replace(/\n\s*<button id="(?:languageSwitch|sidebarLanguageSwitch)"[^>]*>English<\/button>/g, "");
-  // sha256 of index.html at 1001bb9 with LF line endings.
-  assert.equal(crypto.createHash("sha256").update(withoutAdditions).digest("hex"), "75fc338d3e2cc195426fd357ad1880e8306f24a49f0308d0f649da89b4d46851");
+  // sha256 of index.html at 1001bb9 with LF line endings was 75fc338d…46851. Commit 10 changed the
+  // Chinese page on purpose: the note above statistics / charts / custom analysis moved out of the
+  // heading into a bar of its own (3 places), and the export's two counts became “共 N 行” (2 places).
+  // The new value is the old content with only those 5 replacements, not the new file hashed again.
+  assert.equal(crypto.createHash("sha256").update(withoutAdditions).digest("hex"), "7c3f1ed67621a6535edbada30173368570d36c1928dd2121407745e606538435");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -10865,4 +10871,44 @@ test("v3.2.0 navigation: a second row only when the links overflow, measured wit
   // The second row's track is only as wide as its links (fix after commit 9), never wider than the row.
   assert.match(css, /body\.has-results\.nav-wrap \.module-nav \{\s*flex: 0 1 auto;\s*max-width: 100%;/);
   assert.match(css, /\.module-nav \{[^}]*overflow-x: auto;/);
+});
+
+test("v3.2.0 commit 10: the note above the results is a white bar under the heading, sentence left, button right", () => {
+  const css = repoFile("style.css");
+  const rule = css.match(/\n\.analysis-contains-note \{([^}]*)\}/)[1];
+  for (const line of ["display: flex;", "justify-content: space-between;", "border: 1px solid var(--card-border);", "border-radius: var(--radius-card);", "background: #fff;", "font-size: 13px;", "font-weight: 400;"]) {
+    assert.ok(rule.includes(line), line);
+  }
+  const button = css.match(/\n\.analysis-contains-note \.text-button \{([^}]*)\}/)[1];
+  assert.ok(button.includes("font-size: 13px;") && button.includes("font-weight: 600;"), button);
+  // The heading no longer wraps for it (the rules of v3.1.0 are gone).
+  assert.doesNotMatch(css, /\.section-heading:has\(> \.analysis-contains-note/);
+  // The text and the button are as before: the bar changes place and frame only.
+  const scope = createScriptContext();
+  commitRows(scope, ["名称", "金额"], [{ 名称: "甲", 金额: "1" }, { 名称: "乙", 金额: "2" }, { 名称: "合计", 金额: "3" }]);
+  const html = scope.evaluate("dom.statisticsContainsNote.innerHTML");
+  assert.match(html, /^[^<]+ <button type="button" class="text-button" data-quality-target="suspectedTotal" aria-label="[^"]+">去数据质量处理<\/button>$/);
+});
+
+test("v3.2.0 commit 10: the export options say 共 42 行 / 42 rows, the number alone in its <strong>", async () => {
+  const words = (language, count) => {
+    const scope = createScriptContext({ language });
+    return JSON.parse(scope.evaluate(`JSON.stringify(formatExportRowCount(${count}))`));
+  };
+  assert.deepEqual(words("zh", 42), { before: "共 ", after: " 行" });
+  assert.deepEqual(words("zh", 1), { before: "共 ", after: " 行" });
+  assert.deepEqual(words("en", 42), { before: "", after: " rows" });
+  assert.deepEqual(words("en", 1), { before: "", after: " row" });
+  for (const language of ["zh", "en"]) {
+    const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+    scope.evaluate('setRowExclusion("duplicateRows", true)');
+    const line = (name) => ["Before", "Count", "After"].map((part) => textOf(scope, `dataExport${name}${part}`)).join("");
+    assert.deepEqual([line("Filtered"), line("Original")], language === "zh" ? ["共 18 行", "共 19 行"] : ["18 rows", "19 rows"]);
+    assert.deepEqual([textOf(scope, "dataExportFilteredCount"), textOf(scope, "dataExportOriginalCount")], ["18", "19"]);
+  }
+  // The old labels are gone from the page and from the English table.
+  const page = indexHtmlSource();
+  assert.doesNotMatch(page, /当前分析行数|原始行数 </);
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal("export.analysisCount" in english || "export.originalCount" in english, false);
 });

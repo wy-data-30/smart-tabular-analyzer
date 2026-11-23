@@ -79,6 +79,12 @@ function renderDataExportSummary() {
   const filteredCount = getAnalysisRows().length;
   dom.dataExportOriginalCount.textContent = formatInteger(originalCount);
   dom.dataExportFilteredCount.textContent = formatInteger(filteredCount);
+  // v3.2.0 commit 10: “共 42 行” / “42 rows”, the words written around the number.
+  [[dom.dataExportFilteredBefore, dom.dataExportFilteredAfter, filteredCount], [dom.dataExportOriginalBefore, dom.dataExportOriginalAfter, originalCount]].forEach(([before, after, count]) => {
+    const words = formatExportRowCount(count);
+    before.textContent = words.before;
+    after.textContent = words.after;
+  });
   // v3.1.0: the rows left out are not in this export either.
   const excludedCount = state.rows.length ? countExcludedRows() : 0;
   dom.dataExportExcludedNote.textContent = excludedCount ? formatDataExportExcludedNote(excludedCount) : "";

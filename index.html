@@ -439,8 +439,8 @@
             <h2 id="statisticsSectionTitle" tabindex="-1" data-i18n="statistics.title">数值与分类统计</h2>
           </div>
           <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
-          <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
+        <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
         <div class="module-subsection first">
           <h3 class="subsection-title" data-i18n="statistics.numeric">数值字段统计指标</h3>
           <div class="table-wrap" tabindex="0" aria-label="数值字段统计表，可横向滚动" data-i18n-attr="aria-label=statistics.numericWrap">
@@ -459,8 +459,8 @@
             <h2 id="chartsSectionTitle" tabindex="-1" data-i18n="charts.title">字段分布与趋势</h2>
           </div>
           <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
-          <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
         </div>
+        <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
         <div class="chart-grid">
           <div class="chart-card">
             <div class="chart-header">
@@ -503,8 +503,8 @@
             <h2 id="customSectionTitle" tabindex="-1" data-i18n="custom.title">按业务需要组合字段</h2>
           </div>
           <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
-          <p id="customContainsNote" class="analysis-contains-note hidden"></p>
         </div>
+        <p id="customContainsNote" class="analysis-contains-note hidden"></p>
         <p class="section-note" data-i18n="custom.note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
         <div class="analysis-panel primary-analysis-panel">
@@ -576,7 +576,7 @@
             <div class="data-export-option">
               <div>
                 <h3 data-i18n="export.analysisRows">当前分析的行</h3>
-                <p class="export-count" data-i18n="export.analysisCount">当前分析行数 <strong id="dataExportFilteredCount">0</strong></p>
+                <p class="export-count"><span id="dataExportFilteredBefore"></span><strong id="dataExportFilteredCount">0</strong><span id="dataExportFilteredAfter"></span></p>
                 <p data-i18n="export.analysisNote">导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"></span></p>
               </div>
               <button id="exportFilteredCsv" type="button" disabled data-i18n="export.analysisButton">导出当前分析的行</button>
@@ -584,7 +584,7 @@
             <div class="data-export-option">
               <div>
                 <h3 data-i18n="export.standardized">写法统一的表</h3>
-                <p class="export-count" data-i18n="export.originalCount">原始行数 <strong id="dataExportOriginalCount">0</strong></p>
+                <p class="export-count"><span id="dataExportOriginalBefore"></span><strong id="dataExportOriginalCount">0</strong><span id="dataExportOriginalAfter"></span></p>
                 <p data-i18n="export.standardizedNote">全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已按空值处理的写法，去掉文本首尾空格。先检查会改哪些单元格。</p>
                 <p id="standardizedExportGate" class="standardize-gate"></p>
               </div>

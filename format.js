@@ -232,11 +232,9 @@ const I18N_EN = Object.freeze({
   "export.data": "Export the data",
   "export.dataNote": "The export happens only in this browser. Files are UTF-8 with a BOM and keep the original column order; the original file is not changed or overwritten.",
   "export.analysisRows": "Rows in analysis",
-  "export.analysisCount": "Rows in analysis",
   "export.analysisNote": "Exports the rows the statistics and charts use (the rows after filtering).",
   "export.analysisButton": "Export rows in analysis",
   "export.standardized": "Standardized table",
-  "export.originalCount": "Original rows",
   "export.standardizedNote": "All original rows: dates written as YYYY-MM-DD; numbers without units, thousands separators or currency signs; values treated as blank emptied; leading and trailing spaces removed from text. Check which cells will change first.",
   "export.check": "Check which cells will change",
   "export.changesWrap": "Standardized changes table, scrolls sideways",
@@ -534,6 +532,12 @@ function formatAllIncludedRows(includedCount, excludedCount) {
     `全部 ${formatInteger(includedCount)} 行（不含不计入分析的 ${formatInteger(excludedCount)} 行）`,
     `all ${enCount(includedCount, "row", "rows")} (not counting ${enCount(excludedCount, "row", "rows")} excluded from analysis)`
   );
+}
+
+// v3.2.0 commit 10: the words around an export option's row count: “共 42 行” / “42 rows”. The
+// number itself is written into its own <strong> (dataExportFilteredCount, dataExportOriginalCount).
+function formatExportRowCount(count) {
+  return L({ before: "共 ", after: " 行" }, { before: "", after: count === 1 ? " row" : " rows" });
 }
 
 // After the export's static note while rows are left out (v3.1.0).
