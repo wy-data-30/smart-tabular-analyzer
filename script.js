@@ -15,7 +15,7 @@ function ensureDomElementsPresent() {
   const missingScripts = [
     ["parsing.js", typeof toNumber],
     ["profiling.js", typeof buildColumnProfile],
-    ["format.js", typeof formatNumber],
+    ["format.js", typeof L],
     ["stats.js", typeof buildNumericStats],
     ["quality.js", typeof countDuplicateRows],
     ["app.js", typeof commitTabularData],
@@ -27,14 +27,19 @@ function ensureDomElementsPresent() {
     : Object.keys(dom).filter((key) => !dom[key]);
   if (!missingKeys.length) return;
 
+  // v3.2.0: an English page is hidden until this script has set the language; show it again
+  // first, so the notice below is not hidden with it. The mark is also the only sign of the
+  // language here: format.js (L) may be the file that did not load.
+  const english = Boolean(document.documentElement?.hasAttribute?.("data-lang-pending"));
+  document.documentElement?.removeAttribute("data-lang-pending");
   const notice = document.createElement("div");
   notice.setAttribute("role", "alert");
   notice.style.cssText = "position:sticky;top:0;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:12px;padding:12px 16px;border-bottom:1px solid #fedf89;background:#fffaeb;color:#b54708;font:600 14px/1.5 system-ui,-apple-system,\"Segoe UI\",\"Microsoft YaHei\",sans-serif;";
   const message = document.createElement("span");
-  message.textContent = "页面已更新，请刷新后再使用。";
+  message.textContent = english ? "The page was updated. Refresh it to continue." : "页面已更新，请刷新后再使用。";
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "刷新页面";
+  button.textContent = english ? "Refresh" : "刷新页面";
   button.style.cssText = "padding:6px 14px;border:1px solid #b54708;border-radius:6px;background:#b54708;color:#fff;font:inherit;cursor:pointer;";
   button.addEventListener("click", () => window.location.reload());
   notice.append(message, button);
@@ -43,6 +48,15 @@ function ensureDomElementsPresent() {
     ? `脚本文件缺失，HTML 与脚本版本不一致：${missingKeys.join(", ")}`
     : `页面元素缺失，HTML 与 script.js 版本不一致：${missingKeys.join(", ")}`);
 }
+
+// v3.2.0: the language, before anything is drawn or bound: ?lang= first, then the browser's
+// first language. Chinese needs nothing (the page is written in it); the English page has been
+// hidden by the inline script in <head> until now.
+const INITIAL_LANGUAGE = pickInterfaceLanguage(window.location?.search, readNavigatorLanguages(typeof navigator === "undefined" ? null : navigator));
+// The page's own Chinese, read now in both languages (commit 9): later switches write it back.
+rememberStaticLanguage();
+if (INITIAL_LANGUAGE !== "zh") setInterfaceLanguage(INITIAL_LANGUAGE);
+document.documentElement?.removeAttribute("data-lang-pending");
 
 if (window.Chart) {
   Chart.defaults.color = CHART_THEME.text;
@@ -67,15 +81,17 @@ dom.fileInput.addEventListener("change", (event) => {
 
 dom.loadSample.addEventListener("click", async () => {
   const importId = beginImport();
+  // v3.2.0: the English interface loads the English sample (the same orders and problems).
+  const sampleName = L("sample-orders.csv", "sample-orders-en.csv");
   try {
-    setStatus("正在加载 sample-orders.csv ...");
-    const response = await fetch("examples/sample-orders.csv");
-    if (!response.ok) throw new Error("示例数据加载失败");
+    setStatus(L(`正在加载 ${sampleName} ...`, `Loading ${sampleName} ...`));
+    const response = await fetch(`examples/${sampleName}`);
+    if (!response.ok) throw languageError(Lp("示例数据加载失败", "The sample data could not be loaded"));
     const text = await response.text();
     if (!isCurrentImport(importId)) return;
-    parseCsvText(text, "sample-orders.csv", importId);
+    parseCsvText(text, sampleName, importId);
   } catch (error) {
-    showError(error.message, importId);
+    showError(errorMessageBuilder(error), importId);
   }
 });
 
@@ -135,13 +151,28 @@ dom.exportStandardizedChanges.addEventListener("click", () => exportStandardized
 
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 
-dom.exportMarkdownReport.addEventListener("click", exportMarkdownReport);
-
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
+[dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
+
+
+// v3.2.0 commit 9: the navigation gets its own row when it does not fit (updateNavFit(), app.js).
+window.addEventListener("resize", updateNavFit);
+// The navigation too: it appears with an import (display: none → flex) without the top bar
+// changing its size, so watching the top bar alone misses a page opened narrow.
+if (typeof ResizeObserver === "function" && document.querySelector?.(".app-header")) {
+  const navFitObserver = new ResizeObserver(updateNavFit);
+  navFitObserver.observe(document.querySelector(".app-header"));
+  navFitObserver.observe(document.getElementById("moduleNav"));
+}
+
+// The switches are disabled while a worksheet waits to be chosen: follow the list's panel.
+if (typeof MutationObserver === "function") {
+  new MutationObserver(syncLanguageSwitches).observe(dom.sheetSelectionPanel, { attributes: true, attributeFilter: ["class"] });
+}
+
 dom.excelSheetSelect.addEventListener("change", () => {
-  dom.sheetSelectionMessage.className = "sheet-selection-message";
-  dom.sheetSelectionMessage.textContent = "";
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", "");
 });
 
 dom.previewFirstPage.addEventListener("click", () => goToPreviewPage("first"));
@@ -218,8 +249,7 @@ updateExportButtons();
 [dom.v2MetricField, dom.v2GroupField, dom.v2DateField].forEach((control) => {
   control.addEventListener("change", () => {
     if (state.rows.length) {
-      dom.v2FieldPrompt.className = "analysis-prompt";
-      dom.v2FieldPrompt.textContent = "字段已更新，点击“生成自定义分析”生成新的结果。";
+      writeOneOffMessage(dom.v2FieldPrompt, "analysis-prompt", () => L("字段已更新，点击“生成自定义分析”生成新的结果。", "The columns changed; click “Create breakdown” for new results."));
     }
   });
 });
@@ -286,7 +316,7 @@ function showUploadPage() {
   document.body.classList.remove("has-results");
   dom.results.classList.add("hidden");
   dom.statusPanel.className = "status-panel hidden";
-  dom.statusPanel.textContent = "";
+  clearStatusMessage();
   dom.statusPanel.removeAttribute("aria-busy");
   resetStatusNote();
   setImportBusy(false);
@@ -306,9 +336,8 @@ function returnToAnalysis() {
   dom.returnToAnalysis.textContent = "";
   document.body.classList.add("has-results");
   dom.results.classList.remove("hidden");
-  const { message, tone, hasNote, summary } = state.importStatus;
-  setStatus(message, tone, hasNote);
-  dom.statusNoteSummary.textContent = summary;
+  // v3.2.0: the message is written again from its figures, in the current language.
+  showImportStatus(state.importStatus);
   syncSidebarToggle();
   showModule(state.returnModule || MODULE_IDS[0]);
 }

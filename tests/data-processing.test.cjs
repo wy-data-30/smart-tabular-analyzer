@@ -6,6 +6,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const englishDateCorpus = require("./fixtures/english-date-corpus.cjs");
 
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+
 // Default release gate: exercise the real data functions from the app scripts without
 // coupling core correctness to browser layout or CSS implementation details.
 
@@ -262,7 +267,7 @@ test("English dates keep the correct calendar day in profiling and inclusive fil
 });
 
 for (const method of ["median", "sum", "avg"]) {
-  test(`${method} custom analysis preserves statistics and exports median in both report formats`, () => {
+  test(`${method} custom analysis preserves statistics and exports median in the report`, () => {
     const { context, evaluate } = createScriptContext();
     context.__rows = [1, 10, 100].map(amount => ({ group: "A", amount: String(amount) }));
     evaluate('commitTabularData(["group", "amount"], __rows, "report.csv", beginImport())');
@@ -277,83 +282,21 @@ for (const method of ["median", "sum", "avg"]) {
     const html = evaluate("buildHtmlReport(__report, [])").split("自定义分组分析结果")[1];
     assert.match(html, /<th>中位数<\/th>/);
     assert.match(html, /<td>A<\/td>\s*<td>3<\/td>\s*<td>111<\/td>\s*<td>37<\/td>\s*<td>10<\/td>\s*<td>1<\/td>\s*<td>100<\/td>/);
-    const md = evaluate("buildMarkdownReport(__report)").split("## 自定义分组分析结果")[1];
-    assert.ok(md.includes("| group | 记录数 | 求和 | 平均值 | 中位数 | 最小值 | 最大值 |"));
-    assert.ok(md.includes("| A | 3 | 111 | 37 | 10 | 1 | 100 |"));
   });
 }
 
-test("Markdown table cells escape inline syntax and preserve ordinary text", () => {
-  const { context, evaluate } = createScriptContext();
-  const cases = [
-    ["![x](https://example.com/a.png)", String.raw`\!\[x\]\(https\:\/\/example\.com\/a\.png\)`],
-    ["[x](javascript:alert(1))", String.raw`\[x\]\(javascript\:alert\(1\)\)`],
-    ["**bold** _em_ ~~strike~~ `code`", String.raw`\*\*bold\*\* \_em\_ \~\~strike\~\~ \`code\``],
-    ["中文 English 123", "中文 English 123"],
-    ["第一行\r\n第二行\n第三行\r第四行|末列", "第一行<br>第二行<br>第三行<br>第四行\\|末列"],
-    [String.raw`C:\data\[x]`, String.raw`C\:\\data\\\[x\]`],
-    ["<img src=x>&copy;", "&lt;img src\\=x&gt;&amp;copy\\;"],
-    ["www.example.com https://example.com", String.raw`www\.example\.com https\:\/\/example\.com`]
-  ];
-  for (const [input, expected] of cases) {
-    context.__cell = input;
-    assert.equal(evaluate("escapeMarkdownCell(__cell)"), expected, input);
-    assert.equal(evaluate("buildMarkdownTable([__cell], [[__cell]])"), `| ${expected} |\n| --- |\n| ${expected} |`);
-  }
-});
-
-test("Markdown report text converts every line ending, including a lone CR", () => {
-  const { context, evaluate } = createScriptContext();
-  const cases = [
-    ["a\r---", "a\n---"],
-    ["第一行\r\n第二行\r第三行", "第一行\n第二行\n第三行"]
-  ];
-  for (const [input, lfOnly] of cases) {
-    context.__text = input;
-    context.__lfOnly = lfOnly;
-    const escaped = evaluate("escapeMarkdownText(__text)");
-    assert.ok(!/[\r\n]/.test(escaped), JSON.stringify(input));
-    assert.equal(escaped, evaluate("escapeMarkdownText(__lfOnly)"), JSON.stringify(input));
-  }
-
-  // Our own <br> markup is added after escaping, so it stays a real line break
-  // while user-supplied angle brackets remain escaped.
-  const exact = [
-    ["a\r---", "a<br>---"],
-    ["第一行\r\n第二行\n第三行\r第四行", "第一行<br>第二行<br>第三行<br>第四行"],
-    ["<b>x</b>\n<br>", "&lt;b&gt;x&lt;/b&gt;<br>&lt;br&gt;"]
-  ];
-  for (const [input, expected] of exact) {
-    context.__text = input;
-    assert.equal(evaluate("escapeMarkdownText(__text)"), expected, JSON.stringify(input));
-  }
-});
-
-test("Markdown report exports untrusted field names and values as inert table text", () => {
-  const { context, evaluate } = createScriptContext();
-  context.__field = "[field](https://example.com)";
-  context.__value = "![pixel](https://example.com/pixel.png) **bold** `code`";
-  evaluate('commitTabularData([__field, "amount"], [{[__field]:__value, amount:"10"}], "report.csv", beginImport())');
-  const report = evaluate("buildMarkdownReport(buildReportData())");
-  assert.ok(report.includes(evaluate("escapeMarkdownCell(__field)")));
-  assert.ok(report.includes(evaluate("escapeMarkdownCell(__value)")));
-  assert.ok(!report.includes(context.__field));
-  assert.ok(!report.includes(context.__value));
-  assert.ok(report.includes("由[表格体检](https://github.com/wy-data-30/smart-tabular-analyzer)"));
-});
-
-test("public current version markers agree on v3.1.0", () => {
+test("public current version markers agree on v3.2.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.1.0");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.1\.0/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.1\.0/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.2.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.2\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.2\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v3.1.0");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.1.0");
+  assert.equal(evaluate("buildReportData().version"), "v3.2.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.2.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
-  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const html = stripI18nAttributes(fs.readFileSync(path.join(root, "index.html"), "utf8"));
   assert.equal(html.match(/<link rel="stylesheet" href="style\.css\?v=([^"]+)">/)?.[1], packageVersion);
   const appScriptVersions = [...html.matchAll(/<script src="(?!vendor\/)([^"?]+)\?v=([^"]+)"><\/script>/g)]
     .map((match) => ({ file: match[1], version: match[2] }));

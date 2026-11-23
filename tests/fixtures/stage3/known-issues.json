@@ -229,5 +229,65 @@
       ] },
       { "field": "客户", "edgeSpaceCount": 0, "groupCount": 1, "rowCount": 10, "groups": [{ "variants": [["ABC公司", 8], ["\uFF21\uFF22\uFF23公司", 1], ["abc公司", 1]], "reasons": ["compat", "case"], "rowCount": 10 }] }
     ]
+  },
+  "en-issues.csv": {
+    "encoding": "UTF-8 BOM，CRLF（v3.2.0，英文表）",
+    "headerFileLine": 1,
+    "dataRows": 20,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "N1", "type": "按单位读取", "field": "Weight", "value": "20 个值都写成「12 kg」这样，只有一种单位 kg", "fileLines": "2-21" },
+      { "id": "N2", "type": "像是数字的文本列", "field": "Floor", "value": "12 个数字、8 个 B1 / G / B2：12/20 = 60%，在 50%–80% 之间", "fileLines": [3, 5, 8, 10, 12, 14, 17, 19] },
+      { "id": "N3", "type": "整列只有一个值", "field": "Status", "value": "Active 19 行，第 13 行少两格是空值", "fileLines": [] },
+      { "id": "N4", "type": "写法不一样（大小写、不可见字符）", "field": "Team", "value": "Sales / sales / Sales + \u200B", "fileLines": [2, 4, 6, 7, 10, 13, 16, 19] },
+      { "id": "N5", "type": "只有不可见字符的格", "field": "Note", "value": "\u200B", "fileLines": [10] },
+      { "id": "N6", "type": "读取时有疑问：TooFewFields", "field": "（整行）", "value": "E12 只有 5 格，少了 Status 和 Note", "fileLines": [13] },
+      { "id": "N7", "type": "读取时有疑问：InvalidQuotes", "field": "Note", "value": "\"ab\"c\"（引号后面紧跟了字符，再用一个引号收尾，读取不中断）", "fileLines": [16] },
+      { "id": "N8", "type": "反例：不是 ID", "field": "Name", "value": "Mia Clark 出现两次（第 2、12 行）：唯一率 19/20 = 95% < 98%，是分类", "fileLines": [2, 12] }
+    ],
+    "expectedTypes": [
+      { "field": "ID", "nonMissing": 20, "numericRate": "0/20", "dateRate": "0/20", "uniqueRate": "20/20", "expected": "id", "reason": "字段名就是 ID" },
+      { "field": "Name", "nonMissing": 20, "numericRate": "0/20", "dateRate": "0/20", "uniqueRate": "19/20=95%", "expected": "category", "reason": "唯一率 < 98%，不触发唯一率 ID 规则" },
+      { "field": "Team", "nonMissing": 20, "numericRate": "0/20", "dateRate": "0/20", "uniqueRate": "5/20", "expected": "category" },
+      { "field": "Weight", "nonMissing": 20, "numericRate": "20/20", "dateRate": "0/20", "uniqueRate": "9/20", "expected": "numeric", "reason": "按单位 kg 读取" },
+      { "field": "Floor", "nonMissing": 20, "numericRate": "12/20=60%", "dateRate": "0/20", "uniqueRate": "9/20", "expected": "category", "reason": "数值率 < 80%" },
+      { "field": "Status", "nonMissing": 19, "numericRate": "0/19", "dateRate": "0/19", "uniqueRate": "1/19", "expected": "category" },
+      { "field": "Note", "nonMissing": 3, "numericRate": "0/3", "dateRate": "0/3", "uniqueRate": "3/3", "expected": "category", "reason": "非空 3 个 <12；只有不可见字符的格不算空值" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 18, "formatProblems": 0 },
+    "parseWarnings": [
+      { "line": 16, "code": "InvalidQuotes" },
+      { "line": 13, "code": "TooFewFields" }
+    ],
+    "constantFields": [
+      { "field": "Status", "value": "Active", "count": 19, "missingCount": 1 }
+    ],
+    "lookAlikes": [
+      { "field": "Team", "edgeSpaceCount": 0, "invisibleOnlyCount": 0, "groupCount": 1, "rowCount": 8, "groups": [{ "variants": [["Sales", 6], ["sales", 1], ["Sales\u200B", 1]], "reasons": ["case", "invisible"], "rowCount": 8 }] },
+      { "field": "Note", "edgeSpaceCount": 0, "invisibleOnlyCount": 1, "groupCount": 0, "rowCount": 1, "groups": [] }
+    ]
+  },
+  "en-formula-errors.xlsx": {
+    "sheet": "Orders",
+    "headerFileLine": 1,
+    "dataRows": 11,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "F1", "type": "数值列里的错误", "field": "Margin", "value": "#DIV/0! 3 个、#REF! 1 个", "fileLines": [3, 5, 7, 9] },
+      { "id": "F2", "type": "疑似合计行（英文字样只认整格）", "field": "Item", "value": "Subtotal", "fileLines": [12], "note": "Qty 179 = 第 2–11 行之和；Price、Margin 是空格子。这一行仍计入，会让 Qty 多 1 个偏大或偏小的值（Price 都在上下界以内，没有）" }
+    ],
+    "expectedTypes": [
+      { "field": "Item", "nonMissing": 11, "numericRate": "0/11", "dateRate": "0/11", "uniqueRate": "11/11", "expected": "category", "reason": "非空 11 个 <12，不触发唯一率 ID 规则" },
+      { "field": "Qty", "nonMissing": 11, "numericRate": "11/11", "dateRate": "0/11", "uniqueRate": "11/11", "expected": "numeric" },
+      { "field": "Price", "nonMissing": 10, "numericRate": "10/10", "dateRate": "0/10", "uniqueRate": "10/10", "expected": "numeric", "reason": "合计行这一格是空的" },
+      { "field": "Margin", "nonMissing": 6, "numericRate": "6/6", "dateRate": "0/6", "uniqueRate": "6/6", "expected": "numeric", "reason": "错误格算缺失，不进分母；合计行这一格是空的" }
+    ],
+    "expectedTotals": { "duplicateRows": 0, "totalMissing": 6, "formatProblems": 0, "formulaErrorCells": 4 },
+    "formulaErrors": [
+      { "field": "Margin", "count": 4, "byError": { "#DIV/0!": 3, "#REF!": 1 }, "lines": [3, 5, 7, 9] }
+    ],
+    "suspectedTotals": [
+      { "line": 12, "label": "Subtotal", "field": "Item", "matches": [{ "scope": "segment", "fields": ["Qty"], "firstLine": 2, "lastLine": 11, "rowCount": 10, "contiguous": true }] }
+    ]
   }
 }

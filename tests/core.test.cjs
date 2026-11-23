@@ -7,7 +7,11 @@ const { createScriptContext, APP_SCRIPT_FILES } = require("./test-context.cjs");
 const { context, elements, source, evaluate } = createScriptContext();
 
 const projectRoot = path.join(__dirname, "..");
-const htmlSource = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+const htmlSource = stripI18nAttributes(fs.readFileSync(path.join(projectRoot, "index.html"), "utf8"));
 const missingDomIds = [...new Set(
   [...source.matchAll(/document\.getElementById\("([^"]+)"\)/g)]
     .map((match) => match[1])
@@ -18,7 +22,8 @@ assert.deepEqual(missingDomIds, []);
 // Startup self-check: a cached old index.html that lacks an element must stop
 // script.js with a visible refresh notice before any listener is attached.
 // test-context's fake DOM never returns null, so this uses its own minimal one.
-function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
+// english: the page arrived marked by the inline script in <head> (v3.2.0).
+function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES, { english = false } = {}) {
   const vm = require("node:vm");
   const listeners = [];
   const reloads = [];
@@ -33,6 +38,7 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
     dataset: {},
     setAttribute(name, value) { this.attributes[name] = String(value); },
     removeAttribute(name) { delete this.attributes[name]; },
+    hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name); },
     addEventListener(type, handler) { listeners.push({ element: this, type, handler }); },
     append(...nodes) { this.children.push(...nodes); },
     appendChild(node) { this.children.push(node); return node; },
@@ -41,9 +47,13 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
     getContext() { return { clearRect() {}, save() {}, restore() {}, fillText() {} }; }
   });
   const body = makeElement("body");
+  // v3.2.0: an English page arrives marked by the inline script in <head>.
+  const documentElement = makeElement("html");
+  if (english) documentElement.attributes["data-lang-pending"] = "";
   const lookedUp = new Set();
   const document = {
     body,
+    documentElement,
     getElementById(id) {
       if (id === missingId) return null;
       const element = makeElement("div");
@@ -74,6 +84,7 @@ function loadScriptWithMissingElement(missingId, files = APP_SCRIPT_FILES) {
   return {
     error,
     body,
+    documentElement,
     reloads,
     listeners,
     domListeners: listeners.filter(({ element }) => lookedUp.has(element))
@@ -91,6 +102,15 @@ const refreshButton = refreshNotice.children.find((node) => node.tagName === "bu
 assert.equal(refreshButton?.textContent, "刷新页面");
 assert.deepEqual(brokenStartup.domListeners, [], "no listener may be attached after the self-check stops");
 assert.deepEqual(brokenStartup.reloads, []);
+// v3.2.0: an English page: the mark is gone, so the notice is not hidden with the page, and the
+// notice is in English (the mark tells the language: format.js may be the file that is missing).
+const brokenEnglishStartup = loadScriptWithMissingElement("dateChartMetric", APP_SCRIPT_FILES, { english: true });
+assert.ok(brokenEnglishStartup.error);
+assert.equal("data-lang-pending" in brokenEnglishStartup.documentElement.attributes, false);
+const englishNotice = brokenEnglishStartup.body.children[0];
+assert.equal(englishNotice?.attributes.role, "alert");
+assert.equal(englishNotice.children.find((node) => node.tagName !== "button")?.textContent, "The page was updated. Refresh it to continue.");
+assert.equal(englishNotice.children.find((node) => node.tagName === "button")?.textContent, "Refresh");
 const refreshClick = brokenStartup.listeners.find(({ element, type }) => element === refreshButton && type === "click");
 assert.ok(refreshClick, "the refresh button needs a click handler");
 refreshClick.handler();
@@ -112,8 +132,13 @@ function assertStoppedForMissingScripts(startup, missingFiles) {
     "only the refresh button may get a listener"
   );
 }
+const scriptOnlyStartup = loadScriptWithMissingElement(null, ["script.js"]);
+// Only script.js (no format.js, no L): an English page still gets its notice in English.
+const scriptOnlyEnglish = loadScriptWithMissingElement(null, ["script.js"], { english: true });
+assert.equal("data-lang-pending" in scriptOnlyEnglish.documentElement.attributes, false);
+assert.equal(scriptOnlyEnglish.body.children[0].children.find((node) => node.tagName !== "button")?.textContent, "The page was updated. Refresh it to continue.");
 assertStoppedForMissingScripts(
-  loadScriptWithMissingElement(null, ["script.js"]),
+  scriptOnlyStartup,
   APP_SCRIPT_FILES.filter((file) => file !== "script.js")
 );
 assertStoppedForMissingScripts(
@@ -123,6 +148,9 @@ assertStoppedForMissingScripts(
 
 const healthyStartup = loadScriptWithMissingElement(null);
 assert.equal(healthyStartup.error, null);
+const healthyEnglish = loadScriptWithMissingElement(null, APP_SCRIPT_FILES, { english: true });
+assert.equal(healthyEnglish.error, null);
+assert.equal("data-lang-pending" in healthyEnglish.documentElement.attributes, false);
 assert.deepEqual(healthyStartup.body.children, []);
 assert.ok(healthyStartup.domListeners.some(({ type }) => type === "change"), "a complete page keeps attaching its listeners");
 
@@ -182,7 +210,8 @@ localAssetReferences.forEach((reference) => {
   const localPath = reference.split(/[?#]/, 1)[0];
   assert.equal(fs.existsSync(path.join(projectRoot, localPath)), true, `missing local asset: ${reference}`);
 });
-assert.match(source, /fetch\("examples\/sample-orders\.csv"\)/);
+assert.match(source, /fetch\(`examples\/\$\{sampleName\}`\)/);
+assert.match(source, /const sampleName = L\("sample-orders\.csv", "sample-orders-en\.csv"\);/);
 const resultSectionOrder = [
   "overviewSection",
   "schemaSection",
@@ -681,7 +710,7 @@ evaluate(`(() => {
   state.profiles = state.fields.map((field) => buildColumnProfile(field, state.rows));
   const orderProfile = state.profiles.find((profile) => profile.field === "订单号");
   orderProfile.typeKey = "id";
-  orderProfile.type = FIELD_TYPE_LABELS.id;
+  orderProfile.type = FIELD_TYPE_LABELS.id[0];
   state.numericStats = buildNumericStats();
   state.categoryStats = buildCategoryStats();
   state.categoryStats.push({
@@ -761,30 +790,14 @@ assert.match(reportHtml, /https:\/\/github\.com\/wy-data-30\/smart-tabular-analy
 assert.doesNotMatch(reportHtml, legacyProductNamePattern);
 assert.doesNotMatch(reportHtml, /<(?:script|link)[^>]+(?:src|href)=["']https?:/i);
 
-const reportMarkdown = evaluate("buildMarkdownReport(__reportData)");
-assert.match(reportMarkdown, /^# .+/);
-assert.match(reportMarkdown, /销售 数据\.xlsx/);
-assert.match(reportMarkdown, /华东&lt;明细&gt;/);
-assert.match(reportMarkdown, /## 字段类型结果/);
-assert.match(reportMarkdown, /## 数据质量报告/);
-assert.match(reportMarkdown, /## 数值字段描述性统计/);
-assert.match(reportMarkdown, /## 分类字段 Top 10/);
-assert.match(reportMarkdown, /## 日期趋势摘要/);
-assert.match(reportMarkdown, /## 自定义分组分析结果/);
-assert.match(reportMarkdown, /## 自动分析结论/);
-assert.match(reportMarkdown, /\| 销售额 \|/);
-assert.match(reportMarkdown, /^> 由\[表格体检\]\(https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer\) /m);
-assert.match(reportMarkdown, /https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer/);
-assert.doesNotMatch(reportMarkdown, legacyProductNamePattern);
-
 assert.match(
   evaluate('buildReportFileName("html", new Date(2026, 6, 17, 14, 30, 5))'),
   /^销售 数据(?:\.xlsx)?[-_].*20260717.*143005.*\.html$/
 );
 evaluate('state.sourceFileName = "客户:销售?.xlsx"');
-const markdownFileName = evaluate('buildReportFileName("md", new Date(2026, 6, 17, 14, 30, 5))');
-assert.match(markdownFileName, /20260717.*143005.*\.md$/);
-assert.doesNotMatch(markdownFileName, /[<>:"/\\|?*]/);
+const unsafeHtmlFileName = evaluate('buildReportFileName("html", new Date(2026, 6, 17, 14, 30, 5))');
+assert.match(unsafeHtmlFileName, /20260717.*143005.*\.html$/);
+assert.doesNotMatch(unsafeHtmlFileName, /[<>:"/\\|?*]/);
 evaluate('state.sourceFileName = "report\\u202Egnp.exe.csv"');
 const bidiSafeFileName = evaluate('buildDataExportFileName("filtered", new Date(2026, 6, 17))');
 assert.doesNotMatch(bidiSafeFileName, /[\u202A-\u202E\u2066-\u2069]/);
@@ -793,13 +806,15 @@ evaluate('state.sourceFileName = "销售 数据.xlsx"');
 assert.equal(evaluate("canExportReport()"), true);
 evaluate("updateExportButtons()");
 assert.equal(elements.get("exportHtmlReport").disabled, false);
-assert.equal(elements.get("exportMarkdownReport").disabled, false);
 
 evaluate("state.analysisCompletedAt = null");
 assert.equal(evaluate("canExportReport()"), false);
 evaluate("updateExportButtons()");
 assert.equal(elements.get("exportHtmlReport").disabled, true);
-assert.equal(elements.get("exportMarkdownReport").disabled, true);
+// v3.2.0: one report. The fake getElementById answers any id, so only the page source can tell.
+assert.ok(!htmlSource.includes('id="exportMarkdownReport"'));
+assert.ok(htmlSource.includes('disabled>导出报告</button>'));
+assert.equal(typeof context.buildMarkdownReport, "undefined");
 evaluate("state.analysisCompletedAt = new Date(2026, 6, 17, 14, 30, 5); state.rows = []");
 assert.equal(evaluate("canExportReport()"), false);
 
@@ -833,7 +848,6 @@ assert.equal(noNumericReport.dateTrends.length, 1);
 assert.deepEqual(noNumericReport.dateTrends[0].labels, ["2026-01-01", "2026-01-02"]);
 context.__noNumericReport = noNumericReport;
 assert.doesNotThrow(() => evaluate("buildHtmlReport(__noNumericReport, [])"));
-assert.doesNotThrow(() => evaluate("buildMarkdownReport(__noNumericReport)"));
 
 // Report renderers must keep working when no optional analytical section has
 // data. This covers category-only files, empty trends and no custom analysis.
@@ -865,10 +879,7 @@ const emptySectionsReport = {
 };
 context.__emptySectionsReport = emptySectionsReport;
 assert.doesNotThrow(() => evaluate("buildHtmlReport(__emptySectionsReport, [])"));
-assert.doesNotThrow(() => evaluate("buildMarkdownReport(__emptySectionsReport)"));
 assert.match(evaluate("buildHtmlReport(__emptySectionsReport, [])"), /未识别到数值字段|无可用数值统计/);
-assert.match(evaluate("buildMarkdownReport(__emptySectionsReport)"), /未识别到数值字段|无可用数值统计/);
 assert.doesNotThrow(() => evaluate('buildHtmlReport({fileName:"空数据.csv", dataScale:{rows:0, fields:0}}, [])'));
-assert.doesNotThrow(() => evaluate('buildMarkdownReport({fileName:"空数据.csv", dataScale:{rows:0, fields:0}})'));
 
 console.log("core tests passed");

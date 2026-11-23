@@ -3,51 +3,64 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>表格体检 | 检查 CSV、Excel 表格的数据问题</title>
-  <link rel="stylesheet" href="style.css?v=3.1.0">
+  <title data-i18n="page.title">表格体检 | 检查 CSV、Excel 表格的数据问题</title>
+  <!-- v3.2.0: the one script that runs before script.js. It only reads ?lang= and the browser's
+       languages (the rule of pickInterfaceLanguage() in format.js) and, for English, marks <html>
+       so style.css hides the Chinese page until script.js has switched it (at most 3 s). -->
+  <script>
+    (function () {
+      var asked = /(?:^|[?&])lang=(zh|en)(?:&|$)/.exec(String(window.location.search || ""));
+      var languages = navigator.languages && navigator.languages.length ? navigator.languages : (navigator.language ? [navigator.language] : []);
+      var first = languages.length ? String(languages[0] || "") : "";
+      var language = asked ? asked[1] : !first ? "zh" : /^zh(?:-|$)/i.test(first) ? "zh" : "en";
+      if (language === "en") document.documentElement.setAttribute("data-lang-pending", "");
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css?v=3.2.0">
   <script src="vendor/papaparse-5.4.1.min.js" integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"></script>
   <script src="vendor/chart-4.4.1.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"></script>
   <script src="vendor/xlsx-0.20.3.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"></script>
 </head>
 <body>
-  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+  <a class="skip-link" href="#mainContent" data-i18n="skip">跳到主要内容</a>
 
   <header class="app-header">
     <div class="header-inner">
-      <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">
+      <button id="sidebarToggle" class="icon-button sidebar-toggle" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段" data-i18n-attr="aria-label=sidebar.toggle">
         <svg viewBox="0 0 20 20" aria-hidden="true">
           <rect x="2.75" y="3.75" width="14.5" height="12.5" rx="2.25" fill="none" stroke="currentColor" stroke-width="1.5"/>
           <path d="M7.5 3.75v12.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
         </svg>
       </button>
-      <a class="brand" href="#mainContent" aria-label="表格体检首页">
+      <a class="brand" href="#mainContent" aria-label="表格体检首页" data-i18n-attr="aria-label=brand.label">
         <span class="brand-copy">
-          <strong>表格体检</strong>
+          <strong data-i18n="brand.name">表格体检</strong>
         </span>
       </a>
       <p id="topbarFileName" class="topbar-file-name"></p>
 
-      <nav id="moduleNav" class="module-nav" aria-label="分析模块目录">
-        <a class="active" href="#overviewSection" aria-current="page">数据概览</a>
-        <a href="#schemaSection">字段配置</a>
-        <a href="#qualitySection">数据质量</a>
-        <a href="#filterSection">筛选</a>
-        <a href="#statisticsSection">统计</a>
-        <a href="#chartsSection">图表</a>
-        <a href="#customSection">自定义分析</a>
-        <a href="#exportSection">导出</a>
+      <nav id="moduleNav" class="module-nav" aria-label="分析模块目录" data-i18n-attr="aria-label=nav.label">
+        <a class="active" href="#overviewSection" aria-current="page" data-i18n="nav.overview">数据概览</a>
+        <a href="#schemaSection" data-i18n="nav.schema">字段配置</a>
+        <a href="#qualitySection" data-i18n="nav.quality">数据质量</a>
+        <a href="#filterSection" data-i18n="nav.filter">筛选</a>
+        <a href="#statisticsSection" data-i18n="nav.statistics">统计</a>
+        <a href="#chartsSection" data-i18n="nav.charts">图表</a>
+        <a href="#customSection" data-i18n="nav.custom">自定义分析</a>
+        <a href="#exportSection" data-i18n="nav.export">导出</a>
       </nav>
 
       <div class="header-actions">
-        <a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>
+        <button id="languageSwitch" class="secondary-button language-switch" type="button" lang="en">English</button>
+        <a class="nav-new-analysis secondary-button" href="#dropZone" data-i18n="changeFile">换一个文件</a>
       </div>
     </div>
   </header>
 
   <aside id="appSidebar" class="app-sidebar" aria-labelledby="sidebarTitle">
     <div class="sidebar-head">
-      <h2 id="sidebarTitle" class="sidebar-title">文件和字段</h2>
-      <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="关闭文件和字段">
+      <h2 id="sidebarTitle" class="sidebar-title" data-i18n="sidebar.title">文件和字段</h2>
+      <button id="sidebarClose" class="icon-button sidebar-close" type="button" aria-label="关闭文件和字段" data-i18n-attr="aria-label=sidebar.close">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.5 5.5 9 9m0-9-9 9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.6"/></svg>
       </button>
     </div>
@@ -55,27 +68,28 @@
       <p id="sourceName" class="source-name"></p>
       <p id="sidebarFileSize" class="sidebar-file-size"></p>
     </div>
-    <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone">换一个文件</a>
+    <a class="nav-new-analysis secondary-button sidebar-new-analysis" href="#dropZone" data-i18n="changeFile">换一个文件</a>
     <div class="sidebar-section">
-      <button id="sidebarFieldsToggle" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="sidebarFieldList">字段 <span id="sidebarFieldCount"></span></button>
+      <button id="sidebarFieldsToggle" class="sidebar-section-toggle" type="button" aria-expanded="true" aria-controls="sidebarFieldList" data-i18n="sidebar.fields">字段 <span id="sidebarFieldCount"></span></button>
       <ul id="sidebarFieldList" class="sidebar-field-list"></ul>
     </div>
     <div class="sidebar-section">
-      <h3 class="sidebar-subtitle">当前状态</h3>
+      <h3 class="sidebar-subtitle" data-i18n="sidebar.status">当前状态</h3>
       <dl class="sidebar-status">
-        <div><dt>筛选</dt><dd id="sidebarFilterSummary"></dd></div>
-        <div id="sidebarHeaderRow" class="hidden"><dt>表头</dt><dd id="sidebarHeaderValue"></dd></div>
-        <div id="sidebarPlaceholderRow" class="hidden"><dt>已按空值处理</dt><dd id="sidebarPlaceholderValue"></dd></div>
+        <div><dt data-i18n="sidebar.filter">筛选</dt><dd id="sidebarFilterSummary"></dd></div>
+        <div id="sidebarHeaderRow" class="hidden"><dt data-i18n="sidebar.header">表头</dt><dd id="sidebarHeaderValue"></dd></div>
+        <div id="sidebarPlaceholderRow" class="hidden"><dt data-i18n="sidebar.placeholders">已按空值处理</dt><dd id="sidebarPlaceholderValue"></dd></div>
       </dl>
     </div>
-    <p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。</p>
+    <p class="sidebar-privacy" data-i18n="privacy.sidebar">表格只在这台电脑的浏览器里处理，不会上传。</p>
+    <button id="sidebarLanguageSwitch" class="secondary-button language-switch sidebar-language-switch" type="button" lang="en">English</button>
   </aside>
   <div id="sidebarBackdrop" class="sidebar-backdrop" hidden></div>
 
   <main id="mainContent" class="app-shell">
     <div class="upload-hero">
-      <h1 id="heroTitle">上传表格，先做一次体检</h1>
-      <p class="product-description">不用安装，表格不会离开这台电脑。</p>
+      <h1 id="heroTitle" data-i18n="hero.title">上传表格，先做一次体检</h1>
+      <p class="product-description" data-i18n="hero.description">不用安装，表格不会离开这台电脑。</p>
       <button id="returnToAnalysis" class="secondary-button return-to-analysis hidden" type="button"></button>
     </div>
 
@@ -88,14 +102,14 @@
               <path d="M29 7v8h8M18 30l6-6 6 6M24 24v11" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
             </svg>
           </span>
-          <h2 id="uploadTitle">把文件拖到这里</h2>
-          <p class="upload-limits">CSV、XLSX、XLS，单文件最大 25 MB，最多 100,000 行、200 列</p>
+          <h2 id="uploadTitle" data-i18n="upload.title">把文件拖到这里</h2>
+          <p class="upload-limits" data-i18n="upload.limits">CSV、XLSX、XLS，单文件最大 25 MB，最多 100,000 行、200 列</p>
           <div class="upload-buttons">
             <input id="csvFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
-            <label class="file-button" for="csvFile">
+            <label class="file-button" for="csvFile" data-i18n="upload.choose">
               选择数据文件
             </label>
-            <button id="loadSample" class="secondary-button" type="button">
+            <button id="loadSample" class="secondary-button" type="button" data-i18n="upload.sample">
               使用示例数据
             </button>
           </div>
@@ -103,16 +117,16 @@
 
         <div class="upload-footer">
           <label class="encoding-control" for="fileEncoding">
-            <span>CSV 文件编码</span>
+            <span data-i18n="upload.encoding">CSV 文件编码</span>
             <select id="fileEncoding">
-              <option value="auto" selected>自动识别</option>
+              <option value="auto" selected data-i18n="upload.encodingAuto">自动识别</option>
               <option value="utf-8">UTF-8</option>
               <option value="gbk">GBK</option>
               <option value="gb18030">GB18030</option>
             </select>
           </label>
-          <p class="upload-encoding-hint">不确定时保持“自动识别”即可</p>
-          <a href="examples/sample-orders.csv" download>下载示例 CSV</a>
+          <p class="upload-encoding-hint" data-i18n="upload.encodingHint">不确定时保持“自动识别”即可</p>
+          <a href="examples/sample-orders.csv" download data-i18n="upload.download" data-i18n-attr="href=upload.downloadHref">下载示例 CSV</a>
         </div>
       </section>
     </div>
@@ -120,71 +134,71 @@
     <div id="statusNote" class="status-note">
       <div class="status-note-bar">
         <p id="statusNoteSummary" class="status-note-summary" aria-hidden="true"></p>
-        <button id="statusNoteToggle" class="text-button status-note-toggle" type="button" aria-controls="statusPanel" aria-expanded="true">收起</button>
+        <button id="statusNoteToggle" class="text-button status-note-toggle" type="button" aria-controls="statusPanel" aria-expanded="true" data-i18n="status.collapse">收起</button>
       </div>
       <section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"></section>
     </div>
 
     <section id="sheetSelectionPanel" class="sheet-selection-panel hidden" aria-labelledby="sheetSelectionTitle">
       <div>
-        <h2 id="sheetSelectionTitle">选择要分析的工作表</h2>
+        <h2 id="sheetSelectionTitle" data-i18n="sheet.title">选择要分析的工作表</h2>
         <p id="excelWorkbookName" class="muted-text"></p>
       </div>
       <div class="sheet-selection-controls">
-        <label for="excelSheetSelect">
+        <label for="excelSheetSelect" data-i18n="sheet.label">
           工作表
           <select id="excelSheetSelect"></select>
         </label>
-        <button id="confirmSheetSelection" type="button">分析所选工作表</button>
+        <button id="confirmSheetSelection" type="button" data-i18n="sheet.confirm">分析所选工作表</button>
       </div>
       <p id="sheetSelectionMessage" class="sheet-selection-message" aria-live="polite"></p>
     </section>
 
     <section class="sample-preview" aria-labelledby="samplePreviewTitle">
       <div class="sample-preview-heading">
-        <h2 id="samplePreviewTitle">会帮你查这些</h2>
-        <span class="sample-preview-note">示例数据里的几行</span>
+        <h2 id="samplePreviewTitle" data-i18n="sample.title">会帮你查这些</h2>
+        <span class="sample-preview-note" data-i18n="sample.note">示例数据里的几行</span>
       </div>
-      <div class="table-wrap" tabindex="0" aria-label="示例数据里的几行，可横向滚动">
-        <table class="sample-preview-table" aria-label="示例数据里的几行">
-          <thead><tr><th>行</th><th>订单编号</th><th>下单日期</th><th>地区</th><th>金额</th><th>会标出来</th></tr></thead>
+      <div class="table-wrap" tabindex="0" aria-label="示例数据里的几行，可横向滚动" data-i18n-attr="aria-label=sample.tableWrap">
+        <table class="sample-preview-table" aria-label="示例数据里的几行" data-i18n-attr="aria-label=sample.note">
+          <thead><tr><th data-i18n="sample.row">行</th><th data-i18n="sample.orderId">订单编号</th><th data-i18n="sample.orderDate">下单日期</th><th data-i18n="sample.region">地区</th><th data-i18n="sample.amount">金额</th><th data-i18n="sample.flagged">会标出来</th></tr></thead>
           <tbody>
-            <tr><td>10</td><td>SO-1008</td><td>2025-02-11</td><td class="mark mark-look-alike">华南<span class="visible-space" aria-hidden="true">␣</span></td><td>1800</td><td class="mark-note mark-look-alike">后面多了一个空格</td></tr>
-            <tr><td>12</td><td>SO-1010</td><td class="mark mark-date">2025/2/18</td><td>西南</td><td>3120</td><td class="mark-note mark-date">日期写法和别的行不一样</td></tr>
-            <tr><td>20</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td>华南</td><td>3900</td><td class="mark-note"></td></tr>
-            <tr><td>21</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td>华南</td><td>3900</td><td class="mark-note mark-duplicate">和上一行完全相同</td></tr>
-            <tr><td>29</td><td>SO-1026</td><td>2025-05-09</td><td>西北</td><td class="mark mark-placeholder">N/A</td><td class="mark-note mark-placeholder">像是空值的写法，认不出是数字</td></tr>
-            <tr><td>44</td><td class="mark mark-total">合计</td><td></td><td></td><td>123440</td><td class="mark-note mark-total">合计行混在数据里</td></tr>
+            <tr><td>10</td><td>SO-1008</td><td>2025-02-11</td><td class="mark mark-look-alike" data-i18n="sample.south">华南<span class="visible-space" aria-hidden="true">␣</span></td><td>1800</td><td class="mark-note mark-look-alike" data-i18n="sample.noteSpace">后面多了一个空格</td></tr>
+            <tr><td>12</td><td>SO-1010</td><td class="mark mark-date" data-i18n="sample.otherDate">2025/2/18</td><td data-i18n="sample.southwest">西南</td><td>3120</td><td class="mark-note mark-date" data-i18n="sample.noteDate">日期写法和别的行不一样</td></tr>
+            <tr><td>20</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td data-i18n="sample.south">华南</td><td>3900</td><td class="mark-note"></td></tr>
+            <tr><td>21</td><td class="mark mark-duplicate">SO-1018</td><td>2025-03-28</td><td data-i18n="sample.south">华南</td><td>3900</td><td class="mark-note mark-duplicate" data-i18n="sample.noteDuplicate">和上一行完全相同</td></tr>
+            <tr><td>29</td><td>SO-1026</td><td>2025-05-09</td><td data-i18n="sample.northwest">西北</td><td class="mark mark-placeholder">N/A</td><td class="mark-note mark-placeholder" data-i18n="sample.notePlaceholder">像是空值的写法，认不出是数字</td></tr>
+            <tr><td>44</td><td class="mark mark-total" data-i18n="sample.total">合计</td><td></td><td></td><td>123440</td><td class="mark-note mark-total" data-i18n="sample.noteTotal">合计行混在数据里</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <section id="results" class="results hidden" aria-labelledby="reportTitle">
-      <h2 id="reportTitle" class="visually-hidden" tabindex="-1">数据分析工作区</h2>
+      <h2 id="reportTitle" class="visually-hidden" tabindex="-1" data-i18n="workspace.title">数据分析工作区</h2>
 
       <div id="moduleStage" class="module-stage">
       <section id="overviewSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="overviewSectionTitle" tabindex="-1">数据规模与预览</h2>
+            <h2 id="overviewSectionTitle" tabindex="-1" data-i18n="overview.title">数据规模与预览</h2>
           </div>
-          <p id="globalFilterStatus" class="filter-scope" aria-live="polite">当前分析范围：<span id="globalFilterSummary">尚未加载数据</span> <button id="globalClearFilters" class="text-button hidden" type="button">清除筛选</button></p>
+          <p id="globalFilterStatus" class="filter-scope" aria-live="polite" data-i18n="scope.label">当前分析范围：<span id="globalFilterSummary" data-i18n="scope.none">尚未加载数据</span> <button id="globalClearFilters" class="text-button hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
         <div id="overviewCards" class="metric-grid"></div>
         <div class="module-subsection">
           <details class="preview-details" open>
-            <summary><h3 class="subsection-title">数据预览</h3></summary>
-            <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动">
-              <table id="previewTable" aria-label="数据预览"></table>
+            <summary data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details.open data-i18n-closed=details.closed"><h3 class="subsection-title" data-i18n="preview.title">数据预览</h3></summary>
+            <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动" data-i18n-attr="aria-label=preview.tableWrap">
+              <table id="previewTable" aria-label="数据预览" data-i18n-attr="aria-label=preview.title"></table>
             </div>
             <div class="row-pager">
               <p id="previewPageInfo" class="row-pager-info" aria-live="polite"></p>
               <div class="row-pager-buttons">
-                <button id="previewFirstPage" class="secondary-button" type="button" disabled>首页</button>
-                <button id="previewPrevPage" class="secondary-button" type="button" disabled>上一页</button>
-                <button id="previewNextPage" class="secondary-button" type="button" disabled>下一页</button>
-                <button id="previewLastPage" class="secondary-button" type="button" disabled>末页</button>
+                <button id="previewFirstPage" class="secondary-button" type="button" disabled data-i18n="pager.first">首页</button>
+                <button id="previewPrevPage" class="secondary-button" type="button" disabled data-i18n="pager.prev">上一页</button>
+                <button id="previewNextPage" class="secondary-button" type="button" disabled data-i18n="pager.next">下一页</button>
+                <button id="previewLastPage" class="secondary-button" type="button" disabled data-i18n="pager.last">末页</button>
               </div>
             </div>
           </details>
@@ -194,23 +208,23 @@
       <section id="schemaSection" class="section-block">
         <div class="section-heading">
           <div class="section-title-line">
-            <h2 id="schemaSectionTitle" tabindex="-1">确认字段类型</h2>
-            <p class="section-aside">识别不准时再改；应用后统一重新计算</p>
+            <h2 id="schemaSectionTitle" tabindex="-1" data-i18n="schema.title">确认字段类型</h2>
+            <p class="section-aside" data-i18n="schema.aside">识别不准时再改；应用后统一重新计算</p>
           </div>
         </div>
         <div id="schemaFilter" class="schema-filter hidden">
-          <input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段">
-          <div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段"></div>
+          <input id="schemaSearch" class="schema-search" type="search" autocomplete="off" aria-label="搜索字段" data-i18n-attr="aria-label=schema.search">
+          <div id="schemaKinds" class="schema-kinds" role="group" aria-label="按类型筛选字段" data-i18n-attr="aria-label=schema.kinds"></div>
         </div>
-        <p id="schemaFilterEmpty" class="empty-state hidden">没有符合条件的字段。</p>
-        <div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动">
-          <table id="schemaTable" aria-label="字段类型配置" aria-describedby="fieldConfigMessage"></table>
+        <p id="schemaFilterEmpty" class="empty-state hidden" data-i18n="schema.empty">没有符合条件的字段。</p>
+        <div class="table-wrap schema-table-wrap" tabindex="0" aria-label="字段配置表，可横向滚动" data-i18n-attr="aria-label=schema.tableWrap">
+          <table id="schemaTable" aria-label="字段类型配置" aria-describedby="fieldConfigMessage" data-i18n-attr="aria-label=schema.table"></table>
         </div>
         <div id="fieldConfigToolbar" class="field-config-toolbar">
           <p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>
           <div class="field-config-actions">
-            <button id="restoreAutoFieldTypes" class="secondary-button" type="button" disabled>恢复自动识别</button>
-            <button id="applyFieldConfig" type="button" disabled>应用字段配置</button>
+            <button id="restoreAutoFieldTypes" class="secondary-button" type="button" disabled data-i18n="schema.restore">恢复自动识别</button>
+            <button id="applyFieldConfig" type="button" disabled data-i18n="schema.apply">应用字段配置</button>
           </div>
         </div>
       </section>
@@ -218,8 +232,8 @@
       <section id="qualitySection" class="section-block">
         <div class="section-heading">
           <div class="section-title-line">
-            <h2 id="qualitySectionTitle" tabindex="-1">空值、重复和其他问题</h2>
-            <p class="section-aside">始终按导入的原始数据算，不受筛选影响</p>
+            <h2 id="qualitySectionTitle" tabindex="-1" data-i18n="quality.title">空值、重复和其他问题</h2>
+            <p class="section-aside" data-i18n="quality.aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
         <p id="qualityScopeNote" class="quality-scope-note hidden"></p>
@@ -230,95 +244,95 @@
         </div>
         <p id="parseWarningSummary" class="parse-warning-summary hidden"></p>
         <div id="suspectedTotalSection" class="module-subsection row-note-section hidden">
-          <h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 / 小计行</h3>
-          <p class="section-note">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
+          <h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1" data-i18n="quality.totals">疑似合计 / 小计行</h3>
+          <p class="section-note" data-i18n="quality.totalsNote">这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。</p>
           <p id="suspectedTotalExcludedNote" class="section-note hidden"></p>
           <div id="suspectedTotalDetails" class="number-note-details"></div>
           <p id="suspectedTotalMessage" class="exclusion-message" role="status"></p>
         </div>
         <div id="formulaErrorSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">公式错误单元格</h3>
-          <p class="section-note">这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。</p>
-          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
+          <h3 class="subsection-title" data-i18n="quality.formula">公式错误单元格</h3>
+          <p class="section-note" data-i18n="quality.formulaNote">这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false" data-i18n="note.expand">展开</button>
           <div id="formulaErrorDetails" class="number-note-details"></div>
         </div>
         <div class="two-column">
           <div>
-            <h3 class="subsection-title">空值检查</h3>
-            <div class="table-wrap compact" tabindex="0" aria-label="空值检查表，可横向滚动">
-              <table id="qualityTable" aria-label="字段空值检查"></table>
+            <h3 class="subsection-title" data-i18n="quality.missing">空值检查</h3>
+            <div class="table-wrap compact" tabindex="0" aria-label="空值检查表，可横向滚动" data-i18n-attr="aria-label=quality.missingWrap">
+              <table id="qualityTable" aria-label="字段空值检查" data-i18n-attr="aria-label=quality.missingTable"></table>
             </div>
           </div>
           <div>
-            <h3 class="subsection-title">数值字段里偏大或偏小的值</h3>
-            <div class="table-wrap compact" tabindex="0" aria-label="偏大或偏小的值检查表，可横向滚动">
-              <table id="outlierTable" aria-label="数值字段里偏大或偏小的值"></table>
+            <h3 class="subsection-title" data-i18n="quality.outliers">数值字段里偏大或偏小的值</h3>
+            <div class="table-wrap compact" tabindex="0" aria-label="偏大或偏小的值检查表，可横向滚动" data-i18n-attr="aria-label=quality.outliersWrap">
+              <table id="outlierTable" aria-label="数值字段里偏大或偏小的值" data-i18n-attr="aria-label=quality.outliers"></table>
             </div>
           </div>
         </div>
         <p id="problemRowsMessage" class="problem-rows-message" role="status"></p>
         <div id="problemRowsSection" class="module-subsection problem-rows hidden">
           <div class="problem-rows-heading">
-            <h3 id="problemRowsTitle" class="subsection-title" tabindex="-1">问题行</h3>
+            <h3 id="problemRowsTitle" class="subsection-title" tabindex="-1" data-i18n="problemRows.title">问题行</h3>
             <div class="problem-rows-actions">
-              <button id="problemRowsExport" class="secondary-button" type="button">导出这一类</button>
-              <button id="problemRowsClose" class="secondary-button" type="button">关闭</button>
+              <button id="problemRowsExport" class="secondary-button" type="button" data-i18n="problemRows.export">导出这一类</button>
+              <button id="problemRowsClose" class="secondary-button" type="button" data-i18n="problemRows.close">关闭</button>
             </div>
           </div>
           <div class="problem-rows-toolbar">
-            <label class="problem-rows-category" for="problemRowsCategory">类别</label>
+            <label class="problem-rows-category" for="problemRowsCategory" data-i18n="problemRows.category">类别</label>
             <select id="problemRowsCategory"></select>
           </div>
           <p id="problemRowsSummary" class="problem-rows-summary" aria-live="polite"></p>
-          <p id="problemRowsDraftNote" class="problem-rows-note hidden">字段配置有未应用的修改，这里按已应用的字段配置列出。</p>
-          <div class="table-wrap" tabindex="0" aria-label="问题行表，可横向滚动">
-            <table id="problemRowsTable" aria-label="问题行"></table>
+          <p id="problemRowsDraftNote" class="problem-rows-note hidden" data-i18n="problemRows.draft">字段配置有未应用的修改，这里按已应用的字段配置列出。</p>
+          <div class="table-wrap" tabindex="0" aria-label="问题行表，可横向滚动" data-i18n-attr="aria-label=problemRows.tableWrap">
+            <table id="problemRowsTable" aria-label="问题行" data-i18n-attr="aria-label=problemRows.title"></table>
           </div>
           <div class="row-pager">
             <div class="row-pager-buttons">
-              <button id="problemRowsFirstPage" class="secondary-button" type="button" disabled>首页</button>
-              <button id="problemRowsPrevPage" class="secondary-button" type="button" disabled>上一页</button>
-              <button id="problemRowsNextPage" class="secondary-button" type="button" disabled>下一页</button>
-              <button id="problemRowsLastPage" class="secondary-button" type="button" disabled>末页</button>
+              <button id="problemRowsFirstPage" class="secondary-button" type="button" disabled data-i18n="pager.first">首页</button>
+              <button id="problemRowsPrevPage" class="secondary-button" type="button" disabled data-i18n="pager.prev">上一页</button>
+              <button id="problemRowsNextPage" class="secondary-button" type="button" disabled data-i18n="pager.next">下一页</button>
+              <button id="problemRowsLastPage" class="secondary-button" type="button" disabled data-i18n="pager.last">末页</button>
             </div>
           </div>
           <p id="problemRowsExportStatus" class="inline-status" aria-live="polite"></p>
         </div>
         <div class="quality-notes">
         <div id="numberConversionSection" class="module-subsection hidden">
-          <h3 class="subsection-title">按单位读取的数字</h3>
+          <h3 class="subsection-title" data-i18n="quality.units">按单位读取的数字</h3>
           <div id="numberConversionDetails" class="number-note-details"></div>
         </div>
         <div id="numericLookingSection" class="module-subsection hidden">
-          <h3 class="subsection-title">像是数字的文本列</h3>
+          <h3 class="subsection-title" data-i18n="quality.numericLooking">像是数字的文本列</h3>
           <div id="numericLookingDetails" class="number-note-details"></div>
         </div>
         <div id="dateStyleSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">日期写法混用</h3>
-          <p class="section-note">这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>
+          <h3 class="subsection-title" data-i18n="quality.dateStyles">日期写法混用</h3>
+          <p class="section-note" data-i18n="quality.dateStyleNote">这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>
           <div id="dateStyleDetails" class="number-note-details"></div>
         </div>
         <div id="constantFieldSection" class="module-subsection hidden">
-          <h3 class="subsection-title">整列只有一个值</h3>
-          <p class="section-note">这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。</p>
-          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
+          <h3 class="subsection-title" data-i18n="quality.constant">整列只有一个值</h3>
+          <p class="section-note" data-i18n="quality.constantNote">这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false" data-i18n="note.expand">展开</button>
           <div id="constantFieldDetails" class="number-note-details"></div>
         </div>
         <div id="lookAlikeSection" class="module-subsection row-note-section hidden">
-          <h3 class="subsection-title">同一个值，写法不一样</h3>
-          <p class="section-note">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。</p>
-          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
+          <h3 class="subsection-title" data-i18n="quality.lookAlike">同一个值，写法不一样</h3>
+          <p class="section-note" data-i18n="quality.lookAlikeNote">首尾空格：本工具已按去掉空格处理，但导出给别的系统、用 VLOOKUP 时会对不上。同一个值有多种写法：本工具把它们当成不同的值，分类统计、筛选和编号重复都会分开算。只有不可见字符：格子看起来是空的，但本工具不按空值处理，分类统计和筛选里会多出一个看不见的值。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false" data-i18n="note.expand">展开</button>
           <div id="lookAlikeDetails" class="number-note-details"></div>
         </div>
         <div id="placeholderSection" class="module-subsection">
-          <h3 class="subsection-title">像是空值的写法</h3>
-          <p class="section-note">这些写法常被用来表示“没有数据”。按空值处理后：不再算作认不出的数字或日期，也不参与统计、Top 10、分组、筛选选项和编号重复检查。原始数据、数据预览和导出的 CSV 不变。</p>
-          <button type="button" class="text-button note-toggle" aria-expanded="false">展开</button>
+          <h3 class="subsection-title" data-i18n="quality.placeholders">像是空值的写法</h3>
+          <p class="section-note" data-i18n="quality.placeholdersNote">这些写法常被用来表示“没有数据”。按空值处理后：不再算作认不出的数字或日期，也不参与统计、Top 10、分组、筛选选项和编号重复检查。原始数据、数据预览和导出的 CSV 不变。</p>
+          <button type="button" class="text-button note-toggle" aria-expanded="false" data-i18n="note.expand">展开</button>
           <div id="placeholderDetails" class="placeholder-details"></div>
           <p id="placeholderMessage" class="placeholder-message" role="status" tabindex="-1"></p>
         </div>
         <div class="module-subsection">
-          <h3 class="subsection-title">编号重复</h3>
+          <h3 class="subsection-title" data-i18n="quality.idDuplicates">编号重复</h3>
           <div id="idDuplicateDetails" class="id-duplicate-details"></div>
         </div>
         </div>
@@ -327,26 +341,26 @@
       <section id="filterSection" class="section-block">
         <div class="section-heading">
           <div class="section-title-line">
-            <h2 id="filterSectionTitle" tabindex="-1">设置当前分析范围</h2>
-            <p class="section-aside">只影响分析结果，不改原始数据和数据质量</p>
+            <h2 id="filterSectionTitle" tabindex="-1" data-i18n="filter.title">设置当前分析范围</h2>
+            <p class="section-aside" data-i18n="filter.aside">只影响分析结果，不改原始数据和数据质量</p>
           </div>
         </div>
 
-        <div class="filter-count-grid" aria-label="筛选记录统计">
+        <div class="filter-count-grid" aria-label="筛选记录统计" data-i18n-attr="aria-label=filter.counts">
           <div class="filter-count-item">
-            <span>原始记录数</span>
+            <span data-i18n="filter.original">原始记录数</span>
             <strong id="filterOriginalCount">0</strong>
           </div>
           <div class="filter-count-item current">
-            <span>当前记录数</span>
+            <span data-i18n="filter.current">当前记录数</span>
             <strong id="filterCurrentCount">0</strong>
           </div>
           <div class="filter-count-item">
-            <span>已筛除记录数</span>
+            <span data-i18n="filter.filteredOut">已筛除记录数</span>
             <strong id="filterExcludedCount">0</strong>
           </div>
           <div id="filterNotCountedItem" class="filter-count-item hidden">
-            <span>不计入分析</span>
+            <span data-i18n="filter.notCounted">不计入分析</span>
             <strong id="filterNotCountedCount">0</strong>
           </div>
         </div>
@@ -354,38 +368,38 @@
         <div class="filter-builder-grid">
           <div class="filter-condition">
             <div class="filter-condition-heading">
-              <h3>分类字段</h3>
-              <span id="categoryFilterSelectionCount">未选择字段</span>
+              <h3 data-i18n="filter.category">分类字段</h3>
+              <span id="categoryFilterSelectionCount" data-i18n="filter.noColumn">未选择字段</span>
             </div>
-            <label class="filter-field-label" for="categoryFilterField">筛选字段
+            <label class="filter-field-label" for="categoryFilterField" data-i18n="filter.field">筛选字段
               <select id="categoryFilterField"></select>
             </label>
             <div id="categoryFilterControls" class="category-filter-controls hidden">
-              <label class="filter-search-label" for="categoryFilterSearch">搜索类别
-                <input id="categoryFilterSearch" type="search" placeholder="输入关键词" autocomplete="off">
+              <label class="filter-search-label" for="categoryFilterSearch" data-i18n="filter.search">搜索类别
+                <input id="categoryFilterSearch" type="search" placeholder="输入关键词" autocomplete="off" data-i18n-attr="placeholder=filter.searchPlaceholder">
               </label>
               <div class="filter-selection-actions">
-                <button id="selectAllCategoryValues" class="text-button" type="button">全选</button>
-                <button id="clearCategoryValues" class="text-button" type="button">取消全选</button>
+                <button id="selectAllCategoryValues" class="text-button" type="button" data-i18n="filter.selectAll">全选</button>
+                <button id="clearCategoryValues" class="text-button" type="button" data-i18n="filter.clearSelection">取消全选</button>
               </div>
-              <div id="categoryFilterValues" class="filter-value-list" role="group" aria-label="类别值"></div>
+              <div id="categoryFilterValues" class="filter-value-list" role="group" aria-label="类别值" data-i18n-attr="aria-label=filter.values"></div>
             </div>
-            <p id="categoryFilterEmpty" class="filter-empty-note">请选择分类字段。</p>
+            <p id="categoryFilterEmpty" class="filter-empty-note" data-i18n="filter.chooseText">请选择分类字段。</p>
           </div>
 
           <div class="filter-condition">
             <div class="filter-condition-heading">
-              <h3>数值字段</h3>
-              <span id="numericFilterRange">请选择字段</span>
+              <h3 data-i18n="filter.numeric">数值字段</h3>
+              <span id="numericFilterRange" data-i18n="filter.chooseColumn">请选择字段</span>
             </div>
-            <label class="filter-field-label" for="numericFilterField">筛选字段
+            <label class="filter-field-label" for="numericFilterField" data-i18n="filter.field">筛选字段
               <select id="numericFilterField"></select>
             </label>
             <div class="filter-range-grid">
-              <label for="numericFilterMin">最小值
+              <label for="numericFilterMin" data-i18n="filter.min">最小值
                 <input id="numericFilterMin" type="number" step="any" disabled>
               </label>
-              <label for="numericFilterMax">最大值
+              <label for="numericFilterMax" data-i18n="filter.max">最大值
                 <input id="numericFilterMax" type="number" step="any" disabled>
               </label>
             </div>
@@ -393,17 +407,17 @@
 
           <div class="filter-condition">
             <div class="filter-condition-heading">
-              <h3>日期字段</h3>
-              <span id="dateFilterRange">请选择字段</span>
+              <h3 data-i18n="filter.date">日期字段</h3>
+              <span id="dateFilterRange" data-i18n="filter.chooseColumn">请选择字段</span>
             </div>
-            <label class="filter-field-label" for="dateFilterField">筛选字段
+            <label class="filter-field-label" for="dateFilterField" data-i18n="filter.field">筛选字段
               <select id="dateFilterField"></select>
             </label>
             <div class="filter-range-grid">
-              <label for="dateFilterStart">开始日期
+              <label for="dateFilterStart" data-i18n="filter.start">开始日期
                 <input id="dateFilterStart" type="date" disabled>
               </label>
-              <label for="dateFilterEnd">结束日期
+              <label for="dateFilterEnd" data-i18n="filter.end">结束日期
                 <input id="dateFilterEnd" type="date" disabled>
               </label>
             </div>
@@ -411,10 +425,10 @@
         </div>
 
         <div class="filter-toolbar">
-          <p id="filterMessage" class="filter-message" aria-live="polite">尚未应用筛选，当前分析使用全部记录。</p>
+          <p id="filterMessage" class="filter-message" aria-live="polite" data-i18n="filter.none">尚未应用筛选，当前分析使用全部记录。</p>
           <div class="filter-toolbar-actions">
-            <button id="clearAllFilters" class="secondary-button" type="button">清除全部筛选</button>
-            <button id="applyFilters" type="button">应用筛选</button>
+            <button id="clearAllFilters" class="secondary-button" type="button" data-i18n="filter.clearAll">清除全部筛选</button>
+            <button id="applyFilters" type="button" data-i18n="filter.apply">应用筛选</button>
           </div>
         </div>
       </section>
@@ -422,19 +436,19 @@
       <section id="statisticsSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="statisticsSectionTitle" tabindex="-1">数值与分类统计</h2>
+            <h2 id="statisticsSectionTitle" tabindex="-1" data-i18n="statistics.title">数值与分类统计</h2>
           </div>
-          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
-          <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
+          <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
+        <p id="statisticsContainsNote" class="analysis-contains-note hidden"></p>
         <div class="module-subsection first">
-          <h3 class="subsection-title">数值字段统计指标</h3>
-          <div class="table-wrap" tabindex="0" aria-label="数值字段统计表，可横向滚动">
-            <table id="numericStatsTable" aria-label="数值字段描述性统计"></table>
+          <h3 class="subsection-title" data-i18n="statistics.numeric">数值字段统计指标</h3>
+          <div class="table-wrap" tabindex="0" aria-label="数值字段统计表，可横向滚动" data-i18n-attr="aria-label=statistics.numericWrap">
+            <table id="numericStatsTable" aria-label="数值字段描述性统计" data-i18n-attr="aria-label=statistics.numericTable"></table>
           </div>
         </div>
         <div class="module-subsection">
-          <h3 class="subsection-title">分类字段频数统计</h3>
+          <h3 class="subsection-title" data-i18n="statistics.category">分类字段频数统计</h3>
           <div id="categoryStats" class="category-grid"></div>
         </div>
       </section>
@@ -442,42 +456,42 @@
       <section id="chartsSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="chartsSectionTitle" tabindex="-1">字段分布与趋势</h2>
+            <h2 id="chartsSectionTitle" tabindex="-1" data-i18n="charts.title">字段分布与趋势</h2>
           </div>
-          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
-          <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
+          <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
+        <p id="chartsContainsNote" class="analysis-contains-note hidden"></p>
         <div class="chart-grid">
           <div class="chart-card">
             <div class="chart-header">
-              <h3 id="numericChartTitle">数值字段分布（记录频数）</h3>
-              <label class="chart-control" for="numericChartField"><span>选择字段</span><select id="numericChartField"></select></label>
+              <h3 id="numericChartTitle" data-i18n="charts.numeric">数值字段分布（记录频数）</h3>
+              <label class="chart-control" for="numericChartField"><span data-i18n="charts.field">选择字段</span><select id="numericChartField"></select></label>
             </div>
-            <div class="chart-frame"><canvas id="numericDistributionChart" role="img" aria-label="数值字段分布图"></canvas><p id="numericDistributionChartEmpty" class="empty-state chart-empty hidden"></p></div>
+            <div class="chart-frame"><canvas id="numericDistributionChart" role="img" aria-label="数值字段分布图" data-i18n-attr="aria-label=charts.numericChart"></canvas><p id="numericDistributionChartEmpty" class="empty-state chart-empty hidden"></p></div>
           </div>
           <div class="chart-card">
             <div class="chart-header">
-              <h3 id="categoryChartTitle">分类字段 Top 10（记录数）</h3>
-              <label class="chart-control" for="categoryChartField"><span>选择字段</span><select id="categoryChartField"></select></label>
+              <h3 id="categoryChartTitle" data-i18n="charts.category">分类字段 Top 10（记录数）</h3>
+              <label class="chart-control" for="categoryChartField"><span data-i18n="charts.field">选择字段</span><select id="categoryChartField"></select></label>
             </div>
-            <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表"></canvas><p id="categoryTopChartEmpty" class="empty-state chart-empty hidden"></p></div>
+            <div class="chart-frame"><canvas id="categoryTopChart" role="img" aria-label="分类字段前十项图表" data-i18n-attr="aria-label=charts.categoryChart"></canvas><p id="categoryTopChartEmpty" class="empty-state chart-empty hidden"></p></div>
             <p id="categoryChartInsight" class="chart-insight hidden"></p>
           </div>
           <div class="chart-card wide">
             <div class="chart-header">
-              <h3 id="dateChartTitle">日期字段趋势（记录数）</h3>
+              <h3 id="dateChartTitle" data-i18n="charts.date">日期字段趋势（记录数）</h3>
               <div class="chart-control-group">
-                <label class="chart-control" for="dateChartField"><span>选择字段</span><select id="dateChartField"></select></label>
-                <label class="chart-control" for="dateChartMetric"><span>选择指标</span><select id="dateChartMetric"></select></label>
-                <label class="chart-control" for="dateChartAggregate"><span>汇总方式</span>
+                <label class="chart-control" for="dateChartField"><span data-i18n="charts.field">选择字段</span><select id="dateChartField"></select></label>
+                <label class="chart-control" for="dateChartMetric"><span data-i18n="charts.metric">选择指标</span><select id="dateChartMetric"></select></label>
+                <label class="chart-control" for="dateChartAggregate"><span data-i18n="charts.aggregate">汇总方式</span>
                   <select id="dateChartAggregate">
-                    <option value="avg" selected>平均值</option>
-                    <option value="sum">求和</option>
+                    <option value="avg" selected data-i18n="aggregate.avg">平均值</option>
+                    <option value="sum" data-i18n="aggregate.sum">求和</option>
                   </select>
                 </label>
               </div>
             </div>
-            <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图"></canvas><p id="dateTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
+            <div class="chart-frame"><canvas id="dateTrendChart" role="img" aria-label="日期字段趋势图" data-i18n-attr="aria-label=charts.dateChart"></canvas><p id="dateTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
             <p id="dateChartInsight" class="chart-insight hidden"></p>
           </div>
         </div>
@@ -486,30 +500,30 @@
       <section id="customSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="customSectionTitle" tabindex="-1">按业务需要组合字段</h2>
+            <h2 id="customSectionTitle" tabindex="-1" data-i18n="custom.title">按业务需要组合字段</h2>
           </div>
-          <p class="filter-scope">当前分析范围：<span class="filter-scope-text">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button">清除筛选</button></p>
-          <p id="customContainsNote" class="analysis-contains-note hidden"></p>
+          <p class="filter-scope" data-i18n="scope.label">当前分析范围：<span class="filter-scope-text" data-i18n="scope.none">尚未加载数据</span> <button class="text-button filter-scope-clear hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
-        <p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
+        <p id="customContainsNote" class="analysis-contains-note hidden"></p>
+        <p class="section-note" data-i18n="custom.note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。</p>
 
         <div class="analysis-panel primary-analysis-panel">
           <div class="analysis-panel-heading">
-            <h3 class="subsection-title">生成自定义分析</h3>
-            <p>统一生成汇总表、分组图表和简要结果。</p>
+            <h3 class="subsection-title" data-i18n="custom.create">生成自定义分析</h3>
+            <p data-i18n="custom.createNote">统一生成汇总表、分组图表和简要结果。</p>
           </div>
           <div class="field-selector-panel custom-primary-controls">
-            <label>指标字段<select id="v2MetricField"></select></label>
-            <label>分组维度<select id="v2GroupField"></select></label>
-            <label>聚合方式
+            <label data-i18n="custom.metric">指标字段<select id="v2MetricField"></select></label>
+            <label data-i18n="custom.group">分组维度<select id="v2GroupField"></select></label>
+            <label data-i18n="custom.aggregate">聚合方式
               <select id="v2AggregateMethod">
-                <option value="sum">求和</option>
-                <option value="avg">平均值</option>
-                <option value="median">中位数</option>
+                <option value="sum" data-i18n="aggregate.sum">求和</option>
+                <option value="avg" data-i18n="aggregate.avg">平均值</option>
+                <option value="median" data-i18n="aggregate.median">中位数</option>
               </select>
             </label>
-            <label>时间字段（可选）<select id="v2DateField"></select></label>
-            <button id="v2AnalyzeButton" type="button">生成自定义分析</button>
+            <label data-i18n="custom.date">时间字段（可选）<select id="v2DateField"></select></label>
+            <button id="v2AnalyzeButton" type="button" data-i18n="custom.create">生成自定义分析</button>
           </div>
           <div id="v2FieldPrompt" class="analysis-prompt" aria-live="polite"></div>
           <div id="v2AnalysisResults" class="v2-analysis-results hidden">
@@ -517,28 +531,28 @@
             <p id="v2ResultSummary" class="custom-result-summary"></p>
             <div class="custom-result-grid">
               <div class="custom-result-table">
-                <h3 id="v2PrimaryTableTitle" class="subsection-title">汇总表</h3>
-                <div class="table-wrap compact" tabindex="0" aria-label="自定义分析汇总结果，可横向滚动"><table id="v2PrimaryTable" aria-label="自定义分析汇总结果"></table></div>
+                <h3 id="v2PrimaryTableTitle" class="subsection-title" data-i18n="custom.summaryTable">汇总表</h3>
+                <div class="table-wrap compact" tabindex="0" aria-label="自定义分析汇总结果，可横向滚动" data-i18n-attr="aria-label=custom.summaryWrap"><table id="v2PrimaryTable" aria-label="自定义分析汇总结果" data-i18n-attr="aria-label=custom.summary"></table></div>
               </div>
               <div class="chart-card">
-                <div class="chart-header"><h3 id="v2TopGroupTitle">分组结果</h3></div>
-                <div class="chart-frame"><canvas id="v2TopGroupChart" role="img" aria-label="自定义分析分组柱状图"></canvas><p id="v2TopGroupChartEmpty" class="empty-state chart-empty hidden"></p></div>
+                <div class="chart-header"><h3 id="v2TopGroupTitle" data-i18n="custom.groups">分组结果</h3></div>
+                <div class="chart-frame"><canvas id="v2TopGroupChart" role="img" aria-label="自定义分析分组柱状图" data-i18n-attr="aria-label=custom.groupsChart"></canvas><p id="v2TopGroupChartEmpty" class="empty-state chart-empty hidden"></p></div>
               </div>
             </div>
             <div id="v2TrendCard" class="chart-card v2-trend-card">
-                <div class="chart-header"><h3 id="v2TrendTitle">时间趋势</h3></div>
-                <div class="chart-frame"><canvas id="v2SelectedTrendChart" role="img" aria-label="自定义分析时间趋势图"></canvas><p id="v2SelectedTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
+                <div class="chart-header"><h3 id="v2TrendTitle" data-i18n="custom.trend">时间趋势</h3></div>
+                <div class="chart-frame"><canvas id="v2SelectedTrendChart" role="img" aria-label="自定义分析时间趋势图" data-i18n-attr="aria-label=custom.trendChart"></canvas><p id="v2SelectedTrendChartEmpty" class="empty-state chart-empty hidden"></p></div>
             </div>
             <details class="analysis-details result-details">
-              <summary>查看完整统计</summary>
+              <summary data-i18n="custom.details">查看完整统计</summary>
               <div class="two-column analysis-details-content">
                 <div>
-                  <h3 class="subsection-title">按分组字段求和</h3>
-                  <div class="table-wrap compact" tabindex="0" aria-label="分组求和结果，可横向滚动"><table id="v2SumTable" aria-label="分组求和结果"></table></div>
+                  <h3 class="subsection-title" data-i18n="custom.sum">按分组字段求和</h3>
+                  <div class="table-wrap compact" tabindex="0" aria-label="分组求和结果，可横向滚动" data-i18n-attr="aria-label=custom.sumWrap"><table id="v2SumTable" aria-label="分组求和结果" data-i18n-attr="aria-label=custom.sumTable"></table></div>
                 </div>
                 <div>
-                  <h3 class="subsection-title">按分组字段平均值</h3>
-                  <div class="table-wrap compact" tabindex="0" aria-label="分组平均值结果，可横向滚动"><table id="v2AvgTable" aria-label="分组平均值结果"></table></div>
+                  <h3 class="subsection-title" data-i18n="custom.avg">按分组字段平均值</h3>
+                  <div class="table-wrap compact" tabindex="0" aria-label="分组平均值结果，可横向滚动" data-i18n-attr="aria-label=custom.avgWrap"><table id="v2AvgTable" aria-label="分组平均值结果" data-i18n-attr="aria-label=custom.avgTable"></table></div>
                 </div>
               </div>
             </details>
@@ -549,40 +563,40 @@
       <section id="exportSection" class="section-block export-section">
         <div class="section-heading">
           <div>
-            <h2 id="exportSectionTitle" tabindex="-1">保存数据与分析报告</h2>
+            <h2 id="exportSectionTitle" tabindex="-1" data-i18n="export.title">保存数据与分析报告</h2>
           </div>
         </div>
         <section id="dataExportSection" class="export-module" aria-labelledby="dataExportTitle">
           <div class="export-module-heading">
-            <h3 id="dataExportTitle">保存处理后的数据</h3>
+            <h3 id="dataExportTitle" data-i18n="export.data">保存处理后的数据</h3>
           </div>
-          <p class="section-note">导出过程仅在浏览器本地完成。下载文件使用 UTF-8 BOM，并保留原始字段顺序；不会修改或覆盖原始文件。</p>
+          <p class="section-note" data-i18n="export.dataNote">导出过程仅在浏览器本地完成。下载文件使用 UTF-8 BOM，并保留原始字段顺序；不会修改或覆盖原始文件。</p>
 
           <div class="data-export-options">
             <div class="data-export-option">
               <div>
-                <h3>当前分析的行</h3>
-                <p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0</strong></p>
-                <p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"></span></p>
+                <h3 data-i18n="export.analysisRows">当前分析的行</h3>
+                <p class="export-count"><span id="dataExportFilteredBefore"></span><strong id="dataExportFilteredCount">0</strong><span id="dataExportFilteredAfter"></span></p>
+                <p data-i18n="export.analysisNote">导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"></span></p>
               </div>
-              <button id="exportFilteredCsv" type="button" disabled>导出当前分析的行</button>
+              <button id="exportFilteredCsv" type="button" disabled data-i18n="export.analysisButton">导出当前分析的行</button>
             </div>
             <div class="data-export-option">
               <div>
-                <h3>写法统一的表</h3>
-                <p class="export-count">原始行数 <strong id="dataExportOriginalCount">0</strong></p>
-                <p>全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已按空值处理的写法，去掉文本首尾空格。先检查会改哪些单元格。</p>
+                <h3 data-i18n="export.standardized">写法统一的表</h3>
+                <p class="export-count"><span id="dataExportOriginalBefore"></span><strong id="dataExportOriginalCount">0</strong><span id="dataExportOriginalAfter"></span></p>
+                <p data-i18n="export.standardizedNote">全部原始行：日期写成 YYYY-MM-DD，数字去掉单位、千分位和货币符号，清空已按空值处理的写法，去掉文本首尾空格。先检查会改哪些单元格。</p>
                 <p id="standardizedExportGate" class="standardize-gate"></p>
               </div>
-              <button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格</button>
+              <button id="checkStandardizedExport" class="secondary-button" type="button" disabled data-i18n="export.check">检查会改哪些格</button>
             </div>
           </div>
           <div id="standardizedExportPanel" class="standardized-export hidden">
             <p id="standardizedExportSummary"></p>
-            <div class="table-wrap compact" tabindex="0" aria-label="写法统一改动表，可横向滚动"><table id="standardizedExportTable"></table></div>
+            <div class="table-wrap compact" tabindex="0" aria-label="写法统一改动表，可横向滚动" data-i18n-attr="aria-label=export.changesWrap"><table id="standardizedExportTable"></table></div>
             <div class="standardized-export-actions">
-              <button id="exportStandardizedCsv" type="button" disabled>导出写法统一的表</button>
-              <button id="exportStandardizedChanges" class="secondary-button" type="button" disabled>导出改动清单</button>
+              <button id="exportStandardizedCsv" type="button" disabled data-i18n="export.standardizedButton">导出写法统一的表</button>
+              <button id="exportStandardizedChanges" class="secondary-button" type="button" disabled data-i18n="export.changesButton">导出改动清单</button>
             </div>
             <p id="standardizedExportStatus" class="inline-status" aria-live="polite"></p>
           </div>
@@ -591,16 +605,15 @@
 
         <section id="reportSection" class="export-module report-section" aria-labelledby="reportExportTitle">
           <div class="export-module-heading">
-            <h3 id="reportExportTitle">保存分析结果</h3>
+            <h3 id="reportExportTitle" data-i18n="export.report">保存分析结果</h3>
           </div>
           <div class="report-export-layout">
             <div class="report-export-copy">
-              <h3 id="reportActionsTitle">在浏览器本地生成报告</h3>
-              <p id="reportExportHint">HTML 报告包含当前图表，Markdown 报告适合继续编辑。导出过程不会上传数据。</p>
+              <h3 id="reportActionsTitle" data-i18n="export.reportTitle">在浏览器本地生成报告</h3>
+              <p id="reportExportHint" data-i18n="export.reportHint">报告包含当前图表，可以在浏览器里打印成 PDF。导出过程不会上传数据。</p>
             </div>
             <div class="report-actions" aria-labelledby="reportExportHint">
-              <button id="exportHtmlReport" type="button" aria-describedby="reportExportHint" disabled>导出 HTML 报告</button>
-              <button id="exportMarkdownReport" class="secondary-button" type="button" aria-describedby="reportExportHint" disabled>导出 Markdown 报告</button>
+              <button id="exportHtmlReport" type="button" aria-describedby="reportExportHint" disabled data-i18n="export.reportButton">导出报告</button>
             </div>
           </div>
           <p id="reportExportStatus" class="inline-status" aria-live="polite"></p>
@@ -611,17 +624,17 @@
   </main>
 
   <footer class="app-footer">
-    <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span>GitHub 仓库</span></a></p>
+    <p><a class="footer-github-link" href="https://github.com/wy-data-30/smart-tabular-analyzer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span data-i18n="footer.github">GitHub 仓库</span></a></p>
   </footer>
 
-  <script src="parsing.js?v=3.1.0"></script>
-  <script src="profiling.js?v=3.1.0"></script>
-  <script src="format.js?v=3.1.0"></script>
-  <script src="stats.js?v=3.1.0"></script>
-  <script src="quality.js?v=3.1.0"></script>
-  <script src="app.js?v=3.1.0"></script>
-  <script src="importer.js?v=3.1.0"></script>
-  <script src="report.js?v=3.1.0"></script>
-  <script src="script.js?v=3.1.0"></script>
+  <script src="parsing.js?v=3.2.0"></script>
+  <script src="profiling.js?v=3.2.0"></script>
+  <script src="format.js?v=3.2.0"></script>
+  <script src="stats.js?v=3.2.0"></script>
+  <script src="quality.js?v=3.2.0"></script>
+  <script src="app.js?v=3.2.0"></script>
+  <script src="importer.js?v=3.2.0"></script>
+  <script src="report.js?v=3.2.0"></script>
+  <script src="script.js?v=3.2.0"></script>
 </body>
 </html>

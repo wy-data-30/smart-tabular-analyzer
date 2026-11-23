@@ -10,6 +10,14 @@ const Papa = require(path.join(__dirname, "..", "vendor", "papaparse-5.4.1.min.j
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 
+// v3.2.0: index.html as the tests compare it, without the data-i18n* attributes that carry the
+// English keys, so the Chinese text and markup read as before. Tests read index.html only this way.
+const DATA_I18N_ATTRIBUTE = /\s+data-i18n[\w-]*="[^"]*"/g;
+const stripI18nAttributes = (html) => html.replace(DATA_I18N_ATTRIBUTE, "");
+function indexHtmlSource() {
+  return stripI18nAttributes(fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8"));
+}
+
 function put(context, name, value) {
   context[name] = value;
 }
@@ -26,8 +34,8 @@ function buildXlsxBuffer(sheets) {
   return XLSX.write(workbook, { type: "array", bookType: "xlsx" });
 }
 
-function createExcelContext() {
-  const scope = createScriptContext();
+function createExcelContext(options = {}) {
+  const scope = createScriptContext(options);
   scope.context.XLSX = XLSX;
   scope.context.window.XLSX = XLSX;
   return scope;
@@ -526,14 +534,12 @@ test("reports carry unconvertible counts and escaped samples", () => {
   put(scope.context, "__report", report);
   const html = scope.evaluate("buildHtmlReport(__report, [])");
   assert.match(html.split("数值字段描述性统计")[1], /<th>有效数量<\/th><th>认不出<\/th>/);
+  // The whole header row, in order (the Markdown report pinned it until v3.2.0).
+  assert.match(html.split("数值字段描述性统计")[1], /<th>字段<\/th><th>有效数量<\/th><th>认不出<\/th><th>平均值<\/th><th>中位数<\/th><th>最小值<\/th><th>最大值<\/th><th>标准差<\/th>/);
   assert.match(html.split("数值字段描述性统计")[1], /<td>金额<\/td><td>12<\/td><td>3<\/td>/);
   assert.match(html, /<td>3（&lt;b&gt;x&lt;\/b&gt;\|y、待定、约500）<\/td>/);
   assert.doesNotMatch(html, /<b>x<\/b>/);
 
-  const markdown = scope.evaluate("buildMarkdownReport(__report)");
-  assert.ok(markdown.includes("| 字段 | 有效数量 | 认不出 | 平均值 | 中位数 | 最小值 | 最大值 | 标准差 |"));
-  // escapeMarkdownCell backslash-escapes ASCII punctuation, so "/" and "|" both carry a backslash.
-  assert.ok(markdown.includes("3（&lt;b&gt;x&lt;\\/b&gt;\\|y、待定、约500）"));
 
   const legacy = {
     numericStats: [{ field: "金额", count: 2, mean: "1", median: "1", min: "1", max: "1", standardDeviation: "0" }],
@@ -546,7 +552,6 @@ test("reports carry unconvertible counts and escaped samples", () => {
   assert.deepEqual(normalized.fieldTypes[0].conversionFailureSamples, []);
   assert.equal(normalized.customAnalysis.metricInvalidCount, 0);
   assert.doesNotThrow(() => scope.evaluate("buildHtmlReport(__legacy, [])"));
-  assert.doesNotThrow(() => scope.evaluate("buildMarkdownReport(__legacy)"));
 });
 
 // sample-data 订单日期 spans Jan-Jun 2025, so trends are grouped by month.
@@ -827,6 +832,9 @@ function applyFilterState(scope, filters) {
   })()`);
 }
 
+// A literal text inside a RegExp (v3.2.0: the HTML assertions that took over from the Markdown ones).
+const regExpText = (text) => String(text).replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
 // Every marker is in the text, each one after the one before (v2.12.0): a bare
 // indexOf(a) < indexOf(b) also passes when a is missing.
 function assertInOrder(text, markers) {
@@ -842,25 +850,22 @@ function reportOf(scope) {
   put(scope.context, "__filterReport", report);
   return {
     report,
-    html: scope.evaluate("buildHtmlReport(__filterReport, [])"),
-    markdown: scope.evaluate("buildMarkdownReport(__filterReport)")
+    html: scope.evaluate("buildHtmlReport(__filterReport, [])")
   };
 }
 
 test("reports say when no filter is applied", () => {
   const scope = createChartContext();
   commitExampleCsv(scope, "sample-data.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.filters, []);
-  for (const text of [html, markdown]) {
+  for (const text of [html]) {
     assert.ok(text.includes("筛选条件"));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
     assert.ok(text.includes(QUALITY_SCOPE_SENTENCE));
   }
   assert.ok(html.indexOf("<h2>数据规模</h2>") < html.indexOf("<h2>筛选条件</h2>"));
   assert.ok(html.indexOf("<h2>筛选条件</h2>") < html.indexOf("<h2>字段类型结果</h2>"));
-  assert.ok(markdown.indexOf("## 数据规模") < markdown.indexOf("## 筛选条件"));
-  assert.ok(markdown.indexOf("## 筛选条件") < markdown.indexOf("## 字段类型结果"));
 });
 
 test("reports list applied category, numeric and date filters in order", () => {
@@ -871,7 +876,7 @@ test("reports list applied category, numeric and date filters in order", () => {
     numeric: { field: "销售额", min: 1000, max: 5000 },
     date: { field: "订单日期", start: "2025-01-01", end: "2025-03-31" }
   });
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.filters, [
     { type: "category", field: "地区", keptCount: 3, totalCount: 6, keptValues: ["华北", "华东", "华南"], description: "地区：保留 3 / 共 6 个类别（华北、华东、华南）" },
     { type: "numeric", field: "销售额", min: 1000, max: 5000, description: "销售额：1,000 至 5,000" },
@@ -888,12 +893,6 @@ test("reports list applied category, numeric and date filters in order", () => {
   assert.ok(html.includes("<td>订单日期</td><td>订单日期：2025-01-01 至 2025-03-31</td>"));
   assert.ok(!html.includes(NO_FILTER_SENTENCE));
   assert.ok(html.includes(QUALITY_SCOPE_SENTENCE));
-  assert.ok(markdown.includes("| 字段 | 条件 |"));
-  assert.ok(markdown.includes("| 地区 | 地区：保留 3 \\/ 共 6 个类别（华北、华东、华南） |"));
-  // escapeMarkdownCell backslash-escapes ASCII punctuation, including "," "/" and "-".
-  assert.ok(markdown.includes("| 销售额 | 销售额：1\\,000 至 5\\,000 |"));
-  assert.ok(markdown.includes("| 订单日期 | 订单日期：2025\\-01\\-01 至 2025\\-03\\-31 |"));
-  assert.ok(markdown.includes(QUALITY_SCOPE_SENTENCE));
 });
 
 test("report category filters show at most ten kept values and empty values", () => {
@@ -940,25 +939,21 @@ test("report filters ignore unapplied drafts and clear with the filters", () => 
   assert.deepEqual(reportOf(scope).report.filters, []);
 });
 
-test("report filter descriptions are escaped in HTML and Markdown", () => {
+test("report filter descriptions are escaped in HTML", () => {
   const scope = createScriptContext();
   commitRows(scope, ["备注"], ["<b>x</b>|y", "第一行\n第二行", "其他"].map((note) => ({ 备注: note })), "escape.csv");
   applyFilterState(scope, { category: { field: "备注", values: ["<b>x</b>|y", "第一行\n第二行"] } });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   // The same values also appear as field samples, so look only at the filter section.
   const htmlSection = html.split("<h2>筛选条件</h2>")[1]?.split("<h2>字段类型结果</h2>")[0] ?? "";
-  const markdownSection = markdown.split("## 筛选条件")[1]?.split("## 字段类型结果")[0] ?? "";
   assert.ok(htmlSection.includes("<td>备注</td><td>备注：保留 2 / 共 3 个类别（&lt;b&gt;x&lt;/b&gt;|y、第一行\n第二行）</td>"));
   assert.ok(!html.includes("<b>x</b>"));
-  assert.ok(markdownSection.includes("| 备注 | 备注：保留 2 \\/ 共 3 个类别（&lt;b&gt;x&lt;\\/b&gt;\\|y、第一行<br>第二行） |"));
-  assert.ok(!markdown.includes("<b>x</b>"));
 });
 
 test("legacy report snapshots without filters still render", () => {
   const scope = createScriptContext();
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(normalizeReportSnapshot({}).filters)")), []);
   assert.ok(scope.evaluate("buildHtmlReport({}, [])").includes(NO_FILTER_SENTENCE));
-  assert.ok(scope.evaluate("buildMarkdownReport({})").includes(NO_FILTER_SENTENCE));
 });
 
 test("field inference recognizes ID, numeric, date and category columns", () => {
@@ -1249,8 +1244,8 @@ test("processed CSV exports preserve fields, Chinese text, BOM and original rows
 // imported through parseDataFile() with the real PapaParse and SheetJS.
 const STAGE3_FIXTURES = path.join(__dirname, "fixtures", "stage3");
 
-async function importStage3Fixture(fileName) {
-  const scope = createExcelContext();
+async function importStage3Fixture(fileName, language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
   let papaCalls = 0;
   const papaHeaderOptions = [];
   const countingPapa = Object.assign(Object.create(Papa), {
@@ -1307,8 +1302,8 @@ test("a header in the first row of the roster fixture imports as before", async 
   });
 });
 
-async function importWorkbookFile(buffer, fileName = "t.xlsx") {
-  const scope = createExcelContext();
+async function importWorkbookFile(buffer, fileName = "t.xlsx", language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
   const bytes = Buffer.from(buffer);
   put(scope.context, "__workbookFile", {
     name: fileName,
@@ -1511,10 +1506,9 @@ test("the header note follows the parse-warning status too", () => {
 test("reports carry the header note and a later first-row import clears it", async () => {
   const scope = await importStage3Fixture("门店报表.xlsx");
   put(scope.context, "__headerNote", STORE_HEADER_NOTE);
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.headerDetection, JSON.parse(scope.evaluate("JSON.stringify(state.headerDetection)")));
   assert.ok(html.includes(`<div><dt>表头位置</dt><dd>${scope.evaluate("escapeHtml(__headerNote)")}</dd></div>`));
-  assert.ok(markdown.includes(`- 表头位置：${scope.evaluate("escapeMarkdownText(__headerNote)")}`));
 
   const orders = await importStage3Fixture("订单表.csv");
   assert.equal(orders.evaluate("state.headerDetection"), null);
@@ -1522,7 +1516,6 @@ test("reports carry the header note and a later first-row import clears it", asy
   const after = reportOf(orders);
   assert.equal(after.report.headerDetection, null);
   assert.doesNotMatch(after.html, /表头位置/);
-  assert.doesNotMatch(after.markdown, /表头位置/);
 
   // The same scope importing again also replaces the previous detection.
   const sameScope = await importStage3Fixture("门店报表.xlsx");
@@ -1547,7 +1540,6 @@ test("legacy report snapshots without header detection still render", () => {
   const scope = createScriptContext();
   assert.equal(scope.evaluate("normalizeReportSnapshot({}).headerDetection"), null);
   assert.doesNotMatch(scope.evaluate("buildHtmlReport({}, [])"), /表头位置/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport({})"), /表头位置/);
 });
 
 test("header errors add the title hint only when skipping was tried", async () => {
@@ -1720,7 +1712,8 @@ test("CSV edge files keep their errors and parse warnings", () => {
     const panel = scope.elements.get("statusPanel");
     assert.equal(panel.className, className, JSON.stringify(text));
     assert.equal(panel.textContent, status, JSON.stringify(text));
-    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)")), warnings, JSON.stringify(text));
+    // v3.2.0: stored as code and figures; the text is written by formatParseWarning().
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ row: warning.row, code: warning.code, message: formatParseWarning(warning) })))")), warnings, JSON.stringify(text));
   }
 });
 
@@ -1829,7 +1822,8 @@ test("a shown extra-cell error adds one line pass after the main parse and heade
   assert.deepEqual(extra.papaOptions().map((options) => options.header), [true, false, false]);
 });
 
-const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(({ row, code, message }) => [row, code, message]))"));
+// v3.2.0: the text of a warning is written by formatParseWarning() from its code and figures.
+const codedWarnings = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => [warning.row, warning.code, formatParseWarning(warning)]))"));
 
 test("imported CSV warnings carry Chinese messages and keep their codes", async () => {
   const short = await importCsvFile("a,b,c\n1,2,3\n4\n5,6,7\n");
@@ -1844,7 +1838,7 @@ test("imported CSV warnings carry Chinese messages and keep their codes", async 
     meta: { fields: ["a", "b", "c"] },
     data: [{ a: "1", b: "2", c: "3" }, { a: "4" }]
   }, "no-source.csv", beginImport())`);
-  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings)")), [
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ row: warning.row, code: warning.code, message: formatParseWarning(warning) })))")), [
     { row: null, code: "TooFewFields", message: "有一条记录的列数少于表头（只有 1 列，表头有 3 列），缺少的单元格按空值处理。" }
   ]);
 });
@@ -2037,7 +2031,7 @@ const idDetails = (scope) => scope.elements.get("idDuplicateDetails").innerHTML;
 const behaviorCsv = () => readExampleCsv("sample-user-behavior.csv");
 
 test("the quality page has a static ID duplicate container in the dom map", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   assert.match(quality, /<h3 class="subsection-title">编号重复<\/h3>\s*<div id="idDuplicateDetails"/);
   const { evaluate } = createScriptContext();
@@ -2106,19 +2100,15 @@ test("ID duplicate details show without numeric fields, escape data and note lon
 
 test("reports add an ID duplicate section after the outliers and count it in the summary", async () => {
   const roster = await importStage3Fixture("花名册.xlsx");
-  const { report, html, markdown } = reportOf(roster);
+  const { report, html } = reportOf(roster);
   assert.deepEqual(report.quality.idDuplicates, idDuplicates(roster.evaluate));
   assert.ok(html.includes("；读取时有疑问：<strong>0</strong> 处；编号重复：<strong>3</strong> 个字段；日期写法混用：<strong>1</strong> 个字段。</p>"));
   const htmlSection = html.slice(html.indexOf("<h3>编号重复</h3>"), html.indexOf("数值字段描述性统计"));
   assertInOrder(html, ["<h3>偏大或偏小的值</h3>", "<h3>编号重复</h3>"]);
   assert.match(htmlSection, /<th>字段<\/th><th>重复值<\/th><th>出现次数<\/th><th>文件行号<\/th><th>说明<\/th>/);
   assert.ok(htmlSection.includes("<td>工号</td><td>E1012</td><td>3</td><td>13、14、25</td><td>其中 2 行内容完全相同</td>"));
+  assertInOrder(html, ["<h3>编号重复</h3>", "<h2>数值字段描述性统计</h2>"]);
 
-  assert.ok(markdown.includes("- 读取时有疑问：0 处\n- 编号重复：3 个字段\n"));
-  assertInOrder(markdown, ["### 偏大或偏小的值", "### 编号重复"]);
-  assertInOrder(markdown, ["### 编号重复", "## 数值字段描述性统计"]);
-  assert.ok(markdown.includes("| 字段 | 重复值 | 出现次数 | 文件行号 | 说明 |"));
-  assert.ok(markdown.includes("| 工号 | E1012 | 3 | 13、14、25 | 其中 2 行内容完全相同 |"));
 });
 
 test("report ID duplicates show mostly repeated fields, overflow, clean fields and no ID fields", async () => {
@@ -2127,7 +2117,6 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   put(behavior.context, "__hintItem", idDuplicates(behavior.evaluate)[1]);
   const hint = behavior.evaluate("formatMostlyRepeatedIdHint(__hintItem)");
   assert.ok(behaviorReport.html.includes(`<td>用户ID</td><td>—</td><td>—</td><td>—</td><td>${behavior.evaluate("escapeHtml(formatMostlyRepeatedIdHint(__hintItem))")}</td>`));
-  assert.ok(behaviorReport.markdown.includes(`| 用户ID | — | — | — | ${behavior.evaluate(`escapeMarkdownCell(${JSON.stringify(hint)})`)} |`));
   assert.ok(behaviorReport.html.includes("<td>事件ID</td><td>EV-00026</td><td>2</td><td>27、120</td><td>其中 2 行内容完全相同</td>"));
   assert.ok(behaviorReport.html.includes("；编号重复：<strong>1</strong> 个字段。"));
 
@@ -2138,13 +2127,11 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   ];
   const long = reportOf(await importCsvFile(`学号\r\n${ids.join("\r\n")}\r\n`));
   assert.ok(long.html.includes("<p>「学号」共 12 个重复值，只列出前 10 个</p>"));
-  assert.ok(long.markdown.includes("「学号」共 12 个重复值，只列出前 10 个"));
 
   const grades = reportOf(await importStage3Fixture("成绩表.csv"));
   const gradeSection = grades.html.slice(grades.html.indexOf("<h3>编号重复</h3>"), grades.html.indexOf("数值字段描述性统计"));
   assert.ok(gradeSection.includes("<p>类型为 ID 的字段没有编号重复（已检查：学号、姓名）</p>"));
   assert.doesNotMatch(gradeSection, /<table>/);
-  assert.ok(grades.markdown.includes("### 编号重复\n\n类型为 ID 的字段没有编号重复（已检查：学号、姓名）\n"));
   assert.ok(grades.html.includes("；编号重复：<strong>0</strong> 个字段。"));
 
   const none = createScriptContext();
@@ -2152,18 +2139,16 @@ test("report ID duplicates show mostly repeated fields, overflow, clean fields a
   const noneReport = reportOf(none);
   assert.deepEqual(noneReport.report.quality.idDuplicates, []);
   assert.ok(noneReport.html.includes("<p>未识别到 ID 字段。</p>"));
-  assert.ok(noneReport.markdown.includes("### 编号重复\n\n未识别到 ID 字段。\n"));
+  assert.match(noneReport.html, /<h3>编号重复<\/h3>\s*<p>未识别到 ID 字段。<\/p>/);
 });
 
-test("report ID duplicate values are escaped for HTML and Markdown", () => {
+test("report ID duplicate values are escaped for HTML", () => {
   const scope = createScriptContext();
   const value = "<b>x</b>|y\nz";
   commitRows(scope, ["编号", "姓名"], [{ 编号: value, 姓名: "甲" }, { 编号: value, 姓名: "乙" }], "escape.csv");
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<td>编号</td><td>&lt;b&gt;x&lt;/b&gt;|y\nz</td><td>2</td><td>—</td><td></td>"));
   assert.doesNotMatch(html, /<b>x<\/b>/);
-  assert.ok(markdown.includes(`| 编号 | ${scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`)} | 2 | — |  |`));
-  assert.ok(markdown.includes("&lt;b&gt;x&lt;\\/b&gt;\\|y<br>z"));
 });
 
 test("legacy report snapshots without ID duplicates leave the section out", () => {
@@ -2172,13 +2157,9 @@ test("legacy report snapshots without ID duplicates leave the section out", () =
   const legacy = { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0, outliers: [{ field: "金额", outlierCount: 1, lowerBound: "1", upperBound: "9" }] } };
   put(scope.context, "__legacyQuality", legacy);
   const html = scope.evaluate("buildHtmlReport(__legacyQuality, [])");
-  const markdown = scope.evaluate("buildMarkdownReport(__legacyQuality)");
   assert.doesNotMatch(html, /<h3>编号重复<\/h3>|；编号重复：/);
-  assert.doesNotMatch(markdown, /### 编号重复|- 编号重复：/);
   assert.ok(html.includes("；读取时有疑问：<strong>0</strong> 处。</p>"));
   assert.ok(html.includes("<td>金额</td><td>1</td><td>1</td><td>9</td>"));
-  assert.ok(markdown.includes("- 读取时有疑问：0 处\n\n### 各字段空值情况"));
-  assert.ok(markdown.includes("| 金额 | 1 | 1 | 9 |"));
 });
 
 // Placeholder missing values (stage 3 item 3): candidates from the original rows.
@@ -2204,12 +2185,13 @@ test("the grade fixtures and the bundled examples have no placeholder candidates
     assert.deepEqual(placeholderEntries(scope.evaluate), [], fileName);
   }
   const examples = listExampleCsvFiles();
-  assert.equal(examples.length, 7);
+  assert.equal(examples.length, 8);
   for (const fileName of examples) {
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     assert.ok(scope.evaluate("state.rows.length") > 0, fileName);
     const fieldsAndKeys = placeholderEntries(scope.evaluate).map(([field, key]) => [field, key]);
-    assert.deepEqual(fieldsAndKeys, fileName === "sample-orders.csv" ? [["金额", "N/A"], ["销售代表", "\u2014"]] : [], fileName);
+    const expected = { "sample-orders.csv": [["金额", "N/A"], ["销售代表", "\u2014"]], "sample-orders-en.csv": [["Amount", "N/A"], ["Sales rep", "\u2014"]] }[fileName] || [];
+    assert.deepEqual(fieldsAndKeys, expected, fileName);
   }
 });
 
@@ -2589,7 +2571,7 @@ const placeholderDetails = (scope) => scope.elements.get("placeholderDetails").i
 const PLACEHOLDER_MAYBE_NOTE_TEXT = "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。";
 
 test("the quality page has a static placeholder subsection before the ID duplicates", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const placeholderSection = quality.slice(quality.indexOf('<h3 class="subsection-title">像是空值的写法</h3>'), quality.indexOf('<h3 class="subsection-title">编号重复</h3>'));
   assertInOrder(quality, ['<h3 class="subsection-title">像是空值的写法</h3>', '<h3 class="subsection-title">编号重复</h3>']);
@@ -2702,11 +2684,7 @@ test("reports list confirmed and pending placeholders after the missing values a
   assertInOrder(before.html, ["<h3>各字段空值情况</h3>", "<h3>像是空值的写法</h3>"]);
   assert.match(htmlSection, /<th>字段<\/th><th>写法<\/th><th>档位<\/th><th>出现次数<\/th><th>文件行号<\/th><th>按空值处理后的影响<\/th>/);
   assert.ok(htmlSection.includes("<td>金额</td><td>「N/A」</td><td>常见</td><td>1</td><td>15</td><td>按空值处理后，空值 0 → 1，类型仍为数值</td>"));
-  assert.ok(before.markdown.includes("- 编号重复：1 个字段\n- 像是空值的写法：4 个字段\n"));
-  assertInOrder(before.markdown, ["### 各字段空值情况", "### 像是空值的写法"]);
-  assertInOrder(before.markdown, ["### 像是空值的写法", "### 偏大或偏小的值"]);
-  const cell = (value) => orders.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
-  assert.ok(before.markdown.includes(`| 金额 | ${cell("「N/A」")} | 常见 | 1 | 15 | 按空值处理后，空值 0 → 1，类型仍为数值 |`));
+  assertInOrder(before.html, ["<h3>像是空值的写法</h3>", "<h3>偏大或偏小的值</h3>"]);
 
   orders.evaluate('confirmPlaceholder("金额", "N/A"); confirmPlaceholder("备注", "N/A")');
   orders.evaluate('stageFieldTypeChange("备注", "ignore"); applyFieldConfiguration()');
@@ -2718,43 +2696,30 @@ test("reports list confirmed and pending placeholders after the missing values a
   assert.ok(after.html.includes("；像是空值的写法：<strong>2</strong> 个字段。</p>"));
   assert.ok(after.html.includes("<td>金额</td><td>「N/A」</td><td>1</td><td>已按空值处理</td>"));
   assert.ok(after.html.includes("<td>备注</td><td>「N/A」</td><td>1</td><td>已按空值处理（字段已忽略）</td>"));
-  assert.ok(after.markdown.includes(`| 备注 | ${cell("「N/A」")} | 1 | 已按空值处理（字段已忽略） |`));
 });
 
 test("report placeholder summaries appear only with candidates, and legacy snapshots leave the section out", async () => {
   for (const scope of [await importStage3Fixture("花名册.xlsx"), await importStage3Fixture("成绩表.csv"), await importCsvFile(behaviorCsv(), "sample-user-behavior.csv")]) {
-    const { report, html, markdown } = reportOf(scope);
+    const { report, html } = reportOf(scope);
     assert.deepEqual(report.quality.placeholders, { confirmed: [], pending: [] });
     assert.doesNotMatch(html, /像是空值的写法：/);
-    assert.doesNotMatch(markdown, /像是空值的写法：/);
     assert.ok(html.includes("<p>没有发现像是空值的写法。</p>"));
-    assert.ok(markdown.includes("### 像是空值的写法\n\n没有发现像是空值的写法。\n"));
   }
   const scope = createScriptContext();
   assert.equal(scope.evaluate("normalizeReportSnapshot({}).quality.placeholders"), null);
   assert.equal(scope.evaluate("normalizeReportSnapshot({ quality: { placeholders: { confirmed: [] } } }).quality.placeholders"), null);
   put(scope.context, "__legacyPlaceholders", { quality: { totalMissing: 1, duplicateRows: 0, parseWarningCount: 0 } });
   assert.doesNotMatch(scope.evaluate("buildHtmlReport(__legacyPlaceholders, [])"), /<h3>像是空值的写法<\/h3>|；像是空值的写法：/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__legacyPlaceholders)"), /### 像是空值的写法|- 像是空值的写法：/);
 });
 
-test("report placeholder sections escape field names and keep Markdown lines from starting with user text", () => {
+test("report placeholder sections escape field names", () => {
   const scope = commitColumns({ "<b>备注</b>|x": ["N/A", "好", "-", "好"], "-前缀": ["—", "甲", "乙", "丙"] });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   const section = html.slice(html.indexOf("<h3>像是空值的写法</h3>"), html.indexOf("<h3>偏大或偏小的值</h3>"));
   assert.ok(section.includes("<td>&lt;b&gt;备注&lt;/b&gt;|x</td><td>「N/A」</td>"));
   assert.ok(section.includes("<td>-前缀</td><td>「—」</td>"));
   assert.doesNotMatch(html, /<b>备注<\/b>/);
   assert.ok(section.includes(`<p>说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。</p>`));
-  const markdownSection = markdown.slice(markdown.indexOf("### 像是空值的写法"), markdown.indexOf("### 偏大或偏小的值"));
-  const cell = (value) => scope.evaluate(`escapeMarkdownCell(${JSON.stringify(value)})`);
-  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「N/A」")} |`));
-  assert.ok(markdownSection.includes(`| ${cell("-前缀")} | ${cell("「—」")} |`));
-  assert.ok(markdownSection.includes(`| ${cell("<b>备注</b>|x")} | ${cell("「-」")} | 可能是有效值 |`));
-  for (const line of markdownSection.split("\n")) {
-    assert.ok(!line.startsWith("-") && !line.startsWith("<"), line);
-  }
-  assert.ok(markdownSection.includes(scope.evaluate(`escapeMarkdownText(${JSON.stringify(`说明：${PLACEHOLDER_MAYBE_NOTE_TEXT}在会计格式里，「-」通常表示 0。`)})`)));
 });
 
 // v2.5.0 number strategies: each field reads units, 万/亿 and full-width digits
@@ -3095,7 +3060,7 @@ test("number conversion texts order conflicting units by count, then first appea
 });
 
 test("the quality page has static number subsections between the missing value check and the placeholders", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const order = ['id="qualityTable"', 'id="numberConversionSection"', 'id="numericLookingSection"', '<h3 class="subsection-title">像是空值的写法</h3>'].map((marker) => quality.indexOf(marker));
   assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
@@ -3115,7 +3080,7 @@ test("the quality page renders the number subsections even without numeric field
 test("reports carry number units, conversions and numeric-looking fields like the quality page", async () => {
   const orders = await importStage3Fixture("订单表.csv");
   orders.evaluate('dom.dateChartMetric.value = "金额"; dom.dateChartAggregate.value = "avg"; dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "大区"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = ""; renderV2Analysis()');
-  const { report, html, markdown } = reportOf(orders);
+  const { report, html } = reportOf(orders);
   assert.deepEqual(report.fieldTypes.map((field) => field.numberUnit), ["", "", "", "", "", "", "元", ""]);
   assert.deepEqual(report.quality.numberConversions, [
     { field: "金额", unit: "元", unitCount: 2, unitSamples: ["2200元", "3500元"], magnitudeCount: 0, fullwidthCount: 0, conflictUnits: [] }
@@ -3129,11 +3094,6 @@ test("reports carry number units, conversions and numeric-looking fields like th
   assert.ok(html.includes("<td>金额（元）</td><td>29</td><td>1</td>"));
   assert.ok(html.includes("<td>金额（元）</td><td>1</td><td>-4,275</td><td>9,925</td>"));
   assert.ok(html.includes("<strong>指标字段：</strong>金额（元）"));
-  assert.doesNotMatch(markdown, /- 按单位读取：/);
-  assert.doesNotMatch(markdown, /像是数字的文本列/);
-  assert.ok(markdown.includes(`### 按单位读取的数字\n\n- ${orders.evaluate(`escapeMarkdownText(${JSON.stringify(ORDER_AMOUNT_CONVERSION_TEXT)})`)}\n\n`));
-  assert.ok(markdown.includes("| 金额（元） | 29 | 1 |"));
-  assert.ok(markdown.includes("- 指标字段：金额（元）"));
 
   const scope = commitColumns(UNIT_SECTION_COLUMNS);
   const constructed = reportOf(scope);
@@ -3142,10 +3102,6 @@ test("reports carry number units, conversions and numeric-looking fields like th
   assert.doesNotMatch(constructed.html, /按单位读取：<strong>/);
   assert.ok(constructed.html.includes(`<h3>按单位读取的数字</h3>\n    <ul class="summary-list"><li>${WEIGHT_CONFLICT_TEXT}</li><li>${SALES_CONVERSION_TEXT}</li></ul>`));
   assert.ok(constructed.html.includes(`<h3>像是数字的文本列</h3>\n    <ul class="summary-list"><li>${FLOOR_HINT_TEXT}</li></ul>`));
-  assert.ok(constructed.markdown.includes("- 编号重复：0 个字段\n- 像是数字的文本列：1 个字段\n"));
-  assert.doesNotMatch(constructed.markdown, /- 按单位读取：/);
-  assert.ok(constructed.markdown.includes("### 按单位读取的数字\n\n- "));
-  assert.ok(constructed.markdown.includes(`### 像是数字的文本列\n\n- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(FLOOR_HINT_TEXT)})`)}\n\n`));
 });
 
 test("legacy report snapshots without number units or hints leave both sections and counts out", () => {
@@ -3161,31 +3117,21 @@ test("legacy report snapshots without number units or hints leave both sections 
   };
   put(scope.context, "__legacyNumbers", legacy);
   const html = scope.evaluate("buildHtmlReport(__legacyNumbers, [])");
-  const markdown = scope.evaluate("buildMarkdownReport(__legacyNumbers)");
   assert.doesNotMatch(html, /按单位读取|像是数字的文本列/);
-  assert.doesNotMatch(markdown, /按单位读取|像是数字的文本列/);
   assert.ok(html.includes("<td>金额</td><td>3</td>"));
-  assert.ok(markdown.includes("| 金额 | 3 |"));
   // Present but empty lists: no section and no count either.
   put(scope.context, "__emptyNumbers", { ...legacy, quality: { ...legacy.quality, numberConversions: [], numericLooking: [] } });
   assert.doesNotMatch(scope.evaluate("buildHtmlReport(__emptyNumbers, [])"), /按单位读取|像是数字的文本列/);
-  assert.doesNotMatch(scope.evaluate("buildMarkdownReport(__emptyNumbers)"), /按单位读取|像是数字的文本列/);
 });
 
-test("number sections and unit labels escape field names in HTML and Markdown", () => {
+test("number sections and unit labels escape field names in HTML", () => {
   const field = "<b>重\n量</b>|x";
   const scope = commitColumns({ [field]: ["5kg", "6kg", "7kg", "8kg", "9kg"], "-楼层": ["1", "2", "3", "B1", "B2"] });
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<td>&lt;b&gt;重\n量&lt;/b&gt;|x（kg）</td><td>5</td>"));
   assert.ok(html.includes(`<li>${scope.evaluate(`escapeHtml(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}</li>`));
   assert.ok(scope.elements.get("numberConversionDetails").innerHTML.includes("「&lt;b&gt;重\n量&lt;/b&gt;|x」"));
   assert.ok(scope.elements.get("numericLookingDetails").innerHTML.includes("「-楼层」"));
-  const conversionLine = `- ${scope.evaluate(`escapeMarkdownText(${JSON.stringify(`「${field}」：按"kg"读取了 5 个值（5kg、6kg、7kg）`)})`)}`;
-  assert.ok(markdown.includes(conversionLine));
-  assert.ok(conversionLine.includes("<br>") && !conversionLine.includes("<b>"));
-  for (const line of markdown.split("\n")) {
-    assert.ok(!line.startsWith("<") && !line.startsWith("-楼层") && !line.startsWith("量"), line);
-  }
 });
 
 // v2.6.0: the checks behind the quality counts, shared with the problem-row lists.
@@ -3210,7 +3156,7 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 15);
+  assert.equal(scopes.length, 18);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3328,7 +3274,7 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 15);
+  assert.equal(scopes.length, 18);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -3537,7 +3483,7 @@ test("renderPreview() clamps the page and works without a page in the state", ()
 });
 
 test("the preview heading, pager and its buttons are static in index.html and bound in script.js", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
   assert.match(overview, /<h3 class="subsection-title">数据预览<\/h3>/);
   assert.match(overview, /<table id="previewTable" aria-label="数据预览"><\/table>/);
@@ -3812,7 +3758,7 @@ test("the viewer escapes field names, values and labels", async () => {
 });
 
 test("the problem-row viewer is static in index.html, in the dom map and bound in script.js", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('id="qualitySection"'), html.indexOf('id="filterSection"'));
   const order = ['id="qualitySummary"', 'id="parseWarningSummary"', 'id="outlierTable"', 'id="problemRowsSection"', 'id="numberConversionSection"'].map((marker) => quality.indexOf(marker));
   assert.ok(order.every((index, position) => index > 0 && (position === 0 || index > order[position - 1])), JSON.stringify(order));
@@ -4024,7 +3970,7 @@ test("the export button needs an open category and its status clears with the vi
   orders.evaluate("exportProblemRows(); closeProblemView()");
   assert.equal(orders.elements.get("problemRowsExportStatus").textContent, "");
 
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const section = html.slice(html.indexOf('id="problemRowsSection"'), html.indexOf('id="numberConversionSection"'));
   assert.match(section, /<button id="problemRowsExport" class="secondary-button" type="button">导出这一类<\/button>/);
   assert.match(section, /<p id="problemRowsExportStatus" class="inline-status" aria-live="polite"><\/p>/);
@@ -4220,12 +4166,12 @@ test("a field-configuration rebuild keeps a chosen category field that is still 
 const REPO_ROOT = path.join(__dirname, "..");
 
 test("v2.7.0 examples: examples/ keeps only the file the sample button loads, the other six are test fixtures (v2.11.0)", () => {
-  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")), ["sample-orders.csv"]);
+  assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "examples")).sort(), ["sample-orders-en.csv", "sample-orders.csv"]);
   assert.deepEqual(fs.readdirSync(path.join(REPO_ROOT, "tests", "fixtures", "examples")).sort(), [
     "sample-data.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
   assert.deepEqual(["examples", path.join("tests", "fixtures", "examples")].flatMap((dir) => fs.readdirSync(path.join(REPO_ROOT, dir))).sort(), [
-    "sample-data.csv", "sample-orders.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
+    "sample-data.csv", "sample-orders-en.csv", "sample-orders.csv", "sample-sales.csv", "sample-students.csv", "sample-survey.csv", "sample-used-products.csv", "sample-user-behavior.csv"
   ]);
 });
 
@@ -4235,7 +4181,7 @@ const typesOf = (scope, names) => JSON.parse(scope.evaluate("JSON.stringify(" + 
 
 test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles and the scripts", () => {
   const scope = createScriptContext();
-  assert.doesNotMatch(repoFile("index.html"), /workflow-status|workflowStep/);
+  assert.doesNotMatch(indexHtmlSource(), /workflow-status|workflowStep/);
   assert.doesNotMatch(repoFile("style.css"), /workflow-|\.step-(?:number|copy|state)/);
   assert.deepEqual(typesOf(scope, ["updateWorkflowSteps"]), ["undefined"]);
   assert.deepEqual(domKeys(scope).filter((key) => key.startsWith("workflowStep")), []);
@@ -4243,7 +4189,7 @@ test("v2.7.0 workflow: the workflow status bar is gone from the page, the styles
 
 test("v2.7.0 quick grouping: the advanced settings block, its chart and its report fallback are gone", () => {
   const scope = createScriptContext();
-  assert.doesNotMatch(repoFile("index.html"), /id="(?:metricField|groupField|aggregateMethod|customAnalysisChart|customAnalysisChartTitle)"|高级设置|快速分组/);
+  assert.doesNotMatch(indexHtmlSource(), /id="(?:metricField|groupField|aggregateMethod|customAnalysisChart|customAnalysisChartTitle)"|高级设置|快速分组/);
   assert.deepEqual(typesOf(scope, ["renderCustomAnalysisChart"]), ["undefined"]);
   assert.deepEqual(domKeys(scope).filter((key) => ["metricField", "groupField", "aggregateMethod", "customAnalysisChartTitle"].includes(key)), []);
   assert.equal(scope.evaluate('"customAnalysisChart" in REPORT_CHART_TITLES || "customAnalysisChart" in REPORT_CHART_HEADING_IDS'), false);
@@ -4263,7 +4209,7 @@ test("v2.7.0 quick grouping: the report has a custom-analysis section only after
 
 test("v2.7.0 templates: templates.js, its markup, styles, startup check and report entries are gone", () => {
   const scope = createScriptContext();
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.equal(fs.existsSync(path.join(REPO_ROOT, "templates.js")), false);
   assert.doesNotMatch(html, /templates\.js|scenarioTemplate|使用分析模板|id="template[A-Z]/);
   assert.doesNotMatch(repoFile("style.css"), /\.template-/);
@@ -4279,7 +4225,7 @@ test("v2.7.0 templates: templates.js, its markup, styles, startup check and repo
 });
 
 test("v2.7.0 conclusions: the findings section and its navigation entries are gone, the conclusions sit in the chart cards", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.doesNotMatch(html, /insightsSection|id="insights"|主要发现|分析结论<\/a>/);
   // v3.0.0: one navigation of exactly 8 links, in module order and without numbers; the phone
   // select is gone.
@@ -4392,11 +4338,12 @@ test("v2.7.0 conclusions: they do not depend on Chart.js being loaded", () => {
 test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 when there are none, and old snapshots as they were", () => {
   const scope = createScriptContext();
   commitRows(scope, ["部门", "品名", "签约日期", "回访日期"], CONCLUSION_ROWS, "conclusions.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.deepEqual(report.insights, [conclusions(scope).category, conclusions(scope).trend]);
   assert.ok(html.includes("<h2>自动分析结论</h2>"));
   assert.ok(html.includes("<li>" + conclusions(scope).category + "</li>"));
-  assert.ok(markdown.includes("1. " + conclusions(scope).category + "\n2. "));
+  // Both sentences, the category one first and the trend one right after it.
+  assert.ok(html.includes('<ol class="insights"><li>' + conclusions(scope).category + "</li><li>" + conclusions(scope).trend + "</li></ol>"));
   // one sentence only
   scope.evaluate('dom.dateChartField.value = ""; renderTrendInsight()');
   assert.deepEqual(reportOf(scope).report.insights, [conclusions(scope).category]);
@@ -4405,7 +4352,6 @@ test("v2.7.0 conclusions: the report shows the sentences on the page, 暂无 whe
   const none = reportOf(scope);
   assert.deepEqual(none.report.insights, []);
   assert.ok(none.html.includes("暂无自动分析结论。"));
-  assert.ok(none.markdown.includes("暂无自动分析结论。"));
   // an old snapshot with the six v2.6.1 sentences is printed as it is; one without the field prints 暂无
   const old = ["数据集包含 30 行，当前分析使用全部记录。", "当前有 4 个字段参与分析。", "缺失值 0 个。", "数值字段「金额」的平均值为 1。", "分类字段「部门」中占比最高的类别是「A」。", "基于日期字段「签约日期」观察。"];
   put(scope.context, "__oldInsights", old);
@@ -4678,8 +4624,8 @@ test("v2.8.0 fixtures: the store report's row 33 and the region table match know
 
 test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error (v2.11.0: the sample button's file has one total)", async () => {
   const scopes = await importEveryQualityFile();
-  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["分区小计表.csv", "门店报表.xlsx", "sample-orders.csv"]);
-  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["公式错误.xlsx"]);
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "公式错误.xlsx"]);
 });
 
 test("v2.8.0 totals: the three ranges, each tried in order", async () => {
@@ -4826,7 +4772,7 @@ const problemCategories = (scope) => JSON.parse(scope.evaluate("JSON.stringify(s
 const subtotalsCsv = (count) => `名,额\r\n${Array.from({ length: count }, (_, index) => `A${index},10\r\nA${index}小计,10`).join("\r\n")}\r\n`;
 
 test("v2.8.0 page: both subsections are static, after the warnings and before the tables, with their notes", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const positions = ['id="parseWarningSummary"', '<div id="suspectedTotalSection" class="module-subsection row-note-section hidden">', '<div id="formulaErrorSection" class="module-subsection row-note-section hidden">', '<div class="two-column">'].map((text) => html.indexOf(text));
   assert.equal(positions.every((position) => position >= 0), true);
   assert.deepEqual(positions, [...positions].sort((a, b) => a - b));
@@ -5095,65 +5041,55 @@ test("only a successful status without a note is hidden once results show", () =
 
 test("v2.8.0 report: sections and summary counts only when there is something, old snapshots without them", async () => {
   const store = await importStage3Fixture("门店报表.xlsx");
-  const { report, html, markdown } = reportOf(store);
+  const { report, html } = reportOf(store);
   assert.equal(report.quality.suspectedTotals.length, 1);
   assert.ok(html.includes("；疑似合计 / 小计行：<strong>1</strong> 行。"));
   assert.ok(html.includes("<h3>疑似合计 / 小计行</h3>"));
   assert.ok(html.includes("<li>第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。</li>"));
   assertInOrder(html, ["<h3>疑似合计 / 小计行</h3>", "<h3>各字段空值情况</h3>"]);
-  assert.ok(markdown.includes("- 疑似合计 / 小计行：1 行"));
-  assert.ok(markdown.includes("### 疑似合计 / 小计行"));
-  assert.ok(markdown.includes("- 第 33 行「合计」：销售额、成本等于第 5–32 行之和（28 行）。"));
-  assertInOrder(markdown, ["### 疑似合计 / 小计行", "### 各字段空值情况"]);
-  assert.doesNotMatch(html + markdown, /公式错误/);
+  assert.doesNotMatch(html, /公式错误/);
 
   const errors = await importStage3Fixture("公式错误.xlsx");
   const errorReport = reportOf(errors);
   assert.ok(errorReport.html.includes("；公式错误：<strong>7</strong> 个单元格。"));
   assert.ok(errorReport.html.includes("<h3>公式错误单元格</h3>"));
   assert.ok(errorReport.html.includes("<li>「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。</li>"));
-  assert.ok(errorReport.markdown.includes("- 公式错误：7 个单元格"));
-  assert.ok(errorReport.markdown.includes("### 公式错误单元格"));
-  assert.ok(errorReport.markdown.includes("- 「利润率」：3 个（\\#DIV/0! 2 个、\\#REF! 1 个），第 3、5、9 行。"));
-  assert.doesNotMatch(errorReport.html + errorReport.markdown, /疑似合计/);
+  assert.doesNotMatch(errorReport.html, /疑似合计/);
   errors.evaluate('stageFieldTypeChange("利润率", "ignore"); applyFieldConfiguration()');
   assert.match(reportOf(errors).html, /「利润率」（字段已忽略）：3 个/);
 
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
   assert.deepEqual([clean.report.quality.suspectedTotals, clean.report.quality.formulaErrors], [[], []]);
-  assert.doesNotMatch(clean.html + clean.markdown, /疑似合计|公式错误/);
+  assert.doesNotMatch(clean.html, /疑似合计|公式错误/);
 
   delete report.quality.suspectedTotals;
   delete report.quality.formulaErrors;
   put(store.context, "__old", report);
   assert.equal(store.evaluate("JSON.stringify([normalizeReportSnapshot(__old).quality.suspectedTotals, normalizeReportSnapshot(__old).quality.formulaErrors])"), "[null,null]");
-  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])") + store.evaluate("buildMarkdownReport(__old)"), /疑似合计|公式错误/);
+  assert.doesNotMatch(store.evaluate("buildHtmlReport(__old, [])"), /疑似合计|公式错误/);
 });
 
 test("v2.8.0 report: the note matches the page, at most 20 totals, the counts and overflow say how many there are", async () => {
-  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const pageHtml = indexHtmlSource();
   const exact = await importCsvFile(subtotalsCsv(20));
-  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE");
+  const note = exact.evaluate("SUSPECTED_TOTAL_NOTE[0]");
   assert.equal(note, "这些行目前仍按普通数据参与统计，其中的数字会被重复计入求和、平均值和偏大或偏小的值的判断。");
   assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
   const atLimit = reportOf(exact);
   assert.equal(atLimit.report.quality.suspectedTotals.length, 20);
   assert.ok(atLimit.html.includes(`<p>${note}</p>`));
-  assert.ok(atLimit.markdown.includes(note));
-  assert.doesNotMatch(atLimit.html + atLimit.markdown, /只列出/);
+  assert.doesNotMatch(atLimit.html, /只列出/);
 
   const over = reportOf(await importCsvFile(subtotalsCsv(21)));
   assert.equal(over.report.quality.suspectedTotals.length, 21);
   assert.ok(over.html.includes("；疑似合计 / 小计行：<strong>21</strong> 行"));
-  assert.ok(over.markdown.includes("- 疑似合计 / 小计行：21 行"));
-  for (const output of [over.html, over.markdown]) {
+  for (const output of [over.html]) {
     assert.ok(output.includes("第 41 行「A19小计」"));
     assert.ok(!output.includes("第 43 行「A20小计」"));
     assert.ok(output.includes("共 21 行，只列出前 20 行。"));
     assert.doesNotMatch(output, /全部行请点/);
   }
   assert.equal([...over.html.matchAll(/<li>第 \d+ 行「A\d+小计」/g)].length, 20);
-  assert.equal([...over.markdown.matchAll(/^- 第 \d+ 行「A\d+小计」/gm)].length, 20);
 });
 
 test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothing with state", async () => {
@@ -5175,30 +5111,25 @@ test("v2.8.0 report: the sections ignore filters, and the snapshot shares nothin
 
 test("v2.8.0 report: labels and fields are escaped for each output", async () => {
   const scope = await importCsvFile('名,<i>额|x</i>\r\nA,10\r\n"<b>y|\n小计",10\r\n');
-  const { html, markdown } = reportOf(scope);
+  const { html } = reportOf(scope);
   assert.ok(html.includes("<li>第 3 行「&lt;b&gt;y|\n小计」：&lt;i&gt;额|x&lt;/i&gt;等于第 2 行（只有 1 行）。</li>"));
   assert.ok(!html.includes("<b>y"));
-  const line = markdown.split("\n").find((text) => text.startsWith("- 第 3 行"));
-  assert.ok(line.includes("「&lt;b&gt;y\\|<br>小计」"), line);
-  assert.ok(!markdown.split("\n").some((text) => text.startsWith("小计")));
   const errors = reportOf(await importWorkbookFile(buildErrorWorkbook([["名", "<i>额"], ["A", 1], ["B", { e: 7 }], ["C", 2]])));
   assert.ok(errors.html.includes("<li>「&lt;i&gt;额」：1 个（#DIV/0! 1 个），第 3 行。</li>"));
-  assert.ok(errors.markdown.includes("- 「&lt;i&gt;额」：1 个（\\#DIV/0! 1 个），第 3 行。"));
 });
 
 test("v2.8.0 report: the formula error note matches the page and comes before the list, only with errors", async () => {
-  const pageHtml = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const pageHtml = indexHtmlSource();
   const errors = await importStage3Fixture("公式错误.xlsx");
-  const note = errors.evaluate("FORMULA_ERROR_NOTE");
+  const note = errors.evaluate("FORMULA_ERROR_NOTE[0]");
   assert.equal(note, "这些单元格的公式算出了错误，按空值处理（已计入空值）。整行都是错误值的行不会导入，也不在这里列出。");
   assert.ok(pageHtml.includes(`<p class="section-note">${note}</p>`));
-  const { html, markdown } = reportOf(errors);
+  const { html } = reportOf(errors);
   assert.ok(html.includes(`<h3>公式错误单元格</h3>\n    <p>${note}</p>\n    <ul class="summary-list"><li>「数量」`));
-  assert.ok(markdown.includes(`### 公式错误单元格\n\n${note}\n\n- 「数量」`));
   const totalsOnly = reportOf(await importStage3Fixture("门店报表.xlsx"));
-  assert.ok(!(totalsOnly.html + totalsOnly.markdown).includes(note));
+  assert.ok(!totalsOnly.html.includes(note));
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
-  assert.ok(!(clean.html + clean.markdown).includes(note));
+  assert.ok(!clean.html.includes(note));
 });
 
 // v2.8.1: SheetJS applies a date number format to text and boolean cells under
@@ -5345,7 +5276,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
   const actual = {};
   for (const fileName of STAGE3_IMPORT_FILES) {
-    if (fileName === "写法不一致.csv") continue;
+    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx"].includes(fileName)) continue;
     const scope = await importStage3Fixture(fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5353,7 +5284,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   }
   for (const fileName of EXAMPLE_CSV_FILES) {
     // v2.11.0: the new sample is newer than the guard, like 写法不一致.csv above.
-    if (fileName === "sample-orders.csv") continue;
+    if (["sample-orders.csv", "sample-orders-en.csv"].includes(fileName)) continue;
     const scope = await importCsvFile(readExampleCsv(fileName), fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5521,7 +5452,7 @@ test("v2.9.0 date styles: the fixture, the roster and the sample button's file (
       { key: "ymdDot", count: 2, sample: "2021.03.05", firstLine: 15 }
     ]
   }]);
-  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => dateStylesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "花名册.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
 });
 
 test("v2.9.0 date styles: the most frequent style is the main one, ties go to the first seen", async () => {
@@ -5641,7 +5572,7 @@ test("v2.9.0 constant columns: the fixture and the formula-error sheet, and no o
   const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
   assert.deepEqual(constantsOf(errors), [{ field: "备注", value: "正常", count: 6, missingCount: 3 }]);
   assert.equal(errors.evaluate("formatConstantField(state.constantFields[0])"), "「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。");
-  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["公式错误.xlsx", "写法不一致.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => constantsOf(scope).length).map(([name]) => name), ["en-issues.csv", "公式错误.xlsx", "写法不一致.csv"]);
   assert.equal(scopes.find(([name]) => name === "写法不一致.csv")[1].evaluate("formatConstantField(state.constantFields[0])"), "「状态」：只有一种取值「正常」（24 行）。");
 });
 
@@ -5796,7 +5727,7 @@ test("v2.9.0 look-alike values: the fixture and the sample button's file (v2.11.
     groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
   })), knownIssues["写法不一致.csv"].lookAlikes);
   assert.ok(summary.every((item) => item.invisibleOnlyCount === 0));
-  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["写法不一致.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => lookAlikesOf(scope).length).map(([name]) => name), ["en-issues.csv", "写法不一致.csv", "sample-orders-en.csv", "sample-orders.csv"]);
   // ID duplicates and look-alikes count apart: SKU-002 with a space is a duplicate value and
   // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
   assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
@@ -6033,7 +5964,7 @@ test("v2.9.0 the three sections render without a numeric field, escape data and 
 });
 
 test("v2.9.0 the sections are static, in place and change neither the pills nor the status", async () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const positions = ['id="numericLookingSection"', 'id="dateStyleSection"', 'id="constantFieldSection"', 'id="lookAlikeSection"', 'id="placeholderDetails"'].map((id) => html.indexOf(id));
   assert.ok(positions.every((position, index) => position >= 0 && (index === 0 || position > positions[index - 1])), positions.join());
   const writing = await importStage3Fixture("写法不一致.csv");
@@ -6042,59 +5973,53 @@ test("v2.9.0 the sections are static, in place and change neither the pills nor 
 });
 
 test("v2.9.0 reports: the notes are the page's sentences", () => {
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const { evaluate } = createScriptContext();
-  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(name)}</p>`), name);
-  assert.match(evaluate("LOOK_ALIKE_NOTE"), /只有不可见字符：格子看起来是空的/);
+  for (const name of ["DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE"]) assert.ok(html.includes(`<p class="section-note">${evaluate(`${name}[0]`)}</p>`), name);
+  assert.match(evaluate("LOOK_ALIKE_NOTE[0]"), /只有不可见字符：格子看起来是空的/);
 });
 
 test("v2.9.0 reports: three sections with content, two summary counts, constant columns not counted", async () => {
   const roster = reportOf(await importStage3Fixture("花名册.xlsx"));
   assert.ok(roster.html.includes("<h3>日期写法混用</h3>\n    <p>这些写法本工具都能读成同一个日期，但在 Excel 里文本日期不能按日期排序、筛选，导入别的系统时可能读错。</p>"));
   assert.ok(roster.html.includes("<li>「入职日期」：主写法是 Excel 日期单元格 24 个（如 2016-04-01）；另有 6 行是别的写法：文本 年/月/日 2 个（如 2021/3/5）、文本 中文年月日 2 个（如 2021年3月5日）、文本 年.月.日 2 个（如 2021.03.05）。</li>"));
-  assert.ok(roster.markdown.includes("- 编号重复：3 个字段\n- 日期写法混用：1 个字段\n"));
-  assert.ok(!(roster.html + roster.markdown).includes("整列只有一个值"));
+  assert.ok(!roster.html.includes("整列只有一个值"));
 
-  const errors = reportOf(await importStage3Fixture("公式错误.xlsx"));
+  const errorsScope = await importStage3Fixture("公式错误.xlsx");
+  const errors = reportOf(errorsScope);
   assert.ok(errors.html.includes("<li>「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。</li>"));
-  assert.ok(errors.markdown.includes("### 整列只有一个值\n\n这些列的非空值全都一样。不一定是错误：可能是导出时带上的固定列，也可能是漏填或填错。\n\n- 「备注」：只有一种取值「正常」（6 行），另有 3 行是空值。\n"));
-  assert.ok(!errors.markdown.includes("- 整列只有一个值"));
+  // The note right under the heading, then the list.
+  assert.match(errors.html, new RegExp(`<h3>整列只有一个值<\\/h3>\\s*<p>${regExpText(errorsScope.evaluate("CONSTANT_FIELD_NOTE[0]"))}<\\/p>\\s*<ul[^>]*>\\s*<li>「备注」`));
   assert.ok(!errors.html.includes("整列只有一个值：<strong>"));
 
   const writing = reportOf(await importStage3Fixture("写法不一致.csv"));
   assert.ok(writing.html.includes("；日期写法混用：<strong>1</strong> 个字段；同一个值，写法不一样：<strong>3</strong> 个字段。</p>"));
-  assert.ok(writing.markdown.includes("- 日期写法混用：1 个字段\n- 同一个值，写法不一样：3 个字段\n"));
   // The section shows whitespace and invisible characters by name; Top 10 and the sample values
   // still print cells as they are.
   const section = writing.html.slice(writing.html.indexOf("<h3>同一个值，写法不一样</h3>"), writing.html.indexOf("<h3>像是空值的写法</h3>"));
   assert.ok(section.includes("「华东[零宽字符]」1 个"));
   assert.ok(section.includes("（如「SKU-002␣」）"));
   assert.ok(!section.includes("\u200B"));
-  assert.ok(writing.markdown.includes("「华东\\[零宽字符\\]」1 个"));
   // Order: after the numeric-looking section's place, before the placeholders, in both outputs.
   const order = (text, titles) => titles.map((title) => text.indexOf(title));
   const htmlOrder = order(writing.html, ["<h3>各字段空值情况</h3>", "<h3>日期写法混用</h3>", "<h3>整列只有一个值</h3>", "<h3>同一个值，写法不一样</h3>", "<h3>像是空值的写法</h3>"]);
   assert.ok(htmlOrder.every((position, index) => position >= 0 && (index === 0 || position > htmlOrder[index - 1])), htmlOrder.join());
-  const markdownOrder = order(writing.markdown, ["### 各字段空值情况", "### 日期写法混用", "### 整列只有一个值", "### 同一个值，写法不一样", "### 像是空值的写法"]);
-  assert.ok(markdownOrder.every((position, index) => position >= 0 && (index === 0 || position > markdownOrder[index - 1])), markdownOrder.join());
 
   const clean = reportOf(await importStage3Fixture("订单表.csv"));
   assert.deepEqual([clean.report.quality.dateStyles, clean.report.quality.constantFields, clean.report.quality.lookAlikes], [[], [], []]);
-  for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!(clean.html + clean.markdown).includes(title), title);
+  for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!clean.html.includes(title), title);
 });
 
 test("v2.9.0 reports: cells of nothing but invisible characters, escaped field names and values", async () => {
   const field = "<b>备注|*</b>";
   const scope = await importCsvFile(`"${field}",序\r\n\u200B,1\r\n<i>x</i>,2\r\n<I>X</I>,3\r\n`, "r.csv");
-  const { report, html, markdown } = reportOf(scope);
+  const { report, html } = reportOf(scope);
   assert.equal(report.quality.lookAlikes[0].invisibleOnlyCount, 1);
   assert.ok(html.includes("只有不可见字符 1 格"));
-  assert.ok(markdown.includes("只有不可见字符 1 格"));
   assert.ok(html.includes("「&lt;b&gt;备注|*&lt;/b&gt;」共 3 行"));
   assert.ok(html.includes("「&lt;i&gt;x&lt;/i&gt;」1 个"));
   assert.ok(html.includes("<h3>同一个值，写法不一样</h3>"));
   assert.doesNotMatch(html.slice(html.indexOf("<h3>同一个值，写法不一样</h3>")), /<i>x|<b>备注/);
-  assert.ok(markdown.includes("「&lt;b&gt;备注\\|\\*&lt;/b&gt;」共 3 行"));
 });
 
 test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot shares nothing with state", async () => {
@@ -6106,7 +6031,7 @@ test("v2.9.0 reports: old snapshots leave the sections out, and the snapshot sha
   put(store.context, "__old", old);
   // null itself: JSON.stringify would write undefined in an array as null too.
   assert.equal(store.evaluate("(() => { const quality = normalizeReportSnapshot(__old).quality; return quality.dateStyles === null && quality.constantFields === null && quality.lookAlikes === null; })()"), true);
-  const oldOutput = store.evaluate("buildMarkdownReport(__old)") + store.evaluate("buildHtmlReport(__old, [])");
+  const oldOutput = store.evaluate("buildHtmlReport(__old, [])");
   for (const title of ["日期写法混用", "整列只有一个值", "同一个值，写法不一样"]) assert.ok(!oldOutput.includes(title), title);
   store.evaluate('__snapshot = buildReportData(new Date("2026-10-25T00:00:00.000Z"))');
   const shared = JSON.parse(store.evaluate(`JSON.stringify([
@@ -6409,8 +6334,8 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
     assert.equal(types(again), types(scope), name);
   }
   assert.deepEqual(totals, {
-    "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
-    "sample-data.csv": 0, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
+    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
+    "sample-data.csv": 0, "sample-orders-en.csv": 12, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
   });
 });
 
@@ -6543,7 +6468,7 @@ test("v2.10.0 gate: no data or an unapplied field draft disables the buttons and
 });
 
 test("v2.10.0 the page: a third export option, a static hidden panel, print hides its buttons, one binding", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
   assert.equal((options.match(/<div class="data-export-option">/g) || []).length, 2);
   assert.match(options, /<h3>写法统一的表<\/h3>[\s\S]*<p id="standardizedExportGate" class="standardize-gate"><\/p>[\s\S]*<button id="checkStandardizedExport" class="secondary-button" type="button" disabled>检查会改哪些格<\/button>/);
@@ -6746,7 +6671,7 @@ const sampleOrdersShownSections = (scope) => SAMPLE_ORDERS_HINT_SECTIONS.filter(
 
 // Clicks the real "使用示例数据" handler of script.js. The fake DOM ignores addEventListener, so
 // the shared element prototype records the listeners while one context loads, then is restored.
-async function clickSampleButton(fetchedText) {
+async function clickSampleButton(fetchedText, language) {
   const probe = createScriptContext();
   const proto = Object.getPrototypeOf(probe.context.document.getElementById("loadSample"));
   const original = proto.addEventListener;
@@ -6757,7 +6682,7 @@ async function clickSampleButton(fetchedText) {
   };
   let scope;
   try {
-    scope = createExcelContext();
+    scope = createExcelContext(language === undefined ? {} : { language });
   } finally {
     proto.addEventListener = original;
   }
@@ -6812,9 +6737,10 @@ test("v2.11.0 sample: the file holds the planned rows, title and total line", ()
 
 test("v2.11.0 sample: the button fetches the new file and names the import after it, like an upload", async () => {
   const script = repoFile("script.js");
-  assert.match(script, /fetch\("examples\/sample-orders\.csv"\)/);
+  assert.match(script, /fetch\(`examples\/\$\{sampleName\}`\)/);
+  assert.match(script, /const sampleName = L\("sample-orders\.csv", "sample-orders-en\.csv"\);/);
   assert.doesNotMatch(script, /sample-data\.csv/);
-  assert.match(repoFile("index.html"), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
+  assert.match(indexHtmlSource(), /<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
   const clicked = await clickSampleButton(sampleOrdersFetchedText());
   assert.deepEqual(clicked.fetched, ["examples/sample-orders.csv"]);
   // The handler calls parseCsvText() once; the title-row retry calls it again with the same name.
@@ -6941,7 +6867,8 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
   "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
-const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE",
+// (v3.2.0: the constants are [中文, English] pairs; [0] is the Chinese.)
+const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE[0]", "FORMULA_ERROR_NOTE[0]", "DATE_STYLE_NOTE[0]", "CONSTANT_FIELD_NOTE[0]", "LOOK_ALIKE_NOTE[0]", "PLACEHOLDER_MAYBE_NOTE[0]", "PLACEHOLDER_DASH_NOTE[0]",
   // v3.1.0: the totals note once they are left out, one row and several.
   "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)"];
 const HAN_SPACE_HAN = /\p{Script=Han} +\p{Script=Han}/u;
@@ -6968,7 +6895,6 @@ function findOldWordsInImport(scope, name, hits) {
   findOldWordsInElements(scope, `${name} import`, hits);
   const first = reportOf(scope);
   findOldInterfaceWords(`${name} html report`, first.html, hits);
-  findOldInterfaceWords(`${name} markdown report`, first.markdown, hits);
   const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
   categories.forEach((category, index) => {
     put(scope.context, "__oldWordsCategory", category);
@@ -6990,7 +6916,6 @@ function findOldWordsInImport(scope, name, hits) {
   findOldInterfaceWords(`${name} change list`, scope.evaluate("buildStandardizedChangesCsvContent(state.standardizedExport, state.rows, state.fields, getSourceRowNumber)"), hits);
   const confirmed = reportOf(scope);
   findOldInterfaceWords(`${name} confirmed html report`, confirmed.html, hits);
-  findOldInterfaceWords(`${name} confirmed markdown report`, confirmed.markdown, hits);
 
   const numeric = scope.evaluate('getProfilesByType("numeric").map((profile) => profile.field)')[0];
   const dateField = scope.evaluate('getProfilesByType("date").map((profile) => profile.field)')[0];
@@ -7005,13 +6930,13 @@ function findOldWordsInImport(scope, name, hits) {
   findOldInterfaceWords(`${name} trend title`, title, hits);
   if (title && !title.endsWith("（求和）")) hits.push(`${name} trend title: ${title}`);
   const trend = reportOf(scope);
-  findOldInterfaceWords(`${name} trend report`, trend.html + trend.markdown, hits);
+  findOldInterfaceWords(`${name} trend report`, trend.html, hits);
   return title ? 1 : 0;
 }
 
 test("v2.12.0: old interface words no longer appear in pages, reports, file names or exported notes", async () => {
   const hits = [];
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   findOldInterfaceWords("index.html", html, hits);
   const selectStart = html.indexOf('<select id="dateChartAggregate">');
   assert.ok(selectStart >= 0);
@@ -7070,9 +6995,8 @@ test("v2.12.0: charts, insights and the report say 认得出 when a filtered ran
     const texts = () => JSON.parse(scope.evaluate("JSON.stringify(__emptyChartTexts)"));
     assert.ok(texts().some(([id, text]) => id === "dateTrendChart" && text === "该字段没有认得出的日期"), JSON.stringify(texts()));
     assert.equal(scope.evaluate("state.chartInsights.trend"), "日期字段「日期」里没有认得出的日期，因此未生成趋势结论。");
-    const { html, markdown } = reportOf(scope);
+    const { html } = reportOf(scope);
     assert.ok(html.includes("日期字段「日期」里没有认得出的日期。"));
-    assert.ok(markdown.includes("日期字段「日期」里没有认得出的日期。"));
 
     // fieldHasNumericData() drops 金额 from #numericChartField once the filtered range has no
     // numbers (in a browser too), so the page shows 没有可用的数值字段; this sentence is the
@@ -7224,7 +7148,7 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
 // blanked, is the v2.12.0 text with only the name changed: neither the v3.0.0 shell nor the
 // v3.0.1 rename touches any other word. v3.0.1 renamed the product and the report title; the
 // new hash was taken by replacing just those words in the old text and comparing byte for byte.
-const GUARD_REPORT_SHA256 = "593ed289f311170989fb8976d1cb21680d4116c1cbe331faa3710153b9886204";
+const GUARD_REPORT_SHA256 = "e32ff801425545fb38b8e2822f132e39cbda05d554202529d9af44f2b8f21421";
 test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the name changed", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const version = orders.evaluate("buildReportData().version");
@@ -7236,7 +7160,7 @@ test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the n
       report[key] = "T";
     });
     put(orders.context, "__guardReport", report);
-    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"), orders.evaluate("buildMarkdownReport(__guardReport)"));
+    texts.push(orders.evaluate("buildHtmlReport(__guardReport, [])"));
   };
   orders.evaluate(GUARD_CUSTOM_ANALYSIS);
   snapshot();
@@ -7284,7 +7208,7 @@ function withModuleNavigation(scope) {
 }
 
 test("v3.0.0 modules: the page wraps the eight modules in one stage, each title can take the focus", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const stageStart = html.indexOf('<div id="moduleStage" class="module-stage">');
   assert.ok(stageStart >= 0);
   assertInOrder(html.slice(stageStart), MODULE_SECTION_IDS.map((id) => `<section id="${id}"`));
@@ -7373,7 +7297,7 @@ test("v3.0.0 modules: field configuration, placeholder confirmations and filters
 
 // v3.0.0 commit 2: top bar and sidebar.
 test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 换一个文件; no section labels", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
   assertInOrder(header, ['<button id="sidebarToggle"', "<strong>表格体检</strong>", '<nav id="moduleNav"', '<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件</a>']);
   assert.match(header, /<button id="sidebarToggle" class="[^"]*" type="button" aria-controls="appSidebar" aria-expanded="false" aria-label="文件和字段">/);
@@ -7393,7 +7317,7 @@ test("v3.0.0 shell: the top bar holds the toggle, the brand, the navigation and 
 });
 
 test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside it for phones", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<aside id="appSidebar"');
   assert.ok(start >= 0);
   const sidebar = html.slice(start, html.indexOf("</aside>", start));
@@ -7416,7 +7340,7 @@ test("v3.0.0 shell: the sidebar's static parts, and one 换一个文件 inside i
 });
 
 test("v3.0.0 shell: the analysis range sits by four module titles; only the overview's carries the ids", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const heading = (id) => {
     const section = html.slice(html.indexOf(`<section id="${id}"`));
     return section.slice(0, section.indexOf("</h2>") + 600);
@@ -7573,7 +7497,7 @@ test("v3.0.0 shell: the sidebar controls are bound once each in script.js", () =
 // v3.0.0 commit 3: the import message with notes can fold to one line. #statusPanel itself
 // keeps its text, classes and role: the fold lives on the wrapper #statusNote.
 test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by CSS that keeps the text for screen readers", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<div id="statusNote" class="status-note">');
   assert.ok(start >= 0);
   const note = html.slice(start, html.indexOf('<section id="sheetSelectionPanel"'));
@@ -7689,7 +7613,7 @@ test("v3.0.0 status note: on the export module, setStatus marks warnings and err
 
 // v3.0.0 commit 4: the upload page and the way back to the last analysis.
 test("v3.0.0 upload page: the new title, the drop area and the encoding line; the old intro is gone", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div id="statusNote"'));
   assertInOrder(hero, [
     '<h1 id="heroTitle">上传表格，先做一次体检</h1>',
@@ -7716,7 +7640,7 @@ test("v3.0.0 upload page: the new title, the drop area and the encoding line; th
 
 // The six rows of examples/sample-orders.csv shown on the upload page, as they are in the file.
 test("v3.0.0 upload page: the sample table shows rows 10, 12, 20, 21, 29 and 44 of sample-orders.csv with their marks", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
   assert.ok(start >= 0);
   assert.ok(start > html.indexOf('<div id="statusNote"'), "below the upload card and the status");
@@ -7756,7 +7680,7 @@ test("v3.0.0 upload page: an error shows between the title and the card; loading
   assert.match(css, /body:not\(\.has-results\) \.upload-hero \{\s*order: -2;\s*\}/);
   assert.match(css, /body:not\(\.has-results\) #statusNote\[data-tone="error"\] \{\s*order: -1;\s*\}/);
   assert.match(css, /body\.has-results \.upload-hero,\s*body\.has-results \.sample-preview \{\s*display: none;\s*\}/);
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   // The sheet choice sits right under the card, above the sample rows.
   assertInOrder(html, ['<div class="upload-hero">', '<section id="dropZone"', '<div id="statusNote"', '<section id="sheetSelectionPanel"', '<section class="sample-preview"', '<section id="results"']);
   assert.match(css, /\.sheet-selection-panel \{\s*grid-template-columns: 1fr;\s*\}/);
@@ -7991,7 +7915,7 @@ test("v3.0.0 F2: applying keeps the search and the type (back to 全部 when it 
 });
 
 test("v3.0.0 F2: the toolbar is static, bound once, and the table box is limited only above 640 px", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
   assertInOrder(schema, [
     '<div id="schemaFilter" class="schema-filter hidden">',
@@ -8043,7 +7967,7 @@ const chartEmpty = (scope, id) => {
 };
 
 test("v3.0.0 F3: every chart frame has a static, hidden empty-state line after its canvas", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   CHART_CANVAS_IDS.forEach((id) => {
     assert.match(html, new RegExp(`<div class="chart-frame"><canvas id="${id}" [^>]*></canvas><p id="${id}Empty" class="empty-state chart-empty hidden"></p></div>`), id);
   });
@@ -8137,7 +8061,7 @@ test("v3.0.0 overview: the five numbers are one line of text with their old labe
 });
 
 test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
   assertInOrder(overview, [
     '<details class="preview-details" open>',
@@ -8149,7 +8073,7 @@ test("v3.0.0 overview: the preview sits in an open <details> whose summary is th
 });
 
 test("v3.0.0 field configuration: the message and both buttons sit under the table, marked has-draft while drafts wait", async () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const schema = html.slice(html.indexOf('<section id="schemaSection"'), html.indexOf('<section id="qualitySection"'));
   assertInOrder(schema, ['<table id="schemaTable"', '<div id="fieldConfigToolbar" class="field-config-toolbar">', '<p id="fieldConfigMessage" class="field-config-message" aria-live="polite"></p>', '<button id="restoreAutoFieldTypes"', '<button id="applyFieldConfig"']);
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
@@ -8164,7 +8088,7 @@ test("v3.0.0 field configuration: the message and both buttons sit under the tab
 });
 
 test("v3.0.0 quality: only notes of more than one sentence keep their paragraph and get a 展开 button after it", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
   const notes = [...quality.matchAll(/<p class="section-note">([^<]*)<\/p>(\s*<button type="button" class="text-button note-toggle" aria-expanded="false">展开<\/button>)?/g)];
   const sentences = notes.map((match) => (match[1].match(/。/g) || []).length);
@@ -8206,11 +8130,12 @@ test("v3.0.0 statistics: each frequency row has a bar as long as its share, and 
 });
 
 test("v3.0.0 export: each option shows its own row count after its title; the separate count row is gone", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>/);
+  // v3.2.0 commit 10: the words around the number are written by the script (“共 42 行” / “42 rows”).
+  assert.match(options, /<h3>当前分析的行<\/h3>\s*<p class="export-count"><span id="dataExportFilteredBefore"><\/span><strong id="dataExportFilteredCount">0<\/strong><span id="dataExportFilteredAfter"><\/span><\/p>/);
   assert.doesNotMatch(options, /去重/);
-  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count">原始行数 <strong id="dataExportOriginalCount">0<\/strong><\/p>/);
+  assert.match(options, /<h3>写法统一的表<\/h3>\s*<p class="export-count"><span id="dataExportOriginalBefore"><\/span><strong id="dataExportOriginalCount">0<\/strong><span id="dataExportOriginalAfter"><\/span><\/p>/);
   assert.doesNotMatch(html, /数据导出记录统计/);
 });
 
@@ -8381,7 +8306,7 @@ test("v3.0.0 look: one blue button per group, by id only; the class names stay",
   assert.match(css, /#exportFilteredCsv:not\(:disabled\) \{[^}]*border-color: rgba\(28, 28, 30, 0\.14\);[^}]*background: #fff;[^}]*color: var\(--text\);/);
   // 按空值处理 on each line looks secondary; 常见写法全部按空值处理 stays blue.
   assert.match(css, /#placeholderDetails \.placeholder-item > \.placeholder-button:not\(\.secondary-button, :disabled\) \{[^}]*background: #fff;[^}]*color: var\(--text\);/);
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.match(html, /<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>/);
 });
 
@@ -8435,7 +8360,7 @@ test("v3.0.0 look: charts take the new blue and the page's font", () => {
 
 // v3.0.0 look, second pass (impl-v3.0.0-look2): fewer template touches. Items 1–7 of that file.
 test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no privacy badge); the footer only the GitHub link", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>", html.indexOf('<header class="app-header">')));
   assert.match(header, /<strong>表格体检<\/strong>/);
@@ -8457,7 +8382,7 @@ test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no priv
 });
 
 test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry a one-line aside next to the title", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const heading = cssRule(css, ".section-heading");
   assert.doesNotMatch(heading, /border-bottom|padding-bottom/);
@@ -8486,12 +8411,13 @@ test("v3.0.0 look2: module titles are 17 px without a rule; three modules carry 
   assert.doesNotMatch(html, /系统已自动推断字段类型|本模块始终基于导入的原始数据计算|分类、数值和日期条件可以同时应用/);
   assert.equal((html.match(/class="section-aside"/g) || []).length, 3);
   // The other modules keep their paragraph (custom analysis) and the 当前分析范围 on the right.
-  assert.match(html, /<\/div>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
+  // v3.2.0 commit 10: heading → the note bar → the paragraph, in this order.
+  assert.match(html, /<\/div>\s*<p id="customContainsNote" class="analysis-contains-note hidden"><\/p>\s*<p class="section-note">选择一个指标、一个分组维度和汇总方式即可生成结果；时间字段为可选。<\/p>/);
   assert.equal((html.match(/<p class="filter-scope">当前分析范围：/g) || []).length, 3);
 });
 
 test("v3.0.0 look2: the quality page is cards: three of their own, and one holding the seven note subsections", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const css = repoFile("style.css");
   const quality = html.slice(html.indexOf('<section id="qualitySection"'), html.indexOf('<section id="filterSection"'));
   const start = quality.indexOf('<div class="quality-notes">');
@@ -8601,7 +8527,7 @@ test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export
 });
 
 test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons have no icon", () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const buttons = html.slice(html.indexOf('<div class="upload-buttons">'), html.indexOf('<div class="upload-footer">'));
   assert.match(buttons, /<label class="file-button" for="csvFile">\s*选择数据文件\s*<\/label>/);
   assert.match(buttons, /<button id="loadSample" class="secondary-button" type="button">\s*使用示例数据\s*<\/button>/);
@@ -8638,7 +8564,7 @@ function findOldWordsInProductScope(scope, hits) {
 
 test("v3.0.1 rename: the old product name and report title never appear; the new name is exact", async () => {
   const hits = [];
-  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   findOldProductWords("index.html", html, hits);
   assert.equal((html.match(/<title>([^<]*)<\/title>/) || [])[1], "表格体检 | 检查 CSV、Excel 表格的数据问题");
   assert.equal((html.match(/<a class="brand" href="#mainContent" aria-label="([^"]*)">/) || [])[1], "表格体检首页");
@@ -8658,25 +8584,22 @@ test("v3.0.1 rename: the old product name and report title never appear; the new
   findOldWordsInProductScope(orders, hits);
   orders.evaluate(GUARD_CUSTOM_ANALYSIS);
   orders.evaluate(GUARD_EAST_FILTER);
-  const { html: reportHtml, markdown } = reportOf(orders);
+  const { html: reportHtml } = reportOf(orders);
   findOldProductWords("html report", reportHtml, hits);
-  findOldProductWords("markdown report", markdown, hits);
   assert.equal((reportHtml.match(/<title>([^<]*)<\/title>/) || [])[1], "sample-orders.csv - 表格体检报告");
   assert.deepEqual(reportHtml.match(/<h1>[^<]*<\/h1>/g), ["<h1>表格体检报告</h1>"]);
-  assert.equal(markdown.split("\n")[0], "# 表格体检报告");
   assert.equal((reportHtml.match(/<footer>由<a href="([^"]*)">([^<]*)<\/a> /) || []).slice(1).join(" "), `${RENAME_REPO_URL} 表格体检`);
-  assert.equal((markdown.match(/^> 由\[([^\]]*)\]\(([^)]*)\) /m) || []).slice(1).join(" "), `表格体检 ${RENAME_REPO_URL}`);
-  for (const text of [html, reportHtml, markdown]) assert.ok(text.includes(RENAME_REPO_URL));
+  for (const text of [html, reportHtml]) assert.ok(text.includes(RENAME_REPO_URL));
 
   const names = [
-    orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`), orders.evaluate(`buildReportFileName("md", new Date(2026, 10, 15))`),
+    orders.evaluate(`buildReportFileName("html", new Date(2026, 10, 15))`),
     orders.evaluate(`buildDataExportFileName("filtered", new Date(2026, 10, 15))`),
     orders.evaluate(`buildStandardizedFileName("data", new Date(2026, 10, 15))`), orders.evaluate(`buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)`),
     ...JSON.parse(orders.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
   ];
   assert.ok(names.length > 6);
-  // v3.1.0: 21 names, the deduplicated export is gone.
-  assert.equal(names.length, 21);
+  // v3.1.0: 21 names, the deduplicated export is gone; v3.2.0: 20, the Markdown report is gone.
+  assert.equal(names.length, 20);
   for (const name of names) {
     assert.ok(name.startsWith("sample-orders"), name);
     findOldProductWords("file name", name, hits);
@@ -9128,7 +9051,7 @@ test("v3.1.0 quality page: a message counts only the rows this click left out or
   assert.equal(scope.evaluate("state.suspectedTotals.length"), 2);
   assert.equal(scope.evaluate("state.duplicateRows"), 1);
   // No column tells the records apart: the long note stays, before and after.
-  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE"));
+  assert.equal(textOf(scope, "duplicateExclusionText"), scope.evaluate("NO_ID_DUPLICATE_NOTE[0]"));
   exclusionClick(scope, "suspectedTotal", true);
   assert.equal(textOf(scope, "suspectedTotalMessage"), "已把 2 行疑似合计行设为不计入分析，参与分析的行 5 → 3。");
   exclusionClick(scope, "duplicateRows", true);
@@ -9177,7 +9100,7 @@ test("v3.1.0 page: scope sentence, filter panel, overview, preview, sidebar and 
   orders.evaluate("clearAllFilters()");
   assert.equal(textOf(orders, "filterMessage"), "已清除全部筛选，当前分析恢复使用全部 41 行（不含不计入分析的 1 行）。");
   // 当前状态 keeps its three rows: 筛选, 表头, 已按空值处理.
-  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  const html = indexHtmlSource();
   const status = html.slice(html.indexOf('<dl class="sidebar-status">'), html.indexOf("</dl>", html.indexOf('<dl class="sidebar-status">')));
   assert.deepEqual([...status.matchAll(/<dt>([^<]*)<\/dt>/g)].map((match) => match[1]), ["筛选", "表头", "已按空值处理"]);
 });
@@ -9204,8 +9127,8 @@ test("v3.1.0 status bar: the totals sentence offers to leave them out and never 
   assert.equal(textOf(orders, "statusPanel"), "sample-orders.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行：「2025年上半年销售订单明细」。第 44 行「合计」疑似合计行，可以在“数据质量”里设为不计入分析。");
   const oldEnding = "目前仍计入统计，详情见“数据质量”";
   orders.evaluate('setRowExclusion("suspectedTotal", true)');
-  const { html, markdown } = reportOf(orders);
-  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html, markdown]) {
+  const { html } = reportOf(orders);
+  for (const text of [textOf(orders, "statusPanel"), orders.elements.get("qualitySection").innerHTML, htmlText(orders, "suspectedTotalDetails"), html]) {
     assert.ok(!text.includes(oldEnding));
   }
   const region = await importStage3Fixture("分区小计表.csv");
@@ -9327,14 +9250,15 @@ test("v3.1.0 modules: 去数据质量处理 opens the quality module at the subs
   assert.equal(orders.evaluate("document.body.dataset.module"), "chartsSection");
   assert.deepEqual(calls, []);
 
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   assert.match(html, /<h3 id="suspectedTotalTitle" class="subsection-title" tabindex="-1">疑似合计 \/ 小计行<\/h3>/);
   for (const [section, id] of [["statisticsSection", "statisticsContainsNote"], ["chartsSection", "chartsContainsNote"], ["customSection", "customContainsNote"]]) {
     const start = html.indexOf(`<section id="${section}"`);
     const heading = html.slice(html.indexOf('<div class="section-heading">', start), html.indexOf(`id="${id}"`, start));
-    // Inside the heading, right under the range sentence, and the heading's last child.
-    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<p $/, section);
-    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<\/div>\s*<(div|p) class=/, section);
+    // v3.2.0 commit 10: a bar of its own right under the heading (the range sentence is the
+    // heading's last child), before the module's first content.
+    assert.match(heading, /<\/h2>\s*<\/div>\s*<p class="filter-scope">当前分析范围：[^\n]*<\/p>\s*<\/div>\s*<p $/, section);
+    assert.match(html.slice(html.indexOf(`id="${id}"`)), /^id="[^"]+" class="analysis-contains-note hidden"><\/p>\s*<(div|p) class=/, section);
   }
   assert.match(repoFile("script.js"), /\[dom\.statisticsContainsNote, dom\.chartsContainsNote, dom\.customContainsNote\]\.forEach\(\(note\) => note\.addEventListener\("click", handleAnalysisNoteClick\)\)/);
 });
@@ -9372,7 +9296,7 @@ const scaleCard = (label, value) => `<div class="scale-card"><div class="label">
 
 test("v3.1.0 report: the rows left out are named in the data scale, the filters, the quality part and the totals section", async () => {
   const orders = await sampleWithExclusions();
-  const { report, html, markdown } = reportOf(orders);
+  const { report, html } = reportOf(orders);
   assert.deepEqual([report.dataScale.rows, report.dataScale.originalRows, report.dataScale.filteredOutRows, report.dataScale.excludedRows], [40, 42, 0, 2]);
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] }, overlap: null });
   assert.deepEqual(report.quality.excludedScope, { totalRows: 42, excludedRows: 2, excludedMissing: 6 });
@@ -9388,13 +9312,7 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   assert.match(html, new RegExp(`<p>${noFilter}<\\/p>\\s*<p>${left}<\\/p>\\s*<p>数据质量部分始终基于原始数据，不受筛选影响。<\\/p>`));
   assert.match(html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${scope}<\\/p>\\s*<p>空值总数：`));
   assert.match(html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${excludedNote}<\\/p>`));
-  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
-  // Markdown: the same four places.
-  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 不计入分析行数 | 2 |\n| 字段总数 | 9 |"));
-  assert.ok(markdown.includes(`${noFilter}\n\n${left}\n\n数据质量部分始终基于原始数据，不受筛选影响。`));
-  assert.ok(markdown.includes(`## 数据质量报告\n\n${scope}\n\n- 空值总数：`));
-  assert.ok(markdown.includes(`### 疑似合计 / 小计行\n\n${excludedNote}\n\n- 第 44 行`));
-  assert.ok(!markdown.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE")));
+  assert.ok(!html.includes(orders.evaluate("SUSPECTED_TOTAL_NOTE[0]")));
   // The page shows the same sentences.
   assert.equal(textOf(orders, "qualityScopeNote"), scope);
   assert.equal(textOf(orders, "suspectedTotalExcludedNote"), excludedNote);
@@ -9409,14 +9327,15 @@ test("v3.1.0 report: the rows left out are named in the data scale, the filters,
   // One kind only: only that kind; the totals section keeps its usual note.
   const repeats = await sampleWithExclusions({ totals: false });
   const one = reportOf(repeats);
-  assert.ok(one.markdown.includes("\n不计入分析：重复的行 1 行（第 21 行）。\n"));
-  assert.ok(one.markdown.includes(`### 疑似合计 / 小计行\n\n${repeats.evaluate("SUSPECTED_TOTAL_NOTE")}\n`));
-  assert.ok(one.markdown.includes(`## 数据质量报告\n\n${textOf(repeats, "qualityScopeNote")}\n\n`));
   assert.equal(textOf(repeats, "qualityScopeNote"), "质量页检查的是文件里的全部 42 行，包括不计入分析的 1 行；偏大或偏小的值也按这 42 行算。");
   // The same words as the filter panel without a filter.
-  assert.ok(one.markdown.includes("\n未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。\n"));
+  // HTML: the same four places.
+  assert.ok(one.html.includes("<p>不计入分析：重复的行 1 行（第 21 行）。</p>"));
+  assert.match(one.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(repeats.evaluate("SUSPECTED_TOTAL_NOTE[0]"))}<\\/p>`));
+  assert.match(one.html, new RegExp(`<h2>数据质量报告<\\/h2>\\s*<p>${regExpText(textOf(repeats, "qualityScopeNote"))}<\\/p>`));
+  assert.ok(one.html.includes("<p>未设置筛选，结果基于全部 41 行（不含不计入分析的 1 行）。</p>"));
   assert.equal(textOf(repeats, "filterMessage"), "当前分析使用全部 41 行（不含不计入分析的 1 行）。");
-  assert.ok(!one.markdown.includes("完整数据") && !one.html.includes("完整数据"));
+  assert.ok(!one.html.includes("完整数据"));
 });
 
 test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", async () => {
@@ -9426,7 +9345,7 @@ test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", a
   assert.equal(plain.report.exclusions, null);
   assert.equal(plain.report.quality.excludedScope, null);
   assert.equal(plain.report.quality.suspectedTotalsExcluded, 0);
-  for (const text of [plain.html, plain.markdown]) {
+  for (const text of [plain.html]) {
     assert.ok(!text.includes("不计入分析"), text.slice(0, 80));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
   }
@@ -9445,14 +9364,13 @@ test("v3.1.0 report: nothing left out, or an old snapshot, prints none of it", a
   const normalized = JSON.parse(excluded.evaluate("JSON.stringify(normalizeReportSnapshot(__oldReport))"));
   assert.deepEqual([normalized.dataScale.excludedRows, normalized.exclusions, normalized.quality.excludedScope, normalized.quality.suspectedTotalsExcluded, normalized.quality.suspectedTotalExtras], [0, null, null, 0, null]);
   const html = excluded.evaluate("buildHtmlReport(__oldReport, [])");
-  const markdown = excluded.evaluate("buildMarkdownReport(__oldReport)");
-  for (const text of [html, markdown]) {
+  for (const text of [html]) {
     assert.ok(!text.includes("不计入分析"));
     assert.ok(!text.includes("质量页检查的是"));
-    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE")));
+    assert.ok(text.includes(excluded.evaluate("SUSPECTED_TOTAL_NOTE[0]")));
     assert.ok(text.includes(NO_FILTER_SENTENCE));
   }
-  assert.ok(markdown.includes("| 筛除行数 | 0 |\n| 字段总数 | 9 |"));
+  assert.ok(html.includes(`${scaleCard("筛除行数", 0)}${scaleCard("字段总数", 9)}`));
 });
 
 test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no line number", () => {
@@ -9470,30 +9388,29 @@ test("v3.1.0 report: line numbers up to 20, then 等; none when a row has no lin
   scope.evaluate('setRowExclusion("suspectedTotal", true)');
   const report = JSON.parse(scope.evaluate("JSON.stringify(buildReportData())"));
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 0, lines: [] }, overlap: null });
-  assert.ok(scope.evaluate("buildMarkdownReport(buildReportData())").includes("\n不计入分析：疑似合计行 2 行。\n"));
+  assert.ok(scope.evaluate("buildHtmlReport(buildReportData(), [])").includes("<p>不计入分析：疑似合计行 2 行。</p>"));
 });
 
 test("v3.1.0 report: a row of both kinds is counted once, and named, in the 不计入分析 line", async () => {
   const both = await importCsvFile("编号,名称,金额\n1,甲,10\n2,乙,20\n2,乙,20\n3,丙,30\n,合计,80\n,合计,80\n", "totals-and-repeats.csv");
   both.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
-  const { report, html, markdown } = reportOf(both);
+  const { report, html } = reportOf(both);
   assert.equal(report.dataScale.excludedRows, 3);
   assert.deepEqual(report.exclusions, { suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } });
   const line = "不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行），共 3 行（第 7 行两类都是）。";
   assert.ok(html.includes(`<p>${line}</p>`));
-  assert.ok(markdown.includes(`\n${line}\n`));
   assert.ok(html.includes(`${scaleCard("不计入分析行数", 3)}`));
 
   // Without overlap the sentence is unchanged, and the snapshot says null.
   const sample = reportOf(await sampleWithExclusions());
   assert.equal(sample.report.exclusions.overlap, null);
-  assert.ok(sample.markdown.includes("\n不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。\n"));
+  assert.ok(sample.html.includes("<p>不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。</p>"));
   // An old snapshot (no overlap key) gets null and the sentence without 共.
   const old = JSON.parse(both.evaluate('JSON.stringify(buildReportData(new Date("2026-10-25T00:00:00.000Z")))'));
   delete old.exclusions.overlap;
   put(both.context, "__oldOverlap", old);
   assert.equal(both.evaluate("normalizeReportSnapshot(__oldOverlap).exclusions.overlap"), null);
-  assert.ok(both.evaluate("buildMarkdownReport(__oldOverlap)").includes("\n不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。\n"));
+  assert.ok(both.evaluate("buildHtmlReport(__oldOverlap, [])").includes("<p>不计入分析：疑似合计行 2 行（第 6、7 行）、重复的行 2 行（第 4、7 行）。</p>"));
 
   // More than 20 rows of both kinds end in 等; without line numbers only 共 N 行.
   const sentence = (exclusions) => both.evaluate(`formatReportExclusions(${JSON.stringify(exclusions)})`);
@@ -9512,30 +9429,28 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
   assert.ok(htmlText(region, "suspectedTotalDetails").includes(single));
   const regionReport = reportOf(region);
   assert.ok(regionReport.html.includes(`<p>${single}</p>`));
-  assert.ok(regionReport.markdown.includes(`\n${single}\n`));
   // Left out: the excluded note and still the same sentence.
   region.evaluate('setRowExclusion("suspectedTotal", true)');
   const excludedReport = reportOf(region);
-  assert.ok(excludedReport.markdown.includes(`### 疑似合计 / 小计行\n\n${textOf(region, "suspectedTotalExcludedNote")}\n`));
-  assert.ok(excludedReport.markdown.includes("不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。"));
-  assert.ok(excludedReport.markdown.includes(`\n${single}\n`));
+  assert.match(excludedReport.html, new RegExp(`<h3>疑似合计 \\/ 小计行<\\/h3>\\s*<p>${regExpText(textOf(region, "suspectedTotalExcludedNote"))}<\\/p>`));
+  assert.ok(excludedReport.html.includes("<p>不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。</p>"));
+  assert.ok(excludedReport.html.includes(`<p>${single}</p>`));
 
   const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
   const tasksReport = reportOf(tasks);
   for (const sentence of ["另有 89 行也带这类字样，但数字对不上，没有列出。", "其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
     assert.ok(htmlText(tasks, "suspectedTotalDetails").includes(sentence));
     assert.ok(tasksReport.html.includes(`<p>${sentence}</p>`), sentence);
-    assert.ok(tasksReport.markdown.includes(`\n${sentence}\n`), sentence);
   }
   // The sample has neither.
-  const { html, markdown } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
-  for (const text of [html, markdown]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
+  const { html } = reportOf(await clickSampleButton(sampleOrdersFetchedText()));
+  for (const text of [html]) assert.doesNotMatch(text, /只等于上面一行|也带这类字样/);
 });
 
 test("v3.1.0 export: one data export, the rows of the current analysis, and what it leaves out", async () => {
-  const html = repoFile("index.html");
+  const html = indexHtmlSource();
   const options = html.slice(html.indexOf('<div class="data-export-options">'), html.indexOf('<div id="standardizedExportPanel"'));
-  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count">当前分析行数 <strong id="dataExportFilteredCount">0<\/strong><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
+  assert.match(options, /^<div class="data-export-options">\s*<div class="data-export-option">\s*<div>\s*<h3>当前分析的行<\/h3>\s*<p class="export-count"><span id="dataExportFilteredBefore"><\/span><strong id="dataExportFilteredCount">0<\/strong><span id="dataExportFilteredAfter"><\/span><\/p>\s*<p>导出统计、图表用的那批行（筛选后的行）。<span id="dataExportExcludedNote"><\/span><\/p>\s*<\/div>\s*<button id="exportFilteredCsv" type="button" disabled>导出当前分析的行<\/button>\s*<\/div>\s*<div class="data-export-option">\s*<div>\s*<h3>写法统一的表<\/h3>/);
 
   const orders = await clickSampleButton(sampleOrdersFetchedText());
   const downloads = captureDownloads(orders);
@@ -9563,7 +9478,7 @@ test("v3.1.0 export: one data export, the rows of the current analysis, and what
 
 test("v3.1.0 export: the page never says 去重后 or 导出筛选后 CSV again", async () => {
   const words = ["去重后", "导出筛选后 CSV", "筛选后数据", "_filtered"];
-  const html = repoFile("index.html").replace(/<!--[\s\S]*?-->/g, "");
+  const html = indexHtmlSource().replace(/<!--[\s\S]*?-->/g, "");
   for (const word of words) assert.ok(!html.includes(word), word);
   const orders = await clickSampleButton(sampleOrdersFetchedText());
   orders.evaluate('setRowExclusion("suspectedTotal", true); exportProcessedCsv("filtered")');
@@ -9587,10 +9502,10 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
     }
     findOldInterfaceWords(`${name} #suspectedTotalDetails`, htmlText(scope, "suspectedTotalDetails"), hits);
   }
-  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE, formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
-    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL,
+  const fixed = JSON.parse(orders.evaluate(`JSON.stringify([NO_ID_DUPLICATE_NOTE[0], formatUnmatchedTotalLabels(95, 6, true), formatSingleRowTotals(1),
+    formatSuspectedTotalExcludedNote(1), formatSuspectedTotalExcludedNote(5), formatDuplicateIncludedNote(1), formatDuplicateExcludedNote(1), EXCLUSION_DRAFT_REFUSAL[0],
     formatQualityScopeNote(42, 2, 6), formatQualityScopeNote(42, 2, 0), formatAnalysisScope(1, 28, 40, 2), formatNoFilterMessage(40, 2),
-    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL,
+    formatAnalysisContainsNote(1, 1), formatAnalysisContainsNote(1, 0), formatAnalysisContainsNote(0, 1), formatGoToQualityAriaLabel(1, 1), GO_TO_QUALITY_LABEL[0],
     formatReportNoFilterText(40, 2), formatDataExportExcludedNote(2), formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })])`));
   for (const text of fixed) {
     findOldInterfaceWords("format.js", text, hits);
@@ -9600,4 +9515,2198 @@ test("v3.1.0 wording: the new sentences use no old interface word and no space b
   // 不计入分析 is part of several sentences and the button: the button is matched with its markup.
   assert.match(orders.elements.get("suspectedTotalDetails").innerHTML, /data-exclusion-kind="suspectedTotal" data-exclusion-on="false"[^>]*>撤销<\/button>/);
   assert.doesNotMatch(orders.elements.get("suspectedTotalDetails").innerHTML, />不计入分析<\/button>/);
+});
+
+test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes out data-i18n attributes and nothing else", () => {
+  const readCall = new RegExp("(?:" + ["readFileSync", "repoFile"].join("|") + ")\\([^;\\n]*index\\.html");
+  for (const file of ["basic-data-processing.test.cjs", "core.test.cjs", "data-processing.test.cjs", "destructive-qa.test.cjs"]) {
+    const lines = fs.readFileSync(path.join(__dirname, file), "utf8").split(/\r?\n/);
+    const reads = lines.filter((line) => readCall.test(line));
+    assert.ok(reads.every((line) => line.includes("stripI18nAttributes(")), `${file}: ${reads.filter((line) => !line.includes("stripI18nAttributes(")).join(" | ")}`);
+    if (file !== "destructive-qa.test.cjs") {
+      assert.equal(reads.length, 1, file);
+      assert.ok(lines.includes("const DATA_I18N_ATTRIBUTE = /\\s+data-i18n[\\w-]*=\"[^\"]*\"/g;"), file);
+    }
+  }
+  assert.equal(stripI18nAttributes('<p id="a" data-i18n="upload.title" class="b">表格</p>'), '<p id="a" class="b">表格</p>');
+  assert.equal(stripI18nAttributes('<button data-i18n-attr="aria-label=nav.open title=nav.tip" type="button">打开</button>'), '<button type="button">打开</button>');
+  assert.equal(stripI18nAttributes('<details data-i18n-open="x" data-i18n-closed="y">'), "<details>");
+  // Text that only looks like the attribute stays: no leading space, or not an attribute name.
+  assert.equal(stripI18nAttributes("<p>data-i18n=\"x\"</p>"), "<p>data-i18n=\"x\"</p>");
+  assert.equal(stripI18nAttributes('<p data-lang="en" data-i18ndex="1">'), '<p data-lang="en">');
+  assert.equal(stripI18nAttributes('<p data-lang="en">'), '<p data-lang="en">');
+  // The raw file is read by a name the scan above does not see, on purpose: these are the only
+  // comparisons with it. (1) Everything the helper takes out is an attribute inside a start tag,
+  // and as many as the file has data-i18n names.
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8").replace(/\r\n/g, "\n");
+  const taken = [...raw.matchAll(DATA_I18N_ATTRIBUTE)];
+  // (Names written inside a data-i18n-attr value, "data-i18n-open=details.open", have no quote.)
+  assert.equal(taken.length, (raw.match(/\sdata-i18n[\w-]*="/g) || []).length);
+  assert.ok(taken.length > 0);
+  for (const match of taken) {
+    const before = raw.slice(0, match.index);
+    assert.ok(before.lastIndexOf("<") > before.lastIndexOf(">"), `not inside a tag: ${match[0]}`);
+    assert.match(before.slice(before.lastIndexOf("<")), /^<[a-z][\w-]*(?:\s+[^\s=>]+(?:="[^"]*")?)*$/, match[0]);
+  }
+  assert.ok(!indexHtmlSource().includes("data-i18n"));
+  // (2) What is left is index.html as it was at commit 2 (1001bb9, before any data-i18n), byte for
+  // byte, once the v3.2.0 additions that are not attributes are taken out too: the inline script in
+  // <head> and the two language switches. A later commit that changes the Chinese page on purpose
+  // changes this hash and says why.
+  const withoutAdditions = stripI18nAttributes(raw)
+    .replace(/ {2}<!-- v3\.2\.0: the one script[\s\S]*?<\/script>\n/, "")
+    .replace(/\n\s*<button id="(?:languageSwitch|sidebarLanguageSwitch)"[^>]*>English<\/button>/g, "");
+  // The ten cache parameters (?v=x.y.z of style.css and the nine scripts) are written as ?v=VERSION
+  // before hashing, as the report hash blanks the version: a release changes them and nothing else,
+  // and the version itself is pinned place by place by the version test (data-processing). So a
+  // release stays 17 places, and this hash still sees every other character of the page.
+  const cacheParameters = withoutAdditions.match(/\?v=\d+\.\d+\.\d+"/g) || [];
+  assert.equal(cacheParameters.length, 10);
+  const versionless = withoutAdditions.replace(/\?v=\d+\.\d+\.\d+"/g, "?v=VERSION\"");
+  // sha256 of index.html at 1001bb9 with LF line endings was 75fc338d…46851. Commit 10 changed the
+  // Chinese page on purpose: the note above statistics / charts / custom analysis moved out of the
+  // heading into a bar of its own (3 places), and the export's two counts became “共 N 行” (2 places);
+  // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
+  // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
+  // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "2a5cbc9497c04f4745ee6fcc0fc5119addb1659e1554e6c5db51b4fb0cf66031");
+});
+
+// v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
+// whole, so a long original name cut off the labels: the standardized table and the change list
+// got the same name, _前N条 went missing, and problem-row files of different categories or columns
+// got the same name. Now the original name (and the user's column and writing) is cut, the labels
+// never; a name that fitted in 80 is byte for byte the same as before.
+const LONG_NAME_EN71 = "Quarterly Regional Sales Orders Export for the North America Team v2 Q3";
+const LONG_NAME_ZH = (count) => "华东区上半年销售订单明细表".repeat(8).slice(0, count);
+const FILE_NAME_DATE = new Date(2026, 10, 21);
+// The file names as cd4d2a0 builds them: one sanitize over the whole, cut at 80.
+const oldSanitizeFileName = (value) => String(value || "data-report")
+  .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+  .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+const oldCutFileName = (value) => oldSanitizeFileName(value).slice(0, 80) || "data-report";
+const PROBLEM_KIND_WORDS = { missing: "空值", conversion: "认不出", outlier: "偏大或偏小", duplicateRows: "整行重复", idDuplicate: "编号重复", placeholder: "像是空值的写法",
+  parseWarnings: "读取有疑问", suspectedTotal: "疑似合计", formulaError: "公式错误", dateStyle: "日期写法", lookAlike: "写法不一样" };
+
+async function longNameExports(stem) {
+  const scope = await importCsvFile(readExampleCsv("sample-orders.csv"), `${stem}.csv`);
+  put(scope.context, "__fileNameDate", FILE_NAME_DATE);
+  const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+  const problemRows = categories.map((category) => {
+    put(scope.context, "__fileNameCategory", category);
+    const joined = [stem, "问题行", PROBLEM_KIND_WORDS[category.kind], category.field, category.key].filter((part) => part !== undefined && part !== null && part !== "").join("_");
+    return { category, name: scope.evaluate("buildProblemRowsFileName(__fileNameCategory, __fileNameDate)"), joined };
+  });
+  return {
+    scope,
+    problemRows,
+    data: { name: scope.evaluate('buildStandardizedFileName("data", __fileNameDate)'), joined: `${stem}_写法统一` },
+    changes: { name: scope.evaluate('buildStandardizedFileName("changes", __fileNameDate)'), joined: `${stem}_写法统一改动清单` },
+    changesCut: { name: scope.evaluate('buildStandardizedFileName("changes", __fileNameDate, 1048575)'), joined: `${stem}_写法统一改动清单_前1048575条` },
+    analysis: scope.evaluate('buildDataExportFileName("filtered", __fileNameDate)'),
+    report: scope.evaluate("buildReportFileName(\"html\", __fileNameDate)")
+  };
+}
+const beforeDate = (name) => name.replace(/_20261121\.csv$/, "");
+
+test("v3.2.0 long file names: the labels stay, so no two exports of one file get the same name", async () => {
+  for (const stem of [LONG_NAME_EN71, LONG_NAME_ZH(76)]) {
+    const files = await longNameExports(stem);
+    assert.ok(files.data.name.endsWith("_写法统一_20261121.csv"), files.data.name);
+    assert.ok(files.changes.name.endsWith("_写法统一改动清单_20261121.csv"), files.changes.name);
+    assert.ok(files.changesCut.name.endsWith("_写法统一改动清单_前1048575条_20261121.csv"), files.changesCut.name);
+    const names = [files.data.name, files.changes.name, files.changesCut.name, ...files.problemRows.map((item) => item.name)];
+    assert.equal(new Set(names).size, names.length, names.join("\n"));
+    for (const { category, name } of files.problemRows) {
+      assert.ok(name.includes(`_问题行_${PROBLEM_KIND_WORDS[category.kind]}`), name);
+      // The column (and the writing) is still there, maybe cut, after the category word.
+      if (category.field) assert.ok(beforeDate(name).split(`_问题行_${PROBLEM_KIND_WORDS[category.kind]}_`)[1].length > 0, name);
+    }
+    for (const name of names) {
+      assert.ok(beforeDate(name).length <= 80, `${beforeDate(name).length} ${name}`);
+      assert.ok(name.startsWith(stem.slice(0, 10)), name);
+    }
+  }
+  // The rule itself: the parts that may be cut share what the labels leave, longest first (the
+  // first one on a tie); a label is never cut, even past 80; a cut part loses a space it ends with.
+  const { evaluate } = createScriptContext();
+  const labeled = (parts) => evaluate(`buildLabeledFileName(${JSON.stringify(parts)})`);
+  assert.equal(labeled([{ text: "S".repeat(90), cut: true }, { text: "L".repeat(40), cut: false }, { text: "F".repeat(40), cut: true }]),
+    `${"S".repeat(19)}_${"L".repeat(40)}_${"F".repeat(19)}`);
+  assert.equal(labeled([{ text: "S".repeat(10), cut: true }, { text: "L".repeat(90), cut: false }]), `S_${"L".repeat(90)}`);
+  assert.equal(labeled([{ text: `${"a".repeat(74)} b`, cut: true }, { text: "写法统一", cut: false }]), `${"a".repeat(74)}_写法统一`);
+  assert.equal(labeled([{ text: "表".repeat(81), cut: true }]), "表".repeat(80));
+  // One character over: before, the column lost its last character; now the original name does.
+  const over = await longNameExports("B".repeat(69));
+  const missing = over.problemRows.find((item) => item.category.kind === "missing" && item.category.field === "下单日期");
+  assert.equal(missing.joined.length, 81);
+  assert.equal(missing.name, `${"B".repeat(68)}_问题行_空值_下单日期_20261121.csv`);
+});
+
+test("v3.2.0 long file names: every name that fitted in 80 characters is byte for byte as before", async () => {
+  let same = 0;
+  let cut = 0;
+  for (const stem of [LONG_NAME_EN71, LONG_NAME_ZH(40), LONG_NAME_ZH(76), "B".repeat(68), "B".repeat(69), "短名", `  ${"甲".repeat(70)} 乙  `, `a:b?${"x".repeat(60)} \u202Ec`]) {
+    const files = await longNameExports(stem);
+    for (const { name, joined } of [files.data, files.changes, files.changesCut, ...files.problemRows]) {
+      if (oldSanitizeFileName(joined).length > 80) { cut += 1; continue; }
+      assert.equal(name, `${oldCutFileName(joined)}_20261121.csv`, joined);
+      same += 1;
+    }
+    // These two never cut a label: unchanged for every length.
+    assert.equal(files.analysis, `${oldCutFileName(stem)}_当前分析_20261121.csv`);
+    assert.ok(files.report.startsWith(`${oldCutFileName(stem)}-20261121-`), files.report);
+  }
+  // The boundary: 68 + "_问题行_空值_下单日期" is exactly 80 and stays as it was.
+  const exact = (await longNameExports("B".repeat(68))).problemRows.find((item) => item.category.kind === "missing" && item.category.field === "下单日期");
+  assert.equal(exact.joined.length, 80);
+  assert.equal(exact.name, `${exact.joined}_20261121.csv`);
+  assert.ok(same > 50 && cut > 10, `${same} same, ${cut} cut`);
+});
+
+// An original name that ends in a space, the whole name exactly 80 (or 79) characters: it fits, so
+// it is cd4d2a0's name byte for byte, space before "_" included. With "< 80" instead of "<= 80" the
+// 80-character names would go the cutting way and lose that space.
+test("v3.2.0 long file names: 80 and 79 characters with a space before a label are as before", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__fileNameDate", FILE_NAME_DATE);
+  const nameOf = (stem, expression) => {
+    scope.evaluate(`state.sourceFileName = ${JSON.stringify(`${stem}.csv`)}`);
+    return scope.evaluate(expression);
+  };
+  let checked = 0;
+  for (const total of [80, 79]) {
+    // 问题行 · 空值 · <column>: "订单 " + "_问题行_空值_" + the column.
+    const stem = "订单 ";
+    const field = "列".repeat(total - stem.length - "_问题行_空值_".length);
+    put(scope.context, "__spaceCategory", { kind: "missing", field });
+    const problemJoined = `${stem}_问题行_空值_${field}`;
+    assert.equal(problemJoined.length, total);
+    assert.equal(nameOf(stem, "buildProblemRowsFileName(__spaceCategory, __fileNameDate)"), `${oldCutFileName(problemJoined)}_20261121.csv`);
+    assert.ok(nameOf(stem, "buildProblemRowsFileName(__spaceCategory, __fileNameDate)").startsWith("订单 _问题行_"));
+    // 写法统一的表, 改动清单, 改动清单（前 N 条）: an original name of the right length ending in a space.
+    for (const [label, expression] of [["写法统一", 'buildStandardizedFileName("data", __fileNameDate)'], ["写法统一改动清单", 'buildStandardizedFileName("changes", __fileNameDate)'], ["写法统一改动清单_前1048575条", 'buildStandardizedFileName("changes", __fileNameDate, 1048575)']]) {
+      const spaced = `订单${"a".repeat(total - 4 - label.length)} `;
+      const joined = `${spaced}_${label}`;
+      assert.equal(joined.length, total, label);
+      const name = nameOf(spaced, expression);
+      assert.equal(name, `${oldCutFileName(joined)}_20261121.csv`, label);
+      assert.ok(name.includes(` _${label}_20261121`), name);
+      checked += 1;
+    }
+    checked += 1;
+  }
+  assert.equal(checked, 8);
+});
+
+// ---- v3.2.0 commit 4: the language skeleton and the static guard ----
+const i18nGuard = require("./i18n-guard.cjs");
+const i18nWhitelist = () => new Map(i18nGuard.I18N_WHITELIST.map(([file, decl, count]) => [`${file}|${decl}`, count]));
+
+test("v3.2.0 static guard: the tokenizer puts every Han character of the nine scripts in a comment or a literal", () => {
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const source = repoFile(file);
+    const { all, inTokens } = i18nGuard.lexerSelfCheck(source);
+    assert.ok(all > 0, file);
+    assert.equal(inTokens, all, file);
+  }
+  // The guard's own file list is the page's script list.
+  assert.deepEqual(i18nGuard.APP_SCRIPT_NAMES, require("./test-context.cjs").APP_SCRIPT_FILES);
+});
+
+test("v3.2.0 static guard: the whitelist names declarations that exist, with exactly that many Chinese literals", () => {
+  const whitelist = i18nWhitelist();
+  assert.equal(whitelist.size, i18nGuard.I18N_WHITELIST.length, "one entry per file and declaration");
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const tokens = i18nGuard.lex(repoFile(file));
+    const { used } = i18nGuard.checkScriptTokens(file, tokens, whitelist, { rule1: false });
+    for (const [entryFile, decl, count] of i18nGuard.I18N_WHITELIST.filter(([entryFile]) => entryFile === file)) {
+      assert.ok(tokens.some((token) => token.type === "ident" && token.value === decl && token.decl === decl), `${entryFile} ${decl} is declared`);
+      assert.equal(used.get(`${entryFile}|${decl}`), count, `${entryFile} ${decl}`);
+    }
+  }
+});
+
+test("v3.2.0 static guard: rules 1 and 2 in every script (no Chinese outside L(), none in an English argument)", () => {
+  const whitelist = i18nWhitelist();
+  // Commit 9: the list of finished files (commits 5–8 added them one by one) is gone.
+  assert.equal("I18N_DONE_FILES" in i18nGuard, false);
+  assert.equal(i18nGuard.APP_SCRIPT_NAMES.length, 9);
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    const { problems } = i18nGuard.checkScriptTokens(file, i18nGuard.lex(repoFile(file)), whitelist);
+    assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.decl} ${problem.kind}: ${problem.text}`), [], file);
+  }
+});
+
+test("v3.2.0 static guard catches each kind of missed text (the review's 13 cases)", () => {
+  assert.equal(i18nGuard.SELF_TEST_CASES.length, 13);
+  for (const [name, code, expected] of i18nGuard.SELF_TEST_CASES) {
+    const { problems } = i18nGuard.checkScriptTokens("test.js", i18nGuard.lex(code), i18nGuard.SELF_TEST_WHITELIST);
+    assert.equal(problems.length, expected, `${name}: ${problems.map((problem) => problem.kind).join("; ")}`);
+  }
+  // The self-check fails when the tokenizer loses its place (a division read as a regex start
+  // would swallow code): Han in an identifier is outside every literal.
+  const broken = i18nGuard.lexerSelfCheck("const 金额 = 1;");
+  assert.notEqual(broken.inTokens, broken.all);
+});
+
+test("v3.2.0 static guard: index.html has a key for every Chinese text and attribute, and every key has English", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8");
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  // Commit 9: the whole page (commit 4 checked only the top bar, the sidebar and the upload page).
+  const { problems, keys } = i18nGuard.checkIndexHtml(raw, english);
+  assert.deepEqual(problems.map((problem) => `${problem.line} ${problem.kind}: ${problem.text}`), []);
+  assert.equal(keys.size, Object.keys(english).length);
+  // Commit 13: the product name's three places use the keys the name test checks in English.
+  assert.match(raw, /<title data-i18n="page\.title">表格体检 \| 检查 CSV、Excel 表格的数据问题<\/title>/);
+  assert.match(raw, /<a class="brand" href="#mainContent" aria-label="表格体检首页" data-i18n-attr="aria-label=brand\.label">/);
+  assert.match(raw, /<strong data-i18n="brand\.name">表格体检<\/strong>/);
+  const summary = raw.match(/<summary [^>]*>/)[0];
+  assert.match(summary, /data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details\.open data-i18n-closed=details\.closed"/);
+  // The same check finds a Chinese text without a key, an attribute not named and a key without English.
+  const bad = i18nGuard.checkIndexHtml('<p data-i18n="hero.title">甲</p><p>乙</p><b aria-label="丙">x</b><i data-i18n="no.such">丁</i>', english);
+  assert.deepEqual(bad.problems.filter((problem) => problem.line > 0).map((problem) => problem.kind), ["text without data-i18n", "attribute aria-label not in data-i18n-attr"]);
+  assert.ok(bad.problems.some((problem) => problem.kind === "key not in I18N_EN" && problem.text === "no.such"));
+  assert.ok(keys.size > 180, `${keys.size} keys`);
+});
+
+const LANGUAGE_CASES = [
+  ["", ["zh-CN"], "zh"], ["", ["zh"], "zh"], ["", ["zh-TW", "en"], "zh"], ["", ["zh-HK"], "zh"], ["", ["ZH-cn"], "zh"],
+  ["", ["en-US"], "en"], ["", ["en-US", "zh-CN"], "en"], ["", ["ja-JP"], "en"], ["", ["zhx"], "en"], ["", ["fr"], "en"],
+  ["?lang=en", ["zh-CN"], "en"], ["?lang=zh", ["en-US"], "zh"], ["?a=1&lang=en", ["zh-CN"], "en"], ["?lang=en&a=1", ["zh-CN"], "en"],
+  ["?lang=EN", ["zh-CN"], "zh"], ["?lang=EN", ["en-US"], "en"], ["?lang=fr", ["zh-CN"], "zh"], ["?lang=en-US", ["zh-CN"], "zh"], ["?xlang=en", ["zh-CN"], "zh"],
+  ["", [], "zh"], ["", [""], "zh"], ["?lang=en", [], "en"], [undefined, undefined, "zh"]
+];
+
+test("v3.2.0 language: ?lang= first (lower case only), then the browser's first language, Chinese without either", () => {
+  const scope = createScriptContext();
+  for (const [search, languages, expected] of LANGUAGE_CASES) {
+    put(scope.context, "__languageCase", [search, languages]);
+    assert.equal(scope.evaluate("pickInterfaceLanguage(__languageCase[0], __languageCase[1])"), expected, JSON.stringify([search, languages]));
+  }
+  const read = (browser) => { put(scope.context, "__browser", browser); return JSON.parse(scope.evaluate("JSON.stringify(readNavigatorLanguages(__browser))")); };
+  assert.deepEqual(read(null), []);
+  assert.deepEqual(read({ languages: ["en-US", "zh"], language: "zh" }), ["en-US", "zh"]);
+  assert.deepEqual(read({ languages: [], language: "en-GB" }), ["en-GB"]);
+  assert.deepEqual(read({ language: "zh-TW" }), ["zh-TW"]);
+  assert.deepEqual(read({}), []);
+});
+
+test("v3.2.0 language: the inline script in <head> decides as pickInterfaceLanguage() does, defines nothing and only marks <html>", () => {
+  const html = indexHtmlSource();
+  const head = html.slice(0, html.indexOf("</head>"));
+  const inline = [...head.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  assert.equal(inline.length, 1);
+  // Before the style sheet, so the hidden state is set before the first paint; after <title>.
+  assert.ok(head.indexOf("<script>") < head.indexOf('<link rel="stylesheet"'));
+  assert.ok(head.indexOf("</title>") < head.indexOf("<script>"));
+  const vm = require("node:vm");
+  const code = inline[0][1];
+  assert.match(code.trim(), /^\(function \(\) \{[\s\S]*\}\)\(\);$/);
+  const scope = createScriptContext();
+  const browsers = [];
+  for (const [search, languages] of LANGUAGE_CASES) browsers.push([search, languages === undefined ? undefined : { languages, language: languages[0] }]);
+  browsers.push(["", { languages: [], language: "en-US" }], ["", { languages: [], language: "zh-CN" }], ["", { language: "" }], ["?lang=zh", {}]);
+  for (const [search, browser] of browsers) {
+    const marks = [];
+    const sandbox = vm.createContext({
+      window: { location: { search } },
+      navigator: browser || {},
+      document: { documentElement: { setAttribute: (name, value) => marks.push([name, value]) } },
+      String,
+      Array
+    });
+    const before = new Set(Object.keys(sandbox));
+    vm.runInContext(code, sandbox);
+    assert.deepEqual(Object.keys(sandbox).filter((key) => !before.has(key)), [], "no global names");
+    put(scope.context, "__headCase", [search, browser || null]);
+    const expected = scope.evaluate("pickInterfaceLanguage(__headCase[0], readNavigatorLanguages(__headCase[1]))");
+    assert.deepEqual(marks, expected === "en" ? [["data-lang-pending", ""]] : [], JSON.stringify([search, browser]));
+  }
+});
+
+test("v3.2.0 language: style.css hides a marked page and shows it after 3 s without any script; script.js removes the mark", () => {
+  const css = repoFile("style.css");
+  assert.match(cssRule(css, "html[data-lang-pending] body"), /visibility: hidden;\s*animation: lang-pending-reveal 0s linear 3s forwards;/);
+  assert.match(css, /@keyframes lang-pending-reveal \{\s*to \{\s*visibility: visible;\s*\}\s*\}/);
+  // The preview's 收起 / 展开 come from the attributes now, so they can switch language.
+  assert.match(cssRule(css, ".preview-details > summary::after"), /content: attr\(data-i18n-open\);/);
+  assert.match(cssRule(css, ".preview-details:not([open]) > summary::after"), /content: attr\(data-i18n-closed\);/);
+  assert.doesNotMatch(css, /content: "收起"|content: "展开"/);
+  const script = repoFile("script.js");
+  // Removed on the way out of a failed startup check, before the notice, and after the language is set.
+  const check = script.slice(script.indexOf("function ensureDomElementsPresent()"), script.indexOf("throw new Error", script.indexOf("function ensureDomElementsPresent()")));
+  assertInOrder(check, ["if (!missingKeys.length) return;", 'document.documentElement?.removeAttribute("data-lang-pending");', 'const notice = document.createElement("div");']);
+  assert.ok(script.indexOf("\nensureDomElementsPresent();") >= 0 && script.indexOf("\nensureDomElementsPresent();") < script.indexOf("const INITIAL_LANGUAGE"));
+  const startup = script.slice(script.indexOf("const INITIAL_LANGUAGE"));
+  assertInOrder(startup, ["const INITIAL_LANGUAGE = pickInterfaceLanguage(", "if (INITIAL_LANGUAGE !== \"zh\") setInterfaceLanguage(INITIAL_LANGUAGE);", 'document.documentElement?.removeAttribute("data-lang-pending");', "setupResultNavigation();"]);
+  // The startup check's representative of format.js is L (still one per file).
+  assert.match(script, /\["format\.js", typeof L\],/);
+  assert.doesNotMatch(script, /typeof formatNumber/);
+});
+
+test("v3.2.0 language: a test context with an English browser goes through the real startup, a Chinese one changes nothing", () => {
+  const english = createScriptContext({ language: "en" });
+  assert.equal(english.evaluate("currentLanguage"), "en");
+  assert.equal(english.evaluate("INITIAL_LANGUAGE"), "en");
+  assert.equal(english.elements.get("languageSwitch").textContent, "中文");
+  assert.equal(english.elements.get("sidebarLanguageSwitch").textContent, "中文");
+  assert.equal(english.evaluate('L("甲", "A")'), "A");
+  for (const [options, language] of [[{}, "zh"], [{ language: "zh" }, "zh"], [{ language: "en", search: "?lang=zh" }, "zh"], [{ language: "zh", search: "?lang=en" }, "en"]]) {
+    const scope = createScriptContext(options);
+    assert.equal(scope.evaluate("currentLanguage"), language, JSON.stringify(options));
+  }
+  // Chinese: the switches keep the text index.html gives them; nothing writes them.
+  const chinese = createScriptContext({ language: "zh" });
+  assert.equal(chinese.elements.get("languageSwitch").textContent, "");
+});
+
+test("v3.2.0 language: L, Lp / Lpick and enCount follow the language", () => {
+  const scope = createScriptContext();
+  assert.equal(scope.evaluate('L("甲", "A")'), "甲");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(Lp("甲", "A"))')), ["甲", "A"]);
+  assert.equal(scope.evaluate('Object.isFrozen(Lp("甲", "A"))'), true);
+  assert.equal(scope.evaluate('Lpick(Lp("甲", "A"))'), "甲");
+  assert.equal(scope.evaluate("languageSwitchLabel()"), "English");
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scope.evaluate('L("甲", "A")'), "A");
+  assert.equal(scope.evaluate('Lpick(Lp("甲", "A"))'), "A");
+  assert.equal(scope.evaluate("languageSwitchLabel()"), "中文");
+  assert.deepEqual(["enCount(0, \"row\", \"rows\")", "enCount(1, \"row\", \"rows\")", "enCount(2, \"row\", \"rows\")", "enCount(12345, \"row\", \"rows\")"].map((expression) => scope.evaluate(expression)), ["0 rows", "1 row", "2 rows", "12,345 rows"]);
+  scope.evaluate('setInterfaceLanguage("fr")');
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+});
+
+// Elements as the browser has them: own text nodes, attributes.
+function i18nElement(attributes, nodes) {
+  const element = {
+    attributes: { ...attributes },
+    childNodes: nodes.map((node) => (typeof node === "string" ? { nodeType: 3, nodeValue: node } : node)),
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
+    setAttribute(name, value) { this.attributes[name] = String(value); }
+  };
+  return element;
+}
+
+test("v3.2.0 language: the static text switches by its own text nodes and attributes, and comes back byte for byte", () => {
+  const scope = createScriptContext();
+  const count = { nodeType: 1, nodeValue: null, textContent: "（9）" };
+  const fields = i18nElement({ "data-i18n": "sidebar.fields" }, ["字段 ", count]);
+  const choose = i18nElement({ "data-i18n": "upload.choose" }, ["\n              选择数据文件\n            "]);
+  const toggle = i18nElement({ "aria-label": "文件和字段", "data-i18n-attr": "aria-label=sidebar.toggle" }, []);
+  const summary = i18nElement({ "data-i18n-open": "收起", "data-i18n-closed": "展开", "data-i18n-attr": "data-i18n-open=details.open data-i18n-closed=details.closed" }, []);
+  const unknown = i18nElement({ "data-i18n": "no.such.key" }, ["甲"]);
+  put(scope.context, "__i18nElements", [fields, choose, toggle, summary, unknown]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  const snapshot = () => JSON.stringify([fields.childNodes.map((node) => node.nodeValue), choose.childNodes[0].nodeValue, toggle.attributes, summary.attributes, unknown.childNodes[0].nodeValue]);
+  const chinese = snapshot();
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(fields.childNodes.map((node) => node.nodeValue), ["Columns ", null]);
+  assert.equal(fields.childNodes[1], count, "the count element stays");
+  assert.equal(choose.childNodes[0].nodeValue, "\n              Choose a file\n            ");
+  assert.equal(toggle.attributes["aria-label"], "File and columns");
+  assert.deepEqual([summary.attributes["data-i18n-open"], summary.attributes["data-i18n-closed"]], ["Collapse", "Expand"]);
+  assert.equal(unknown.childNodes[0].nodeValue, "甲", "a key without English keeps the Chinese");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(snapshot(), chinese);
+  scope.evaluate('setInterfaceLanguage("en"); setInterfaceLanguage("en"); setInterfaceLanguage("zh")');
+  assert.equal(snapshot(), chinese);
+});
+
+test("v3.2.0 language: the page's Chinese is read at startup, so a switch leaves the text and attributes a script wrote", () => {
+  const scope = createScriptContext();
+  const scopeText = i18nElement({ "data-i18n": "scope.none" }, ["尚未加载数据"]);
+  const title = i18nElement({ "data-i18n": "charts.numeric" }, ["数值字段分布（记录频数）"]);
+  const canvas = i18nElement({ "aria-label": "数值字段分布图", "data-i18n-attr": "aria-label=charts.numericChart" }, []);
+  const untouched = i18nElement({ "data-i18n": "filter.apply", "aria-label": "类别值", "data-i18n-attr": "aria-label=filter.values" }, ["应用筛选"]);
+  put(scope.context, "__i18nElements", [scopeText, title, canvas, untouched]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  scope.evaluate("rememberStaticLanguage()");
+  // After an import the scripts write their own text (textContent puts a new text node in) and
+  // the chart's aria-label.
+  scopeText.childNodes = [{ nodeType: 3, nodeValue: "40 行" }];
+  title.childNodes = [{ nodeType: 3, nodeValue: "Amount（元） 数值分布（记录频数）" }];
+  canvas.setAttribute("aria-label", "Amount（元） 数值分布（记录频数）");
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scopeText.childNodes[0].nodeValue, "40 行");
+  assert.equal(title.childNodes[0].nodeValue, "Amount（元） 数值分布（记录频数）");
+  assert.equal(canvas.attributes["aria-label"], "Amount（元） 数值分布（记录频数）");
+  assert.deepEqual([untouched.childNodes[0].nodeValue, untouched.attributes["aria-label"]], ["Apply filters", "Values"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual([scopeText.childNodes[0].nodeValue, canvas.attributes["aria-label"], untouched.childNodes[0].nodeValue, untouched.attributes["aria-label"]], ["40 行", "Amount（元） 数值分布（记录频数）", "应用筛选", "类别值"]);
+  // script.js reads it before the first switch, in both languages.
+  const script = repoFile("script.js");
+  assert.ok(script.indexOf("rememberStaticLanguage();") > 0 && script.indexOf("rememberStaticLanguage();") < script.indexOf("if (INITIAL_LANGUAGE !== \"zh\") setInterfaceLanguage(INITIAL_LANGUAGE);"));
+});
+
+test("v3.2.0 language: every key of the page has English that keeps its numbers, and the notes are those of format.js", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, ["index", "html"].join(".")), "utf8");
+  const scope = createScriptContext();
+  const english = JSON.parse(scope.evaluate("JSON.stringify(I18N_EN)"));
+  const pairs = [];
+  for (const match of raw.matchAll(/<([a-z0-9]+)\b([^>]*)>([^<]*)/g)) {
+    const attrs = Object.fromEntries([...match[2].matchAll(/([^\s=]+)="([^"]*)"/g)].map((item) => [item[1], item[2]]));
+    if (attrs["data-i18n"]) pairs.push([attrs["data-i18n"], match[3].trim()]);
+    for (const [name, key] of String(attrs["data-i18n-attr"] || "").split(/\s+/).filter(Boolean).map((pair) => pair.split("="))) pairs.push([key, attrs[name]]);
+  }
+  assert.ok(pairs.length > 200, `${pairs.length}`);
+  for (const [key, chinese] of pairs) {
+    if (!chinese) continue;
+    assert.ok(english[key] && !ENGLISH_BAD.test(english[key]), `${key}: ${english[key]}`);
+    // The one exception: the sample's date written as the English sample writes it (02/18/2025).
+    if (key !== "sample.otherDate") assert.deepEqual(numbersOf(english[key]).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)), numbersOf(chinese).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)), `${key}: ${chinese} / ${english[key]}`);
+  }
+  // One key, one Chinese text: a key used twice names the same words.
+  const byKey = new Map();
+  for (const [key, chinese] of pairs) {
+    if (!chinese) continue;
+    if (byKey.has(key)) assert.equal(byKey.get(key), chinese, key);
+    byKey.set(key, chinese);
+  }
+  for (const [key, name] of [["quality.totalsNote", "SUSPECTED_TOTAL_NOTE"], ["quality.formulaNote", "FORMULA_ERROR_NOTE"], ["quality.dateStyleNote", "DATE_STYLE_NOTE"], ["quality.constantNote", "CONSTANT_FIELD_NOTE"], ["quality.lookAlikeNote", "LOOK_ALIKE_NOTE"]]) {
+    assert.equal(english[key], scope.evaluate(`${name}[1]`), key);
+  }
+  // The names the scripts write into the same places.
+  assert.equal(english["export.check"], "Check which cells will change");
+  assert.equal(english["custom.create"], "Create breakdown");
+  assert.equal(english["schema.apply"], "Apply column settings");
+  // The eight module titles say what the Chinese title says, not the navigation's short names.
+  assert.deepEqual(["overview", "schema", "quality", "filter", "statistics", "charts", "custom", "export"].map((name) => english[`${name}.title`]),
+    ["Size and preview", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
+  assert.equal(english["sample.row"], "#");
+  assert.equal(english["note.expand"], scope.evaluate('(() => { const button = { getAttribute: () => "true", setAttribute() {}, previousElementSibling: { classList: { toggle() {} } } }; setInterfaceLanguage("en"); toggleSectionNote({ target: { closest: () => button } }); return button.textContent; })()'));
+});
+
+test("v3.2.0 language: the switch names the other language, sets <html lang> and ?lang=, keeps the module, and waits during an import", () => {
+  const scope = createScriptContext({ search: "?x=1" });
+  const attributes = new Map();
+  for (const id of ["languageSwitch", "sidebarLanguageSwitch"]) {
+    const button = scope.elements.get(id);
+    button.setAttribute = (name, value) => attributes.set(`${id}.${name}`, String(value));
+  }
+  const documentElement = { lang: "zh-CN" };
+  scope.context.document.documentElement = documentElement;
+  const addresses = [];
+  scope.context.window.location.href = "http://127.0.0.1/index.html?x=1#chartsSection";
+  scope.context.window.history.replaceState = (state, title, address) => addresses.push(address);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "en");
+  assert.equal(documentElement.lang, "en");
+  assert.equal(scope.elements.get("languageSwitch").textContent, "中文");
+  assert.equal(attributes.get("languageSwitch.lang"), "zh-CN");
+  assert.equal(attributes.get("sidebarLanguageSwitch.lang"), "zh-CN");
+  assert.deepEqual(addresses, ["/index.html?x=1&lang=en#chartsSection"]);
+  scope.context.window.location.href = "http://127.0.0.1/index.html?x=1&lang=en#chartsSection";
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(documentElement.lang, "zh-CN");
+  assert.equal(scope.elements.get("sidebarLanguageSwitch").textContent, "English");
+  assert.equal(attributes.get("sidebarLanguageSwitch.lang"), "en");
+  assert.equal(addresses[1], "/index.html?x=1&lang=zh#chartsSection");
+  // While a file is read, or a worksheet waits: disabled, and a click does nothing.
+  scope.evaluate("setImportBusy(true)");
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [true, true]);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  scope.evaluate("setImportBusy(false)");
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  scope.evaluate("state.pendingExcel = { workbook: {}, fileName: 'a.xlsx', importId: 1 }; syncLanguageSwitches()");
+  assert.equal(scope.elements.get("languageSwitch").disabled, true);
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  scope.evaluate("state.pendingExcel = null; syncLanguageSwitches()");
+  assert.equal(scope.elements.get("sidebarLanguageSwitch").disabled, false);
+  // script.js: both buttons bound, the worksheet panel followed.
+  const script = repoFile("script.js");
+  assert.match(script, /\[dom\.languageSwitch, dom\.sidebarLanguageSwitch\]\.forEach\(\(button\) => button\.addEventListener\("click", switchInterfaceLanguage\)\);/);
+  assert.match(script, /new MutationObserver\(syncLanguageSwitches\)\.observe\(dom\.sheetSelectionPanel, \{ attributes: true, attributeFilter: \["class"\] \}\);/);
+});
+
+test("v3.2.0 language: two switches, in the top bar of the upload page and at the sidebar's foot, written in the other language", () => {
+  const html = indexHtmlSource();
+  const header = html.slice(html.indexOf('<header class="app-header">'), html.indexOf("</header>"));
+  assert.match(header, /<div class="header-actions">\s*<button id="languageSwitch" class="secondary-button language-switch" type="button" lang="en">English<\/button>\s*<a class="nav-new-analysis secondary-button" href="#dropZone">换一个文件<\/a>/);
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assert.match(sidebar, /<p class="sidebar-privacy">表格只在这台电脑的浏览器里处理，不会上传。<\/p>\s*<button id="sidebarLanguageSwitch" class="secondary-button language-switch sidebar-language-switch" type="button" lang="en">English<\/button>\s*$/);
+  assert.equal((html.match(/class="[^"]*\blanguage-switch\b/g) || []).length, 2);
+  const css = repoFile("style.css");
+  assert.match(css, /body\.has-results \.header-actions \.language-switch \{\s*display: none;\s*\}/);
+  assert.deepEqual(domKeys(createScriptContext()).filter((key) => /language/i.test(key)), ["languageSwitch", "sidebarLanguageSwitch"]);
+});
+
+// ---- v3.2.0 commit 5: the sentences of format.js in English ----
+// The 18 constants set at load time: [中文, English] pairs (Lp), read with Lpick() or [0] / [1].
+const FORMAT_PAIRED_CONSTANTS = ["SUSPECTED_TOTAL_NOTE", "FORMULA_ERROR_NOTE", "EXCLUSION_KIND_LABELS", "EXCLUSION_DRAFT_REFUSAL", "NO_ID_DUPLICATE_NOTE", "CATEGORY_STATS_EMPTY_NOTE",
+  "CATEGORY_CHART_EMPTY_NOTE", "GO_TO_QUALITY_LABEL", "PLACEHOLDER_MAYBE_NOTE", "PLACEHOLDER_DASH_NOTE", "DATE_STYLE_NOTE", "CONSTANT_FIELD_NOTE", "LOOK_ALIKE_NOTE", "DATE_STYLE_NAMES",
+  "VISIBLE_TEXT_NAMES", "LOOK_ALIKE_REASON_NAMES", "STANDARDIZE_ACTION_LABELS", "STANDARDIZE_ORDER_HINT"];
+const ENGLISH_BAD = /[\p{Script=Han}\u3000-\u303F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/u;
+// The one exception (commit 7): the trend note writes its last date as “up to YYYY-MM-DD” in
+// English and “截至 M 月 D 日” in Chinese; that date counts as its month and day, without zeros
+// (its year is in the period's name in both languages).
+const numbersOf = (text) => (String(text).replace(/(only has data up to )(\d{4})-(\d{2})-(\d{2})(?=,)/g, (_, words, year, month, day) => `${words}${Number(month)} ${Number(day)}`).match(/\d[\d,.]*\d|\d/g) || []).sort();
+
+test("v3.2.0 format.js: the 18 constants are frozen [中文, English] pairs, and the English has no Chinese", () => {
+  const scope = createScriptContext();
+  assert.equal(FORMAT_PAIRED_CONSTANTS.length, 18);
+  let pairs = 0;
+  for (const name of FORMAT_PAIRED_CONSTANTS) {
+    const value = scope.context[name] ?? scope.evaluate(name);
+    const list = Array.isArray(value) ? [value] : Object.values(value);
+    assert.ok(Object.isFrozen(value), name);
+    for (const pair of list) {
+      assert.ok(Array.isArray(pair) && pair.length === 2 && Object.isFrozen(pair), name);
+      assert.match(pair[0], /\p{Script=Han}/u, name);
+      // The one English that is not a fixed text: the maybe-valid note names this column's writings (R11).
+      const english = typeof pair[1] === "function" ? pair[1](["NA"]) : pair[1];
+      assert.equal(typeof english, "string", name);
+      assert.ok(english.length > 0 && !ENGLISH_BAD.test(english), `${name}: ${english}`);
+      pairs += 1;
+    }
+  }
+  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 10, VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
+  assert.equal(pairs, 13 + 2 + 10 + 13 + 4 + 13);
+  // The page notes, as index.html will have them in English (commit 9 checks I18N_EN against these).
+  assert.equal(scope.evaluate("SUSPECTED_TOTAL_NOTE[1]"), "These rows still count as ordinary data, so their numbers are counted again in sums, averages and the check for unusually high or low values.");
+  assert.equal(scope.evaluate("LOOK_ALIKE_NOTE[1]").split(": ")[0], "Leading or trailing spaces");
+});
+
+// Every function of format.js that writes text, called with the same arguments in both languages.
+const FORMAT_TEXT_CALLS = [
+  'formatConversionFailures(3, ["N/A", "x1", "about 500"], "3")',
+  'numericAxisLabel("Weight", "Weight")', 'numericAxisLabel("Rate", "Rate")', 'formatFieldLabelWithUnit("Amount", "kg")',
+  'formatNumberConversion({ field: "Weight", unit: "kg", unitCount: 5, unitSamples: ["5kg", "6kg", "7kg"], magnitudeCount: 2, fullwidthCount: 1, conflictUnits: [] })',
+  'formatNumberConversion({ field: "Weight", unit: "", unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 0, conflictUnits: [{ unit: "kg", count: 5 }, { unit: "t", count: 1 }] })',
+  'formatNumericLookingHint({ field: "Floor", valueCount: 6, numericCount: 4, ratio: 0.6667, samples: ["B1", "B2"] })',
+  'formatTotalMatchedFields(["a", "b", "c", "d", "e", "f", "g"])', 'formatTotalMatchedFields(["a", "b"])',
+  'formatTotalAddends({ scope: "segment", firstLine: 5, lastLine: 32, rowCount: 28, contiguous: true })',
+  'formatTotalAddends({ scope: "above", firstLine: 2, lastLine: 13, rowCount: 9, contiguous: false })',
+  'formatTotalAddends({ scope: "segment", firstLine: 9, lastLine: 9, rowCount: 1, contiguous: true })',
+  'formatTotalAddends({ scope: "all", firstLine: null, lastLine: null, rowCount: 12, contiguous: true })',
+  'formatSuspectedTotal({ line: 33, label: "Total", matches: [{ fields: ["Sales", "Cost"], scope: "segment", firstLine: 5, lastLine: 32, rowCount: 28, contiguous: true }, { fields: ["Qty"], scope: "all", firstLine: null, lastLine: null, rowCount: 9, contiguous: true }] })',
+  'formatSuspectedTotal({ line: null, label: "Sum", matches: [{ fields: ["Qty"], scope: "above", firstLine: 3, lastLine: 3, rowCount: 1, contiguous: true }] })',
+  "formatSuspectedTotalOverflow(21)",
+  'formatSuspectedTotalStatus([{ line: 44, label: "Total" }])', 'formatSuspectedTotalStatus([{ line: null, label: "Total" }])',
+  'formatSuspectedTotalStatus([1, 2, 3, 4, 5, 6, 7].map((line) => ({ line, label: "Subtotal" })))', 'formatSuspectedTotalStatus([{ line: 5, label: "A" }, { line: 8, label: "B" }])',
+  "formatExclusionLines([44])", "formatExclusionLines([1, 2, 3, 4, 5, 6, 7])",
+  "formatExclusionRestored(1)", "formatExclusionRestored(3)", "formatTotalsFlaggedAgain([5])", "formatTotalsFlaggedAgain([5, 8])", "formatTotalsFlaggedAgain([null, null])",
+  "formatExcludedTail(2)", "formatAnalysisScope(1, 28, 40, 2)", "formatAnalysisScope(2, 28, 40, 0)", "formatAnalysisScope(0, 40, 40, 2)", "formatAnalysisScope(0, 42, 42, 0)", "formatAnalysisScope(0, 1, 1, 0)",
+  "formatAllIncludedRows(40, 2)", "formatAllIncludedRows(42, 0)", "formatDataExportExcludedNote(2)", "formatReportNoFilterText(40, 2)", "formatNoFilterMessage(40, 2)", "formatNoFilterMessage(42, 0)",
+  "formatFiltersApplied(2, 17, 23)", "formatFiltersApplied(1, 0, 40)", "formatPreviewPageInfo(1, 3, 120, 2, false)", "formatPreviewPageInfo(2, 3, 120, 2, true)",
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: true, currentCount: 17, includedCount: 40, totalCount: 42, excludedCount: 2 })',
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: false, currentCount: 40, includedCount: 40, totalCount: 42, excludedCount: 2 })',
+  'formatCustomAnalysisScope({ groupField: "Region", metricField: "Amount", aggregateLabel: "sum", filtered: false, currentCount: 42, includedCount: 42, totalCount: 42, excludedCount: 0 })',
+  "formatQualityScopeNote(42, 2, 6)", "formatQualityScopeNote(42, 1, 0)", "formatSuspectedTotalExcludedNote(1)", "formatSuspectedTotalExcludedNote(5)",
+  "formatSingleRowTotals(1)", "formatSingleRowTotals(6)", "formatUnmatchedTotalLabels(95, 6, true)", "formatUnmatchedTotalLabels(7, 6, true)",
+  "formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 30, lines: Array.from({ length: 20 }, (_, i) => i + 2) } })",
+  "formatReportExclusions({ suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } })",
+  "formatReportExclusions({ suspectedTotal: { count: 2, lines: null }, duplicateRows: { count: 2, lines: null }, overlap: { count: 1, lines: null } })",
+  "formatDuplicateIncludedNote(1)", "formatDuplicateIncludedNote(3)", "formatDuplicateExcludedNote(1)", "formatDuplicateExcludedNote(3)",
+  "formatAnalysisContainsNote(1, 1)", "formatAnalysisContainsNote(2, 0)", "formatAnalysisContainsNote(0, 3)", "formatGoToQualityAriaLabel(1, 1)", "formatGoToQualityAriaLabel(0, 1)",
+  'formatExclusionMessage({ kind: "suspectedTotal", on: true, rows: 1, changed: 1, before: 42, after: 41 })',
+  'formatExclusionMessage({ kind: "duplicateRows", on: true, rows: 2, changed: 0, before: 40, after: 40 })',
+  'formatExclusionMessage({ kind: "suspectedTotal", on: true, rows: 1, changed: 0, before: 40, after: 40 })',
+  'formatExclusionMessage({ kind: "duplicateRows", on: false, rows: 3, changed: 3, before: 39, after: 42 })',
+  'formatExclusionMessage({ kind: "suspectedTotal", on: false, rows: 1, changed: 0, before: 41, after: 41 })',
+  "formatFormulaErrorStatus([{ count: 3 }, { count: 4 }])", 'formatStatusNoteSummary("orders.csv", 2)', 'formatStatusNoteSummary("orders.csv", 1)',
+  "formatSchemaSearchPlaceholder(21)", 'formatReturnToAnalysis("orders.csv")',
+  'formatFormulaError({ field: "Margin", count: 3, byError: { "#DIV/0!": 2, "#REF!": 1 }, lines: [3, 5, 9] })',
+  'formatFormulaError({ field: "Margin", count: 12, byError: { "#N/A": 12 }, lines: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], fieldIgnored: true })',
+  'formatFormulaError({ field: "Margin", count: 1, byError: { "#VALUE!": 1 }, lines: [null] })',
+  'formatHeaderDetectionNote({ headerRowNumber: 2, skippedRows: [{ preview: "Sales 2025" }] })',
+  'formatHeaderDetectionNote({ headerRowNumber: 5, skippedRows: [{ preview: "A" }, { preview: "B" }, { preview: "C" }] })', 'formatHeaderDetectionNote({ headerRowNumber: 3, skippedRows: [] })',
+  'formatCsvWarningMessage("TooFewFields", { line: 12, cellCount: 2, headerCount: 4 })', 'formatCsvWarningMessage("TooFewFields", { line: 12 })',
+  'formatCsvWarningMessage("TooFewFields", { cellCount: 1, headerCount: 4 })', 'formatCsvWarningMessage("TooFewFields")',
+  'formatCsvWarningMessage("InvalidQuotes", { line: 7 })', 'formatCsvWarningMessage("InvalidQuotes")',
+  'formatCsvWarningMessage("UndetectableDelimiter", { separator: ";" })', 'formatCsvWarningMessage("UndetectableDelimiter", { separator: "|" })',
+  'formatCsvWarningMessage("UndetectableDelimiter", { separator: String.fromCharCode(9) })',
+  ...["missing", "conversion", "outlier", "duplicateRows", "idDuplicate", "placeholder", "suspectedTotal", "formulaError", "dateStyle", "lookAlike", "parseWarnings"].flatMap((kind) => [
+    `formatProblemViewLabel({ kind: "${kind}", field: "Amount", key: "N/A", count: 3 })`,
+    `formatProblemCategoryLabel({ kind: "${kind}", field: "Amount", key: "N/A", count: 3 })`,
+    `formatProblemRowsSummary({ kind: "${kind}" }, { count: 2, groupCount: 1, items: [1, 2, 3] }, 1, 2)`
+  ]),
+  "formatRowNumberList([6, 19])", "formatRowNumberList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 15)", "formatIdenticalRows(2, 1)", "formatIdenticalRows(4, 2)",
+  "formatIdDuplicateOverflow(12, 10)", 'formatCleanIdFieldsNote(["ID", "Name"])', 'formatCleanIdFieldsNote(["ID"], true)',
+  'formatMostlyRepeatedIdHint({ field: "User", distinctCount: 5, nonMissingCount: 120, uniqueRatio: 0.0417 })',
+  'formatPlaceholderValue({ key: "N/A", rawValues: ["N/A", "n/a"] })', "formatPlaceholderRows([15], 1)", "formatPlaceholderRows([2, 3], 5)", "formatPlaceholderRows([null], 1)",
+  'formatPlaceholderChange("Amount", 0, "numeric", { typeKey: "numeric", missingCount: 1 })', 'formatPlaceholderChange("Amount", 2, "category", { typeKey: "numeric", missingCount: 5 })',
+  'formatPendingPlaceholder({ field: "Amount", key: "N/A", rawValues: ["N/A"], count: 1, rowNumbers: [15] }, formatPlaceholderChange("Amount", 0, "numeric", { typeKey: "numeric", missingCount: 1 }))',
+  'formatConfirmedPlaceholder({ field: "Note", key: "N/A", rawValues: ["N/A"], count: 2, fieldIgnored: true })',
+  'formatPlaceholderNotes(["-", "N/A"])', 'formatPlaceholderNotes(["NA", "/"])',
+  'formatPlaceholderCounts("N/A", { missing: 0, failures: 1, typeKey: "numeric", listed: true }, { missing: 1, failures: 0, typeKey: "numeric", listed: false }, true)',
+  'formatPlaceholderCounts("-", { missing: 1, failures: 0, typeKey: "category", listed: false }, { missing: 0, failures: 0, typeKey: "category", listed: true }, false)',
+  'formatPlaceholderTypeChange("Amount", "category", "numeric")', "formatPlaceholderRowCount(42, false)", "formatPlaceholderRowCount(40, true)",
+  'formatPlaceholderConfirmMessage({ field: "Amount", key: "N/A", count: 1, before: { missing: 0, failures: 1, typeKey: "numeric", listed: false }, after: { missing: 1, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderConfirmMessage({ field: "Date", key: "-", count: 3, before: { missing: 0, failures: 3, typeKey: "date", listed: false }, after: { missing: 3, failures: 0, typeKey: "date", listed: false }, rowCount: 40, rowsLeftOut: true })',
+  'formatPlaceholderConfirmMessage({ field: "Size", key: "none", count: 4, before: { missing: 0, failures: 0, typeKey: "category", listed: false }, after: { missing: 4, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderUndoMessage({ field: "Amount", key: "N/A", count: 1, before: { missing: 1, failures: 0, typeKey: "numeric", listed: false }, after: { missing: 0, failures: 1, typeKey: "numeric", listed: false }, rowCount: 42 })',
+  'formatPlaceholderUndoMessage({ field: "Size", key: "none", count: 4, before: { missing: 4, failures: 0, typeKey: "numeric", listed: false }, after: { missing: 0, failures: 0, typeKey: "category", listed: false }, rowCount: 40, rowsLeftOut: true })',
+  'formatPlaceholderUndoMessage({ field: "Note", key: "N/A", count: 2, ignored: true })',
+  'formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }, { field: "Rep", key: "--" }], [{ field: "Amount", typeKey: "numeric", previousTypeKey: "category" }], 42, false)',
+  'formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }], [], 40, true)',
+  'formatDateStyleLine({ field: "Hired", styles: [{ key: "excelCell", count: 24, sample: "2016-04-01" }, { key: "ymdSlash", count: 2, sample: "2021/3/5" }, { key: "english", count: 4, sample: "Mar 5, 2021" }], otherCount: 6 })',
+  'formatDateStyleLine({ field: "Hired", styles: [{ key: "ymdDash", count: 9, sample: "2021-03-05" }, { key: "dayMonthSame", count: 1, sample: "05/05/2021" }], otherCount: 1 })',
+  'formatConstantField({ field: "Note", value: "OK", count: 6, missingCount: 3 })', 'formatConstantField({ field: "Note", value: " OK", count: 1, missingCount: 0 })',
+  'formatLookAlikeReasons(["compat", "case", "invisible", "innerSpace"])',
+  'formatLookAlikeLine({ field: "Region", edgeSpaceCount: 2, edgeSample: "East ", invisibleOnlyCount: 1, groups: [{ variants: [{ text: "HD", count: 2 }, { text: "hd", count: 1 }], variantCount: 3, reasons: ["case"] }], groupCount: 3, rowCount: 18 })',
+  'formatLookAlikeLine({ field: "Region", edgeSpaceCount: 0, edgeSample: "", invisibleOnlyCount: 0, groups: [{ variants: [{ text: "a  b", count: 1 }, { text: "a b", count: 4 }], reasons: ["innerSpace"] }], groupCount: 1, rowCount: 5 })',
+  'formatDateStyleRowNote("ymdSlash", "excelCell")', 'formatLookAlikeRowNote("East ", { position: 0, reasons: ["case", "compat"] }, true, true)', 'formatLookAlikeRowNote("x", null, true, false)',
+  ...["date", "number", "placeholder", "trim", "keptTime", "keptPercent", "keptScientific", "keptCurrencyMix", "keptPendingPlaceholder", "keptDateUnreadable", "keptDateOrder", "keptNumberUnreadable", "keptUnsafe"].map((action) => `formatStandardizeAction("${action}")`),
+  "formatStandardizedExportGate(false, false, false)", "formatStandardizedExportGate(true, true, false)", "formatStandardizedExportGate(true, false, false)",
+  'formatStandardizeFieldNotes({ kind: "year", unit: "kg", number: 3, field: "Weight", orderHint: true }).join(" | ")',
+  'formatStandardizeKept({ kept: 2, keptSamples: ["2024-05-08 10:30", "TBD"] })',
+  'formatStandardizedChangesStatus(100, 250, "orders_changes.csv")', 'formatStandardizedChangesStatus(3, 3, "orders_changes.csv")',
+  "formatStandardizedSummary({ changed: 12, kept: 3, quietCount: 4, ignoredCount: 1 })", "formatStandardizedSummary({ changed: 0, kept: 0, quietCount: 0, ignoredCount: 2 })",
+  "formatStandardizedSummary({ changed: 1, kept: 0, quietCount: 0, ignoredCount: 0 })"
+];
+// Numbers the English adds on purpose: 万 and 亿 written out.
+const ENGLISH_EXTRA_NUMBERS = ["10,000", "100,000,000"];
+
+test("v3.2.0 format.js: every sentence in English keeps the Chinese sentence's numbers and has no Chinese", () => {
+  const scope = createScriptContext();
+  put(scope.context, "__unitRows", Array.from({ length: 5 }, (_, index) => ({ Weight: `${index + 5}kg`, Rate: `${(index + 1) * 10}%`, Amount: String(index) })));
+  scope.evaluate('commitTabularData(["Weight", "Rate", "Amount"], __unitRows, "units.csv", beginImport())');
+  // The type names come from profiling.js and are paired in commit 7; until then, their keys.
+  scope.evaluate("fieldTypeLabel = (typeKey) => typeKey");
+  const failures = [];
+  for (const call of FORMAT_TEXT_CALLS) {
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const zh = scope.evaluate(call);
+    scope.evaluate('setInterfaceLanguage("en")');
+    const en = scope.evaluate(call);
+    if (typeof zh !== "string" || typeof en !== "string") { failures.push(`${call}: not a string`); continue; }
+    if (!zh) { failures.push(`${call}: empty`); continue; }
+    if (ENGLISH_BAD.test(en)) failures.push(`${call}: Chinese in the English: ${en}`);
+    if (/\p{Script=Han}|[、。，：；（）「」]/u.test(zh) && zh === en) failures.push(`${call}: not translated: ${en}`);
+    const zhNumbers = numbersOf(zh);
+    const enNumbers = numbersOf(en);
+    const left = [...enNumbers];
+    for (const number of zhNumbers) {
+      const at = left.indexOf(number);
+      if (at < 0) failures.push(`${call}: ${number} missing from the English: ${zh} / ${en}`);
+      else left.splice(at, 1);
+    }
+    const extra = left.filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+    if (extra.length) failures.push(`${call}: English has ${extra.join(" ")} more: ${zh} / ${en}`);
+  }
+  assert.deepEqual(failures, []);
+  assert.ok(FORMAT_TEXT_CALLS.length > 150, `${FORMAT_TEXT_CALLS.length}`);
+});
+
+test("v3.2.0 format.js: the English sentences read as written", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  const en = (expression) => scope.evaluate(expression);
+  assert.equal(en("formatAnalysisScope(1, 28, 40, 2)"), "1 filter · 28 / 40 rows (2 more excluded from analysis)");
+  assert.equal(en("formatAnalysisScope(0, 42, 42, 0)"), "All 42 rows");
+  assert.equal(en("formatSuspectedTotalExcludedNote(1)"), "1 row is excluded from analysis: stats, charts, breakdowns and filters no longer include it.");
+  assert.equal(en("formatReportExclusions({ suspectedTotal: { count: 1, lines: [44] }, duplicateRows: { count: 1, lines: [21] } })"), "Excluded from analysis: 1 possible total row (row 44), 1 duplicate row (row 21).");
+  assert.equal(en("formatReportExclusions({ suspectedTotal: { count: 2, lines: [6, 7] }, duplicateRows: { count: 2, lines: [4, 7] }, overlap: { count: 1, lines: [7] } })"),
+    "Excluded from analysis: 2 possible total rows (rows 6, 7), 2 duplicate rows (rows 4, 7), 3 rows in all (row 7 is both).");
+  assert.equal(en('formatSuspectedTotalStatus([{ line: 44, label: "Total" }])'), "Row 44 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.equal(en('formatFormulaError({ field: "Margin", count: 3, byError: { "#DIV/0!": 2, "#REF!": 1 }, lines: [3, 5, 9] })'), "“Margin”: 3 (#DIV/0! 2, #REF! 1), rows 3, 5, 9.");
+  assert.equal(en('formatHeaderDetectionNote({ headerRowNumber: 2, skippedRows: [{ preview: "Sales 2025" }] })'), "The header is on row 2; 1 row above it was skipped: “Sales 2025”.");
+  assert.equal(en('formatProblemCategoryLabel({ kind: "missing", field: "Region", count: 1 })'), "Blanks · Region (1 row)");
+  assert.equal(en('formatCsvWarningMessage("TooFewFields", { line: 12, cellCount: 2, headerCount: 4 })'), "Row 12 has only 2 columns (the header has 4); the missing cells are treated as blank.");
+  assert.equal(en('formatStandardizeAction("date")'), "Date rewritten as YYYY-MM-DD");
+  assert.equal(en('formatVisibleText(" a" + String.fromCharCode(9) + "b ")'), "␣a[tab]b␣");
+  assert.equal(en("formatPreviewPageInfo(1, 1, 1, 0, false)"), "Page 1 of 1, 1 row");
+  // Back in Chinese the same calls give the Chinese.
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate("formatAnalysisScope(0, 42, 42, 0)"), "全部 42 行");
+  assert.equal(scope.evaluate('formatVisibleText(" a" + String.fromCharCode(9) + "b ")'), "␣a[制表符]b␣");
+});
+
+test("v3.2.0 format.js: the English maybe-valid note names only the writings this column has (R11)", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["N/A", "-"])'), "“-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA", "/"])'), "“NA”, “/” may also be real values (for example a yes/no answer, or NA for North America); make sure that in this column they mean there is no data.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA"])'), "“NA” may also be a real value (for example NA for North America); make sure that in this column it means there is no data.");
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["N/A", "NULL"])'), "");
+  // Chinese keeps its one fixed sentence.
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate('formatPlaceholderNotes(["NA", "/"])'), PLACEHOLDER_MAYBE_NOTE_TEXT);
+});
+
+test("v3.2.0 format.js: the per-row texts never call L() (both arguments would be built for every row)", () => {
+  const scope = createScriptContext();
+  for (const language of ["zh", "en"]) {
+    scope.evaluate(`setInterfaceLanguage("${language}")`);
+    scope.evaluate("globalThis.__lCalls = 0; globalThis.__realL ??= L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+    scope.evaluate('formatDateStyleRowNote("ymdSlash", "excelCell"); formatLookAlikeRowNote("East ", { position: 0, reasons: ["case"] }, true, true); formatStandardizeAction("trim"); formatVisibleText(" x "); formatCsvWarningMessage("TooFewFields", { line: 3, cellCount: 1, headerCount: 2 }); formatCsvWarningMessage("InvalidQuotes", { line: 3 })');
+    assert.equal(scope.evaluate("__lCalls"), 0, language);
+    // The counter itself works.
+    scope.evaluate('formatExcludedTail(2)');
+    assert.equal(scope.evaluate("__lCalls"), 1, language);
+    scope.evaluate("L = globalThis.__realL");
+  }
+});
+
+// ---- v3.2.0 commit 6: the sentences of app.js in English ----
+// A table with English names and values that reaches most of app.js: an ID column with a repeated
+// ID, a repeated row, N/A, a total row, a short row (a reading issue), two date formats, "east" next
+// to "East", a value with a trailing space, a blank region and regions whose order depends on the
+// sort key ("(A)", "Z", blank; R3).
+function englishScenarioCsv() {
+  const regions = ["East", "(A)", "Z", "North"];
+  const rows = Array.from({ length: 16 }, (_, index) => ({
+    id: `A${String(index + 1).padStart(2, "0")}`,
+    region: index === 5 ? "east" : index === 9 ? "" : regions[index % 4],
+    amount: index === 3 ? "N/A" : String((index + 1) * 100),
+    date: index === 7 || index === 11 ? `01/${String(index + 2).padStart(2, "0")}/2025` : `2025-01-${String(index + 2).padStart(2, "0")}`,
+    rep: index === 4 ? "Cy " : ["Ann", "Bob", "Cy", "Dee"][index % 4]
+  }));
+  const line = (row) => [row.id, row.region, row.amount, row.date, row.rep].join(",");
+  const amounts = [...rows, rows[2]].map((row) => Number(row.amount)).filter(Number.isFinite);
+  return ["ID,Region,Amount,Date,Rep", ...rows.map(line), line(rows[2]), "A17,East", `Total,,${amounts.reduce((sum, value) => sum + value, 0)},,`].join("\r\n") + "\r\n";
+}
+
+async function importCsvInLanguage(text, fileName, language) {
+  const scope = createScriptContext({ language });
+  put(scope.context, "XLSX", XLSX);
+  scope.context.window.XLSX = XLSX;
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  const bytes = Buffer.from(text, "utf8");
+  put(scope.context, "__languageFile", { name: fileName, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  await scope.evaluate("parseDataFile(__languageFile)");
+  return scope;
+}
+
+// Every element's text, markup, options and attributes (the fake setAttribute keeps nothing, so
+// it is recorded on the shared prototype for the length of the scenario).
+function elementTexts(scope) {
+  const out = {};
+  for (const [id, element] of scope.elements) {
+    out[id] = [element.textContent, element.innerHTML, element.value, ...(element.options || []).map((option) => `${option.textContent ?? ""}`), ...Object.values(element.__attributes || {})].join(" ¦ ");
+  }
+  return out;
+}
+
+// The steps, the same in both languages; texts after each.
+async function runLanguageScenario(language) {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+  const steps = [["import", elementTexts(scope)]];
+  const step = (name, expression) => { scope.evaluate(expression); steps.push([name, elementTexts(scope)]); };
+  step("blanks", "confirmAllCommonPlaceholders()");
+  step("exclude", `["suspectedTotal", "duplicateRows"].forEach((kind) => handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: kind, exclusionOn: "true" } }) } }))`);
+  step("filter", `(() => {
+    const values = getCategoryFilterOptions("Region").map((option) => option.value);
+    dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+    state.categoryFilterDraftValues = new Set(values.slice(0, 3));
+    applyFilters();
+  })()`);
+  step("field type", 'stageFieldTypeChange("Rep", "ignore"); applyFieldConfiguration()');
+  step("custom", 'dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  step("standardize", "checkStandardizedExport()");
+  const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+  categories.forEach((category, index) => {
+    put(scope.context, "__scenarioCategory", category);
+    step(`problem rows ${index}`, "openProblemView(__scenarioCategory)");
+  });
+  step("status fold", "toggleStatusNote()");
+  step("clear filters", "clearAllFilters()");
+  return { scope, steps, categories };
+}
+
+async function withRecordedAttributes(action) {
+  const proto = Object.getPrototypeOf(createScriptContext().elements.get("languageSwitch") || createScriptContext().evaluate("dom.languageSwitch"));
+  const original = proto.setAttribute;
+  proto.setAttribute = function setAttribute(name, value) { (this.__attributes ??= {})[name] = String(value); };
+  try {
+    return await action();
+  } finally {
+    proto.setAttribute = original;
+  }
+}
+
+// The Chinese of the scripts' L() / Lp() calls, in pieces of two or more Han characters, without
+// the pieces the whitelisted data literals also hold (“空值” of BLANK_GROUP_KEY, say).
+function doneFileChineseFragments() {
+  const pieces = (file, chineseArgumentOnly) => new Set(i18nGuard.lex(repoFile(file))
+    .filter((token) => (token.type === "str" || token.type === "tmpl") && (!chineseArgumentOnly || (token.lFrame && token.lFrame.arg === 0)))
+    .flatMap((token) => token.value.match(/\p{Script=Han}{2,}/gu) || []));
+  const done = new Set(i18nGuard.APP_SCRIPT_NAMES.flatMap((file) => [...pieces(file, true)]));
+  for (const file of i18nGuard.APP_SCRIPT_NAMES) {
+    // Also a piece inside one of the data literals outside L().
+    const texts = i18nGuard.lex(repoFile(file)).filter((token) => (token.type === "str" || token.type === "tmpl") && !token.lFrame).map((token) => token.value);
+    for (const piece of [...done]) if (texts.some((text) => text.includes(piece))) done.delete(piece);
+  }
+  return [...done];
+}
+
+test("v3.2.0 app.js: in English the page never shows the Chinese of the files that are done, and every element keeps the numbers of its Chinese text", async () => {
+  const [zh, en] = await withRecordedAttributes(async () => [await runLanguageScenario("zh"), await runLanguageScenario("en")]);
+  assert.equal(en.scope.evaluate("currentLanguage"), "en");
+  assert.ok(zh.categories.length >= 8, `${zh.categories.length} problem categories`);
+  assert.deepEqual(en.categories, zh.categories);
+  const fragments = doneFileChineseFragments();
+  assert.ok(fragments.length > 300, `${fragments.length} fragments`);
+  const leaks = [];
+  const numberGaps = [];
+  en.steps.forEach(([name, texts], stepIndex) => {
+    const zhTexts = zh.steps[stepIndex][1];
+    assert.equal(zh.steps[stepIndex][0], name);
+    for (const [id, text] of Object.entries(texts)) {
+      const leaked = fragments.filter((fragment) => text.includes(fragment));
+      if (leaked.length) leaks.push(`${name} #${id}: ${leaked.slice(0, 3).join(" / ")} in ${text.slice(0, 120)}`);
+      const zhNumbers = numbersOf(zhTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+      const enNumbers = numbersOf(text).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number));
+      if (zhNumbers.join(" ") !== enNumbers.join(" ")) numberGaps.push(`${name} #${id}: ${zhNumbers.join(" ")} / ${enNumbers.join(" ")}`);
+    }
+  });
+  assert.deepEqual(leaks.slice(0, 15), [], `${leaks.length} leaks`);
+  assert.deepEqual(numberGaps.slice(0, 15), [], `${numberGaps.length} elements with other numbers`);
+  // The steps really ran: a filter, two kinds left out, a custom analysis, a standardized check.
+  assert.equal(en.scope.evaluate("state.excludedRows.suspectedTotal.length + state.excludedRows.duplicateRows.length"), 2);
+  assert.ok(en.scope.evaluate("Boolean(state.customAnalysis && state.standardizedExport)"));
+});
+
+test("v3.2.0 app.js: the filter values keep the Chinese order in both languages (R3); only the empty one's label changes", () => {
+  const orders = [];
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Region"], ["(A)", "Z", "", "(A)", "Z", ""].map((Region) => ({ Region })));
+    orders.push(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label, option.count]))')));
+  }
+  assert.deepEqual(orders[0], [["", "（空值）", 2], ["(A)", "(A)", 2], ["Z", "Z", 2]]);
+  assert.deepEqual(orders[1], [["", "(Blank)", 2], ["(A)", "(A)", 2], ["Z", "Z", 2]]);
+});
+
+test("v3.2.0 app.js: the import message is kept as figures and written in the language it is shown in", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const status = JSON.parse(scope.evaluate("JSON.stringify(state.importStatus)"));
+  assert.deepEqual(Object.keys(status).sort(), ["affectedRows", "formulaErrors", "headerDetection", "sourceDisplayName", "suspectedTotals", "warningCount"]);
+  assert.equal(status.warningCount, 1);
+  assert.equal(status.affectedRows, 1);
+  const chinese = textOf(scope, "statusPanel");
+  assert.equal(chinese, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 20 行「Total」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  scope.evaluate('setInterfaceLanguage("en"); showImportStatus(state.importStatus)');
+  assert.equal(textOf(scope, "statusPanel"), "The CSV is loaded, but there is 1 reading issue in 1 row. Check the data preview and the number of columns. Row 20 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 1 note");
+  // Back from 换一个文件: written again, now in Chinese, byte for byte as after the import.
+  scope.evaluate('setInterfaceLanguage("zh"); showUploadPage(); returnToAnalysis()');
+  assert.equal(textOf(scope, "statusPanel"), chinese);
+});
+
+test("v3.2.0 app.js: one-off messages are written again in the other language, and back byte for byte", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  scope.evaluate('confirmPlaceholder("Amount", "N/A")');
+  scope.evaluate(`handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: "duplicateRows", exclusionOn: "true" } }) } })`);
+  scope.evaluate('stageFieldTypeChange("Rep", "ignore")');
+  scope.evaluate("applyFilters()");
+  scope.evaluate('state.problemView = { category: { kind: "missing", field: "Nope" }, page: 1, list: { items: [] } }; refreshProblemView()');
+  const ids = ["placeholderMessage", "duplicateExclusionMessage", "fieldConfigMessage", "filterMessage", "problemRowsMessage"];
+  const chinese = ids.map((id) => textOf(scope, id));
+  chinese.forEach((text, index) => assert.match(text, /\p{Script=Han}/u, ids[index]));
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  const english = ids.map((id) => textOf(scope, id));
+  english.forEach((text, index) => assert.ok(text && !ENGLISH_BAD.test(text), `${ids[index]}: ${text}`));
+  assert.equal(english[4], "This category has no problem rows any more.");
+  assert.equal(english[2], "Column settings have changes that are not applied. Click “Apply column settings” first, then apply the filters.");
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.deepEqual(ids.map((id) => textOf(scope, id)), chinese);
+  // An empty message forgets the element: nothing is written back into it.
+  scope.evaluate('setProblemRowsMessage(""); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "problemRowsMessage"), "");
+  assert.equal(scope.evaluate("oneOffMessages.has(dom.problemRowsMessage)"), false);
+});
+
+test("v3.2.0 app.js: the rebuild message is built at the click in both languages; a later switch shows the counts of the click", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  scope.evaluate('confirmPlaceholder("Amount", "N/A")');
+  const chinese = textOf(scope, "placeholderMessage");
+  // The short row has no Amount: one blank before. 19 rows: 16, the repeated one, the short one and the total.
+  assert.match(chinese, /^已把「Amount」的 1 个「N\/A」按空值处理：空值 1 → 2，认不出 1 → 0。.*行数还是 19。/);
+  // Afterwards a row is left out (the analysis has 18 rows), and only then the language switches:
+  // the English still has the counts of the click.
+  scope.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(scope.evaluate("getIncludedRows().length"), 18);
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  assert.match(textOf(scope, "placeholderMessage"), /^Treated 1 “N\/A” in “Amount” as blank: blanks 1 → 2, not recognized 1 → 0\..*there are still 19 rows\./);
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "placeholderMessage"), chinese);
+  // The language is the one shown before the message was built.
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+});
+
+test("v3.2.0 app.js: the (excluded) suffix of a problem row is no L() call, one per listed row", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  scope.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const notes = JSON.parse(scope.evaluate("JSON.stringify(Array.from({ length: 50 }, () => markExcludedNote({ index: state.excludedRows.suspectedTotal[0], note: \"x\" }, getExcludedIndexSet())))"));
+  assert.equal(scope.evaluate("__lCalls"), 0);
+  scope.evaluate("L = globalThis.__realL");
+  assert.equal(notes[0], "x (excluded from analysis)");
+});
+
+test("v3.2.0 format.js English wording: values (not categories), treated as blank, counts with their unit, date formats as written", () => {
+  const scope = createScriptContext();
+  scope.evaluate('setInterfaceLanguage("en")');
+  const en = (expression) => scope.evaluate(expression);
+  assert.equal(en("Lpick(CATEGORY_STATS_EMPTY_NOTE)"), "The rows in analysis have no non-blank values.");
+  assert.equal(en("Lpick(CATEGORY_CHART_EMPTY_NOTE)"), "The rows in analysis have no values to count");
+  assert.equal(en('formatPlaceholderCounts("-", { missing: 0, failures: 0, typeKey: "category", listed: false }, { missing: 1, failures: 0, typeKey: "category", listed: false }, true)'), "blanks 0 → 1, the value counts no longer have “-”");
+  assert.equal(en('formatPlaceholderCounts("-", { missing: 1, failures: 0, typeKey: "category", listed: false }, { missing: 0, failures: 0, typeKey: "category", listed: false }, false)'), "blanks 1 → 0, the value counts have “-” again");
+  assert.match(en("Lpick(LOOK_ALIKE_NOTE)"), /so value counts, filters and duplicate IDs count them separately\..*so value counts and filters show an extra value you cannot see\.$/);
+  // No English sentence of format.js says category or categories any more, nor treated as empty.
+  const english = [...repoFile("format.js").matchAll(/Lp?\(\s*(?:"[^"]*"|`[^`]*`)\s*,\s*("[^"]*"|`[^`]*`)/g)].map((match) => match[1]).join("\n");
+  assert.ok(english.length > 5000);
+  // (category.key and category.count are the variable, not a word.)
+  assert.doesNotMatch(english, /categor(?!y\.)|treated as empty|white space/i);
+  assert.match(en('formatPlaceholderConfirmMessage({ field: "Amount", key: "N/A", count: 2, before: { missing: 0, failures: 2, typeKey: "numeric", listed: false }, after: { missing: 2, failures: 0, typeKey: "numeric", listed: false }, rowCount: 42 })'), /Only these 2 cells are treated as blank;/);
+  assert.match(en('formatAllPlaceholdersMessage([{ field: "Amount", key: "N/A" }], [], 42, false)'), /Only these cells are treated as blank and no rows are deleted/);
+  // Every category label counts in its unit.
+  assert.deepEqual(["missing", "conversion", "idDuplicate", "parseWarnings"].map((kind) => en(`formatProblemCategoryLabel({ kind: "${kind}", field: "Amount", count: 3 })`)),
+    ["Blanks · Amount (3 rows)", "Numbers or dates not recognized · Amount (3 values)", "Duplicate IDs · Amount (3 duplicate values)", "Reading issues (3 issues)"]);
+  assert.equal(en('formatProblemCategoryLabel({ kind: "parseWarnings", count: 1 })'), "Reading issues (1 issue)");
+  assert.deepEqual(JSON.parse(en("JSON.stringify(Object.fromEntries(Object.entries(DATE_STYLE_NAMES).map(([key, pair]) => [key, pair[1]])))")), {
+    excelCell: "Excel date cell", ymdDash: "text YYYY-MM-DD", ymdSlash: "text YYYY/MM/DD", ymdDot: "text YYYY.MM.DD", chinese: "text with Chinese year/month/day characters",
+    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only"
+  });
+  assert.equal(en("Lpick(VISIBLE_TEXT_OTHER)"), "[whitespace]");
+  assert.equal(en('I18N_EN["sidebar.status"]'), "Current status");
+});
+
+test("v3.2.0 profiling.js: the type names are [中文, English] pairs (Ignored); profile.type stays the Chinese name", () => {
+  const scope = createScriptContext({ language: "en" });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.fromEntries(Object.keys(FIELD_TYPE_LABELS).map((key) => [key, FIELD_TYPE_LABELS[key]])))")), {
+    numeric: ["数值", "Number"], category: ["分类", "Text"], date: ["日期", "Date"], id: ["ID", "ID"], ignore: ["忽略", "Ignored"]
+  });
+  assert.ok(scope.evaluate("Object.isFrozen(FIELD_TYPE_LABELS)"));
+  assert.deepEqual(["numeric", "category", "date", "id", "ignore"].map((key) => scope.evaluate(`fieldTypeLabel("${key}")`)), ["Number", "Text", "Date", "ID", "Ignored"]);
+  // The profile is data (the v2.8.1 digest holds it): the Chinese name in both languages.
+  commitRows(scope, ["Amount", "Region"], [{ Amount: "1", Region: "East" }, { Amount: "2", Region: "West" }]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.type))")), ["数值", "分类"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(["numeric", "ignore"].map((key) => scope.evaluate(`fieldTypeLabel("${key}")`)), ["数值", "忽略"]);
+});
+
+test("v3.2.0 stats.js: the group of blanks keeps its Chinese key (R3) and is shown as (Blank) in English", () => {
+  const groups = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Amount", "Region"], [{ Amount: "1", Region: "" }, { Amount: "2", Region: "East" }, { Amount: "4", Region: "" }]);
+    groups[language] = JSON.parse(scope.evaluate('JSON.stringify(groupNumericFieldByCategory("Amount", "Region").map((group) => [group.name, displayGroupName(group.name)]))'));
+    assert.equal(scope.evaluate("BLANK_GROUP_KEY"), "（空值）");
+  }
+  assert.deepEqual(groups.zh.map(([key]) => key), groups.en.map(([key]) => key));
+  assert.ok(groups.en.some(([key, label]) => key === "（空值）" && label === "(Blank)"), JSON.stringify(groups.en));
+  assert.ok(groups.zh.some(([key, label]) => key === "（空值）" && label === "（空值）"), JSON.stringify(groups.zh));
+  // A value that is written （空值） in the data is the same group in both languages (as before).
+  const scope = createScriptContext({ language: "en" });
+  assert.equal(scope.evaluate('displayGroupName("East")'), "East");
+});
+
+test("v3.2.0 importer.js: a formula error with no known writing is #错误 in both languages (it is the cell's text)", () => {
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    assert.equal(scope.evaluate("FORMULA_ERROR_FALLBACK"), "#错误");
+  }
+});
+
+test("v3.2.0 importer.js: reading issues are kept as code and figures and written in the language shown", async () => {
+  // A short row (a row with more cells stops the import).
+  const text = "a,b,c\n1,2,3\n4,5\n7,8,9\n10\n";
+  const scope = await importCsvInLanguage(text, "short.csv", "zh");
+  const stored = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings)"));
+  assert.ok(stored.length >= 1);
+  for (const warning of stored) {
+    assert.equal("message" in warning, false, JSON.stringify(warning));
+    assert.deepEqual(Object.keys(warning).sort(), ["code", "params", "row", "sourceMessage"]);
+  }
+  assert.deepEqual(stored.map((warning) => [warning.row, warning.code, warning.params]), [
+    [3, "TooFewFields", { line: 3, cellCount: 2, headerCount: 3, separator: "" }],
+    [5, "TooFewFields", { line: 5, cellCount: 1, headerCount: 3, separator: "" }]
+  ]);
+  const chinese = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))"));
+  // The text of v3.1.0, from the figures.
+  assert.deepEqual(chinese, ["第 3 行只有 2 列（表头有 3 列），缺少的单元格按空值处理。", "第 5 行只有 1 列（表头有 3 列），缺少的单元格按空值处理。"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))"));
+  assert.deepEqual(english, ["Row 3 has only 2 columns (the header has 3); the missing cells are treated as blank.", "Row 5 has only 1 column (the header has 3); the missing cells are treated as blank."]);
+  english.forEach((message, index) => {
+    assert.ok(!ENGLISH_BAD.test(message), message);
+    assert.deepEqual(numbersOf(message), numbersOf(chinese[index]), `${message} / ${chinese[index]}`);
+  });
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map(formatParseWarning))")), chinese);
+  // An old message (a string) is shown as it is.
+  assert.equal(scope.evaluate('formatParseWarning({ row: 3, code: "X", message: "原样" })'), "原样");
+});
+
+test("v3.2.0 stats.js: the trend conclusion is figures (computeTrendInsight) and a sentence (formatTrendInsight)", () => {
+  const scope = createScriptContext({ language: "zh" });
+  const sentence = (data, language) => {
+    scope.evaluate(`setInterfaceLanguage("${language}")`);
+    put(scope.context, "__trend", data);
+    return scope.evaluate("formatTrendInsight(__trend)");
+  };
+  const partial = { yearly: false, year: 2025, label: "2025-06", month: 6, day: 15 };
+  const cases = [
+    [{ dateField: "Date", kind: "none" }, "日期字段「Date」里没有认得出的日期，因此未生成趋势结论。", "The date column “Date” has no recognized dates, so there is no trend summary."],
+    [{ dateField: "Date", kind: "few" }, "日期字段「Date」可用于趋势分析，但有效时间点不足以判断变化方向。", "The date column “Date” can show a trend, but it has too few points in time to tell the direction."],
+    [{ dateField: "Date", kind: "flat", yearly: false, from: "2025-01", to: "2025-06", ratio: 0, partial: null }, "基于日期字段「Date」观察，记录数趋势 从 2025-01 到 2025-06 基本持平。", "By the date column “Date”, the record count stays about the same from 2025-01 to 2025-06."],
+    [{ dateField: "Date", kind: "up", yearly: false, from: "2025-01", to: "2025-06", ratio: 0.25, partial },
+      "基于日期字段「Date」观察，记录数趋势 从 2025-01 到 2025-06 呈上升变化，变化幅度约 25.0%。注意：最后一期（2025-06）的数据截至 6 月 15 日，可能不完整，比较结果仅供参考。",
+      "By the date column “Date”, the record count rises from 2025-01 to 2025-06, by about 25.0%. Note: the last period (2025-06) only has data up to 2025-06-15, so it may be incomplete and the comparison is only a guide."],
+    [{ dateField: "Year", kind: "down", yearly: true, from: "2023", to: "2025", ratio: 0.5, partial: { yearly: true, year: 2025, label: "2025", month: 3, day: 1 } },
+      "基于日期字段「Year」观察，年度记录数趋势 从 2023 到 2025 呈下降变化，变化幅度约 50.0%。注意：最后一期（2025 年）的数据截至 3 月 1 日，可能不完整，比较结果仅供参考。",
+      "By the date column “Year”, the yearly record count falls from 2023 to 2025, by about 50.0%. Note: the last period (2025) only has data up to 2025-03-01, so it may be incomplete and the comparison is only a guide."]
+  ];
+  for (const [data, zh, en] of cases) {
+    assert.equal(sentence(data, "zh"), zh);
+    assert.equal(sentence(data, "en"), en);
+    assert.deepEqual(numbersOf(en), numbersOf(zh), en);
+  }
+  // The exception of numbersOf() is that sentence only, and still tells a wrong day or month.
+  assert.deepEqual(numbersOf("only has data up to 2025-06-15, so"), ["15", "6"]);
+  assert.deepEqual(numbersOf("from 2025-06-15 to 2025-07-01."), ["2025-06-15", "2025-07-01"].flatMap((date) => date.split("-")).sort());
+  assert.notDeepEqual(numbersOf(cases[3][2].replace("2025-06-15", "2025-06-16")), numbersOf(cases[3][1]));
+  // (Month and day swapped have the same numbers; the whole sentences above catch that.)
+  assert.notDeepEqual(numbersOf(cases[4][2].replace("2025-03-01", "2025-03-02")), numbersOf(cases[4][1]));
+});
+
+test("v3.2.0 app.js: the trend figures are kept for a switch and cleared with the analysis", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const data = JSON.parse(scope.evaluate("JSON.stringify(state.trendInsightData)"));
+  assert.ok(data && ["flat", "up", "down"].includes(data.kind), JSON.stringify(data));
+  const chinese = scope.evaluate("state.chartInsights.trend");
+  assert.equal(chinese, scope.evaluate("buildTrendInsight(dom.dateChartField.value)"));
+  // The figures are not computed again: the sentence from the kept figures in English keeps the
+  // numbers. (Commit 11: a switch draws the page again from the rows, so it is the trend's
+  // computation that must not run, not every read of the rows.)
+  scope.evaluate("globalThis.__realTrend = computeTrendInsight; computeTrendInsight = () => { throw new Error(\"computed\"); }");
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = scope.evaluate("formatTrendInsight(state.trendInsightData)");
+  assert.equal(scope.evaluate("state.chartInsights.trend"), english);
+  scope.evaluate("computeTrendInsight = globalThis.__realTrend");
+  assert.ok(!ENGLISH_BAD.test(english), english);
+  assert.deepEqual(numbersOf(english), numbersOf(chinese), `${english} / ${chinese}`);
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.evaluate("state.trendInsightData"), null);
+});
+
+test("v3.2.0 quality.js: problem-row notes in English, picked once per list (no L() call per row)", async () => {
+  const zh = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  const en = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  const categories = JSON.parse(zh.evaluate("JSON.stringify(state.problemCategories)"));
+  assert.ok(categories.length >= 8);
+  const notesOf = (scope) => categories.map((category) => {
+    put(scope.context, "__category", category);
+    return JSON.parse(scope.evaluate("JSON.stringify(listProblemRows(__category).items.map((item) => item.note))"));
+  });
+  const zhNotes = notesOf(zh);
+  en.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const enNotes = notesOf(en);
+  const lCalls = en.evaluate("__lCalls");
+  en.evaluate("L = globalThis.__realL");
+  // Some lists format a bound or a number (formatFieldNumber may call L once a list); never once a row.
+  const rows = enNotes.flat().length;
+  assert.ok(rows > 20, `${rows} rows`);
+  assert.ok(lCalls < categories.length, `${lCalls} L() calls for ${rows} rows`);
+  // Many rows of one kind: a list of 12 blanks, 4 values not recognized and 7 rows of one repeat group
+  // makes no L() call at all.
+  const many = createScriptContext({ language: "en" });
+  commitRows(many, ["Amount", "Note"], Array.from({ length: 36 }, (_, index) => ({ Amount: index < 12 ? "" : index < 16 ? `x${index}` : String(index), Note: index >= 30 ? "same" : `n${index}` })).concat(Array.from({ length: 6 }, () => ({ Amount: "35", Note: "same" }))));
+  many.evaluate("globalThis.__lCalls = 0; globalThis.__realL = L; L = (...args) => { globalThis.__lCalls += 1; return globalThis.__realL(...args); }");
+  const manyNotes = JSON.parse(many.evaluate('JSON.stringify([listMissingRows("Amount"), listConversionFailureRows("Amount"), listDuplicateRowGroups()].map((list) => list ? list.items.map((item) => item.note) : null))'));
+  const manyCalls = many.evaluate("__lCalls");
+  many.evaluate("L = globalThis.__realL");
+  assert.deepEqual(manyNotes.map((notes) => notes && notes.length), [12, 4, 7]);
+  assert.deepEqual([manyNotes[0][0], manyNotes[1][0], manyNotes[2][0]], ["Blank", "Not recognized as a number", "Group 1 (kept)"]);
+  assert.equal(manyCalls, 0);
+  enNotes.forEach((notes, index) => {
+    assert.equal(notes.length, zhNotes[index].length);
+    notes.forEach((note, position) => {
+      assert.ok(!/\p{Script=Han}/u.test(note.replace(/「[^」]*」|“[^”]*”/g, "")), note);
+      assert.deepEqual(numbersOf(note), numbersOf(zhNotes[index][position]), `${note} / ${zhNotes[index][position]}`);
+    });
+  });
+  const all = new Set(enNotes.flat());
+  for (const note of ["Blank", "Group 1 (kept)", "Group 1"]) assert.ok(all.has(note), `${note} in ${[...all].slice(0, 20).join(" | ")}`);
+  assert.ok([...all].some((note) => /^Above the upper bound /.test(note)), [...all].join(" | "));
+});
+
+test("v3.2.0 script.js: the self-check notice and the sample messages have English", () => {
+  const source = repoFile("script.js");
+  assert.match(source, /"The page was updated\. Refresh it to continue\."/);
+  assert.match(source, /"Refresh"/);
+  // The notice reads the mark before removing it (format.js may be the missing file).
+  assert.ok(source.indexOf('hasAttribute?.("data-lang-pending")') < source.indexOf('removeAttribute("data-lang-pending")'));
+});
+
+test("v3.2.0 quality.js English wording: a writing like a blank that is not treated as blank yet, and one that is", async () => {
+  const notesOf = (scope) => JSON.parse(scope.evaluate('JSON.stringify([...new Set(listPlaceholderRows("Amount", "N/A").items.map((item) => item.note))])'));
+  const en = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  const zh = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  assert.deepEqual(notesOf(en), ["Not treated as blank yet"]);
+  assert.deepEqual(notesOf(zh), ["待确认"]);
+  en.evaluate('confirmPlaceholder("Amount", "N/A")');
+  zh.evaluate('confirmPlaceholder("Amount", "N/A")');
+  assert.deepEqual(notesOf(en), ["Treated as blank"]);
+  assert.deepEqual(notesOf(zh), ["已按空值处理"]);
+});
+
+// ---- v3.2.0 commit 8: the report, file names and CSV columns in English ----
+// The scenario's steps that reach every part of the report: values like blanks pending, the
+// repeated row left out, a filter, a breakdown with a date column, a standardized check.
+async function reportScenario(language, csv = englishScenarioCsv(), fileName = "orders.csv") {
+  const scope = await importCsvInLanguage(csv, fileName, language);
+  const fields = JSON.parse(scope.evaluate("JSON.stringify(state.fields)"));
+  if (fields.includes("Region")) {
+    scope.evaluate('setRowExclusion("duplicateRows", true)');
+    scope.evaluate(`(() => {
+      dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+      state.categoryFilterDraftValues = new Set(getCategoryFilterOptions("Region").map((option) => option.value).slice(0, 3));
+      applyFilters();
+    })()`);
+    scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  }
+  scope.evaluate("checkStandardizedExport()");
+  // The analysis time is the clock of the import: the same for both languages, or the two reports
+  // differ by a second now and then (commit 11 found the number comparison flaky).
+  scope.evaluate('state.analysisCompletedAt = new Date("2026-10-25T08:00:00.000Z")');
+  return scope;
+}
+
+// The report's text a reader sees: no style block, no tags, entities as characters.
+const reportVisibleText = (html) => html.replace(/<style>[\s\S]*?<\/style>/, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+
+test("v3.2.0 report.js: an English report has <html lang=\"en\">, no Chinese and every number of the Chinese report", async () => {
+  const zh = reportOf(await reportScenario("zh"));
+  const en = reportOf(await reportScenario("en"));
+  assert.match(zh.html, /^<!DOCTYPE html>\n<html lang="zh-CN">/);
+  assert.match(en.html, /^<!DOCTYPE html>\n<html lang="en">/);
+  const text = reportVisibleText(en.html);
+  assert.ok(!ENGLISH_BAD.test(text), text.slice(Math.max(0, text.search(ENGLISH_BAD) - 40), text.search(ENGLISH_BAD) + 40));
+  assert.deepEqual(numbersOf(text), numbersOf(reportVisibleText(zh.html)));
+  // Every part was there: the filter, the row left out, the breakdown, the pending blank-like values.
+  for (const heading of ["Filters", "Column types", "Data quality", "Values that may mean blank", "Breakdown by group", "Date trends", "Automatic conclusions"]) {
+    assert.ok(text.includes(heading), heading);
+  }
+  // The kept values after a colon, each in curly quotes; the blank one is (Blank) without quotes.
+  assert.ok(text.includes("Region: keeps 3 of 6 values: (Blank), “(A)”, “east”"), text.slice(text.indexOf("Region: keeps"), text.indexOf("Region: keeps") + 80));
+  assert.deepEqual(en.report.filters[0].keptValues, ["(Blank)", "(A)", "east"]);
+  assert.match(zh.report.filters[0].description, /^Region：保留 3 \/ 共 6 个类别（（空值）、\(A\)、east）$/);
+  assert.match(text, /Metric column:\s+Amount\s+Group by:\s+Region\s+Aggregation:\s+sum\s+Date column:\s+Date/);
+  // The two trend sentences, each with its direction.
+  assert.match(text, /The date column “Date” has \d+ points in time; the record count goes from \d+ in \d{4}-\d{2}(?:-\d{2})? to \d+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
+  assert.match(text, /By “Date”, the sum of “Amount” goes from [\d,.]+ in \d{4}-\d{2}(?:-\d{2})? to [\d,.]+ in \d{4}-\d{2}(?:-\d{2})?, (?:rising|falling|about the same) overall\./);
+  assert.match(en.html, /<title>orders\.csv - Sheet Checkup report<\/title>/);
+  // The version is the report's own (pinned by the version test), so a release does not touch this.
+  const reportVersion = en.report.version.replace(/\./g, "\\.");
+  assert.match(reportVersion, /^v\d+\\\.\d+\\\.\d+$/);
+  assert.match(en.html, new RegExp(`<footer>Created by <a href="https://github\\.com/wy-data-30/smart-tabular-analyzer">Sheet Checkup</a> ${reportVersion} in your browser; no data was uploaded\\.</footer>`));
+  // The type names of the snapshot are those of the export's language; in Chinese, profile.type.
+  assert.deepEqual(en.report.fieldTypes.map((field) => field.appliedType), ["ID", "Text", "Number", "Date", "Text"]);
+  assert.deepEqual(zh.report.fieldTypes.map((field) => [field.inferredType, field.appliedType]), JSON.parse((await reportScenario("zh")).evaluate("JSON.stringify(state.profiles.map((profile) => [profile.inferredType, profile.type]))")));
+});
+
+test("v3.2.0 report.js: the sample orders (Chinese data) give an English report with every number of the Chinese one", async () => {
+  const csv = readExampleCsv("sample-orders.csv");
+  const zh = reportOf(await reportScenario("zh", csv, "sample-orders.csv"));
+  const en = reportOf(await reportScenario("en", csv, "sample-orders.csv"));
+  assert.deepEqual(numbersOf(reportVisibleText(en.html)), numbersOf(reportVisibleText(zh.html)));
+  // Only the data and the sample's own Chinese name pieces are Chinese in the English report.
+  const dataPieces = new Set((csv.match(/\p{Script=Han}+/gu) || []));
+  const leftover = (reportVisibleText(en.html).match(/\p{Script=Han}+/gu) || []).filter((piece) => ![...dataPieces].some((data) => data.includes(piece)));
+  assert.deepEqual([...new Set(leftover)], []);
+});
+
+test("v3.2.0 report.js: English file names use the label words of the plan; the Chinese ones are as before", async () => {
+  const day = 'new Date("2026-10-25T12:00:00")';
+  const names = {};
+  for (const language of ["zh", "en"]) {
+    const scope = await reportScenario(language);
+    const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+    names[language] = {
+      data: scope.evaluate(`buildDataExportFileName("filtered", ${day})`),
+      standardized: scope.evaluate(`buildStandardizedFileName("data", ${day})`),
+      changes: scope.evaluate(`buildStandardizedFileName("changes", ${day})`),
+      first: scope.evaluate(`buildStandardizedFileName("changes", ${day}, 2)`),
+      report: scope.evaluate(`buildReportFileName("html", ${day})`),
+      problems: categories.map((category) => { put(scope.context, "__nameCategory", category); return [category.kind, scope.evaluate(`buildProblemRowsFileName(__nameCategory, ${day})`)]; })
+    };
+  }
+  assert.deepEqual([names.en.data, names.en.standardized, names.en.changes, names.en.first, names.en.report],
+    ["orders_in-analysis_20261025.csv", "orders_standardized_20261025.csv", "orders_standardized-changes_20261025.csv", "orders_standardized-changes_first-2_20261025.csv", names.zh.report]);
+  assert.deepEqual([names.zh.data, names.zh.standardized, names.zh.changes, names.zh.first],
+    ["orders_当前分析_20261025.csv", "orders_写法统一_20261025.csv", "orders_写法统一改动清单_20261025.csv", "orders_写法统一改动清单_前2条_20261025.csv"]);
+  const words = { missing: "blank", conversion: "unrecognized", outlier: "high-or-low", duplicateRows: "duplicate-rows", idDuplicate: "duplicate-ids", placeholder: "blank-like", parseWarnings: "reading-issues", suspectedTotal: "possible-totals", formulaError: "formula-errors", dateStyle: "mixed-date-formats", lookAlike: "variants" };
+  names.en.problems.forEach(([kind, name], index) => {
+    assert.ok(name.startsWith(`orders_problem-rows_${words[kind]}`) && name.endsWith("_20261025.csv"), name);
+    // The same name with the Chinese labels in their place.
+    const zhName = names.zh.problems[index][1];
+    assert.equal(name.replace(`_problem-rows_${words[kind]}`, ""), zhName.replace(/_问题行_[^_]+/, ""), `${name} / ${zhName}`);
+  });
+  // The eleven words, each a pair with the Chinese of v3.1.0.
+  const scope = createScriptContext({ language: "en" });
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.fromEntries(Object.entries(PROBLEM_KIND_FILE_NAMES).map(([kind, pair]) => [kind, pair[1]])))")), words);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.values(PROBLEM_KIND_FILE_NAMES).map((pair) => pair[0]))")),
+    ["空值", "认不出", "偏大或偏小", "整行重复", "编号重复", "像是空值的写法", "读取有疑问", "疑似合计", "公式错误", "日期写法", "写法不一样"]);
+});
+
+test("v3.2.0 report.js: long English names keep their label words (R1)", async () => {
+  const stem = "a".repeat(90);
+  const scope = await reportScenario("en", englishScenarioCsv(), `${stem}.csv`);
+  const category = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories.find((item) => item.kind === \"missing\"))"));
+  put(scope.context, "__longCategory", category);
+  const day = 'new Date("2026-10-25T12:00:00")';
+  const problem = scope.evaluate(`buildProblemRowsFileName(__longCategory, ${day})`);
+  const first = scope.evaluate(`buildStandardizedFileName("changes", ${day}, 1048575)`);
+  assert.match(problem, new RegExp(`^a+_problem-rows_blank_${category.field}_20261025\\.csv$`));
+  assert.match(first, /^a+_standardized-changes_first-1048575_20261025\.csv$/);
+  for (const name of [problem, first]) assert.equal(name.replace(/_20261025\.csv$/, "").length, 80, name);
+});
+
+test("v3.2.0 report.js: the CSV columns the exports add are in the language of the export", () => {
+  const scope = createScriptContext({ language: "zh" });
+  const headers = (fields) => { put(scope.context, "__headerFields", fields); return JSON.parse(scope.evaluate("JSON.stringify(buildProblemRowsCsvHeaders(__headerFields))")); };
+  assert.deepEqual(headers(["文件行号", "说明", "x"]), ["文件行号（2）", "说明（2）", "文件行号", "说明", "x"]);
+  assert.deepEqual(headers(["File row", "x"]), ["文件行号", "说明", "File row", "x"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Lpick(STANDARDIZED_CHANGE_HEADERS))")), ["文件行号", "字段", "原值", "导出值", "处理"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(headers(["File row", "Note", "File row (2)", "x"]), ["File row (3)", "Note (2)", "File row", "Note", "File row (2)", "x"]);
+  assert.deepEqual(headers(["文件行号", "x"]), ["File row", "Note", "文件行号", "x"]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Lpick(STANDARDIZED_CHANGE_HEADERS))")), ["File row", "Column", "Original", "Exported", "Action"]);
+});
+
+test("v3.2.0 report.js: the exported CSV files of an English export start with the English columns", async () => {
+  const scope = await reportScenario("en");
+  const downloads = captureDownloads(scope);
+  scope.evaluate('openProblemView(state.problemCategories.find((item) => item.kind === "missing")); exportProblemRows(); exportStandardizedData("changes")');
+  const files = await downloads();
+  assert.equal(files.length, 2);
+  assert.match(files[0].text, /^File row,Note,ID,Region,Amount,Date,Rep\r\n/);
+  assert.match(files[1].text, /^File row,Column,Original,Exported,Action\r\n/);
+  assert.match(files[0].fileName, /^orders_problem-rows_blank_/);
+});
+
+test("v3.2.0 report.js: an old snapshot's sentences come out as written; a missing one is written in the current language", () => {
+  const scope = createScriptContext({ language: "en" });
+  put(scope.context, "__oldSnapshot", {
+    fileName: "old.csv",
+    dateTrends: [{ summary: "日期字段「日期」包含 3 个时间点。" }],
+    customAnalysis: { completed: false, message: "旧版本写的句子。" },
+    insights: ["旧的结论。"]
+  });
+  const html = scope.evaluate("buildHtmlReport(__oldSnapshot, [])");
+  for (const text of ["日期字段「日期」包含 3 个时间点。", "旧版本写的句子。", "旧的结论。"]) assert.ok(html.includes(text), text);
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).customAnalysis.message"), "There is no breakdown by group to export yet.");
+  assert.match(scope.evaluate("buildHtmlReport({}, [])"), /<p class="empty">There is no breakdown by group to export yet\.<\/p>/);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(scope.evaluate("normalizeReportSnapshot({}).customAnalysis.message"), "当前没有可导出的自定义分组分析结果。");
+});
+
+test("v3.2.0 report.js: the export status lines are written again in the other language, and back byte for byte", async () => {
+  const scope = await reportScenario("zh");
+  captureDownloads(scope);
+  scope.evaluate('exportProcessedCsv("filtered"); exportStandardizedData("data"); openProblemView(state.problemCategories[0]); exportProblemRows(); exportAnalysisReport()');
+  const ids = ["dataExportStatus", "standardizedExportStatus", "problemRowsExportStatus", "reportExportStatus"];
+  const chinese = ids.map((id) => textOf(scope, id));
+  chinese.forEach((text, index) => assert.match(text, /^已导出|^报告已生成：/, ids[index]));
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  const english = ids.map((id) => textOf(scope, id));
+  assert.match(english[0], /^Exported \d+ rows in analysis: orders_当前分析_\d{8}\.csv$/);
+  assert.match(english[1], /^Exported the standardized table, 19 rows: orders_写法统一_\d{8}\.csv$/);
+  assert.match(english[3], /^The report is ready: orders-\d{8}-\d{6}\.html$/);
+  english.forEach((text, index) => assert.deepEqual(numbersOf(text), numbersOf(chinese[index]), text));
+  scope.evaluate('setInterfaceLanguage("zh"); rewriteOneOffMessages()');
+  assert.deepEqual(ids.map((id) => textOf(scope, id)), chinese);
+});
+
+test("v3.2.0 report.js (R10): the report's file name never had the 已载入 prefix since v3.0.0, so its fallback reads the name alone", async () => {
+  assert.doesNotMatch(repoFile("report.js").replace(/\/\/.*$/gm, ""), /已载入/);
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  assert.equal(scope.evaluate("dom.sourceName.title"), "orders.csv");
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "orders.csv");
+  scope.evaluate('state.sourceFileName = ""; dom.sourceName.title = "book.xlsx · Sheet1"');
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "book.xlsx");
+  scope.evaluate('dom.sourceName.title = ""; dom.sourceName.textContent = ""');
+  assert.equal(scope.evaluate("getReportSourceFileName()"), "data-report");
+});
+
+test("v3.2.0 report.js English wording: a long list of kept values, and the standardized check's name", () => {
+  const descriptions = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    const names = Array.from({ length: 12 }, (_, index) => `V${String(index + 1).padStart(2, "0")}`);
+    commitRows(scope, ["Kind"], [...names, ""].map((Kind) => ({ Kind })));
+    descriptions[language] = scope.evaluate('buildReportFilters({ category: { field: "Kind", values: getCategoryFilterOptions("Kind").map((option) => option.value) } })[0].description');
+    if (language === "en") {
+      scope.evaluate('exportStandardizedData("data")');
+      assert.equal(textOf(scope, "standardizedExportStatus"), "Click “Check which cells will change” first.");
+    }
+  }
+  assert.equal(descriptions.zh, "Kind：保留 13 / 共 13 个类别（（空值）、V01、V02、V03、V04、V05、V06、V07、V08、V09……等 13 个）");
+  assert.equal(descriptions.en, "Kind: keeps 13 of 13 values: (Blank), “V01”, “V02”, “V03”, “V04”, “V05”, “V06”, “V07”, “V08”, “V09”, … 13 in all");
+});
+
+test("v3.2.0 app.js English wording: the chart's value conclusion and an empty filter search say value", () => {
+  const texts = {};
+  for (const language of ["zh", "en"]) {
+    const scope = createScriptContext({ language });
+    commitRows(scope, ["Region"], [..."EEEEEEEEEEEE", ..."W".repeat(20), ..."N".repeat(8)].map((letter) => ({ Region: { E: "East", W: "West", N: "North" }[letter] })));
+    const insight = scope.evaluate('buildCategoryInsight("Region")');
+    scope.evaluate('dom.categoryFilterField.value = "Region"; updateCategoryFilterField(); dom.categoryFilterSearch.value = "zzz"; renderCategoryFilterValues()');
+    texts[language] = [insight, scope.evaluate("dom.categoryFilterValues.innerHTML")];
+  }
+  assert.deepEqual(texts.zh, ["分类字段「Region」中占比最高的类别是「West」，出现 20 次，占比 50.0%。", '<p class="filter-value-empty">没有匹配的类别。</p>']);
+  assert.deepEqual(texts.en, ["In “Region”, the most common value is “West”: 20 times, 50.0%.", '<p class="filter-value-empty">No matching values.</p>']);
+  // The problem category's sentence keeps category (it is a category of problem rows).
+  assert.match(repoFile("app.js"), /"This category has no problem rows any more\."/);
+});
+
+test("v3.2.0 navigation: a second row only when the links overflow, measured without that row; a language switch measures again", () => {
+  const scope = createScriptContext();
+  // A navigation that overflows in one row (900 > 800) and fits in its own (900 ≤ 1200).
+  scope.evaluate(`globalThis.__nav = { get scrollWidth() { return 900; }, get clientWidth() { return document.body.classList.contains("nav-wrap") ? 1200 : globalThis.__navWidth; } };
+    document.getElementById = ((original) => (id) => (id === "moduleNav" ? globalThis.__nav : original(id)))(document.getElementById);`);
+  const wraps = (width, results) => scope.evaluate(`(() => {
+    globalThis.__navWidth = ${width};
+    document.body.classList.${results ? "add" : "remove"}("has-results");
+    updateNavFit();
+    return document.body.classList.contains("nav-wrap");
+  })()`);
+  assert.equal(wraps(800, true), true);
+  // Measured without the class: a navigation that fits in one row loses its second row.
+  assert.equal(wraps(950, true), false);
+  // One pixel of rounding is allowed (scrollWidth is a whole number).
+  assert.equal(wraps(899, true), false);
+  assert.equal(wraps(898, true), true);
+  // The upload page (no results) never wraps.
+  assert.equal(wraps(800, false), false);
+  // A language switch measures again: the English words overflow where the Chinese did not.
+  wraps(950, true);
+  scope.evaluate("globalThis.__navWidth = 800; setInterfaceLanguage(\"en\")");
+  assert.equal(scope.evaluate('document.body.classList.contains("nav-wrap")'), true);
+  // script.js measures on every size change of the top bar and of the window.
+  const script = repoFile("script.js");
+  assert.match(script, /window\.addEventListener\("resize", updateNavFit\);/);
+  assert.match(script, /const navFitObserver = new ResizeObserver\(updateNavFit\);/);
+  assert.match(script, /navFitObserver\.observe\(document\.querySelector\("\.app-header"\)\);/);
+  // The navigation itself: a page opened narrow gets its links with the import, the top bar keeps its size.
+  assert.match(script, /navFitObserver\.observe\(document\.getElementById\("moduleNav"\)\);/);
+  // style.css: the second row, and the fallback scroll of .module-nav stays.
+  const css = repoFile("style.css");
+  assert.match(css, /body\.has-results\.nav-wrap \.header-inner \{\s*flex-wrap: wrap;/);
+  // The second row's track is only as wide as its links (fix after commit 9), never wider than the row.
+  assert.match(css, /body\.has-results\.nav-wrap \.module-nav \{\s*flex: 0 1 auto;\s*max-width: 100%;/);
+  assert.match(css, /\.module-nav \{[^}]*overflow-x: auto;/);
+});
+
+test("v3.2.0 commit 10: the note above the results is a white bar under the heading, sentence left, button right", () => {
+  const css = repoFile("style.css");
+  const rule = css.match(/\n\.analysis-contains-note \{([^}]*)\}/)[1];
+  for (const line of ["display: flex;", "justify-content: space-between;", "border: 1px solid var(--card-border);", "border-radius: var(--radius-card);", "background: #fff;", "font-size: 13px;", "font-weight: 400;"]) {
+    assert.ok(rule.includes(line), line);
+  }
+  const button = css.match(/\n\.analysis-contains-note \.text-button \{([^}]*)\}/)[1];
+  assert.ok(button.includes("font-size: 13px;") && button.includes("font-weight: 600;"), button);
+  // The heading no longer wraps for it (the rules of v3.1.0 are gone).
+  assert.doesNotMatch(css, /\.section-heading:has\(> \.analysis-contains-note/);
+  // The text and the button are as before: the bar changes place and frame only.
+  const scope = createScriptContext();
+  commitRows(scope, ["名称", "金额"], [{ 名称: "甲", 金额: "1" }, { 名称: "乙", 金额: "2" }, { 名称: "合计", 金额: "3" }]);
+  const html = scope.evaluate("dom.statisticsContainsNote.innerHTML");
+  assert.match(html, /^[^<]+ <button type="button" class="text-button" data-quality-target="suspectedTotal" aria-label="[^"]+">去数据质量处理<\/button>$/);
+});
+
+test("v3.2.0 commit 10: the export options say 共 42 行 / 42 rows, the number alone in its <strong>", async () => {
+  const words = (language, count) => {
+    const scope = createScriptContext({ language });
+    return JSON.parse(scope.evaluate(`JSON.stringify(formatExportRowCount(${count}))`));
+  };
+  assert.deepEqual(words("zh", 42), { before: "共 ", after: " 行" });
+  assert.deepEqual(words("zh", 1), { before: "共 ", after: " 行" });
+  assert.deepEqual(words("en", 42), { before: "", after: " rows" });
+  assert.deepEqual(words("en", 1), { before: "", after: " row" });
+  for (const language of ["zh", "en"]) {
+    const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+    scope.evaluate('setRowExclusion("duplicateRows", true)');
+    const line = (name) => ["Before", "Count", "After"].map((part) => textOf(scope, `dataExport${name}${part}`)).join("");
+    assert.deepEqual([line("Filtered"), line("Original")], language === "zh" ? ["共 18 行", "共 19 行"] : ["18 rows", "19 rows"]);
+    assert.deepEqual([textOf(scope, "dataExportFilteredCount"), textOf(scope, "dataExportOriginalCount")], ["18", "19"]);
+  }
+  // The old labels are gone from the page and from the English table.
+  const page = indexHtmlSource();
+  assert.doesNotMatch(page, /当前分析行数|原始行数 </);
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal("export.analysisCount" in english || "export.originalCount" in english, false);
+});
+
+// ---- v3.2.0 commit 11: switch the language in place ----
+// The scenario's steps (filter, rows left out, field draft, custom analysis, standardized check,
+// a problem category open), ending on a state worth keeping; what a switch must keep.
+async function switchScenario(language) {
+  const { scope } = await runLanguageScenario(language);
+  scope.evaluate('setRowExclusion("duplicateRows", true)');
+  // (updateSchemaDraftRow() patches the row through DOM calls the fake page has not; the browser
+  // shows what renderSchema() draws, so the scenario draws it.)
+  scope.evaluate('stageFieldTypeChange("ID", "category"); renderSchema()');
+  scope.evaluate('openProblemView(state.problemCategories.find((category) => category.kind === "missing") || state.problemCategories[0])');
+  scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  return scope;
+}
+
+// The two language switches have no text in the fake page until a switch writes it.
+const withoutSwitches = (texts) => Object.fromEntries(Object.entries(texts).filter(([id]) => !["languageSwitch", "sidebarLanguageSwitch"].includes(id)));
+
+const KEPT_STATE = `JSON.stringify({
+  filters: state.filters, excluded: state.excludedRows, module: document.body.dataset.module ?? null,
+  problem: state.problemView && { category: state.problemView.category, page: state.problemView.page },
+  previewPage: state.previewPage, drafts: state.fieldTypeDrafts, standardized: Boolean(state.standardizedExport),
+  custom: state.customAnalysis && { metricField: state.customAnalysis.metricField, groupField: state.customAnalysis.groupField, grouped: state.customAnalysis.grouped.map((item) => [item.name, item.sum]) },
+  selects: [dom.numericChartField, dom.categoryChartField, dom.dateChartField, dom.dateChartMetric, dom.dateChartAggregate, dom.v2MetricField, dom.v2GroupField, dom.v2AggregateMethod, dom.v2DateField, dom.categoryFilterField, dom.numericFilterField, dom.dateFilterField].map((select) => select.value),
+  categoryDrafts: [...state.categoryFilterDraftValues]
+})`;
+
+test("v3.2.0 commit 11: Chinese → English → Chinese gives every element of the page back byte for byte and keeps the state", async () => {
+  await withRecordedAttributes(async () => {
+    const scope = await switchScenario("zh");
+    const before = withoutSwitches(elementTexts(scope));
+    const state = scope.evaluate(KEPT_STATE);
+    // A browser's <select> loses its choice when its options are written again; the fake one keeps
+    // it, so this does what the browser does (the switch must put every choice back).
+    scope.evaluate("globalThis.__realSetSelectOptions = setSelectOptions; setSelectOptions = (select, ...args) => { __realSetSelectOptions(select, ...args); select.value = \"\"; }");
+    scope.evaluate('setInterfaceLanguage("en")');
+    const english = elementTexts(scope);
+    assert.equal(scope.evaluate(KEPT_STATE), state, "the state after the switch to English");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const after = withoutSwitches(elementTexts(scope));
+    const changed = Object.keys(before).filter((id) => before[id] !== after[id]).map((id) => `${id}: ${String(before[id]).slice(0, 80)} → ${String(after[id]).slice(0, 80)}`);
+    assert.deepEqual(changed, []);
+    assert.equal(scope.evaluate(KEPT_STATE), state);
+    // The English page really was English: no element kept Chinese of the scripts.
+    const fragments = doneFileChineseFragments();
+    const leaks = Object.entries(english).filter(([, text]) => fragments.some((fragment) => text.includes(fragment))).map(([id, text]) => `${id}: ${text.slice(0, 100)}`);
+    assert.deepEqual(leaks, []);
+  });
+});
+
+test("v3.2.0 commit 11: Chinese switched to English shows what a page opened in English shows (no render function left out)", async () => {
+  await withRecordedAttributes(async () => {
+    const switched = await switchScenario("zh");
+    switched.evaluate('setInterfaceLanguage("en")');
+    const native = await switchScenario("en");
+    const a = elementTexts(switched);
+    const b = elementTexts(native);
+    // The status bar's fold and the language announcer come from the switch itself.
+    const differ = Object.keys(b).filter((id) => a[id] !== b[id]).map((id) => `${id}: ${String(a[id]).slice(0, 90)} ≠ ${String(b[id]).slice(0, 90)}`);
+    assert.deepEqual(differ, []);
+  });
+});
+
+test("v3.2.0 commit 11: the switch draws again without computing again: no grouping, no trend figures, charts destroyed and drawn", async () => {
+  const scope = await switchScenario("zh");
+  scope.evaluate(`globalThis.__calls = { grouped: 0, trend: 0, charts: 0, stats: 0 };
+    for (const [name, key] of [["buildV2GroupedStats", "grouped"], ["computeTrendInsight", "trend"], ["renderCharts", "charts"], ["buildCategoryStats", "stats"]]) {
+      const real = globalThis[name];
+      globalThis[name] = (...args) => { __calls[key] += 1; return real(...args); };
+    }`);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const calls = JSON.parse(scope.evaluate("JSON.stringify(__calls)"));
+  assert.deepEqual([calls.grouped, calls.trend, calls.stats], [0, 0, 0]);
+  // The charts are drawn again (renderCharts() destroys each first, 契约 11; the fake page has no
+  // Chart.js, so the count is of the calls).
+  assert.equal(calls.charts, 1);
+  // The open problem rows are listed again in English, on the same page.
+  assert.match(scope.evaluate("state.problemView.list.items[0].note"), /^[A-Z][a-z]/);
+});
+
+test("v3.2.0 commit 11: the problem-row viewer keeps its page; the notes are listed again in the new language", () => {
+  const scope = createScriptContext();
+  commitRows(scope, ["Name", "Amount"], Array.from({ length: 130 }, (_, index) => ({ Name: `n${index}`, Amount: index % 2 ? "" : String(index) })));
+  scope.evaluate('openProblemView({ kind: "missing", field: "Amount" }); state.problemView.page = 2; renderProblemView()');
+  const notes = () => JSON.parse(scope.evaluate("JSON.stringify([state.problemView.page, state.problemView.list.items[0].note])"));
+  assert.deepEqual(notes(), [2, "空值"]);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.deepEqual(notes(), [2, "Blank"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual(notes(), [2, "空值"]);
+});
+
+test("v3.2.0 commit 11: the status bar, an import error and the worksheet message are written again after a switch", async () => {
+  // An error of the importer (a CSV with only a header row): built in both languages.
+  const scope = await importCsvInLanguage("a,b\n", "only-header.csv", "zh");
+  const chinese = textOf(scope, "statusPanel");
+  assert.match(chinese, /\p{Script=Han}/u);
+  scope.evaluate('setInterfaceLanguage("en")');
+  const english = textOf(scope, "statusPanel");
+  assert.ok(english && !ENGLISH_BAD.test(english), english);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(scope, "statusPanel"), chinese);
+  // A message the report export writes into the status bar.
+  const done = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+  captureDownloads(done);
+  done.evaluate("exportAnalysisReport()");
+  assert.match(textOf(done, "statusPanel"), /^报告已生成：orders-\d{8}-\d{6}\.html$/);
+  done.evaluate('setInterfaceLanguage("en")');
+  assert.match(textOf(done, "statusPanel"), /^The report is ready: orders-\d{8}-\d{6}\.html$/);
+  // The worksheet message (a one-off message since commit 11).
+  done.evaluate('showSheetSelectionError(() => L("请选择一个工作表后再继续。", "Choose a worksheet to continue."))');
+  assert.equal(textOf(done, "sheetSelectionMessage"), "Choose a worksheet to continue.");
+  done.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(done, "sheetSelectionMessage"), "请选择一个工作表后再继续。");
+  // An error whose message is not ours (PapaParse, the browser) stays as it is.
+  assert.equal(done.evaluate('errorMessageBuilder(new Error("plain"))'), "plain");
+  assert.equal(done.evaluate('typeof errorMessageBuilder(languageError(Lp("甲", "A")))'), "function");
+});
+
+test("v3.2.0 commit 11: a switch says so in a role=status element made at the first switch, written a moment later and taken away", async () => {
+  const scope = createScriptContext();
+  // A page never switched has no such element (the Chinese page is as before).
+  assert.equal(scope.evaluate("languageAnnouncer"), null);
+  scope.evaluate("switchInterfaceLanguage()");
+  const element = () => JSON.parse(scope.evaluate("JSON.stringify(languageAnnouncer && { text: languageAnnouncer.textContent, className: languageAnnouncer.className })"));
+  assert.deepEqual(element(), { text: "", className: "visually-hidden" });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(element().text, "Switched to English.");
+  scope.evaluate("switchInterfaceLanguage()");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(element().text, "界面已切换为中文。");
+  assert.equal(scope.evaluate("LANGUAGE_ANNOUNCE_CLEAR_MS"), 5000);
+  const app = repoFile("app.js");
+  assert.match(app, /languageAnnouncer\.setAttribute\("role", "status"\);/);
+  assert.match(app, /document\.getElementById\("mainContent"\)\?\.appendChild\(languageAnnouncer\);/);
+  assert.doesNotMatch(repoFile("script.js"), /languageAnnouncer/);
+});
+
+// ---- fix after commit 11: the English y-axis titles start with a capital ----
+test("v3.2.0 fix: English chart axis titles are capitalized; the words in sentences and the Chinese stay as they were", async () => {
+  const axisTitles = async (language) => {
+    const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", language);
+    const charts = withFakeCharts(scope);
+    const titles = [];
+    for (const [metric, aggregate] of [["", "count"], ["Amount", "avg"], ["Amount", "sum"]]) {
+      charts.length = 0;
+      scope.evaluate(`populateControls(); dom.dateChartField.value = "Date"; dom.dateChartMetric.value = ${JSON.stringify(metric)}; dom.dateChartAggregate.value = ${JSON.stringify(aggregate)}; renderDateTrendChart()`);
+      titles.push(charts.at(-1).options.scales.y.title.text);
+    }
+    for (const method of ["sum", "avg", "median"]) {
+      charts.length = 0;
+      scope.evaluate(`dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = ${JSON.stringify(method)}; dom.v2DateField.value = "Date"; renderV2Analysis()`);
+      assert.equal(charts.length, 2, method);
+      titles.push(charts.map((config) => config.options.scales.y.title.text));
+    }
+    return { scope, titles };
+  };
+  const english = await axisTitles("en");
+  assert.deepEqual(english.titles, ["Record count", "Average", "Sum", ["Sum", "Sum"], ["Average", "Average"], ["Median", "Median"]]);
+  // The sentences keep the lower-case words (the chart titles, the breakdown message).
+  assert.deepEqual(JSON.parse(english.scope.evaluate('JSON.stringify([getDateChartAggregateLabel("count"), getDateChartAggregateLabel("sum"), getAggregateMethodLabel("avg"), getAggregateMethodLabel("median")])')),
+    ["record count", "sum", "average", "median"]);
+  assert.match(english.scope.evaluate("dom.v2TrendTitle.textContent"), /^Amount by date \(median\)$/);
+  assert.match(english.scope.evaluate("dom.v2TopGroupTitle.textContent"), /\(median\)$/);
+  // A unit or a percent column keeps its words after the capital.
+  assert.equal(english.scope.evaluate('numericAxisLabel("Amount", getAggregateMethodAxisLabel("sum"))'), "Sum");
+  // Chinese: the same words as before, in the titles and in the sentences.
+  const chinese = await axisTitles("zh");
+  assert.deepEqual(chinese.titles, ["记录数", "平均值", "求和", ["求和", "求和"], ["平均值", "平均值"], ["中位数", "中位数"]]);
+  assert.deepEqual(JSON.parse(chinese.scope.evaluate('JSON.stringify([getDateChartAggregateLabel("count"), getDateChartAggregateLabel("sum"), getAggregateMethodLabel("avg"), getAggregateMethodLabel("median"), getDateChartAxisLabel("avg"), getAggregateMethodAxisLabel("median")])')),
+    ["记录数", "求和", "平均值", "中位数", "平均值", "中位数"]);
+});
+
+// ---- v3.2.0 commit 12: the English sample and two English fixtures ----
+// examples/sample-orders-en.csv: the Chinese sample row by row in English (the same quantities,
+// amounts, dates and places of the problems). The English interface's sample button loads it and
+// the download link points at it; the Chinese interface is as before.
+const SAMPLE_ORDERS_EN = "sample-orders-en.csv";
+// Compared after dropping the CR of every CRLF, like SAMPLE_ORDERS_LF_SHA256.
+const SAMPLE_ORDERS_EN_LF_SHA256 = "0b79436e00095497f163a5e69d42ea66e07fefc356a203f2035319a786031479";
+const sampleOrdersEnLfText = () => fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8").replace(/\r\n/g, "\n");
+const sampleOrdersEnLines = () => sampleOrdersEnLfText().slice(1, -1).split("\n");
+const PILLS_ZERO_EN = ["Blanks: 0", "Duplicate rows: 0", "Numbers or dates not recognized: 0 values", "Unusually high or low values: 0 columns", "Duplicate IDs: 0 columns", "Values that may mean blank: 0 columns"];
+const SAMPLE_ORDERS_EN_TYPES = ["id", "date", "category", "category", "category", "category", "numeric", "numeric", "category"];
+
+test("v3.2.0 commit 12: the English sample holds the planned rows, title and total line; the total adds the duplicate too", () => {
+  const raw = fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN));
+  assert.deepEqual([...raw.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = sampleOrdersEnLfText();
+  assert.equal(crypto.createHash("sha256").update(text, "utf8").digest("hex"), SAMPLE_ORDERS_EN_LF_SHA256);
+  assert.equal(Buffer.byteLength(text, "utf8"), 3306);
+  assert.ok(text.endsWith("\n"));
+  const lines = sampleOrdersEnLines();
+  assert.equal(lines.length, 44);
+  // 20 characters: the status line's preview of a skipped row (SKIPPED_ROW_PREVIEW_LENGTH) shows it whole.
+  assert.equal(lines[0], "H1 2025 sales orders,,,,,,,,");
+  assert.equal(lines[0].replace(/,+$/, "").length, createScriptContext().evaluate("SKIPPED_ROW_PREVIEW_LENGTH"));
+  assert.equal(lines[1], "Order ID,Order date,Region,Category,Product,Customer type,Quantity,Amount,Sales rep");
+  assert.equal(lines[43], "Total,,,,,,800,123440,");
+  assert.equal(lines[19], lines[20]);
+  assert.match(lines[19], /^SO-1018,/);
+  // The total is every readable quantity and amount above it, the repeated SO-1018 included and the
+  // N/A left out (so both columns match; without the duplicate the amount would be 119540).
+  const cells = (line) => Papa.parse(line).data[0];
+  const data = lines.slice(2, 43).map(cells);
+  assert.equal(data.length, 41);
+  assert.equal(data.reduce((sum, row) => sum + Number(row[6]), 0), 800);
+  const amounts = data.map((row) => Number(row[7].replace(/[$,]/g, ""))).filter(Number.isFinite);
+  assert.equal(amounts.length, 40);
+  assert.equal(amounts.reduce((sum, value) => sum + value, 0), 123440);
+  // The Chinese sample has the same numbers, row by row.
+  const chinese = sampleOrdersLines().slice(2, 43).map(cells);
+  assert.deepEqual(data.map((row) => row[6]), chinese.map((row) => row[6]));
+  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
+});
+
+test("v3.2.0 commit 12: the sample button and the download link follow the language; the Chinese ones are as before", async () => {
+  const script = repoFile("script.js");
+  assert.match(script, /fetch\(`examples\/\$\{sampleName\}`\)/);
+  const english = await clickSampleButton(new TextDecoder("utf-8").decode(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN))), "en");
+  assert.deepEqual(english.fetched, ["examples/sample-orders-en.csv"]);
+  assert.deepEqual(english.parsedNames, [SAMPLE_ORDERS_EN, SAMPLE_ORDERS_EN]);
+  const uploaded = await importCsvInLanguage(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8"), SAMPLE_ORDERS_EN, "en");
+  assert.equal(sampleOrdersSnapshot(english), sampleOrdersSnapshot(uploaded));
+  const chinese = await clickSampleButton(sampleOrdersFetchedText(), "zh");
+  assert.deepEqual(chinese.fetched, ["examples/sample-orders.csv"]);
+  assert.deepEqual(chinese.parsedNames, [SAMPLE_ORDERS, SAMPLE_ORDERS]);
+  // The loading line names the file being loaded.
+  assert.match(script, /setStatus\(L\(`正在加载 \$\{sampleName\} \.\.\.`, `Loading \$\{sampleName\} \.\.\.`\)\);/);
+  // The link: the Chinese page is unchanged; the English address is in the English table and is a real
+  // file. (The static guard's test requires every English key to be used in index.html, so the link
+  // carries upload.downloadHref; the switch below is what the key does.)
+  assert.match(indexHtmlSource(),/<a href="examples\/sample-orders\.csv" download>下载示例 CSV<\/a>/);
+  const table = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(table["upload.downloadHref"], "examples/sample-orders-en.csv");
+  assert.ok(fs.existsSync(path.join(REPO_ROOT, table["upload.downloadHref"])));
+  // Switched in place: English, then Chinese again (applyStaticLanguage() over the link alone).
+  const scope = createScriptContext();
+  const link = i18nElement({ href: "examples/sample-orders.csv", download: "", "data-i18n": "upload.download", "data-i18n-attr": "href=upload.downloadHref" }, ["下载示例 CSV"]);
+  put(scope.context, "__i18nElements", [link]);
+  scope.evaluate("document.querySelectorAll = (selector) => selector === '[data-i18n], [data-i18n-attr]' ? __i18nElements : []");
+  scope.evaluate('rememberStaticLanguage(); setInterfaceLanguage("en")');
+  assert.deepEqual([link.getAttribute("href"), link.childNodes[0].nodeValue], ["examples/sample-orders-en.csv", "Download sample CSV"]);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.deepEqual([link.getAttribute("href"), link.childNodes[0].nodeValue], ["examples/sample-orders.csv", "下载示例 CSV"]);
+});
+
+test("v3.2.0 commit 12: the upload page's English rows are rows 10, 12, 20, 21, 29 and 44 of the English sample", () => {
+  const html = indexHtmlSource();
+  const start = html.indexOf('<section class="sample-preview" aria-labelledby="samplePreviewTitle">');
+  assert.ok(start >= 0);
+  const section = html.slice(start, html.indexOf("</section>", start));
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  // The Chinese table's cells (the page as the Chinese interface shows it), with the cells that
+  // have words replaced by their English: the six translated cells and their keys, by place.
+  const rows = [...section.matchAll(/<tr>(<td[\s\S]*?)<\/tr>/g)].map((match) => [...match[1].matchAll(/<td(?: class="[^"]*")?>([\s\S]*?)<\/td>/g)]
+    .map((cell) => cell[1].replace(/<span class="visible-space" aria-hidden="true">␣<\/span>/g, "")));
+  const translated = { "0,3": "sample.south", "1,2": "sample.otherDate", "1,3": "sample.southwest", "2,3": "sample.south", "3,3": "sample.south", "4,3": "sample.northwest", "5,1": "sample.total" };
+  Object.entries(translated).forEach(([place, key]) => {
+    const [row, column] = place.split(",").map(Number);
+    rows[row][column] = english[key];
+  });
+  const lines = sampleOrdersEnLines().map((line) => Papa.parse(line).data[0]);
+  const header = lines[1];
+  assert.deepEqual(rows.map((cells) => cells[0]), ["10", "12", "20", "21", "29", "44"]);
+  rows.forEach((cells) => {
+    const values = lines[Number(cells[0]) - 1];
+    // The marked trailing space of "South " is drawn as ␣ on the page, not in the words.
+    ["Order ID", "Order date", "Region", "Amount"].forEach((field, index) => assert.equal(cells[index + 1], values[header.indexOf(field)].trim(), `${cells[0]} ${field}`));
+  });
+  assert.equal(lines[9][header.indexOf("Region")], "South ");
+  // Every other cell is the same in both samples (order IDs, ISO dates, amounts): no key needed.
+  assert.equal(Object.keys(english).filter((key) => /^sample\.(south|otherDate|southwest|northwest|total)$/.test(key)).length, 5);
+});
+
+// The English sample without its problems, as in the v2.11.0 test: each fix takes one problem out.
+// SO-1026 is 6 headphones at 260 each (1560); every other East order is Emma Chen's.
+const SAMPLE_ORDERS_EN_FIXES = {
+  title: (lines) => lines.slice(1),
+  total: (lines) => lines.filter((line) => !line.startsWith("Total,")),
+  duplicate: (lines) => lines.filter((line, index) => !(line.startsWith("SO-1018,") && line === lines[index - 1])),
+  na: (lines) => lines.map((line) => (line.startsWith("SO-1026,") ? line.replace(",N/A,", ",1560,") : line)),
+  dash: (lines) => lines.map((line) => (line.startsWith("SO-1014,") ? line.replace(/,\u2014$/, ",Emma Chen") : line)),
+  money: (lines) => lines.map((line) => line.replace(/,"?\$([\d,]+)\.00"?,/, (match, number) => `,${number.replace(/,/g, "")},`)),
+  date: (lines) => lines.map((line) => line
+    .replace(/^(SO-\d+),(\d{2})\/(\d{2})\/(\d{4}),/, "$1,$4-$2-$3,")
+    .replace(/^(SO-\d+),"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})",/, (match, id, month, day, year) => `${id},${year}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun"].indexOf(month) + 1).padStart(2, "0")}-${day.padStart(2, "0")},`)),
+  space: (lines) => lines.map((line) => line.replace(/ +,/g, ",").replace(/^(SO-1034,[^,]*),east,/, "$1,East,").replace(/, (Emma Chen)$/, ",$1"))
+};
+
+// The total line of the "total only" case adds the rows that are left, like the sample's own total
+// (the duplicate and N/A fixes change what it adds up to).
+function sampleOrdersEnVariant(keep) {
+  let lines = sampleOrdersEnLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_EN_FIXES)) if (name !== keep) lines = fix(lines);
+  if (keep === "total") {
+    const data = lines.slice(1, -1).map((line) => line.split(","));
+    const sum = (column) => data.reduce((total, row) => total + Number(row[column]), 0);
+    lines[lines.length - 1] = `Total,,,,,,${sum(6)},${sum(7)},`;
+  }
+  return "\uFEFF" + lines.join("\n") + "\n";
+}
+
+test("v3.2.0 commit 12: without its problems the English sample flags nothing, and each problem alone flags only itself", async () => {
+  const pills = (changes) => PILLS_ZERO_EN.map((pill) => changes[pill.split(":")[0]] ?? pill);
+  const cases = {
+    clean: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 0 },
+    title: { pills: PILLS_ZERO_EN, sections: [], note: true, cells: 0 },
+    total: { pills: pills({ Blanks: "Blanks: 6", "Unusually high or low values": "Unusually high or low values: 2 columns" }), sections: ["suspectedTotalSection"], note: true, cells: 0 },
+    duplicate: { pills: pills({ "Duplicate rows": "Duplicate rows: 1", "Duplicate IDs": "Duplicate IDs: 1 column" }), sections: [], note: false, cells: 0 },
+    na: { pills: pills({ "Numbers or dates not recognized": "Numbers or dates not recognized: 1 value", "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 1 },
+    dash: { pills: pills({ "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 0 },
+    // $5,400.00, $900.00 and $1,050.00 are plain numbers to the current rules ($ and the thousands
+    // separator are read without a unit, unlike 5400元), so the quality page has nothing to say;
+    // only the standardized table writes them as 5400.00, 900.00 and 1050.00. Six of the seven
+    // problems put in the sample are flagged.
+    money: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 3 },
+    date: { pills: PILLS_ZERO_EN, sections: ["dateStyleSection"], note: false, cells: 5 },
+    space: { pills: PILLS_ZERO_EN, sections: ["lookAlikeSection"], note: false, cells: 3 }
+  };
+  for (const [name, expected] of Object.entries(cases)) {
+    const scope = await importCsvInLanguage(sampleOrdersEnVariant(name === "clean" ? null : name), SAMPLE_ORDERS_EN, "en");
+    assert.deepEqual(sampleOrdersPills(scope), expected.pills, name);
+    assert.deepEqual(sampleOrdersShownSections(scope), expected.sections, name);
+    assert.equal(scope.elements.get("statusPanel").className.includes("has-note"), expected.note, name);
+    assert.equal(scope.evaluate("state.placeholders.length"), ["na", "dash"].includes(name) ? 1 : 0, name);
+    assert.equal(scope.evaluate("state.parseWarnings.length"), 0, name);
+    assert.equal(scope.evaluate("state.problemCategories.length") === 0, name === "clean" || name === "title" || name === "money", name);
+    scope.evaluate("checkStandardizedExport()");
+    assert.equal(scope.evaluate("state.standardizedExport.cellCount"), expected.cells, name);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => profile.typeKey))")), SAMPLE_ORDERS_EN_TYPES, name);
+    // The total alone matches on both columns.
+    if (name === "total") assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals.map((item) => item.matches[0].fields))")), [["Quantity", "Amount"]]);
+  }
+  const full = sampleOrdersEnLines();
+  for (const [name, fix] of Object.entries(SAMPLE_ORDERS_EN_FIXES)) assert.notDeepEqual(fix(full), full, name);
+  assert.equal(sampleOrdersEnVariant(null).split("\n").length, 1 + 40 + 1);
+  // Each fix takes its whole problem out: the money fix all three amounts, the date fix all five dates.
+  assert.equal(SAMPLE_ORDERS_EN_FIXES.money(full).filter((line) => line.includes("$")).length, 0);
+  assert.equal(SAMPLE_ORDERS_EN_FIXES.date(full).filter((line) => /^SO-\d+,(?!\d{4}-\d{2}-\d{2},)/.test(line)).length, 0);
+});
+
+test("v3.2.0 commit 12: the English sample in English: the status line, the six pills, every hint with its rows and the two conclusions", async () => {
+  const scope = await importCsvInLanguage(fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8"), SAMPLE_ORDERS_EN, "en");
+  assert.equal(scope.elements.get("statusPanel").className, "status-panel success has-note");
+  assert.equal(scope.elements.get("statusPanel").textContent,
+    "sample-orders-en.csv is loaded and the analysis is ready. The header is on row 2; 1 row above it was skipped: “H1 2025 sales orders”. Row 44 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.profiles.map((profile) => [profile.field, profile.typeKey]))")), [
+    ["Order ID", "id"], ["Order date", "date"], ["Region", "category"], ["Category", "category"], ["Product", "category"],
+    ["Customer type", "category"], ["Quantity", "numeric"], ["Amount", "numeric"], ["Sales rep", "category"]
+  ]);
+  assert.deepEqual(sampleOrdersPills(scope), ["Blanks: 6", "Duplicate rows: 1", "Numbers or dates not recognized: 1 value", "Unusually high or low values: 2 columns", "Duplicate IDs: 1 column", "Values that may mean blank: 2 columns"]);
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "dateStyleSection", "lookAlikeSection"]);
+  assert.equal(scope.elements.get("categoryChartInsight").textContent, "In “Region”, the most common value is “East”: 9 times, 22.0%.");
+  assert.equal(scope.elements.get("dateChartInsight").textContent, "By the date column “Order date”, the record count rises from 2025-01 to 2025-06, by about 66.7%.");
+  assert.equal(scope.evaluate("dom.categoryChartField.value"), "Region");
+  assert.equal(sampleOrdersText(scope, "suspectedTotalDetails"), "Row 44 “Total”: Quantity, Amount equal the sum of rows 3\u201343 (41 rows). View Exclude from analysis");
+  assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
+    "“Order date”: the main format is text YYYY-MM-DD: 36 (e.g. 2025-01-03); 5 other rows use other formats: text MM/DD/YYYY: 3 (e.g. 02/18/2025), text with English month names: 2 (e.g. Apr 16, 2025). View");
+  assert.equal(sampleOrdersText(scope, "lookAlikeDetails"),
+    "“Region”, 11 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
+  assert.deepEqual(placeholderEntries(scope.evaluate), [["Amount", "N/A", "common", 1, [29]], ["Sales rep", "\u2014", "common", 1, [16]]]);
+  assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["Order ID", [["SO-1018", 2, [20, 21]]]]]);
+  const { names, mismatches } = problemRowCheck(scope);
+  assert.deepEqual(mismatches, []);
+  assert.deepEqual(names, [
+    "missing / Order date = 1", "missing / Region = 1", "missing / Category = 1", "missing / Product = 1", "missing / Customer type = 1", "missing / Sales rep = 1",
+    "conversion / Amount = 1", "dateStyle / Order date = 5", "outlier / Quantity = 1", "outlier / Amount = 1", "duplicateRows = 2", "suspectedTotal = 1",
+    "idDuplicate / Order ID = 2", "lookAlike / Region = 11", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
+  ]);
+  // The same rows as the Chinese sample, except the case variant "east" (row 37), which the Chinese
+  // sample has not: its 地区 group is two trailing spaces only.
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")), [
+    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [3, 7, 11, 16, 22, 27, 31, 32, 37, 42, 10], [42], [29], [16]
+  ]);
+});
+
+// en-issues.csv and en-formula-errors.xlsx (tests/fixtures/stage3/, made by gen-fixtures.cjs): what
+// the English sample cannot show, against the hand-written known-issues.json.
+test("v3.2.0 commit 12: en-issues.csv: types, reading issues, the kg column, the numeric-looking column, the single value and the variants", async () => {
+  const scope = await importStage3Fixture("en-issues.csv");
+  const expected = knownIssues["en-issues.csv"];
+  const summary = importedSummary(scope.evaluate);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.rows, expected.dataRows);
+  assert.equal(summary.duplicateRows, expected.expectedTotals.duplicateRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.headerDetection"), null);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.parseWarnings.map((warning) => ({ line: warning.row, code: warning.code })))")), expected.parseWarnings);
+  assert.deepEqual(constantsOf(scope), expected.constantFields);
+  assert.deepEqual(lookAlikesOf(scope).map(({ field, edgeSpaceCount, invisibleOnlyCount, groupCount, rowCount, groups }) => ({
+    field, edgeSpaceCount, invisibleOnlyCount, groupCount, rowCount,
+    groups: groups.map(({ variants, reasons, rowCount: count }) => ({ variants: variants.map(({ text, count: n }) => [text, n]), reasons, rowCount: count }))
+  })), expected.lookAlikes);
+  assert.equal(scope.evaluate('getFieldProfile("Weight").numberStrategy.unit'), "kg");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.numericLooking.map((item) => item.field))")), ["Floor"]);
+  assert.deepEqual(sampleOrdersShownSections(scope), ["numberConversionSection", "numericLookingSection", "constantFieldSection", "lookAlikeSection"]);
+  assert.deepEqual(scope.evaluate("state.dateStyles.length"), 0);
+  // The fixture's whole point: every one of these is a problem-row category with the rows above.
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
+    ["missing", "Status", [13]], ["missing", "Note", [2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21]],
+    ["lookAlike", "Team", expected.issues.find((issue) => issue.id === "N4").fileLines], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
+  ]);
+});
+
+test("v3.2.0 commit 12: en-formula-errors.xlsx: the Margin errors and the English subtotal match known-issues.json", async () => {
+  const scope = await importStage3Fixture("en-formula-errors.xlsx");
+  const expected = knownIssues["en-formula-errors.xlsx"];
+  assert.deepEqual(formulaErrors(scope), expected.formulaErrors);
+  assert.deepEqual(suspectedTotals(scope).map((item) => ({ line: item.line, label: item.label, field: item.field, matches: item.matches })), expected.suspectedTotals);
+  const summary = importedSummary(scope.evaluate);
+  assert.deepEqual(summary.fields, expected.expectedTypes.map((item) => item.field));
+  assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected));
+  assert.equal(summary.rows, expected.dataRows);
+  assert.equal(summary.totalMissing, expected.expectedTotals.totalMissing);
+  assert.equal(scope.evaluate("state.rows.map(getSourceRowNumber).join()"), "2,3,4,5,6,7,8,9,10,11,12");
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "formulaErrorSection"]);
+  // Nothing else is flagged: the only high or low value is the subtotal's Qty (no Price).
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
+    ["missing", "Price", [12]], ["missing", "Margin", [3, 5, 7, 9, 12]], ["formulaError", "Margin", [3, 5, 7, 9]], ["outlier", "Qty", [12]], ["suspectedTotal", "", [12]]
+  ]);
+});
+
+// The two fixtures are made by the generator, byte for byte, twice the same.
+test("v3.2.0 commit 12: gen-fixtures.cjs writes the two English fixtures byte for byte, and the others as they are", () => {
+  const out = fs.mkdtempSync(path.join(require("os").tmpdir(), "stage3-"));
+  try {
+    const run = require("child_process").spawnSync(process.execPath, [path.join(STAGE3_FIXTURES, "gen-fixtures.cjs"), out], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    for (const name of STAGE3_IMPORT_FILES) {
+      assert.ok(fs.readFileSync(path.join(out, name)).equals(fs.readFileSync(path.join(STAGE3_FIXTURES, name))), name);
+    }
+    assert.ok(STAGE3_IMPORT_FILES.includes("en-issues.csv") && STAGE3_IMPORT_FILES.includes("en-formula-errors.xlsx"));
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+  // The invisible character is written as an escape in the generator (CLAUDE.md), and is in the file.
+  const generator = fs.readFileSync(path.join(STAGE3_FIXTURES, "gen-fixtures.cjs"), "utf8");
+  assert.doesNotMatch(generator, /\u200B/);
+  assert.ok(fs.readFileSync(path.join(STAGE3_FIXTURES, "en-issues.csv"), "utf8").includes("Sales\u200B,"));
+});
+
+// ---- v3.2.0 commit 13: one name per language, no Chinese in the English interface, same numbers ----
+
+// (1) The product name: the Chinese interface says 表格体检 only, the English one Sheet Checkup only;
+// the old names in neither. (The Chinese half is the v3.0.1 test above; this adds the English half
+// and that the English name never reaches a Chinese page, report or file name.)
+test("v3.2.0 commit 13: each language shows only its own product name, and the old names in neither", async () => {
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(english["page.title"], "Sheet Checkup | Check CSV and Excel files for data problems");
+  assert.equal(english["brand.label"], "Sheet Checkup home");
+  assert.equal(english["brand.name"], "Sheet Checkup");
+  const hits = [];
+  for (const [key, value] of Object.entries(english)) {
+    findOldProductWords(`I18N_EN ${key}`, value, hits);
+    if (value.includes("表格体检")) hits.push(`I18N_EN ${key}: ${value}`);
+  }
+  const names = {};
+  for (const language of ["zh", "en"]) {
+    const own = language === "zh" ? "表格体检" : "Sheet Checkup";
+    const other = language === "zh" ? "Sheet Checkup" : "表格体检";
+    const file = language === "zh" ? "sample-orders.csv" : "sample-orders-en.csv";
+    const scope = await importCsvInLanguage(readExampleCsv(file), file, language);
+    const outputs = [];
+    const take = (where, text) => {
+      outputs.push([where, String(text)]);
+      findOldProductWords(`${language} ${where}`, text, hits);
+      if (String(text).includes(other)) hits.push(`${language} ${where}: ${String(text).slice(0, 120)}`);
+    };
+    for (const [id, text] of Object.entries(elementTexts(scope))) take(`#${id}`, text);
+    const { html } = reportOf(scope);
+    take("report", html);
+    const fileNames = [
+      scope.evaluate('buildReportFileName("html", new Date(2026, 10, 15))'),
+      scope.evaluate('buildDataExportFileName("filtered", new Date(2026, 10, 15))'),
+      scope.evaluate('buildStandardizedFileName("data", new Date(2026, 10, 15))'), scope.evaluate('buildStandardizedFileName("changes", new Date(2026, 10, 15), 3)'),
+      ...JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories.map((category) => buildProblemRowsFileName(category, new Date(2026, 10, 15))))"))
+    ];
+    // The report, the data, the two standardized files and one per problem category (16 / 17).
+    assert.equal(fileNames.length, language === "zh" ? 20 : 21, language);
+    for (const name of fileNames) {
+      take("file name", name);
+      assert.ok(!name.includes(own), name);
+    }
+    names[language] = fileNames;
+    // The report names the product in its own language: title, heading and footer.
+    const title = (html.match(/<title>([^<]*)<\/title>/) || [])[1];
+    const heading = html.match(/<h1>[^<]*<\/h1>/g);
+    const footer = (html.match(/<footer>([\s\S]*?)<\/footer>/) || [])[1];
+    if (language === "zh") {
+      assert.equal(title, "sample-orders.csv - 表格体检报告");
+      assert.deepEqual(heading, ["<h1>表格体检报告</h1>"]);
+      assert.match(footer, new RegExp(`^由<a href="${RENAME_REPO_URL}">表格体检</a> `));
+    } else {
+      assert.equal(title, "sample-orders-en.csv - Sheet Checkup report");
+      assert.deepEqual(heading, ["<h1>Sheet Checkup report</h1>"]);
+      assert.match(footer, new RegExp(`^Created by <a href="${RENAME_REPO_URL}">Sheet Checkup</a> `));
+    }
+    assert.ok(outputs.some(([, text]) => text.includes(own)), `${language}: the own name shows somewhere`);
+  }
+  assert.deepEqual(hits.slice(0, 20), [], `${hits.length} hits`);
+});
+
+// (2) No Chinese in the English interface. Every output of the main operations, in English, on the
+// English sample and the two English fixtures, plus three small files built here for what the
+// fixtures do not reach. The only Chinese allowed, each for its reason:
+//   1. the two switches to Chinese say “中文” (lang="zh-CN"): their text, nothing else on them;
+//   2. FORMULA_ERROR_FALLBACK (#错误): the text of an Excel error cell with no readable code, a value
+//      of the file, shown as written in both languages (R3);
+//   3. BLANK_GROUP_KEY (（空值）), the internal key of the blank group, would be allowed only where it
+//      is never shown; it reaches no output at all (pinned below), so no exception is made for it.
+// Any other Han character or full-width punctuation fails.
+const CHINESE_OR_FULLWIDTH = /[\p{Script=Han}\u3000-\u303F\uFF00-\uFFEF]/u;
+const ALL_PROBLEM_KINDS = ["missing", "formulaError", "conversion", "dateStyle", "outlier", "duplicateRows", "suspectedTotal", "idDuplicate", "lookAlike", "placeholder", "parseWarnings"];
+
+function chineseLeftInEnglish(place, text) {
+  const scope = chineseLeftInEnglish.constants;
+  let rest = String(text);
+  if (/^#(languageSwitch|sidebarLanguageSwitch)$/.test(place)) rest = rest.split(" ¦ ").filter((part) => part !== "中文").join(" ¦ ");
+  rest = rest.split(scope.fallback).join("");
+  const found = rest.match(new RegExp(CHINESE_OR_FULLWIDTH.source, "gu"));
+  return found ? `${place}: ${[...new Set(found)].join("")} in …${rest.slice(Math.max(0, rest.search(CHINESE_OR_FULLWIDTH) - 40), rest.search(CHINESE_OR_FULLWIDTH) + 40)}…` : "";
+}
+
+// Runs the main operations on an English page and hands every output to take(place, text). Returns
+// the problem kinds it opened, each with the operation that reached it.
+function walkEnglishOutputs(scope, name, take) {
+  const downloads = [];
+  put(scope.context, "__downloads", downloads);
+  scope.evaluate("downloadUtf8TextFile = (content, fileName) => { __downloads.push([fileName, content]); }");
+  const charts = withFakeCharts(scope);
+  const reached = {};
+  const snapshot = (operation) => {
+    for (const [id, text] of Object.entries(elementTexts(scope))) take(`#${id}`, text, `${name} ${operation}`);
+    for (const config of charts.splice(0)) take("chart", JSON.stringify([config.data.datasets.map((set) => set.label), Object.values(config.options.scales || {}).map((axis) => axis.title?.text)]), `${name} ${operation}`);
+  };
+  const flushDownloads = (operation) => {
+    for (const [fileName, content] of downloads.splice(0)) {
+      take("file name", fileName, `${name} ${operation}`);
+      take(`file ${fileName}`, content, `${name} ${operation}`);
+    }
+  };
+  const problemRows = (operation) => {
+    const categories = JSON.parse(scope.evaluate("JSON.stringify(state.problemCategories)"));
+    categories.forEach((category) => {
+      reached[category.kind] ??= `${name}: ${operation}`;
+      put(scope.context, "__walkCategory", category);
+      take("category label", scope.evaluate("formatProblemCategoryLabel(__walkCategory)"), `${name} ${operation}`);
+      take("category aria", scope.evaluate("formatProblemViewLabel(__walkCategory)"), `${name} ${operation}`);
+      take("category notes", scope.evaluate("JSON.stringify(listProblemRows(__walkCategory).items.map((item) => item.note))"), `${name} ${operation}`);
+      scope.evaluate("openProblemView(__walkCategory); exportProblemRows()");
+      flushDownloads(`${operation} ${category.kind}`);
+      snapshot(`${operation} ${category.kind}`);
+    });
+  };
+  const fields = (type) => JSON.parse(scope.evaluate(`JSON.stringify(getProfilesByType(${JSON.stringify(type)}).map((profile) => profile.field))`));
+  // A breakdown by the first text column (its blank group too, before any row is left out).
+  const breakdown = (operation, method) => {
+    const [metric] = fields("numeric");
+    const [group] = fields("category");
+    if (!metric || !group) return;
+    put(scope.context, "__walkMetric", metric);
+    put(scope.context, "__walkGroup", group);
+    put(scope.context, "__walkDate", fields("date")[0] || "");
+    scope.evaluate(`dom.v2MetricField.value = __walkMetric; dom.v2GroupField.value = __walkGroup; dom.v2AggregateMethod.value = ${JSON.stringify(method)}; dom.v2DateField.value = __walkDate; renderV2Analysis()`);
+    snapshot(operation);
+  };
+
+  snapshot("import");
+  breakdown("breakdown at import", "sum");
+  scope.evaluate("exportAnalysisReport()");
+  flushDownloads("report");
+  snapshot("report");
+  problemRows("problem rows");
+  // A filter: the first text column keeps the first half of its values.
+  const category = fields("category")[0];
+  if (category) {
+    put(scope.context, "__walkField", category);
+    scope.evaluate(`(() => {
+      const values = getCategoryFilterOptions(__walkField).map((option) => option.value);
+      dom.categoryFilterField.value = __walkField; updateCategoryFilterField();
+      state.categoryFilterDraftValues = new Set(values.slice(0, Math.max(1, Math.ceil(values.length / 2))));
+      applyFilters();
+    })()`);
+    snapshot("filter");
+  }
+  scope.evaluate('exportProcessedCsv("filtered")');
+  flushDownloads("data export");
+  // Both kinds left out, where the file has them; the notes of the problem rows say so.
+  scope.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("duplicateRows", true)');
+  snapshot("exclude");
+  problemRows("problem rows after excluding");
+  // Treat as blank: all, then one undone.
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  snapshot("treat as blank");
+  scope.evaluate("(() => { const entry = state.placeholders.find((item) => item.confirmed); if (entry) undoPlaceholderConfirmation(entry.field, entry.key); })()");
+  snapshot("undo blank");
+  problemRows("problem rows after blanks");
+  // Column settings: a draft (the gates say so), applied (a placeholder of an ignored column), restored.
+  const draftField = JSON.parse(scope.evaluate("JSON.stringify(state.placeholders[0]?.field || state.fields[state.fields.length - 1])"));
+  put(scope.context, "__walkDraft", draftField);
+  scope.evaluate('stageFieldTypeChange(__walkDraft, "ignore"); exportAnalysisReport()');
+  snapshot("column draft");
+  scope.evaluate("applyFieldConfiguration()");
+  snapshot("column applied");
+  problemRows("problem rows with an ignored column");
+  scope.evaluate("restoreAutomaticFieldTypes()");
+  snapshot("columns restored");
+  // The standardized table and its change list.
+  scope.evaluate('checkStandardizedExport(); exportStandardizedData("data"); exportStandardizedData("changes")');
+  flushDownloads("standardized");
+  snapshot("standardized");
+  // A breakdown and the trend summed by a number, where the file has the columns.
+  breakdown("breakdown", "median");
+  const [metric] = fields("numeric");
+  const [dateField] = fields("date");
+  if (metric && dateField) {
+    put(scope.context, "__walkMetric", metric);
+    put(scope.context, "__walkDate", dateField);
+    scope.evaluate('dom.dateChartField.value = __walkDate; dom.dateChartMetric.value = __walkMetric; dom.dateChartAggregate.value = "sum"; renderDateTrendChart()');
+    snapshot("trend");
+  }
+  scope.evaluate("exportAnalysisReport()");
+  flushDownloads("report at the end");
+  scope.evaluate("clearAllFilters()");
+  snapshot("filters cleared");
+  return reached;
+}
+
+// The three small files: what the English fixtures do not reach.
+//   single-column.csv: a reading issue without a row (UndetectableDelimiter, separator “;”);
+//   errors-and-dates.xlsx: an error cell with no code (FORMULA_ERROR_FALLBACK) and Excel date cells
+//   mixed with text dates (the Excel date cell format of mixed date formats).
+function englishExtraFiles() {
+  const serial = (y, m, d) => (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000;
+  const cells = {
+    A1: { t: "s", v: "Item" }, B1: { t: "s", v: "Date" }, C1: { t: "s", v: "Value" }
+  };
+  const rows = [["A", serial(2025, 1, 3), 10], ["B", serial(2025, 1, 6), 12], ["C", "2025/1/9", { e: 255 }], ["D", serial(2025, 1, 14), 9], ["E", serial(2025, 1, 20), 11], ["F", "2025/1/25", 13]];
+  rows.forEach(([item, date, value], index) => {
+    const r = index + 2;
+    cells[`A${r}`] = { t: "s", v: item };
+    cells[`B${r}`] = typeof date === "number" ? { t: "n", v: date, z: "yyyy-mm-dd" } : { t: "s", v: date };
+    cells[`C${r}`] = typeof value === "object" ? { t: "e", v: value.e } : { t: "n", v: value };
+  });
+  return {
+    "single-column.csv": "Name;Team\nAnn;Sales\nBob;Support\nCy;Sales\n",
+    "errors-and-dates.xlsx": buildCellSheetBuffer(cells, "A1:C7")
+  };
+}
+
+test("v3.2.0 commit 13: in English, no output of any operation on any English file has Chinese, except the three allowed and named", async () => {
+  const constants = createScriptContext();
+  chineseLeftInEnglish.constants = { fallback: constants.evaluate("FORMULA_ERROR_FALLBACK"), blankKey: constants.evaluate("BLANK_GROUP_KEY") };
+  assert.deepEqual(chineseLeftInEnglish.constants, { fallback: "#错误", blankKey: "（空值）" });
+  const problems = [];
+  const reached = {};
+  const allowedSeen = { switches: 0, fallback: 0, blankKey: 0 };
+  let outputs = 0;
+  const take = (where, text, operation) => {
+    outputs += 1;
+    const value = String(text);
+    if (/^#(languageSwitch|sidebarLanguageSwitch)$/.test(where) && value.split(" ¦ ").includes("中文")) allowedSeen.switches += 1;
+    if (value.includes(chineseLeftInEnglish.constants.fallback)) allowedSeen.fallback += 1;
+    if (value.includes(chineseLeftInEnglish.constants.blankKey)) allowedSeen.blankKey += 1;
+    const left = chineseLeftInEnglish(where, value);
+    if (left) problems.push(`${operation} ${left}`);
+  };
+  await withRecordedAttributes(async () => {
+    const files = [
+      [SAMPLE_ORDERS_EN, () => importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "en")],
+      ["en-issues.csv", () => importStage3Fixture("en-issues.csv", "en")],
+      ["en-formula-errors.xlsx", () => importStage3Fixture("en-formula-errors.xlsx", "en")],
+      // Blank values among ordinary rows (not only on a total row), and a value starting with a bracket.
+      ["orders.csv", () => importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en")],
+      ...Object.entries(englishExtraFiles()).map(([name, content]) => [name, () => (typeof content === "string" ? importCsvInLanguage(content, name, "en") : importWorkbookFile(content, name, "en"))])
+    ];
+    for (const [name, open] of files) {
+      const scope = await open();
+      assert.equal(scope.evaluate("currentLanguage"), "en", name);
+      assert.ok(scope.evaluate("state.rows.length") > 0, name);
+      for (const [kind, where] of Object.entries(walkEnglishOutputs(scope, name, take))) reached[kind] ??= where;
+    }
+  });
+  assert.deepEqual(problems.slice(0, 15), [], `${problems.length} outputs with Chinese`);
+  assert.ok(outputs > 5000, `${outputs} outputs`);
+  // Every kind of problem rows was opened (its label, notes, viewer and exported file looked at).
+  assert.deepEqual(Object.keys(reached).sort(), [...ALL_PROBLEM_KINDS].sort());
+  assert.deepEqual(reached, {
+    missing: "sample-orders-en.csv: problem rows",
+    conversion: "sample-orders-en.csv: problem rows",
+    dateStyle: "sample-orders-en.csv: problem rows",
+    outlier: "sample-orders-en.csv: problem rows",
+    duplicateRows: "sample-orders-en.csv: problem rows",
+    suspectedTotal: "sample-orders-en.csv: problem rows",
+    idDuplicate: "sample-orders-en.csv: problem rows",
+    lookAlike: "sample-orders-en.csv: problem rows",
+    placeholder: "sample-orders-en.csv: problem rows",
+    parseWarnings: "en-issues.csv: problem rows",
+    formulaError: "en-formula-errors.xlsx: problem rows"
+  });
+  // The allowed ones were really met (the rules are not empty words): the switches on every page,
+  // the fallback in the built workbook; the blank group's key nowhere, not even in an attribute.
+  assert.ok(allowedSeen.switches > 0 && allowedSeen.fallback > 0, JSON.stringify(allowedSeen));
+  assert.equal(allowedSeen.blankKey, 0);
+});
+
+// (3) Principle 1: changing the language changes words only. The same file in both languages gives
+// the same state, problem rows and line numbers, the same report snapshot once its strings are
+// taken out, the same numbers in every element and the same filter order.
+const SAME_IN_BOTH_STATE = `JSON.stringify({
+  rows: state.rows.length, fields: state.fields, totalMissing: state.totalMissing, duplicateRows: state.duplicateRows,
+  profiles: state.profiles, qualityNumericStats: state.qualityNumericStats, numericStats: state.numericStats, categoryStats: state.categoryStats,
+  idDuplicates: state.idDuplicates, placeholders: state.placeholders, numericLooking: state.numericLooking, suspectedTotals: state.suspectedTotals,
+  formulaErrors: state.formulaErrors, parseWarnings: state.parseWarnings, dateStyles: state.dateStyles, constantFields: state.constantFields,
+  lookAlikes: state.lookAlikes, headerDetection: state.headerDetection, trend: state.trendInsightData, categoryChartField: dom.categoryChartField.value,
+  problems: listProblemCategories().map((category) => [category, listProblemRows(category).items.map((item) => [item.line, item.rowIndex])]),
+  filterOrder: getProfilesByType("category").map((profile) => [profile.field, getCategoryFilterOptions(profile.field).map((option) => [option.value, option.count])]),
+  standardized: state.standardizedExport && { counts: state.standardizedExport.counts, cells: state.standardizedExport.cells },
+  custom: state.customAnalysis && state.customAnalysis.grouped
+})`;
+// A breakdown by the first number and text columns (with the date column when there is one).
+const SAME_IN_BOTH_BREAKDOWN = `(() => {
+  const [metric] = getProfilesByType("numeric"); const [group] = getProfilesByType("category"); const [date] = getProfilesByType("date");
+  if (!metric || !group) return;
+  dom.v2MetricField.value = metric.field; dom.v2GroupField.value = group.field; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = date ? date.field : "";
+  renderV2Analysis();
+})()`;
+const withoutStrings = (value) => (typeof value === "string" ? "" : Array.isArray(value) ? value.map(withoutStrings)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, withoutStrings(item)])) : value);
+
+test("v3.2.0 commit 13: the same file in Chinese and in English gives the same numbers, rows, report figures and filter order", async () => {
+  const files = [
+    ...STAGE3_IMPORT_FILES.map((name) => [name, (language) => importStage3Fixture(name, language)]),
+    ...["sample-orders.csv", SAMPLE_ORDERS_EN].map((name) => [name, (language) => importCsvInLanguage(readExampleCsv(name), name, language)]),
+    // Values that start with a bracket next to blanks: the filter's sort key must be the Chinese one in
+    // both languages (R3), or “(Blank)” and “（空值）” sort to different places.
+    ["orders.csv", (language) => importCsvInLanguage(englishScenarioCsv(), "orders.csv", language)]
+  ];
+  assert.equal(files.length, 13);
+  const gaps = [];
+  await withRecordedAttributes(async () => {
+  for (const [name, open] of files) {
+    const [zh, en] = [await open("zh"), await open("en")];
+    const steps = [["import", ""], ["breakdown", SAME_IN_BOTH_BREAKDOWN], ["blanks and standardized", "confirmAllCommonPlaceholders(); checkStandardizedExport()"]];
+    for (const [step, expression] of steps) {
+      for (const scope of [zh, en]) if (expression) scope.evaluate(expression);
+      if (zh.evaluate(SAME_IN_BOTH_STATE) !== en.evaluate(SAME_IN_BOTH_STATE)) {
+        const a = JSON.parse(zh.evaluate(SAME_IN_BOTH_STATE));
+        const b = JSON.parse(en.evaluate(SAME_IN_BOTH_STATE));
+        gaps.push(`${name} ${step} state: ${Object.keys(a).filter((key) => JSON.stringify(a[key]) !== JSON.stringify(b[key])).join(", ")}`);
+      }
+      // The report writes the time of the analysis, each import's own clock: the same moment for both.
+      for (const scope of [zh, en]) scope.evaluate('state.analysisCompletedAt = new Date("2026-10-25T08:00:00.000Z")');
+      const reports = [zh, en].map((scope) => reportOf(scope));
+      if (JSON.stringify(withoutStrings(reports[0].report)) !== JSON.stringify(withoutStrings(reports[1].report))) gaps.push(`${name} ${step} report snapshot`);
+      const reportNumbers = reports.map(({ html }) => numbersOf(html.replace(/<[^>]+>/g, " ")).filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" "));
+      if (reportNumbers[0] !== reportNumbers[1]) gaps.push(`${name} ${step} report numbers`);
+      const zhTexts = elementTexts(zh);
+      const enTexts = elementTexts(en);
+      for (const id of Object.keys({ ...zhTexts, ...enTexts })) {
+        const a = numbersOf(zhTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" ");
+        const b = numbersOf(enTexts[id] || "").filter((number) => !ENGLISH_EXTRA_NUMBERS.includes(number)).join(" ");
+        if (a !== b) gaps.push(`${name} ${step} #${id}: ${a.slice(0, 80)} / ${b.slice(0, 80)}`);
+      }
+    }
+  }
+  });
+  assert.deepEqual(gaps.slice(0, 15), [], `${gaps.length} differences`);
+  // The bracket case is really there: the blank value sorts first in both (（ is after ( in zh-CN order).
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label]))')).slice(0, 2), [["", "(Blank)"], ["(A)", "(A)"]]);
 });

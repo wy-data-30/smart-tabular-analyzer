@@ -252,7 +252,6 @@ test("building reports does not block later filtering and analysis", () => {
   installDataset(context, evaluate, rows);
   context.__qaReport = JSON.parse(evaluate('JSON.stringify(buildReportData(new Date("2026-07-22T01:00:00.000Z")))'));
   assert.doesNotThrow(() => evaluate("buildHtmlReport(__qaReport, [])"));
-  assert.doesNotThrow(() => evaluate("buildMarkdownReport(__qaReport)"));
 
   context.__qaFilters = { category: { field: "group", values: ["A"] }, numeric: null, date: null };
   evaluate(`(() => {

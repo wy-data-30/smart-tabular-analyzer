@@ -94,6 +94,15 @@ function buildMetricDateTrend(dateField, metricField, aggregateMethod = "sum") {
   return buildTrendFromRows(dateField, (row) => parseNumber(row[metricField]), aggregateMethod);
 }
 
+// v3.2.0 (R3): the group of empty values. The key stays Chinese in both languages (it is data:
+// groups, filter values and their order use it); displayGroupName() shows it in the language.
+const BLANK_GROUP_KEY = "（空值）";
+const BLANK_GROUP_LABEL = Lp("（空值）", "(Blank)");
+
+function displayGroupName(name) {
+  return name === BLANK_GROUP_KEY ? Lpick(BLANK_GROUP_LABEL) : name;
+}
+
 function groupNumericFieldByCategory(metricField, groupField) {
   const groupKeys = getConfirmedPlaceholderKeys(groupField);
   const parseNumber = getFieldNumberParser(metricField);
@@ -101,7 +110,7 @@ function groupNumericFieldByCategory(metricField, groupField) {
   getAnalysisRows().forEach((row) => {
     const value = parseNumber(row[metricField]);
     if (value === null) return;
-    const groupName = analysisValue(row[groupField], groupKeys) || "（空值）";
+    const groupName = analysisValue(row[groupField], groupKeys) || BLANK_GROUP_KEY;
     if (!groups.has(groupName)) groups.set(groupName, []);
     groups.get(groupName).push(value);
   });
@@ -170,31 +179,72 @@ function fieldHasDateData(field, rows = getAnalysisRows()) {
 // The trend conclusion always compares record counts; numeric fields and the
 // chart's metric selects do not change it.
 function buildTrendInsight(dateField) {
+  return formatTrendInsight(computeTrendInsight(dateField));
+}
+
+// v3.2.0: the figures of the trend conclusion, apart from its sentence: a language switch writes
+// the sentence again without reading the rows (state.trendInsightData).
+function computeTrendInsight(dateField) {
   const trend = buildDateTrend(dateField, "");
-  if (!trend.labels.length) {
-    return `日期字段「${dateField}」里没有认得出的日期，因此未生成趋势结论。`;
-  }
-  if (trend.values.length < 2) {
-    return `日期字段「${dateField}」可用于趋势分析，但有效时间点不足以判断变化方向。`;
-  }
+  if (!trend.labels.length) return { dateField, kind: "none" };
+  if (trend.values.length < 2) return { dateField, kind: "few" };
   const first = trend.values[0];
   const last = trend.values[trend.values.length - 1];
-  const range = `基于日期字段「${dateField}」观察，${trend.label} 从 ${trend.labels[0]} 到 ${trend.labels[trend.labels.length - 1]}`;
-  const note = buildPartialPeriodNote(dateField, trend);
-  // Every bucket holds at least one record, so the first count is never 0.
-  if (last === first) return `${range} 基本持平。${note}`;
-  const direction = last > first ? "上升" : "下降";
-  return `${range} 呈${direction}变化，变化幅度约 ${formatPercent(Math.abs((last - first) / first))}。${note}`;
+  return {
+    dateField,
+    // Every bucket holds at least one record, so the first count is never 0.
+    kind: last === first ? "flat" : last > first ? "up" : "down",
+    yearly: getDateGranularity(dateField) === "year",
+    from: trend.labels[0],
+    to: trend.labels[trend.labels.length - 1],
+    ratio: Math.abs((last - first) / first),
+    partial: findPartialPeriod(dateField, trend)
+  };
+}
+
+function formatTrendInsight({ dateField, kind, yearly, from, to, ratio, partial }) {
+  if (kind === "none") {
+    return L(`日期字段「${dateField}」里没有认得出的日期，因此未生成趋势结论。`, `The date column “${dateField}” has no recognized dates, so there is no trend summary.`);
+  }
+  if (kind === "few") {
+    return L(`日期字段「${dateField}」可用于趋势分析，但有效时间点不足以判断变化方向。`, `The date column “${dateField}” can show a trend, but it has too few points in time to tell the direction.`);
+  }
+  const note = formatPartialPeriodNote(partial);
+  const label = L(`${yearly ? "年度" : ""}记录数趋势`, `the ${yearly ? "yearly " : ""}record count`);
+  if (kind === "flat") {
+    return L(`基于日期字段「${dateField}」观察，${label} 从 ${from} 到 ${to} 基本持平。${note}`, `By the date column “${dateField}”, ${label} stays about the same from ${from} to ${to}.${note ? ` ${note}` : ""}`);
+  }
+  return L(
+    `基于日期字段「${dateField}」观察，${label} 从 ${from} 到 ${to} 呈${kind === "up" ? "上升" : "下降"}变化，变化幅度约 ${formatPercent(ratio)}。${note}`,
+    `By the date column “${dateField}”, ${label} ${kind === "up" ? "rises" : "falls"} from ${from} to ${to}, by about ${formatPercent(ratio)}.${note ? ` ${note}` : ""}`
+  );
+}
+
+// The partial-period note of the trend conclusion, or "".
+function buildPartialPeriodNote(dateField, trend) {
+  return formatPartialPeriodNote(findPartialPeriod(dateField, trend));
+}
+
+function formatPartialPeriodNote(partial) {
+  if (!partial) return "";
+  const { yearly, year, label, month, day } = partial;
+  // English writes the last date as YYYY-MM-DD (the year is in the period's name already).
+  const lastDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return L(
+    `注意：最后一期（${yearly ? `${year} 年` : label}）的数据截至 ${month} 月 ${day} 日，可能不完整，比较结果仅供参考。`,
+    `Note: the last period (${yearly ? year : label}) only has data up to ${lastDate}, so it may be incomplete and the comparison is only a guide.`
+  );
 }
 
 // Month and year buckets may be incomplete when the latest written date ends
 // before that month / year. Day buckets and year-only values ("2025") are not
 // judged. Dates are UTC calendar days from parseFieldDate(), compared with the
 // same bucket keys as getDateTrendKey(), so the runtime time zone never matters.
-function buildPartialPeriodNote(dateField, trend) {
+// Returns { yearly, year, label, month, day } of the last period, or null.
+function findPartialPeriod(dateField, trend) {
   const lastLabel = trend.labels[trend.labels.length - 1];
   const yearly = getDateGranularity(dateField) === "year";
-  if (!yearly && !/^\d{4}-\d{2}$/.test(lastLabel)) return "";
+  if (!yearly && !/^\d{4}-\d{2}$/.test(lastLabel)) return null;
   const strategy = getFieldProfile(dateField)?.dateStrategy || {};
   let lastDate = null;
   getAnalysisRows().forEach((row) => {
@@ -203,13 +253,12 @@ function buildPartialPeriodNote(dateField, trend) {
     if (!date || (yearly && isYearOnlyDateValue(value, strategy))) return;
     if (!lastDate || date > lastDate) lastDate = date;
   });
-  if (!lastDate || getDateTrendKey(dateField, lastDate, !yearly) !== lastLabel) return "";
+  if (!lastDate || getDateTrendKey(dateField, lastDate, !yearly) !== lastLabel) return null;
   const year = lastDate.getUTCFullYear();
   const month = lastDate.getUTCMonth();
   const periodEnd = yearly ? Date.UTC(year, 11, 31) : Date.UTC(year, month + 1, 0);
-  if (lastDate.getTime() >= periodEnd) return "";
-  const period = yearly ? `${year} 年` : lastLabel;
-  return `注意：最后一期（${period}）的数据截至 ${month + 1} 月 ${lastDate.getUTCDate()} 日，可能不完整，比较结果仅供参考。`;
+  if (lastDate.getTime() >= periodEnd) return null;
+  return { yearly, year, label: lastLabel, month: month + 1, day: lastDate.getUTCDate() };
 }
 
 function buildDateTrend(dateField, numericField) {
@@ -224,7 +273,7 @@ function buildDateTrend(dateField, numericField) {
   });
 
   if (!items.length) {
-    return { labels: [], values: [], label: "趋势", axisLabel: "值" };
+    return { labels: [], values: [], label: L("趋势", "Trend"), axisLabel: L("值", "Value") };
   }
 
   items.sort((a, b) => a.date - b.date);
@@ -251,9 +300,9 @@ function buildDateTrend(dateField, numericField) {
     labels,
     values,
     label: hasMetric
-      ? `${numericField}${getDateGranularity(dateField) === "year" ? "年度" : " "}平均值趋势`
-      : `${getDateGranularity(dateField) === "year" ? "年度" : ""}记录数趋势`,
-    axisLabel: hasMetric ? "平均值" : "记录数"
+      ? L(`${numericField}${getDateGranularity(dateField) === "year" ? "年度" : " "}平均值趋势`, `${numericField} ${getDateGranularity(dateField) === "year" ? "yearly " : ""}average trend`)
+      : L(`${getDateGranularity(dateField) === "year" ? "年度" : ""}记录数趋势`, `${getDateGranularity(dateField) === "year" ? "Yearly record count" : "Record count"} trend`),
+    axisLabel: hasMetric ? L("平均值", "Average") : L("记录数", "Record count")
   };
 }
 

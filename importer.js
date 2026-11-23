@@ -1,7 +1,7 @@
 // 文件导入：CSV / Excel 的读取、编码识别、解析、表头保护、导入上限校验和导入并发保护，还原 Excel 日期格式下的文本和布尔单元格，读出 Excel 的公式错误单元格，记下日期单元格，最后交给 commitTabularData() 提交。
 
 const ENCODING_LABELS = {
-  auto: "自动识别",
+  get auto() { return L("自动识别", "Detect automatically"); },
   "utf-8": "UTF-8",
   gbk: "GBK",
   gb18030: "GB18030"
@@ -16,49 +16,49 @@ const IMPORT_LIMITS = Object.freeze({
 async function parseCsvFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
+    assertRuntimeDependency("Papa", Lp("CSV 解析组件加载失败，请刷新页面重试。", "The CSV reader failed to load; refresh the page and try again."));
     const selectedEncoding = dom.fileEncoding.value || "auto";
-    setStatus(`正在读取 ${file.name} ...`);
+    setStatus(L(`正在读取 ${file.name} ...`, `Reading ${file.name} ...`));
     const buffer = await readFileAsArrayBuffer(file, importId);
     if (!isCurrentImport(importId)) return;
     const decoded = decodeCsvBuffer(buffer, selectedEncoding);
-    setStatus(`正在解析 ${file.name}（${decoded.label}）...`);
+    setStatus(L(`正在解析 ${file.name}（${decoded.label}）...`, `Reading ${file.name} (${decoded.label}) ...`));
     parseCsvText(decoded.text, file.name, importId);
   } catch (error) {
-    showError(error.message, importId);
+    showError(errorMessageBuilder(error), importId);
   }
 }
 
 function parseDataFile(file) {
   if (Number.isFinite(file?.size) && file.size > IMPORT_LIMITS.maxFileSizeBytes) {
     const importId = beginImport();
-    showError(`文件大小超过 ${formatImportLimitSize(IMPORT_LIMITS.maxFileSizeBytes)}，请拆分文件后重试。`, importId);
+    showError(() => L(`文件大小超过 ${formatImportLimitSize(IMPORT_LIMITS.maxFileSizeBytes)}，请拆分文件后重试。`, `The file is larger than ${formatImportLimitSize(IMPORT_LIMITS.maxFileSizeBytes)}; split it and try again.`), importId);
     return;
   }
   if (/\.csv$/i.test(file.name)) return parseCsvFile(file);
   if (/\.(xlsx|xls)$/i.test(file.name)) return parseExcelFile(file);
   const importId = beginImport();
-  showError("不支持的文件格式。请上传 CSV、XLSX 或 XLS 文件。", importId);
+  showError(() => L("不支持的文件格式。请上传 CSV、XLSX 或 XLS 文件。", "This file type is not supported. Upload a CSV, XLSX or XLS file."), importId);
 }
 
 async function parseExcelFile(file) {
   const importId = beginImport();
   try {
-    assertRuntimeDependency("XLSX", "Excel 解析组件加载失败，请刷新页面重试。");
-    setStatus(`正在读取 ${file.name} ...`);
+    assertRuntimeDependency("XLSX", Lp("Excel 解析组件加载失败，请刷新页面重试。", "The Excel reader failed to load; refresh the page and try again."));
+    setStatus(L(`正在读取 ${file.name} ...`, `Reading ${file.name} ...`));
     const buffer = await readFileAsArrayBuffer(file, importId);
     if (!isCurrentImport(importId)) return;
-    setStatus(`正在解析 ${file.name} ...`);
+    setStatus(L(`正在解析 ${file.name} ...`, `Reading ${file.name} ...`));
     validateExcelFileSignature(buffer, file.name);
     let workbook;
     try {
       workbook = readExcelWorkbook(buffer);
     } catch {
-      throw new Error("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。");
+      throw languageError(Lp("Excel 文件格式异常或文件已损坏，无法解析。请确认文件是有效的 XLSX 或 XLS 文件。", "The Excel file is malformed or damaged and cannot be read. Make sure it is a valid XLSX or XLS file."));
     }
 
     const sheetNames = Array.isArray(workbook.SheetNames) ? workbook.SheetNames.filter(Boolean) : [];
-    if (!sheetNames.length) throw new Error("Excel 文件中没有可读取的工作表。");
+    if (!sheetNames.length) throw languageError(Lp("Excel 文件中没有可读取的工作表。", "The Excel file has no worksheet to read."));
 
     if (sheetNames.length > 1) {
       showExcelSheetSelection(workbook, file.name, sheetNames, importId);
@@ -67,7 +67,7 @@ async function parseExcelFile(file) {
 
     importExcelSheet(workbook, file.name, sheetNames[0], importId);
   } catch (error) {
-    showError(error.message, importId);
+    showError(errorMessageBuilder(error), importId);
   }
 }
 
@@ -80,7 +80,7 @@ function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
   if (!isCurrentImport(importId)) return;
   setImportBusy(false);
   state.pendingExcel = { workbook, fileName, importId };
-  dom.excelWorkbookName.textContent = `${fileName} · 共 ${sheetNames.length} 个工作表`;
+  dom.excelWorkbookName.textContent = L(`${fileName} · 共 ${sheetNames.length} 个工作表`, `${fileName} · ${sheetNames.length} worksheets`);
   dom.excelSheetSelect.innerHTML = "";
   sheetNames.forEach((sheetName) => {
     const option = document.createElement("option");
@@ -88,23 +88,22 @@ function showExcelSheetSelection(workbook, fileName, sheetNames, importId) {
     option.textContent = sheetName;
     dom.excelSheetSelect.appendChild(option);
   });
-  dom.sheetSelectionMessage.className = "sheet-selection-message";
-  dom.sheetSelectionMessage.textContent = "请选择一个工作表，确认后再生成分析结果。";
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", () => L("请选择一个工作表，确认后再生成分析结果。", "Choose a worksheet, then confirm to analyze it."));
   dom.sheetSelectionPanel.classList.remove("hidden");
   dom.statusPanel.className = "status-panel hidden";
-  dom.statusPanel.textContent = "";
+  clearStatusMessage();
 }
 
 function analyzeSelectedExcelSheet() {
   const pending = state.pendingExcel;
   if (!pending || !isCurrentImport(pending.importId)) {
-    showError("Excel 工作簿状态已失效，请重新上传文件。");
+    showError(() => L("Excel 工作簿状态已失效，请重新上传文件。", "The Excel workbook is no longer available; upload the file again."));
     return;
   }
 
   const sheetName = dom.excelSheetSelect.value;
   if (!sheetName) {
-    showSheetSelectionError("请选择一个工作表后再继续。");
+    showSheetSelectionError(() => L("请选择一个工作表后再继续。", "Choose a worksheet to continue."));
     return;
   }
 
@@ -119,14 +118,14 @@ function importExcelSheet(workbook, fileName, sheetName, importId) {
   if (!isCurrentImport(importId)) return;
   const worksheet = workbook.Sheets?.[sheetName];
   if (!worksheet || !worksheet["!ref"]) {
-    throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
+    throw languageError(Lp(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`, `The worksheet “${sheetName}” is empty; choose one with a header row and data.`));
   }
 
   const { fields, rows, rowNumbers, numberFormatHints, headerDetection = null, formulaErrors = null, dateCells = null } = readExcelSheetTable(worksheet, sheetName);
 
   state.pendingExcel = null;
   dom.sheetSelectionPanel.classList.add("hidden");
-  setStatus(`正在分析 ${fileName} · ${sheetName} ...`);
+  setStatus(L(`正在分析 ${fileName} · ${sheetName} ...`, `Analyzing ${fileName} · ${sheetName} ...`));
   commitTabularData(fields, rows, fileName, importId, [], sheetName, numberFormatHints, headerDetection, rowNumbers, formulaErrors, dateCells);
 }
 
@@ -202,12 +201,16 @@ const EXCEL_ERROR_CODES = Object.freeze({ 0: "#NULL!", 7: "#DIV/0!", 15: "#VALUE
 const EXCEL_ERROR_TEXT_PATTERN = /^#[A-Z0-9/_!?]+$/;
 const EXCEL_UNKNOWN_ERROR_TEXT = "#WTF?";
 
+// v3.2.0 (R3): what an error cell holds when neither its text nor its code is known. It is data,
+// shown as it is in both languages (no translation), like the error texts themselves.
+const FORMULA_ERROR_FALLBACK = "#错误";
+
 // The text of a t:"e" cell. Only such cells read cell.w: it is the error's own text,
 // not a formatted value, so the time zone cannot change it, and #SPILL! / #CALC! have
 // nothing else (no cell.v).
 function readExcelErrorText(cell) {
   if (cell.w !== EXCEL_UNKNOWN_ERROR_TEXT && EXCEL_ERROR_TEXT_PATTERN.test(cell.w)) return cell.w;
-  return EXCEL_ERROR_CODES[cell.v] ?? "#错误";
+  return EXCEL_ERROR_CODES[cell.v] ?? FORMULA_ERROR_FALLBACK;
 }
 
 // Returns a reader for one position of a sheet_to_json({ header: 1 }) table: the error
@@ -250,7 +253,7 @@ function buildExcelNumberFormatHints(fields, usedColumnIndexes, dataPairs, readN
 // of rows[i] or null (formulaErrors itself is left out without any error); dateCells[i] the
 // { field: true } of the date cells of rows[i] or null, left out alike. readCellError(rowIndex,
 // columnIndex) is asked only about cells that read as empty.
-function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作表", readNumberFormats = null, firstRowNumber = 1, readCellError = null) {
+function buildExcelTabularData(formattedRows, rawRows, sheetName = L("当前工作表", "this worksheet"), readNumberFormats = null, firstRowNumber = 1, readCellError = null) {
   const rowCount = Math.max(formattedRows?.length || 0, rawRows?.length || 0);
   const rowPairs = Array.from({ length: rowCount }, (_, index) => ({
     index,
@@ -266,14 +269,14 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   }
 
   if (!rowPairs.length) {
-    throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
+    throw languageError(Lp(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`, `The worksheet “${sheetName}” is empty; choose one with a header row and data.`));
   }
 
   const { position: headerPosition, attempted: titleSkipAttempted } = findExcelHeaderPosition(rowPairs);
 
   // The row limit counts data rows below the header, not skipped title rows.
   if (rowPairs.length - 1 - headerPosition > IMPORT_LIMITS.maxRows) {
-    throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`);
+    throw languageError(Lp(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`, `The worksheet “${sheetName}” is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows of data; split it and try again.`));
   }
 
   const headerPair = rowPairs[headerPosition];
@@ -281,19 +284,20 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
   const usedColumnIndexes = getExcelUsedColumnIndexes(headerPair, dataPairs);
 
   if (usedColumnIndexes.length > IMPORT_LIMITS.maxColumns) {
-    throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`);
+    throw languageError(Lp(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`, `The worksheet “${sheetName}” is over the limit of ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; remove some columns and try again.`));
   }
 
   if (!usedColumnIndexes.length) {
-    throw new Error(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`);
+    throw languageError(Lp(`工作表「${sheetName}」为空，请选择包含表头和数据的工作表。`, `The worksheet “${sheetName}” is empty; choose one with a header row and data.`));
   }
 
   const headerCheck = checkExcelHeaderFields(headerPair, usedColumnIndexes);
   if (headerCheck.error) {
     const message = excelHeaderErrorMessage(headerCheck.error, sheetName);
-    throw new Error(titleSkipAttempted
-      ? `${message}${formatTitleRowFallbackHint(firstRowNumber + headerPair.index)}`
-      : message);
+    throw languageError(() => {
+      const text = excelHeaderErrorMessage(headerCheck.error, sheetName);
+      return titleSkipAttempted ? `${text}${formatTitleRowFallbackHint(firstRowNumber + headerPair.index)}` : text;
+    });
   }
   const { fields } = headerCheck;
 
@@ -334,7 +338,7 @@ function buildExcelTabularData(formattedRows, rawRows, sheetName = "当前工作
     }, Object.create(null)));
 
   if (!rows.length) {
-    throw new Error(`工作表「${sheetName}」只有表头，没有可分析的数据行。`);
+    throw languageError(Lp(`工作表「${sheetName}」只有表头，没有可分析的数据行。`, `The worksheet “${sheetName}” has only a header row and no data to analyze.`));
   }
 
   const result = { fields, rows, rowNumbers: keptPairs.map((pair) => firstRowNumber + pair.index) };
@@ -374,7 +378,10 @@ function findExcelHeaderPosition(rowPairs) {
 // Appended to a header error when the first non-empty row looked like a title
 // but no header row below it could be confirmed.
 function formatTitleRowFallbackHint(rowNumber) {
-  return `第 ${rowNumber} 行看起来像标题。如果表头不在第 ${rowNumber} 行，请删除表头上方的标题行后重新上传。`;
+  return L(
+    `第 ${rowNumber} 行看起来像标题。如果表头不在第 ${rowNumber} 行，请删除表头上方的标题行后重新上传。`,
+    `Row ${rowNumber} looks like a title. If the header is not on row ${rowNumber}, delete the title rows above the header and upload the file again.`
+  );
 }
 
 function findExcelHeaderErrorAt(rowPairs, position) {
@@ -410,12 +417,12 @@ function checkExcelHeaderFields(headerPair, usedColumnIndexes) {
 
 function excelHeaderErrorMessage(error, sheetName) {
   if (error.code === "missingHeader") {
-    return `工作表「${sheetName}」的第 ${error.columnIndex + 1} 列缺少表头，请补充字段名后重新上传。`;
+    return L(`工作表「${sheetName}」的第 ${error.columnIndex + 1} 列缺少表头，请补充字段名后重新上传。`, `Column ${error.columnIndex + 1} of the worksheet “${sheetName}” has no header; add a column name and upload the file again.`);
   }
   if (error.code === "nonTextHeader") {
-    return `工作表「${sheetName}」未识别到有效文本表头；第 ${error.columnIndex + 1} 列首行不是字段名。`;
+    return L(`工作表「${sheetName}」未识别到有效文本表头；第 ${error.columnIndex + 1} 列首行不是字段名。`, `No text header was found in the worksheet “${sheetName}”: the first row of column ${error.columnIndex + 1} is not a column name.`);
   }
-  return `工作表「${sheetName}」包含重复表头「${error.field}」，请修改后重新上传。`;
+  return L(`工作表「${sheetName}」包含重复表头「${error.field}」，请修改后重新上传。`, `The worksheet “${sheetName}” has the header “${error.field}” more than once; change it and upload the file again.`);
 }
 
 function excelRowHasValue(row) {
@@ -453,7 +460,7 @@ function validateExcelFileSignature(buffer, fileName) {
     && oleSignature.every((value, index) => bytes[index] === value);
 
   if ((isXlsx && !hasZipSignature) || (isXls && !hasOleSignature)) {
-    throw new Error("Excel 文件格式与扩展名不匹配或文件已损坏。请重新导出为有效的 XLSX 或 XLS 文件后再上传。");
+    throw languageError(Lp("Excel 文件格式与扩展名不匹配或文件已损坏。请重新导出为有效的 XLSX 或 XLS 文件后再上传。", "The Excel file does not match its extension or is damaged. Export it again as a valid XLSX or XLS file and upload it."));
   }
 }
 
@@ -462,7 +469,7 @@ function validateExcelWorksheetLimits(worksheet, sheetName) {
   try {
     range = XLSX.utils.decode_range(worksheet["!ref"]);
   } catch {
-    throw new Error(`工作表「${sheetName}」的使用区域无效，无法解析。`);
+    throw languageError(Lp(`工作表「${sheetName}」的使用区域无效，无法解析。`, `The used range of the worksheet “${sheetName}” is not valid, so it cannot be read.`));
   }
 
   const dataRowCount = range.e.r - range.s.r;
@@ -470,16 +477,16 @@ function validateExcelWorksheetLimits(worksheet, sheetName) {
   // An early, coarse check: title rows above the header may still be skipped, so
   // allow HEADER_SCAN_ROWS extra rows; buildExcelTabularData() applies the exact limit.
   if (dataRowCount > IMPORT_LIMITS.maxRows + HEADER_SCAN_ROWS) {
-    throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`);
+    throw languageError(Lp(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分后重试。`, `The worksheet “${sheetName}” is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows of data; split it and try again.`));
   }
   if (columnCount > IMPORT_LIMITS.maxColumns) {
-    throw new Error(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`);
+    throw languageError(Lp(`工作表「${sheetName}」超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`, `The worksheet “${sheetName}” is over the limit of ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; remove some columns and try again.`));
   }
 }
 
+// message: a text or a function writing it (written again after a language switch).
 function showSheetSelectionError(message) {
-  dom.sheetSelectionMessage.className = "sheet-selection-message error";
-  dom.sheetSelectionMessage.textContent = message;
+  writeOneOffMessage(dom.sheetSelectionMessage, "sheet-selection-message", message, "error");
 }
 
 // retry is set only for the one re-parse below skipped title rows:
@@ -487,7 +494,7 @@ function showSheetSelectionError(message) {
 // the one re-parse after blank lines filled it (see handleParsedData()).
 function parseCsvText(text, sourceName, importId = beginImport(), retry = null, wholeText = false) {
   if (!isCurrentImport(importId)) return;
-  assertRuntimeDependency("Papa", "CSV 解析组件加载失败，请刷新页面重试。");
+  assertRuntimeDependency("Papa", Lp("CSV 解析组件加载失败，请刷新页面重试。", "The CSV reader failed to load; refresh the page and try again."));
   Papa.parse(text, {
     header: true,
     skipEmptyLines: true,
@@ -497,14 +504,14 @@ function parseCsvText(text, sourceName, importId = beginImport(), retry = null, 
     worker: false,
     transformHeader: encodeCsvHeaderForParser,
     complete: (results) => handleParsedData(results, sourceName, importId, { text, retry, wholeText }),
-    error: (error) => showError(retry ? retry.firstError() : error.message, importId)
+    error: (error) => showError(retry ? () => retry.firstError() : errorMessageBuilder(error), importId)
   });
 }
 
 // Finds the header below title rows of a CSV whose first row failed the header
 // checks. Returns { offset, lineOffset, headerDetection, titleHint }: offset is the
 // header row's first character and lineOffset the physical lines above it.
-// headerDetection is null when no header was found; titleHint is the fallback
+// headerDetection is null when no header was found; titleHint() writes the fallback
 // hint for the first non-empty row, or "" when skipping was not tried.
 function findCsvHeaderBelowTitleRows(text) {
   const rows = [];
@@ -525,7 +532,9 @@ function findCsvHeaderBelowTitleRows(text) {
   const lineNumbers = lineNumbersAtOffsets(text, starts);
   const lineNumberAt = (index) => lineNumbers[index] ?? 1;
   const firstIndex = Math.max(0, rows.findIndex((row) => countNonEmptyCells(row) > 0));
-  const titleHint = detection.attempted ? formatTitleRowFallbackHint(lineNumberAt(firstIndex)) : "";
+  // v3.2.0 commit 11: a function, so a language switch writes the hint again.
+  const titleRow = detection.attempted ? lineNumberAt(firstIndex) : null;
+  const titleHint = () => (titleRow === null ? "" : formatTitleRowFallbackHint(titleRow));
   if (detection.status !== "skipped" || !detection.headerIndex) return { headerDetection: null, titleHint };
   const headerRowNumber = lineNumberAt(detection.headerIndex);
   return {
@@ -660,28 +669,34 @@ function csvHasMoreDataRecordsThan(text, meta, limit) {
 // text). Returns the error to show now (with the title hint when skipping was
 // tried), or "" when the re-parse took over; a failed re-parse then shows that same
 // first error, built only then through retry.firstError().
+// The error to show: a function (v3.2.0 commit 11: written again after a language switch), or ""
+// when the re-parse below the title rows took over. The re-parse's first error is kept per
+// language: making it reads the file again (its row number).
 function retryCsvBelowTitleRows(source, sourceName, importId, message) {
   const resolve = () => (typeof message === "function" ? message() : message);
-  if (!source || source.retry) return resolve();
+  if (!source || source.retry) return resolve;
   const found = findCsvHeaderBelowTitleRows(source.text);
-  if (!found.headerDetection) return `${resolve()}${found.titleHint}`;
-  let firstError = null;
+  if (!found.headerDetection) return () => `${resolve()}${found.titleHint()}`;
+  const firstErrors = {};
   parseCsvText(source.text.slice(found.offset), sourceName, importId, {
     lineOffset: found.lineOffset,
     headerDetection: found.headerDetection,
-    firstError: () => (firstError ??= `${resolve()}${found.titleHint}`)
+    firstError: () => (firstErrors[currentLanguage] ??= `${resolve()}${found.titleHint()}`)
   });
   return "";
 }
 
 function formatExtraCellError(lineNumber) {
-  return `CSV${lineNumber ? ` 第 ${lineNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`;
+  return L(
+    `CSV${lineNumber ? ` 第 ${lineNumber} 行` : ""}的数据列多于表头，继续分析会丢失额外单元格。请补全表头或修正该行后重试。`,
+    `${lineNumber ? `Row ${lineNumber} of the CSV` : "A row of the CSV"} has more columns than the header, and the extra cells would be lost. Complete the header or fix the row, then try again.`
+  );
 }
 
 function formatUnclosedQuoteError(lineNumber) {
   return lineNumber
-    ? `CSV 第 ${lineNumber} 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。`
-    : "CSV 中有引号没有闭合，之后的内容无法正确分列。请检查文件里的引号后重试。";
+    ? L(`CSV 第 ${lineNumber} 行开始的引号没有闭合，之后的内容无法正确分列。请检查该行的引号后重试。`, `A quote that starts on row ${lineNumber} of the CSV is never closed, so the rest cannot be split into columns. Check the quotes of that row and try again.`)
+    : L("CSV 中有引号没有闭合，之后的内容无法正确分列。请检查文件里的引号后重试。", "A quote in the CSV is never closed, so the rest cannot be split into columns. Check the quotes in the file and try again.");
 }
 
 const CSV_HEADER_KEY_PREFIX = "__SMART_CSV_HEADER__";
@@ -714,8 +729,9 @@ function isCurrentImport(importId) {
   return importId === state.activeImportId;
 }
 
+// message: an Lp() pair (v3.2.0 commit 11: the error can be written again after a switch).
 function assertRuntimeDependency(globalName, message) {
-  if (!window[globalName]) throw new Error(message);
+  if (!window[globalName]) throw languageError(message);
 }
 
 function abortActiveFileRead() {
@@ -743,11 +759,11 @@ function readFileAsArrayBuffer(file, importId = state.activeImportId) {
     };
     reader.onerror = () => {
       clearReader();
-      reject(reader.error || new Error("文件读取失败"));
+      reject(reader.error || languageError(Lp("文件读取失败", "The file could not be read")));
     };
     reader.onabort = () => {
       clearReader();
-      reject(new Error("文件读取已取消"));
+      reject(languageError(Lp("文件读取已取消", "Reading the file was canceled")));
     };
     reader.readAsArrayBuffer(file);
   });
@@ -759,7 +775,7 @@ function decodeCsvBuffer(buffer, selectedEncoding) {
   }
 
   if (!Object.prototype.hasOwnProperty.call(ENCODING_LABELS, selectedEncoding)) {
-    throw new Error("不支持的文件编码。");
+    throw languageError(Lp("不支持的文件编码。", "This file encoding is not supported."));
   }
 
   return {
@@ -784,7 +800,7 @@ function autoDecodeCsvBuffer(buffer) {
   } catch {
     return {
       text: decodeText(buffer, "gb18030"),
-      label: "GB18030 自动识别"
+      label: L("GB18030 自动识别", "GB18030, detected")
     };
   }
 }
@@ -799,7 +815,10 @@ function decodeText(buffer, encoding, fatal = false) {
     return new TextDecoder(encoding, { fatal }).decode(buffer);
   } catch (error) {
     if (fatal) throw error;
-    throw new Error(`当前浏览器不支持 ${ENCODING_LABELS[encoding] || encoding} 解码，请尝试选择其他编码或将文件另存为 CSV UTF-8。`);
+    throw languageError(Lp(
+      `当前浏览器不支持 ${ENCODING_LABELS[encoding] || encoding} 解码，请尝试选择其他编码或将文件另存为 CSV UTF-8。`,
+      `This browser cannot decode ${ENCODING_LABELS[encoding] || encoding}; choose another encoding or save the file as CSV UTF-8.`
+    ));
   }
 }
 
@@ -811,8 +830,9 @@ function handleParsedData(results, sourceName, importId, source = null) {
   // Physical lines skipped above the header, so row numbers match the file.
   const lineOffset = retry?.lineOffset || 0;
   // A failed re-parse below skipped title rows shows the first parse's error.
-  // message may be a function, called only when its text is shown.
-  const fail = (message) => showError(retry ? retry.firstError() : (typeof message === "function" ? message() : message), importId);
+  // message may be a function, called only when its text is shown (and again after a language
+  // switch, v3.2.0 commit 11).
+  const fail = (message) => showError(retry ? () => retry.firstError() : message, importId);
   const failHeader = (message) => {
     const error = retryCsvBelowTitleRows(source, sourceName, importId, message);
     if (error) fail(error);
@@ -827,7 +847,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
   const extraFieldError = parseErrors.find((error) => error.code === "TooManyFields");
   if (extraFieldError) {
     // The re-parse's header passed detection, so an extra cell is its own error.
-    if (retry) showError(`${formatHeaderDetectionNote(buildHeaderDetectionState(retry.headerDetection))}${formatExtraCellError(errorLine(extraFieldError))}`, importId);
+    if (retry) showError(() => `${formatHeaderDetectionNote(buildHeaderDetectionState(retry.headerDetection))}${formatExtraCellError(errorLine(extraFieldError))}`, importId);
     else failHeader(() => formatExtraCellError(errorLine(extraFieldError)));
     return;
   }
@@ -838,7 +858,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
   if (fatalError) {
     fail(() => (fatalError.code === "MissingQuotes"
       ? formatUnclosedQuoteError(errorLine(fatalError))
-      : `CSV 解析失败：${fatalError.message}`));
+      : L(`CSV 解析失败：${fatalError.message}`, `The CSV could not be read: ${fatalError.message}`)));
     return;
   }
 
@@ -847,7 +867,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
     clean: normalizeFieldName(decodeCsvHeaderFromParser(rawField))
   }));
   if (allFieldPairs.length > IMPORT_LIMITS.maxColumns) {
-    fail(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`);
+    fail(() => L(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxColumns)} 列限制，请减少字段后重试。`, `The CSV is over the limit of ${formatInteger(IMPORT_LIMITS.maxColumns)} columns; remove some columns and try again.`));
     return;
   }
   const fieldPairs = allFieldPairs.filter((pair) => pair.clean !== "");
@@ -856,12 +876,12 @@ function handleParsedData(results, sourceName, importId, source = null) {
   const duplicateFields = findDuplicateCsvHeaders(headerNames);
 
   if (duplicateFields.length) {
-    failHeader(`CSV 表头规范化后存在重复字段：${duplicateFields.join("、")}。请修改表头后重试。`);
+    failHeader(() => L(`CSV 表头规范化后存在重复字段：${duplicateFields.join("、")}。请修改表头后重试。`, `After cleaning, the CSV header has repeated column names: ${duplicateFields.join(", ")}. Change the header and try again.`));
     return;
   }
 
   const sourceRows = Array.isArray(results.data) ? results.data : [];
-  const rowLimitError = `CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`;
+  const rowLimitError = () => L(`CSV 超过 ${formatInteger(IMPORT_LIMITS.maxRows)} 行数据限制，请拆分文件后重试。`, `The CSV is over the limit of ${formatInteger(IMPORT_LIMITS.maxRows)} rows of data; split the file and try again.`);
   if (sourceRows.length > IMPORT_LIMITS.maxRows) {
     fail(rowLimitError);
     return;
@@ -880,7 +900,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
     (row, columnIndex) => row?.[allFieldPairs[columnIndex].raw]
   );
   if (blankHeaderHasData) {
-    failHeader("CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。");
+    failHeader(() => L("CSV 存在缺少表头的数据列。请补全每一列的字段名后重试。", "The CSV has a column of data without a header. Give every column a name and try again."));
     return;
   }
 
@@ -902,7 +922,7 @@ function handleParsedData(results, sourceName, importId, source = null) {
   }, []);
 
   if (!fields.length || !rows.length) {
-    fail("CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。");
+    fail(() => L("CSV 中没有可分析的数据。请确认文件包含表头和至少一行数据。", "The CSV has no data to analyze. Make sure it has a header row and at least one row of data."));
     return;
   }
 
@@ -915,15 +935,25 @@ function handleParsedData(results, sourceName, importId, source = null) {
   const parseWarnings = warningErrors.map((error) => {
     const row = parseErrorLineNumber(error, recordLines, lineOffset);
     const shortRow = error.code === "TooFewFields" && Number.isInteger(error.row) ? sourceRows[error.row] : null;
-    const message = formatCsvWarningMessage(error.code, {
-      line: row,
-      cellCount: shortRow ? Object.keys(shortRow).length : null,
-      headerCount: allFieldPairs.length,
-      separator
-    });
-    return { row, code: error.code || "ParseWarning", message: message || error.message || "CSV 行结构异常" };
+    // v3.2.0 (R9): the code and its figures, not a sentence; formatParseWarning() writes it in the
+    // language it is shown in. PapaParse's own (English) message is kept for codes without one.
+    return {
+      row,
+      code: error.code || "ParseWarning",
+      params: { line: row, cellCount: shortRow ? Object.keys(shortRow).length : null, headerCount: allFieldPairs.length, separator },
+      sourceMessage: error.message || ""
+    };
   });
   commitTabularData(fields, rows, sourceName, importId, parseWarnings, "", null, retry?.headerDetection || null, rowNumbers);
+}
+
+// The text of a kept parse warning ({ row, code, params, sourceMessage }) in the current language.
+// A warning saved with its text (before v3.2.0) keeps it.
+function formatParseWarning(warning) {
+  if (typeof warning.message === "string") return warning.message;
+  return formatCsvWarningMessage(warning.code, warning.params || {})
+    || warning.sourceMessage
+    || L("CSV 行结构异常", "The structure of a CSV row looks wrong");
 }
 
 // Header names that repeat after normalizing; blank names are never compared.

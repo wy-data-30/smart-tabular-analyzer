@@ -625,16 +625,47 @@ function problemRowItem(index, note, extra = {}) {
   return { index, line: getSourceRowNumber(state.rows[index]), note, ...extra };
 }
 
+// v3.2.0: the 说明 of problem rows in both languages. A list picks its language once
+// (Lpick), so a list of many rows builds only that language's notes.
+const PROBLEM_ROW_NOTES = Lp({
+  formulaError: (error) => `公式错误 ${error}`,
+  missing: "空值",
+  confirmed: "已按空值处理",
+  pending: "待确认",
+  notDate: "认不出是日期",
+  notNumber: "认不出是数字",
+  above: (bound) => `高于上界 ${bound}`,
+  below: (bound) => `低于下界 ${bound}`,
+  repeatGroup: (group, kept) => `第 ${group} 组${kept ? "（保留）" : ""}`,
+  idGroup: (group, value, count) => `第 ${group} 组：「${value}」出现 ${count} 次`,
+  noLine: "（没有行号）",
+  notImported: "（这一行没有可分析的数据，未导入）"
+}, {
+  formulaError: (error) => `Formula error ${error}`,
+  missing: "Blank",
+  confirmed: "Treated as blank",
+  pending: "Not treated as blank yet",
+  notDate: "Not recognized as a date",
+  notNumber: "Not recognized as a number",
+  above: (bound) => `Above the upper bound ${bound}`,
+  below: (bound) => `Below the lower bound ${bound}`,
+  repeatGroup: (group, kept) => `Group ${group}${kept ? " (kept)" : ""}`,
+  idGroup: (group, value, count) => `Group ${group}: “${value}” appears ${count} ${count === 1 ? "time" : "times"}`,
+  noLine: " (no row number)",
+  notImported: " (this row has no data to analyze and was not imported)"
+});
+
 // Missing values of a field, counted as its profile counts missingCount (with the
 // placeholder keys the profile was built with). Ignored fields keep theirs.
 function listMissingRows(field) {
   const profile = getFieldProfile(field);
   if (!profile) return null;
+  const notes = Lpick(PROBLEM_ROW_NOTES);
   const items = [];
   state.rows.forEach((row, index) => {
     if (!isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
     const error = state.sourceFormulaErrors.get(row)?.[field];
-    items.push(problemRowItem(index, error ? `公式错误 ${error}` : isMissing(row[field]) ? "空值" : "已按空值处理"));
+    items.push(problemRowItem(index, error ? notes.formulaError(error) : isMissing(row[field]) ? notes.missing : notes.confirmed));
   });
   return { items, count: profile.missingCount };
 }
@@ -644,10 +675,12 @@ function listConversionFailureRows(field) {
   const profile = getFieldProfile(field);
   const fails = profile && getProfileConversionCheck(profile, profile.typeKey);
   if (!fails) return null;
+  const notes = Lpick(PROBLEM_ROW_NOTES);
+  const note = profile.typeKey === "date" ? notes.notDate : notes.notNumber;
   const items = [];
   state.rows.forEach((row, index) => {
     const value = row[field];
-    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, `认不出是${profile.typeKey === "date" ? "日期" : "数字"}`));
+    if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) items.push(problemRowItem(index, note));
   });
   return { items, count: profile.conversionFailureCount };
 }
@@ -659,8 +692,9 @@ function listOutlierRows(field) {
   const profile = getFieldProfile(field);
   if (!stat || !profile) return null;
   const parseNumber = getNumberParser(profile.numberStrategy);
-  const above = `高于上界 ${formatFieldNumber(field, stat.upperBound)}`;
-  const below = `低于下界 ${formatFieldNumber(field, stat.lowerBound)}`;
+  const notes = Lpick(PROBLEM_ROW_NOTES);
+  const above = notes.above(formatFieldNumber(field, stat.upperBound));
+  const below = notes.below(formatFieldNumber(field, stat.lowerBound));
   const items = [];
   state.rows.forEach((row, index) => {
     if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
@@ -685,12 +719,13 @@ function listDuplicateRowGroups() {
     if (indexes) indexes.push(index);
     else groups.set(key, [index]);
   });
+  const notes = Lpick(PROBLEM_ROW_NOTES);
   const items = [];
   let group = 0;
   groups.forEach((indexes) => {
     if (indexes.length < 2) return;
     group += 1;
-    indexes.forEach((index, position) => items.push(problemRowItem(index, `第 ${group} 组${position ? "" : "（保留）"}`, { group, kept: !position })));
+    indexes.forEach((index, position) => items.push(problemRowItem(index, notes.repeatGroup(group, !position), { group, kept: !position })));
   });
   return { items, count: state.duplicateRows, groupCount: group };
 }
@@ -703,9 +738,10 @@ function listIdDuplicateRows(field) {
   const profile = getFieldProfile(field);
   if (!summary || !profile || summary.mostlyRepeated || !summary.duplicateValueCount) return null;
   const { indexesByValue } = groupIdValueIndexes(state.rows, field, profile.confirmedKeys);
+  const notes = Lpick(PROBLEM_ROW_NOTES);
   const items = [];
   sortIdDuplicates(indexesByValue).forEach(([value, indexes], position) => {
-    const note = `第 ${position + 1} 组：「${value}」出现 ${indexes.length} 次`;
+    const note = notes.idGroup(position + 1, value, indexes.length);
     indexes.forEach((index) => items.push(problemRowItem(index, note, { group: position + 1, value })));
   });
   return { items, count: items.length, valueCount: summary.duplicateValueCount };
@@ -715,7 +751,7 @@ function listIdDuplicateRows(field) {
 function listPlaceholderRows(field, key) {
   const entry = state.placeholders.find((item) => item.field === field && item.key === key);
   if (!entry) return null;
-  const note = entry.confirmed ? "已按空值处理" : "待确认";
+  const note = entry.confirmed ? Lpick(PROBLEM_ROW_NOTES).confirmed : Lpick(PROBLEM_ROW_NOTES).pending;
   const items = [];
   state.rows.forEach((row, index) => {
     if (placeholderKey(row[field]) === key) items.push(problemRowItem(index, note));
@@ -732,10 +768,11 @@ function listParseWarningRows() {
     const line = getSourceRowNumber(row);
     if (line !== null && !indexByLine.has(line)) indexByLine.set(line, index);
   });
+  const notes = Lpick(PROBLEM_ROW_NOTES);
   const items = state.parseWarnings.map((warning) => {
     const index = warning.row === null ? null : indexByLine.get(warning.row) ?? null;
-    const reason = warning.row === null ? "（没有行号）" : index === null ? "（这一行没有可分析的数据，未导入）" : "";
-    return { index, line: warning.row, note: `${warning.message}${reason}` };
+    const reason = warning.row === null ? notes.noLine : index === null ? notes.notImported : "";
+    return { index, line: warning.row, note: `${formatParseWarning(warning)}${reason}` };
   });
   return { items, count: items.length };
 }
@@ -752,10 +789,11 @@ function listSuspectedTotalRows() {
 function listFormulaErrorRows(field) {
   const summary = state.formulaErrors.find((item) => item.field === field);
   if (!summary) return null;
+  const notes = Lpick(PROBLEM_ROW_NOTES);
   const items = [];
   state.rows.forEach((row, index) => {
     const error = state.sourceFormulaErrors.get(row)?.[field];
-    if (error) items.push(problemRowItem(index, `公式错误 ${error}`));
+    if (error) items.push(problemRowItem(index, notes.formulaError(error)));
   });
   return { items, count: summary.count };
 }
