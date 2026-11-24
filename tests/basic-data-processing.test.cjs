@@ -12571,3 +12571,136 @@ test("v3.2.1 commit 6: the upload page's markup is the sidebar's, next to 回到
   const start = css.indexOf("\n.upload-hero .return-to-analysis {");
   assert.match(css.slice(start, css.indexOf("}", start)), /\btext-align: left;/);
 });
+
+// ---- v3.2.1 commit 7: export names carry the worksheet (R2, R2b) ----
+
+const V321_NAME_TIME = "new Date(2026, 10, 23, 14, 30, 5)";
+// The five exports (the changes list also with its first-N cut, the problem rows with and without
+// a column and a writing): [report, data, standardized, changes, changes cut, problem rows, duplicate rows].
+const V321_EXPORT_NAMES = `[
+  buildReportFileName("html", ${V321_NAME_TIME}),
+  buildDataExportFileName("filtered", ${V321_NAME_TIME}),
+  buildStandardizedFileName("data", ${V321_NAME_TIME}),
+  buildStandardizedFileName("changes", ${V321_NAME_TIME}),
+  buildStandardizedFileName("changes", ${V321_NAME_TIME}, 1048575),
+  buildProblemRowsFileName({ kind: "placeholder", field: "金额", key: "N/A" }, ${V321_NAME_TIME}),
+  buildProblemRowsFileName({ kind: "duplicateRows" }, ${V321_NAME_TIME})
+]`;
+
+// The export names of one source in one language. sheetNames: the worksheets of a kept file (more
+// than one), or null for a CSV and a single-sheet file (nothing is kept).
+function v321ExportNames(scope, fileName, sheetName, sheetNames, language) {
+  put(scope.context, "__nameSource", { fileName, sheetName, sheetNames });
+  return JSON.parse(scope.evaluate(`(() => {
+    state.sourceFileName = __nameSource.fileName;
+    state.sourceSheetName = __nameSource.sheetName;
+    state.keptExcel = __nameSource.sheetNames ? { bytes: new ArrayBuffer(0), fileName: __nameSource.fileName, sheetNames: __nameSource.sheetNames } : null;
+    currentLanguage = ${JSON.stringify(language)};
+    const names = ${V321_EXPORT_NAMES};
+    currentLanguage = "zh";
+    return JSON.stringify(names);
+  })()`));
+}
+
+test("v3.2.1 commit 7 (T8): with more than one worksheet the five exports carry it after the file name, in both languages", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", ["订单", "退货"], "zh"), [
+    "2025上半年订单_订单-20261123-143005.html",
+    "2025上半年订单_订单_当前分析_20261123.csv",
+    "2025上半年订单_订单_写法统一_20261123.csv",
+    "2025上半年订单_订单_写法统一改动清单_20261123.csv",
+    "2025上半年订单_订单_写法统一改动清单_前1048575条_20261123.csv",
+    "2025上半年订单_订单_问题行_像是空值的写法_金额_N-A_20261123.csv",
+    "2025上半年订单_订单_问题行_整行重复_20261123.csv"
+  ]);
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", ["订单", "退货"], "en"), [
+    "2025上半年订单_订单-20261123-143005.html",
+    "2025上半年订单_订单_in-analysis_20261123.csv",
+    "2025上半年订单_订单_standardized_20261123.csv",
+    "2025上半年订单_订单_standardized-changes_20261123.csv",
+    "2025上半年订单_订单_standardized-changes_first-1048575_20261123.csv",
+    "2025上半年订单_订单_problem-rows_blank-like_金额_N-A_20261123.csv",
+    "2025上半年订单_订单_problem-rows_duplicate-rows_20261123.csv"
+  ]);
+  // .xls too; unsafe characters in a worksheet name are made safe like those in a file name.
+  assert.equal(v321ExportNames(scope, "2025上半年订单.xls", "一月", ["一月", "二月"], "zh")[1], "2025上半年订单_一月_当前分析_20261123.csv");
+  assert.equal(v321ExportNames(scope, "book.xlsx", "a<b>c", ["a<b>c", "x"], "zh")[1], "book_a-b-c_当前分析_20261123.csv");
+  // The same file with one worksheet: no worksheet in the names (as in 7b6e091).
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", null, "zh").slice(0, 2),
+    ["2025上半年订单-20261123-143005.html", "2025上半年订单_当前分析_20261123.csv"]);
+});
+
+test("v3.2.1 commit 7 (T8): a real multi-sheet import names the sheet it analyzes, and the one it switched to", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  assert.equal(scope.evaluate(`buildDataExportFileName("filtered", ${V321_NAME_TIME})`), "book_Orders_当前分析_20261123.csv");
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate(`buildDataExportFileName("filtered", ${V321_NAME_TIME})`), "book_Second_当前分析_20261123.csv");
+  assert.equal(scope.evaluate(`buildReportFileName("html", ${V321_NAME_TIME})`), "book_Second-20261123-143005.html");
+});
+
+test("v3.2.1 commit 7 (T8): a 70-character file name and a 30-character worksheet are both cut, longest first, the labels whole, 80 at most", () => {
+  const scope = createScriptContext();
+  const file = `${"名".repeat(70)}.xlsx`;
+  const sheet = "表".repeat(30);
+  const zh = v321ExportNames(scope, file, sheet, [sheet, "另一张"], "zh");
+  const en = v321ExportNames(scope, file, sheet, [sheet, "另一张"], "en");
+  // Report: the file name loses 21 (49 + "_" + 30 = 80); the data export also makes room for its label.
+  assert.equal(zh[0], `${"名".repeat(49)}_${sheet}-20261123-143005.html`);
+  assert.equal(zh[1], `${"名".repeat(44)}_${sheet}_当前分析_20261123.csv`);
+  assert.equal(en[1], `${"名".repeat(37)}_${sheet}_in-analysis_20261123.csv`);
+  // Long labels (70 + 30 + 20 + 13 + 3 "_" = 136, 56 to cut): the file name comes down to the
+  // worksheet's 30, then the two lose 8 each.
+  assert.equal(en[4], `${"名".repeat(22)}_${"表".repeat(22)}_standardized-changes_first-1048575_20261123.csv`);
+  for (const name of [...zh, ...en]) {
+    const before = name.replace(/(?:-\d{8}-\d{6}\.html|_\d{8}\.csv)$/, "");
+    assert.ok(before.length <= 80, `${before.length} ${name}`);
+    assert.match(before, /^名+_表+_?/, name);
+  }
+});
+
+test("v3.2.1 commit 7 (R2b): the worksheet part is trimmed; a worksheet of spaces adds nothing", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(v321ExportNames(scope, "book.xlsx", " 订单 ", [" 订单 ", "x"], "zh").slice(0, 3),
+    ["book_订单-20261123-143005.html", "book_订单_当前分析_20261123.csv", "book_订单_写法统一_20261123.csv"]);
+  // Spaces only: exactly the names of the same file with one worksheet, the file name part as today
+  // (here with its own trailing space, which the report and the data export trim as they always did).
+  for (const language of ["zh", "en"]) {
+    for (const file of ["book.xlsx", " 前后空格 .xlsx", `${"名".repeat(81)}.xlsx`]) {
+      assert.deepEqual(v321ExportNames(scope, file, "   ", ["   ", "x"], language), v321ExportNames(scope, file, "   ", null, language), `${file} ${language}`);
+    }
+  }
+});
+
+// R2: a CSV and a single-sheet Excel file keep 7b6e091's names byte for byte, over awkward names:
+// spaces around, a name of spaces, unsafe characters, 70–90 characters (the report and the data
+// export cut at 80, the others shorten the name), a space or an emoji at the 80th place, emoji,
+// combining marks, a bidi control, a tab. (Built from code points: no invisible character here.)
+const V321_AWKWARD_STEMS = [
+  "订单", "orders", "a<b>c", `x/y${String.fromCharCode(92)}z`, " 前后空格 ", "trailing ", "", "   ", "...",
+  "名".repeat(70), "名".repeat(75), "名".repeat(76), "名".repeat(80), "名".repeat(81), "名".repeat(90),
+  `${"a".repeat(79)} b`, `${"a".repeat(79)}${String.fromCodePoint(0x1F600)}b`, String.fromCodePoint(0x1F600).repeat(45),
+  String.fromCodePoint(0xE9).repeat(50), `${String.fromCodePoint(0x202E)}rtl`, `tab${String.fromCharCode(9)}here`
+];
+// JSON.stringify([[file, language, the seven names], …]) over the 21 names × .csv/.xlsx/.xls × zh/en,
+// computed by running these same calls on `git archive 7b6e091` (v3.2.0).
+const V321_7B6E091_NAMES_SHA256 = "8fbe080ede4364964e6afcc56d3045c2debdb9df16aae4076b0b97b0c1c4671a";
+
+test("v3.2.1 commit 7 (R2): a CSV and a single-sheet file keep 7b6e091's export names byte for byte, over 21 awkward names", () => {
+  const scope = createScriptContext();
+  const all = [];
+  for (const stem of V321_AWKWARD_STEMS) {
+    for (const ext of [".csv", ".xlsx", ".xls"]) {
+      for (const language of ["zh", "en"]) {
+        const names = v321ExportNames(scope, stem + ext, ext === ".csv" ? "" : "表一", null, language);
+        all.push([stem + ext, language, names]);
+        // The report and the data export: 7b6e091's one sanitize-and-cut of the original name.
+        const base = (stem + ext).split(/[\\/]/).pop().replace(/\.(?:csv|xlsx|xls)$/i, "");
+        assert.equal(names[0], `${oldCutFileName(base || "data-report")}-20261123-143005.html`, JSON.stringify(stem + ext));
+        assert.equal(names[1], `${oldCutFileName(base || "data")}_${language === "zh" ? "当前分析" : "in-analysis"}_20261123.csv`, JSON.stringify(stem + ext));
+      }
+    }
+  }
+  assert.equal(all.length, 126);
+  // All 882 names, as 7b6e091 builds them (computed on a copy of 7b6e091, not on this code).
+  assert.equal(crypto.createHash("sha256").update(JSON.stringify(all)).digest("hex"), V321_7B6E091_NAMES_SHA256);
+});
