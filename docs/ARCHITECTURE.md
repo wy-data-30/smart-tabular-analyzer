@@ -81,7 +81,7 @@
 flowchart LR
   A["文件选择 / 拖放 / 示例数据"] --> B{"输入类型"}
   B -->|CSV| C["ArrayBuffer 解码 + PapaParse"]
-  B -->|Excel| D["SheetJS + 工作表选择"]
+  B -->|Excel| D["SheetJS：先读表名，再只读选中的一张"]
   C --> E["标准化 fields + rows + warnings"]
   D --> E
   E --> F["commitTabularData()"]
@@ -134,7 +134,8 @@ flowchart LR
 | 问题行 | `problemCategories`, `problemView`, `problemViewOpener` | `renderQuality()` 时的 `listProblemCategories()`（“查看”按钮带它的下标）；打开的查看区 `{ category: { kind, field, key }, page, list }` 或 `null`；打开查看区的那个“查看”按钮，关闭时把焦点还给它。导入时关闭，`resetAnalysisState()` 清空，筛选不改（见“问题行”） |
 | 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选结果和计入分析的行与 `rows` 共享行对象，所以同样能查到 |
 | 表头检测 | `headerDetection` | `null`，或 `{ headerRowNumber, skippedRows: [{ rowNumber, preview }] }`：导入时跳过了表头上方的标题行才有值。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 清空；筛选和字段配置两条刷新路径不改它 |
-| 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待状态、当前读取器和导入版本号 |
+| 导入控制 | `pendingExcel`, `activeFileReader`, `activeImportId` | 多工作表等待选表时的 `{ bytes, fileName, sheetNames, importId }`（v3.2.1 起存文件字节，不存工作簿）、当前读取器和导入版本号 |
+| 换工作表（v3.2.1） | `keptExcel` | `null`，或工作表多于一张的 Excel 文件的 `{ bytes, fileName, sheetNames }`（`bytes` 是 `readFileAsArrayBuffer()` 读到的 ArrayBuffer），供换工作表。不由 `commitTabularData()` 写，由 `importExcelSheet(…, kept)` 在提交前写；换表时先拿在局部变量里，`beginImport()` 清掉旧分析后再放回。`resetAnalysisState()` 清空；单表 Excel 和 CSV 从来没有（见“换工作表（v3.2.1）”） |
 | 标准化导出（v2.10.0） | `standardizedExport` | `null`，或 `buildStandardizedExport()` 的结果（每列计数、按行再按字段排的四个平行数组、合计）。只由“检查会改哪些格”（`checkStandardizedExport()`）写入；`commitTabularData()`、`rebuildAnalysisFromProfiles()`、`resetAnalysisState()` 经 `clearStandardizedExport()` 清成 `null` 并收起面板，筛选不改它（见“标准化导出（v2.10.0）”） |
 | 来源与完成状态 | `sourceFileName`, `sourceSheetName`, `sourceType`, `analysisCompletedAt` | 报告元信息和导出门禁 |
 | 图表与筛选 UI | `charts`, `categoryFilterOptions`, `categoryFilterDraftValues` | Chart 实例及分类筛选草稿 |
@@ -313,7 +314,7 @@ UTF-8 BOM
 **主要职责**
 
 - 验证并读取 `.xlsx` / `.xls` 工作簿。
-- 单工作表直接分析，多工作表暂停并等待用户选择。
+- 先用 `bookSheets` 只读表名：单工作表直接只读那一张并分析，多工作表暂停并等待用户选择，选了再只读那一张（v3.2.1）。分析中途可以换到同一文件的另一张（见下文“换工作表（v3.2.1）”）。
 - 校验工作表范围、表头和数据行。
 - 把 Excel 单元格转换为统一的字符串行对象。
 
@@ -321,11 +322,15 @@ UTF-8 BOM
 
 | 函数 | 职责 |
 | --- | --- |
-| `parseExcelFile(file)` | 读取文件、校验签名，并通过 `readExcelWorkbook()` 调用 `XLSX.read(..., { type: "array", cellDates: true, cellNF: true })` |
+| `parseExcelFile(file)` | 读取文件、校验签名，经 `readExcelSheetNames()` 读表名；只有一张时直接 `readExcelSheet()` 读它并提交，多于一张时交给 `showExcelSheetSelection()` |
 | `validateExcelFileSignature(buffer, fileName)` | `.xlsx` 检查 ZIP `PK` 签名，`.xls` 检查 OLE 签名 |
-| `showExcelSheetSelection(...)` | 把完整工作簿保存到 `state.pendingExcel` 并显示工作表下拉框 |
-| `analyzeSelectedExcelSheet()` | 校验待选状态和当前选择 |
-| `importExcelSheet(...)` | 校验 `!ref`，经 `readExcelSheetTable()` 读取所选工作表并提交 |
+| `readExcelSheetNames(buffer)` | `XLSX.read(buffer, { type: "array", bookSheets: true })`，只取 `SheetNames`，不解析单元格（v3.2.1） |
+| `readExcelSheet(buffer, sheetName)` | 读一张表的共用函数，第一次导入和换工作表都用它：`XLSX.read(buffer, { type: "array", cellDates: true, cellNF: true, sheets: sheetName })` → `!ref` 为空时报空表 → `readExcelSheetTable()`（v3.2.1，取代整本读的 `readExcelWorkbook()`） |
+| `showExcelSheetSelection(bytes, fileName, sheetNames, importId)` | 把文件字节、文件名、表名和导入号存进 `state.pendingExcel`，显示工作表下拉框 |
+| `analyzeSelectedExcelSheet()` | async：校验待选状态和当前选择，写“正在读取并分析工作表「X」...”，`yieldToBrowser()` 让出一帧，回来再确认还是同一次等待、同一次导入，然后 `readExcelSheet()`；读失败时报错留在面板里、焦点回到“分析所选工作表”，可以另选一张 |
+| `importExcelSheet(table, fileName, sheetName, importId, kept)` | 提交读好的表；工作表多于一张时先把 `kept` 写进 `state.keptExcel`，并清空 `#sheetSelectionMessage` |
+| `switchExcelSheet(sheetName, place)` | 换工作表（v3.2.1），见下文“换工作表（v3.2.1）” |
+| `yieldToBrowser()` | 等一帧（`requestAnimationFrame` 之后再 `setTimeout(0)`），让读表提示在同步读表之前先画出来 |
 | `readExcelSheetTable(worksheet, sheetName)` | 粗检上限、`sheet_to_json`、还原日期格式下的文本和布尔单元格，再调用 `buildExcelTabularData()`，传入 `!ref` 起始行号用于换算文件行号 |
 | `restoreNonDateCellsUnderDateFormat(rawRows, worksheet)` | 在 `rawRows` 上原地修正：值是 Date 的位置，按 `!ref` 起点查单元格，`t` 是 `"s"` 或 `"b"` 就换成 `cell.v`。见下文“日期格式下的文本和布尔单元格” |
 | `validateExcelWorksheetLimits()` | 根据工作表使用区域粗检行数和 200 列；行数额外留出 `HEADER_SCAN_ROWS` 行给表头上方的标题行 |
@@ -364,18 +369,44 @@ XLSX.utils.sheet_to_json(worksheet, {
 
 **输入 / 输出**
 
-- 输入：Excel `File`；多工作表时还包括用户选择的 `sheetName`。
-- 中间输出：SheetJS workbook 或 `state.pendingExcel`。
+- 输入：Excel `File`；多工作表时还包括用户选择的 `sheetName`；换工作表时是留下的文件字节和点的那张表。
+- 中间输出：一张表的 `readExcelSheetTable()` 结果；多工作表时 `state.pendingExcel` / `state.keptExcel` 里的文件字节。
 - 最终输出：唯一、非空文本字段数组，以及由无原型对象组成的行数组。
 - Date 对象被规范为 UTC 日期字符串；string、number、boolean 和 bigint 被转成字符串。
 
 **与其他模块的关系**
 
 - File Input & Parsing 负责路由和读取。
-- UI Rendering 管理工作表选择面板及错误状态。
+- UI Rendering 管理工作表选择面板及错误状态，以及侧栏和上传页的换工作表列表（`renderSheetSwitches()`）。
 - 成功选择后调用 `commitTabularData(..., sheetName)`，后续 profiling、统计和渲染与 CSV 完全共用。
 
-当前一次只分析一个工作表，不合并多表。表头默认是第一个非空行；它通不过表头校验时，按上文“表头行检测”在前 10 行内跳过标题行、说明行（含合并单元格的标题）和空行。最终选定的表头仍必须是唯一、非空的文本表头；多行表头、数值表头、识别不出的复杂标题区或异常 `!ref` 仍会被拒绝，此时如果第一个非空行像标题，报错后面会附加删除标题行的提示。整个工作簿保存在内存中，解析仍在主线程完成。
+当前一次只分析一个工作表，不合并多表。表头默认是第一个非空行；它通不过表头校验时，按上文“表头行检测”在前 10 行内跳过标题行、说明行（含合并单元格的标题）和空行。最终选定的表头仍必须是唯一、非空的文本表头；多行表头、数值表头、识别不出的复杂标题区或异常 `!ref` 仍会被拒绝，此时如果第一个非空行像标题，报错后面会附加删除标题行的提示。v3.2.1 起不保存工作簿：工作表多于一张的文件只留文件字节（见下文“换工作表（v3.2.1）”），解析仍在主线程完成。
+
+### 换工作表（v3.2.1）
+
+文中 R1–R16 是 v3.2.1 审查后处理的编号，原文在项目的计划文档里，不在仓库中。
+
+- **做什么**：工作表多于一张的 Excel 导入后，不用重新上传就能换到同一文件的另一张。侧栏在文件名下面写“工作表：订单（共 4 个）” / “Worksheet: Orders (4 in this file)”（`formatSheetLine()`，`#sidebarSheetLine`；这时 `#sourceName` 只写文件名），下面有“换一个工作表” / “Change worksheet”按钮；上传页在“回到「…」的分析”旁边有同一个按钮，只跟着“回到”出现。点开是这个文件的全部工作表，当前那张标“正在分析” / “Current”（`SHEET_SWITCH_OPEN_NOW`，R4），点另一张就换过去，不弹确认。两处是同一套标记（id 前缀 `sidebar` / `upload`），由 `renderSheetSwitches()` 一起画：`renderSidebar()` 末尾调用它（所以切换语言时也重画，列表开合和提示都保留），`showUploadPage()` 和 `returnToAnalysis()` 也调用它；上传页的按钮隐藏时，它的列表收起、提示清空。列表项只带 `data-sheet-index`（在文件里的序号），不写表名。单表 Excel 和 CSV 没有这两个按钮，侧栏仍是“文件 · 表名”；顶栏、导入消息和报告不论几张表都写“文件 · 表名”。
+- **说明句和提示（R3）**：列表**上面**是“换表会重新分析那张表，现在的筛选、不计入分析、按空值处理和改过的字段类型都不会保留。” / “Switching analyzes that worksheet from scratch: the filter, excluded rows, cells treated as blank and column types you changed here are not kept.”（`sheetSwitch.note`），先看到再点；30 张表时放在下面要滚动才看得到。读表提示和报错写在列表**下面**（`#sidebarSheetMessage` / `#uploadSheetMessage`，`role="status"`，经 `writeOneOffMessage()`，切换语言时重写）。
+- **读一张表（R1）**：第一次导入和换表都用 `readExcelSheet()`，表名由 `readExcelSheetNames()` 用 `bookSheets: true` 读（见上表）。只读一张和整本读时 `readExcelSheetTable()` 的结果和报错原文逐字相同（测试比了 stage3 的 4 个 xlsx、`excel-import-test.xlsx` 的 4 张和 7 张自造的表，中英文；审查时比过 92 张）。代价是单表文件也先读一次表名，`XLSX.read` 从 1 次变成 2 次（21 MB 的文件约多 0.2 s，+3.4%），已接受。调用次数有护栏：单表 2 次；多表出选表面板时 1 次（只读表名），选表后共 2 次；换表 1 次，换到读不了的表也是 1 次；CSV 0 次。
+- **留字节，不留工作簿，不留 File**：解析后的工作簿约是文件的 7 倍（Edge 实测：1.06 / 18.3 / 23.5 / 23.1 MB 的文件多占 +6.6 / +116 / +164 / +158 MB JS 堆）。File 对象在磁盘上的文件改过之后（只改了修改时间也算）再读会报 `NotReadableError`，文件删掉后报 `NotFoundError`。所以只对工作表多于一张的文件留下 `readFileAsArrayBuffer()` 读到的那个 ArrayBuffer（`state.keptExcel = { bytes, fileName, sheetNames }`，最多 25 MB，在 JS 堆外）；等选表时的 `state.pendingExcel` 也只存字节。改过磁盘上的文件之后仍能换表，用的是导入时的内容。换表时旧分析和新表的解析结果会同时在内存里，但实测（C-max.xlsx 汇总 → 明细，R16）峰值不高于重新上传选那张表。
+- **读表提示（R5）**：第一次导入选表后、侧栏换表、上传页换表都先写“正在读取并分析工作表「X」...” / “Reading and analyzing the worksheet “X” ...”（`formatSheetReading()`），`yieldToBrowser()` 让出一帧让它画出来，然后同步读表、分析；读和分析之间不再让出。读表期间 `setImportBusy(true)`：页面是加载中，两个语言按钮禁用（`isLanguageSwitchLocked()`），列表带 `aria-busy="true"`。列表里的按钮不禁用（禁用正在聚焦的按钮会丢焦点），`switchExcelSheet()` 自己不理会加载中的点击。
+- **先读后换**：`switchExcelSheet(sheetName, place)` 在这几种情况下直接返回：不是留下的表名、就是当前那张、正在加载、正在等选表。否则写提示、让出一帧，回来先确认这期间没有开始别的导入（`activeImportId` 没变、`state.keptExcel` 还是同一份），再 `readExcelSheet()`。
+  - 读失败：当前分析一点不动，报错写在点的那个列表下面，焦点回到点的那一项（`focusSheetSwitchItem()`）。在上传页失败就留在上传页，“回到「…」的分析”照样能用，回去还是原来那张表。
+  - 读成功才 `beginImport()`（清掉旧分析和 `state.keptExcel`，字节还在局部变量里），`importExcelSheet(…, kept)` 在提交前把字节放回 state。提交里出现意外异常时走 `showError(errorMessageBuilder(error), importId)`：重置、解除加载中、显示报错（R11）；第一次导入选表的那条路径也一样。
+  - 结果和重新上传、选那张表完全相同：筛选、不计入分析、按空值处理、改过的字段类型、问题行查看区、写法统一检查和自定义分析都清空，打开“数据概览”，焦点在它的标题上；1100 px 以下盖在内容上的侧栏随之关上（1100 px 以上侧栏在内容旁边，保持展开）。
+- **键盘（R13）**：Escape 收起列表、焦点回按钮，并且 `stopPropagation()`，所以盖在内容上的侧栏要再按一次 Escape 才关。不做方向键。
+- **样式**：640 px 以下（手机侧栏）列表不限高，让侧栏整体滚动，不出现滚动套滚动（R6）；641 px 以上限高 40vh。手机侧栏里“换一个工作表”和“换一个文件”并排，按钮上的展开箭头不会被挤没，文字放不下就折行（R12）。上传页的“回到「…」的分析”在长文件名、长表名时折行，可以在任意字符处断开，折行后左对齐；短名时外观和以前相同（R9）。
+- **生命周期**：`resetAnalysisState()` 清空 `state.keptExcel`，并经 `clearSheetSwitches()` 清掉工作表一行、两个按钮、两个列表和它们的提示。导入别的文件、使用示例数据、导入出错都经过它。
+- **导出文件名（R2、R2b）**：多表文件的五种导出（报告、当前分析的行、写法统一的表、改动清单、问题行）在原文件名后加“_表名”，如 `2025上半年订单_订单_当前分析_20261123.csv`、`2025上半年订单_订单-20261123-143005.html`。
+  - 都经 `buildLabeledFileName()`，原文件名和表名两段都可以截，每次截最长的那段，工具加的词不截。
+  - 表名那一段先 `trim()`，trim 后为空就不加，名字和单表时相同。
+  - 判断用 `isMultiSheetSource()`（有 `state.keptExcel`）和 `getSheetFileNamePart()`，开头两段由 `getSourceFileNameParts()` 给出（`report.js`）。
+  - 单表 Excel 和 CSV 的报告、当前分析的行仍走原来的 `sanitizeFileName()`，五种名字都和 v3.2.0 逐字节相同（测试用 21 个刁钻原名钉住）。
+- **工作表的种类（R7）**：隐藏和深度隐藏的工作表和选表下拉框一样照常列出，不标注；图表页、宏表选了会报“为空”，已接受。SheetJS 读 `.xls` 时不理会 `sheets` 选项，换表仍读整个文件（结果相同，只是慢）。`.xls` 里有两张同名的表时（Excel 不允许，只有第三方工具会写出），已知不处理。
+- **已知问题**：
+  - **半个代理对（R15）**：报告和当前分析的行的文件名里可能有半个代理对。条件是原文件名超过 80 个 UTF-16 单位、第 80 位正好落在 emoji 中间，因为 `sanitizeFileName()` 用的是 `slice(0, 80)`。这是 v3.2.0 已有的问题，这一版为了让单表和 CSV 的文件名逐字节不变没有修，测试照原样钉住。多表文件走 `buildLabeledFileName()`（按码点截），没有这个问题。
+  - **让出那一帧里点“换一个文件”**：在侧栏换表时，如果在读表前让出的那一帧里点了“换一个文件”，上传页上不会有“回到「…」的分析”（那时还在加载中）。如果这次换表又失败，就回不到原来的分析，只能重新上传。读表本身是同步的，读的时候的点击会排到读完以后，那时“回到”会正常显示，所以只有那一帧（约 16 ms）碰得到。已知，不修。
 
 ## 5. Field Profiling & Type Detection（字段画像与类型识别）
 
@@ -810,6 +841,8 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 - 保持字段顺序、UTF-8 BOM、文件名安全和内容转义。
 - 阻止未完成分析或未应用字段配置时导出报告。
 
+下面各种导出的文件名格式都按单个工作表写；多工作表文件在原文件名后加 `_表名`（见“换工作表（v3.2.1）”）。
+
 ### 数据 CSV
 
 ```text
@@ -979,7 +1012,7 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 
 - **一次显示一个模块。** 8 个模块在 `#moduleStage` 里，`showModule(sectionId)`（`script.js`）给其余 7 个加 `module-off` 类和 `inert`，给当前导航链接加 `aria-current="page"`，用 `replaceState` 写 `#模块 id`（加载时不读它），把页面滚回顶部、焦点移到模块标题。切换只是显示和隐藏，不重算、不重画图表。导入成功后停在数据概览；应用字段配置、应用筛选、按空值处理之后停在当前模块。
 - **看不见的模块不能用 `display: none`，也不能加 `.hidden`。** 在 `display: none` 的容器里 Chart.js 把图表建成 0×0，`captureCurrentChartImages()` 拿不到图；它还会跳过 `closest(".hidden")` 里的图表。两种写法都会让 HTML 报告少图。所以 `.module-off` 用 `visibility: hidden; position: absolute; top/right/left: 0`，外层 `.module-stage` 是 `position: relative; overflow: clip`（`clip` 而不是 `hidden`，模块里吸顶的表头才不失效）。这样隐藏的模块仍按舞台宽度排版，图表尺寸和显示时相同，无论停在哪个模块，导出的报告图片张数和标题都与 v2.12.0 相同（有护栏测试）。打印时 `.module-off` 改回 `position: static; visibility: visible`，8 个模块都打印。
-- **侧栏**（`#appSidebar`）：文件名和“N 行 × K 列”、按文件顺序列出全部字段和已应用类型的小标、当前状态（筛选、表头所在行、已按空值处理的条数），由 `renderSidebar()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里刷新；“筛选”一行和 `#globalFilterSummary` 同文，由 `updateGlobalFilterStatus()` 写，所以筛选路径也会更新它。宽度不小于 1100 px 默认展开、在内容旁边；小于 1100 px 默认收起，打开时盖在内容上（遮罩、Esc 关闭、焦点关在面板里、关闭后回到按钮）。用户点过开合以后按用户的来（`body.sidebar-open` / `sidebar-closed`），刷新回到默认。
+- **侧栏**（`#appSidebar`）：文件名（v3.2.1 起，工作表多于一张时这一行只写文件名，下一行写工作表，见“换工作表（v3.2.1）”）和“N 行 × K 列”、按文件顺序列出全部字段和已应用类型的小标、当前状态（筛选、表头所在行、已按空值处理的条数），由 `renderSidebar()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里刷新；“筛选”一行和 `#globalFilterSummary` 同文，由 `updateGlobalFilterStatus()` 写，所以筛选路径也会更新它。宽度不小于 1100 px 默认展开、在内容旁边；小于 1100 px 默认收起，打开时盖在内容上（遮罩、Esc 关闭、焦点关在面板里、关闭后回到按钮）。用户点过开合以后按用户的来（`body.sidebar-open` / `sidebar-closed`），刷新回到默认。
 - **上传页与回到分析**：“换一个文件”回到上传页（`showUploadPage()`），不清除当前分析；这时上传页给出“回到〈文件名〉的分析”（`#returnToAnalysis`，`formatReturnToAnalysis()`），点了回到原来的模块（`state.returnModule`）。新导入开始、导入失败或工作簿还在等选工作表时不给这个入口。
 - **字段配置表（F1、F2）**：列是字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值。字段多于 20 个（`SCHEMA_FILTER_MIN_FIELDS`）时出现搜索框和按确认类型的切换（`SCHEMA_KINDS`），状态在 `state.schemaFilter = { query, kind }`；只给表格行加 `hidden`，不重画表格，应用、恢复和“有未应用的修改”都按全部字段算。新导入清空，应用后保留（所选类型没有字段了回到“全部”）。
 - **问题行“查看”（v3.0.0 修复）**：`handleProblemViewClick()` 打开查看区后，把 `#problemRowsSection` 用 `scrollIntoView({ block: "start" })` 滚到顶栏下面（靠 `html` 的 `scroll-padding-top`），标题 `focus({ preventScroll: true })`；换类别、翻页和 `refreshProblemView()` 都不滚动。`prefers-reduced-motion` 下 `scroll-behavior: auto`。
