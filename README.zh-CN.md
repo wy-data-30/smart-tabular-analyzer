@@ -4,7 +4,7 @@
 
 原名 Smart Tabular Analyzer；v3.2.2 起仓库名改为 sheet-checkup，旧网址会自动跳到新网址。
 
-**当前版本：** v3.2.1
+**当前版本：** v3.2.2
 
 ## 语言
 
