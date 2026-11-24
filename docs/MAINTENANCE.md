@@ -114,7 +114,7 @@
 当前演示地址是：
 
 ```text
-https://wy-data-30.github.io/smart-tabular-analyzer/
+https://wy-data-30.github.io/sheet-checkup/
 ```
 
 仓库名或所有者变化时，需要同步 README 的 Live Demo、报告页脚中的仓库链接和 Pages 地址。

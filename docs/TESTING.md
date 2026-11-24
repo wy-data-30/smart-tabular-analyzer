@@ -474,3 +474,24 @@ v3.2.1 让多工作表的 Excel 不用重新上传就能换工作表（见 `docs
 - 其余提交没有改现有断言。
 
 **测不到、要在浏览器里看的**：列表在 1366 / 1100 / 768 / 640 / 390 宽下中英文的样子，包括长表名折行、30 张表时列表自己滚动、640 以下和“换一个文件”并排、箭头看得见；读表提示真的先画出来；1100 以下的侧栏换表成功后关上、焦点在“数据概览”标题；Tab 和 Escape 的实际焦点；上传页长名时没有横向滚动；改过磁盘上的文件后仍能换表；读表时的内存（`docs/RELEASE_CHECKLIST.md` 第 4、7 节）。
+
+## 18. v3.2.2 新增测试固定了什么
+
+v3.2.2 只把仓库地址换成 sheet-checkup：页面页脚的 GitHub 链接、中英文报告页脚的链接和 `package.json` 的 name。判断、计数、界面文字、导出文件一样不变，报告除页脚链接地址外逐字节不变。完整回归从 669 条变成 670 条，新增 1 条，没有删去。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `v3.2.2 repository: the page and both reports link to sheet-checkup only` | `index.html` 含注释的源码（经 `indexHtmlSource()`，只去掉 `data-i18n` 属性）和中英文报告（`reportScenario()` 的场景）里都没有旧仓库名（不分大小写）；页面页脚 `footer-github-link` 的 href 和两份报告页脚里唯一的链接都等于 `https://github.com/wy-data-30/sheet-checkup`；`package.json` 的 name 是 `sheet-checkup`。旧仓库名用 `join` 拼出来，所以测试文件本身不是 grep 旧名的命中。查的是含注释的源码：旧名只写在 `index.html` 的注释里也会失败（v3.0.1 的改名护栏查去掉注释的源码，按设计不管注释） |
+
+**两个哈希按等价比较换值，不是拿新代码重算**（照 v3.0.1 的做法）：在 `git archive` 出的改前、改后两份副本里，把哈希断言换成“把被哈希的文本写进文件”，只跑那一条测试，导出两份原文；改前原文只把 `https://github.com/wy-data-30/smart-tabular-analyzer` 换成 `https://github.com/wy-data-30/sheet-checkup`（只做这一种替换），和改后原文逐字节相同。
+
+- 报告文字 `GUARD_REPORT_SHA256`（`v3.0.1 guard: the sample's report text…`）：替换 2 处，23752 → 23734 字符，`e32ff801…21421` → `937a0034…82f5f2`。
+- `index.html` 去掉属性和版本号后的 sha256（`v3.2.0 tests read index.html only through indexHtmlSource()…`）：替换 1 处，35023 → 35014 字符，`95ef087e…ca866` → `8c1f88e7…bdc80a`。
+
+两处上方的注释写明了这一点。
+
+**改动的现有断言（7 行，2f49ec8 上的行号）**：`core.test.cjs` 239（页面页脚）、788、789（中文报告页脚和地址）；`basic` 8375（`v3.0.0 look2` 页脚正则）、8550（`RENAME_REPO_URL`，v3.0.1 改名护栏断言三份文本都含它）、10703（英文报告页脚）：正则或字符串里只把仓库名换成 sheet-checkup，其余字符不变。另改 `basic` 8547 的注释：拉丁旧词要求中间是空格，所以小写连字符的仓库名本来就不会命中，旧仓库名由 v3.2.2 的护栏单独查。加上两个哈希，没有放宽或删去断言。
+
+**改坏验证**：页面页脚、中文报告页脚、英文报告页脚分别改回旧地址，各有原来的测试和新护栏失败；`package.json` 的 name 改回旧名、旧仓库名只写进 `index.html` 的一段注释，前者只有新护栏失败，后者是新护栏和 `index.html` 哈希失败。
+
+**测不到、要在线上看的**：GitHub 上改名之后旧的 github.io 地址（含 `?lang=en` 和示例 CSV 的深链接）和 github.com 旧仓库地址能跳到新地址；这些不在仓库的测试里。

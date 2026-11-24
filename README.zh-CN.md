@@ -2,9 +2,9 @@
 
 > 隐私优先的表格体检工具：CSV 和 Excel 表格在浏览器里检查，数据不上传，快速告诉你表格有什么问题、问题在哪几行。
 
-原名 Smart Tabular Analyzer；仓库名和网址没有变。
+原名 Smart Tabular Analyzer；v3.2.2 起仓库名改为 sheet-checkup，旧网址会自动跳到新网址。
 
-**当前版本：** v3.2.1
+**当前版本：** v3.2.2
 
 ## 语言
 
@@ -12,8 +12,8 @@
 
 ## 在线演示
 
-- **在线演示：** [打开表格体检](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=zh)
-- **GitHub 仓库：** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
+- **在线演示：** [打开表格体检](https://wy-data-30.github.io/sheet-checkup/?lang=zh)
+- **GitHub 仓库：** [github.com/wy-data-30/sheet-checkup](https://github.com/wy-data-30/sheet-checkup)
 
 打开在线演示并点击 **使用示例数据**，无需准备文件即可完成一次分析。界面有中文和英文（见下面的“界面语言”）：中文界面加载 `examples/sample-orders.csv`，英文界面的 “Use sample data” 加载 `examples/sample-orders-en.csv`。
 
@@ -101,7 +101,7 @@ CSV 和 Excel 解析、筛选、分析、处理后数据导出及报告生成均
 
 ### 使用在线演示
 
-1. 打开[在线演示](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=zh)。
+1. 打开[在线演示](https://wy-data-30.github.io/sheet-checkup/?lang=zh)。
 2. 点击 **使用示例数据**，或上传 `.csv`、`.xlsx` 或 `.xls` 文件。
 3. 查看自动识别的字段类型，仅在需要时进行修正，然后通过分析导航查看或导出结果。
 
@@ -110,8 +110,8 @@ CSV 和 Excel 解析、筛选、分析、处理后数据导出及报告生成均
 克隆仓库并启动静态服务器：
 
 ```bash
-git clone https://github.com/wy-data-30/smart-tabular-analyzer.git
-cd smart-tabular-analyzer
+git clone https://github.com/wy-data-30/sheet-checkup.git
+cd sheet-checkup
 python -m http.server 8000
 ```
 

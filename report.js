@@ -593,7 +593,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v3.2.1",
+    version: "v3.2.2",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -898,7 +898,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v3.2.1",
+    version: reportData.version || "v3.2.2",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -1355,8 +1355,8 @@ function buildHtmlReport(reportData, chartImages = []) {
       : `<p class="empty">${L("暂无自动分析结论。", "There are no automatic conclusions.")}</p>`}
   </section>
   <footer>${L(
-    `由<a href="https://github.com/wy-data-30/smart-tabular-analyzer">表格体检</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。`,
-    `Created by <a href="https://github.com/wy-data-30/smart-tabular-analyzer">Sheet Checkup</a> ${escapeHtml(reportData.version)} in your browser; no data was uploaded.`
+    `由<a href="https://github.com/wy-data-30/sheet-checkup">表格体检</a> ${escapeHtml(reportData.version)} 在浏览器本地生成；数据未上传。`,
+    `Created by <a href="https://github.com/wy-data-30/sheet-checkup">Sheet Checkup</a> ${escapeHtml(reportData.version)} in your browser; no data was uploaded.`
   )}</footer>
 </main>
 </body>
