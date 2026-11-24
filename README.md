@@ -2,7 +2,7 @@
 
 > A privacy-first checkup for spreadsheet data: CSV and Excel files are checked in your browser, nothing is uploaded, and you see what is wrong and which rows it is in.
 
-Formerly Smart Tabular Analyzer. The repository name and URLs are unchanged.
+Formerly Smart Tabular Analyzer. Since v3.2.2 the repository is called sheet-checkup; old links redirect to the new ones.
 
 **Current release:** v3.2.1
 
@@ -12,8 +12,8 @@ English | [中文](./README.zh-CN.md)
 
 ## Live Demo
 
-- **Live Demo:** [Open Sheet Checkup](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=en)
-- **Repository:** [github.com/wy-data-30/smart-tabular-analyzer](https://github.com/wy-data-30/smart-tabular-analyzer)
+- **Live Demo:** [Open Sheet Checkup](https://wy-data-30.github.io/sheet-checkup/?lang=en)
+- **Repository:** [github.com/wy-data-30/sheet-checkup](https://github.com/wy-data-30/sheet-checkup)
 
 Open the demo and choose **Use sample data** to complete an analysis without preparing a file. The interface is in English or Chinese (see Interface Language below); in English the button loads `examples/sample-orders-en.csv`, in Chinese it loads `examples/sample-orders.csv`.
 
@@ -101,7 +101,7 @@ The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repo
 
 ### Use the Live Demo
 
-1. Open the [Live Demo](https://wy-data-30.github.io/smart-tabular-analyzer/?lang=en).
+1. Open the [Live Demo](https://wy-data-30.github.io/sheet-checkup/?lang=en).
 2. Choose **Use sample data**, or upload a `.csv`, `.xlsx`, or `.xls` file.
 3. Review the inferred field types, correct them only when needed, and use the analysis navigation to explore or export the results.
 
@@ -110,8 +110,8 @@ The page loads pinned versions of PapaParse, Chart.js, and SheetJS from the repo
 Clone the repository and start a static server:
 
 ```bash
-git clone https://github.com/wy-data-30/smart-tabular-analyzer.git
-cd smart-tabular-analyzer
+git clone https://github.com/wy-data-30/sheet-checkup.git
+cd sheet-checkup
 python -m http.server 8000
 ```
 
