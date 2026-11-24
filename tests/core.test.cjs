@@ -236,7 +236,7 @@ const coreHeaderHtml = htmlSource.slice(htmlSource.indexOf('<header class="app-h
 assert.match(coreHeaderHtml, /<strong>表格体检<\/strong>/);
 assert.doesNotMatch(coreHeaderHtml, /<small>|brand-mark/);
 const coreFooterHtml = htmlSource.slice(htmlSource.indexOf('<footer class="app-footer">'), htmlSource.indexOf("</footer>"));
-assert.match(coreFooterHtml, /^<footer class="app-footer">\s*<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<\/a><\/p>\s*$/);
+assert.match(coreFooterHtml, /^<footer class="app-footer">\s*<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/sheet-checkup">[\s\S]*<\/a><\/p>\s*$/);
 assert.doesNotMatch(coreFooterHtml, /表格数据体检工具|表格体检|检查 CSV、Excel 表格的数据问题|不会上传到服务器/);
 assert.doesNotMatch(htmlSource, /智能表格数据分析工具/);
 const legacyProductNamePattern = new RegExp(["Smart", "CSV", "Analyzer"].join(" "));
@@ -785,8 +785,8 @@ assert.match(reportHtml, /自定义分组分析结果/);
 assert.match(reportHtml, /自动分析结论/);
 assert.match(reportHtml, /销售额 &lt;分布&gt;/);
 assert.match(reportHtml, /data:image\/png;base64,ZmFrZS1jaGFydA==/);
-assert.match(reportHtml, /<footer>由<a href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">表格体检<\/a> /);
-assert.match(reportHtml, /https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer/);
+assert.match(reportHtml, /<footer>由<a href="https:\/\/github\.com\/wy-data-30\/sheet-checkup">表格体检<\/a> /);
+assert.match(reportHtml, /https:\/\/github\.com\/wy-data-30\/sheet-checkup/);
 assert.doesNotMatch(reportHtml, legacyProductNamePattern);
 assert.doesNotMatch(reportHtml, /<(?:script|link)[^>]+(?:src|href)=["']https?:/i);
 

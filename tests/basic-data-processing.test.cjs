@@ -7150,7 +7150,9 @@ test("v3.0.0 guard: every empty-state sentence still appears under its trigger",
 // blanked, is the v2.12.0 text with only the name changed: neither the v3.0.0 shell nor the
 // v3.0.1 rename touches any other word. v3.0.1 renamed the product and the report title; the
 // new hash was taken by replacing just those words in the old text and comparing byte for byte.
-const GUARD_REPORT_SHA256 = "e32ff801425545fb38b8e2822f132e39cbda05d554202529d9af44f2b8f21421";
+// v3.2.2 only changed the repository URL in the footer to sheet-checkup; the new value is the old
+// text (e32ff801…21421) with just that one replacement, compared byte for byte.
+const GUARD_REPORT_SHA256 = "937a0034ba4f73fe6ecbfae26a7428aba0b367273b27bd740f31ae1db782f5f2";
 test("v3.0.1 guard: the sample's report text is the v2.12.0 text with only the name changed", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const version = orders.evaluate("buildReportData().version");
@@ -8372,7 +8374,7 @@ test("v3.0.0 look2: the top bar has only the name (no mark, no subtitle, no priv
   assert.match(html, /<title>表格体检 \| 检查 CSV、Excel 表格的数据问题<\/title>/);
   const footer = html.slice(html.indexOf('<footer class="app-footer">'), html.indexOf("</footer>"));
   assert.equal((footer.match(/<p>/g) || []).length, 1);
-  assert.match(footer, /<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/smart-tabular-analyzer">[\s\S]*<span>GitHub 仓库<\/span><\/a><\/p>/);
+  assert.match(footer, /<p><a class="footer-github-link" href="https:\/\/github\.com\/wy-data-30\/sheet-checkup">[\s\S]*<span>GitHub 仓库<\/span><\/a><\/p>/);
   assert.doesNotMatch(footer, /表格数据体检工具|表格体检|检查 CSV、Excel 表格的数据问题|不会上传到服务器|<strong>/);
   // The privacy sentences that stay: under the upload title and at the foot of the sidebar.
   assert.match(html, /<p class="product-description">不用安装，表格不会离开这台电脑。<\/p>/);
@@ -8544,10 +8546,11 @@ test("v3.0.0 look2: the upload icon has no tinted square; the two upload buttons
 // never come back on the page (source without comments, title, aria labels, every element after
 // importing the sample), in either report, or in an export file name; the new texts are exact.
 // The old words are joined from parts so that this file is not a hit when the repository is
-// searched for them. The repository URL (smart-tabular-analyzer) is lowercase with hyphens and
-// stays; the Latin words are matched without case but with a space, so it is never a hit.
+// searched for them. The Latin words are matched without case but with a space, so a lowercase
+// repository name with hyphens is never a hit. v3.2.2 renamed the repository to sheet-checkup; the
+// v3.2.2 guard at the end of this file looks for the old repository name on its own.
 const OLD_PRODUCT_WORDS = [["Smart", "Tabular", "Analyzer"].join(" "), ["Tabular", "Analyzer"].join(" "), ["表格数据", "体检工具"].join(""), ["数据分析", "报告"].join("")];
-const RENAME_REPO_URL = "https://github.com/wy-data-30/smart-tabular-analyzer";
+const RENAME_REPO_URL = "https://github.com/wy-data-30/sheet-checkup";
 
 function findOldProductWords(where, text, hits) {
   const lower = String(text).toLowerCase();
@@ -9570,8 +9573,10 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // heading into a bar of its own (3 places), and the export's two counts became “共 N 行” (2 places);
   // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
-  // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "95ef087e9a2ba62a35d30d4c9a6e5635bc22f4bfd9f32491b55bdc4a049ca866");
+  // steps, and the 3.2.0 page gives the same value (nothing but the version changed). v3.2.2 only
+  // changed the repository URL in the footer to sheet-checkup; the value below is the old content
+  // (95ef087e…ca866) with just that one replacement, compared byte for byte.
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "8c1f88e7169f3b6aeb10a60afd154f3d8d16f68846e2ba6b855e778f20bdc80a");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -10700,7 +10705,7 @@ test("v3.2.0 report.js: an English report has <html lang=\"en\">, no Chinese and
   // The version is the report's own (pinned by the version test), so a release does not touch this.
   const reportVersion = en.report.version.replace(/\./g, "\\.");
   assert.match(reportVersion, /^v\d+\\\.\d+\\\.\d+$/);
-  assert.match(en.html, new RegExp(`<footer>Created by <a href="https://github\\.com/wy-data-30/smart-tabular-analyzer">Sheet Checkup</a> ${reportVersion} in your browser; no data was uploaded\\.</footer>`));
+  assert.match(en.html, new RegExp(`<footer>Created by <a href="https://github\\.com/wy-data-30/sheet-checkup">Sheet Checkup</a> ${reportVersion} in your browser; no data was uploaded\\.</footer>`));
   // The type names of the snapshot are those of the export's language; in Chinese, profile.type.
   assert.deepEqual(en.report.fieldTypes.map((field) => field.appliedType), ["ID", "Text", "Number", "Date", "Text"]);
   assert.deepEqual(zh.report.fieldTypes.map((field) => [field.inferredType, field.appliedType]), JSON.parse((await reportScenario("zh")).evaluate("JSON.stringify(state.profiles.map((profile) => [profile.inferredType, profile.type]))")));
@@ -12703,4 +12708,21 @@ test("v3.2.1 commit 7 (R2): a CSV and a single-sheet file keep 7b6e091's export 
   assert.equal(all.length, 126);
   // All 882 names, as 7b6e091 builds them (computed on a copy of 7b6e091, not on this code).
   assert.equal(crypto.createHash("sha256").update(JSON.stringify(all)).digest("hex"), V321_7B6E091_NAMES_SHA256);
+});
+
+// v3.2.2: the repository is called sheet-checkup. The page, both reports and package.json point
+// to the new name only; the old repository name is joined from parts so that this file is not a
+// hit when the repository is searched for it.
+test("v3.2.2 repository: the page and both reports link to sheet-checkup only", async () => {
+  const oldName = ["smart", "tabular", "analyzer"].join("-");
+  const newUrl = "https://github.com/wy-data-30/sheet-checkup";
+  const html = indexHtmlSource();
+  assert.equal(html.toLowerCase().indexOf(oldName), -1);
+  assert.equal((html.match(/<a class="footer-github-link" href="([^"]*)">/) || [])[1], newUrl);
+  for (const lang of ["zh", "en"]) {
+    const { html: report } = reportOf(await reportScenario(lang));
+    assert.equal(report.toLowerCase().indexOf(oldName), -1, lang);
+    assert.deepEqual((report.match(/<footer>[^<]*<a href="([^"]*)">/) || []).slice(1), [newUrl], lang);
+  }
+  assert.equal(JSON.parse(repoFile("package.json")).name, "sheet-checkup");
 });
