@@ -47,7 +47,7 @@ function importXlsxSheet(context, evaluate, buffer, sheetName, { newImport = tru
   put(context, "__newImport", newImport);
   evaluate(`(() => {
     const importId = __newImport ? beginImport() : state.activeImportId;
-    importExcelSheet(readExcelWorkbook(__xlsxBuffer), "formats.xlsx", __xlsxSheet, importId);
+    importExcelSheet(readExcelSheet(__xlsxBuffer, __xlsxSheet), "formats.xlsx", __xlsxSheet, importId);
   })()`);
 }
 
@@ -1347,8 +1347,7 @@ test("Excel header row numbers count leading blank rows and the !ref start", () 
   XLSX.utils.book_append_sheet(workbook, worksheet, "S1");
   put(context, "__offsetBuffer", XLSX.write(workbook, { type: "array", bookType: "xlsx" }));
   const table = JSON.parse(evaluate(`JSON.stringify((() => {
-    const sheet = readExcelWorkbook(__offsetBuffer).Sheets.S1;
-    return readExcelSheetTable(sheet, "S1");
+    return readExcelSheet(__offsetBuffer, "S1");
   })())`));
   assert.deepEqual(table.fields, STAGE3_ATTENDANCE_HEADER);
   assert.equal(table.rows.length, 3);
@@ -1561,7 +1560,10 @@ test("the title hint appears in the sheet selection panel for multi-sheet workbo
     { name: "数据", rows: [["成绩单"], ["姓名"], ["学生1", 61], ["学生2", 75], ["学生3", 82], ["学生4", 90], ["学生5", 68]] }
   ]));
   scope.elements.get("excelSheetSelect").value = "数据";
-  scope.evaluate("analyzeSelectedExcelSheet()");
+  // v3.2.1: the sheet is read after the list says so.
+  const reading = scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.elements.get("sheetSelectionMessage").textContent, "正在读取并分析工作表「数据」...");
+  await reading;
   assert.equal(scope.elements.get("sheetSelectionMessage").textContent,
     `工作表「数据」的第 2 列缺少表头，请补充字段名后重新上传。${TITLE_FALLBACK_HINT}`);
 });
@@ -1606,7 +1608,7 @@ test("Excel row numbers follow the !ref start and skip blank rows inside the dat
 
   const { context, evaluate } = createExcelContext();
   put(context, "__offsetBuffer", buffer);
-  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheetTable(readExcelWorkbook(__offsetBuffer).Sheets.S1, \"S1\"))"));
+  const table = JSON.parse(evaluate("JSON.stringify(readExcelSheet(__offsetBuffer, \"S1\"))"));
   assert.deepEqual(table.rowNumbers, [6, 7, 9, 10]);
 
   const imported = await importWorkbookFile(buffer);
@@ -5311,7 +5313,7 @@ test("v2.9.0 Excel: date cells are recorded per row and column, with title rows 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "S");
   put(scope.context, "__buffer", XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }));
-  scope.evaluate('importExcelSheet(readExcelWorkbook(__buffer), "s.xlsx", "S", beginImport())');
+  scope.evaluate('importExcelSheet(readExcelSheet(__buffer, "S"), "s.xlsx", "S", beginImport())');
   const read = JSON.parse(scope.evaluate("JSON.stringify(state.rows.map((row) => [getSourceRowNumber(row), state.sourceDateCells.get(row) || null, row.日期, row.文本日期]))"));
   assert.deepEqual(read.map(([line, cells]) => [line, cells && Object.keys(cells).sort()]), [[6, ["日期"]], [8, ["文本日期"]], [9, ["日期"]]]);
   // A date cell and a text with the same characters read alike but are told apart.
@@ -9569,7 +9571,7 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // that value (7c3f1ed6…38435) was the old content with only those 5 replacements. The release
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed).
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "2a5cbc9497c04f4745ee6fcc0fc5119addb1659e1554e6c5db51b4fb0cf66031");
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "95ef087e9a2ba62a35d30d4c9a6e5635bc22f4bfd9f32491b55bdc4a049ca866");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -11709,4 +11711,996 @@ test("v3.2.0 commit 13: the same file in Chinese and in English gives the same n
   // The bracket case is really there: the blank value sorts first in both (（ is after ( in zh-CN order).
   const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
   assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(getCategoryFilterOptions("Region").map((option) => [option.value, option.label]))')).slice(0, 2), [["", "(Blank)"], ["(A)", "(A)"]]);
+});
+
+// ---- v3.2.1 commit 1: read one worksheet at a time ----
+
+// Puts a counting XLSX into the context: every XLSX.read call's options, in order.
+function countXlsxReads(scope) {
+  const reads = [];
+  const counting = Object.assign(Object.create(XLSX), {
+    read(data, options) {
+      reads.push({ ...options });
+      return XLSX.read(data, options);
+    }
+  });
+  put(scope.context, "XLSX", counting);
+  scope.context.window.XLSX = counting;
+  return reads;
+}
+
+// A workbook file as parseDataFile() gets it.
+function putWorkbookFile(scope, buffer, fileName) {
+  const bytes = Buffer.from(buffer);
+  put(scope.context, "__workbookFile", {
+    name: fileName,
+    size: bytes.length,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)
+  });
+}
+
+const V321_GOOD_ROWS = [["编号", "金额"], ["A-1", 10], ["A-2", 20], ["A-3", 30]];
+const v321TwoSheets = () => buildXlsxBuffer([{ name: "说明", rows: [["本工作簿为虚构数据"], ["第二行"]] }, { name: "数据", rows: V321_GOOD_ROWS }]);
+
+test("v3.2.1 commit 1: a multi-sheet file reads its names first and then only the chosen sheet; a single sheet reads twice", async () => {
+  const multi = createExcelContext();
+  const reads = countXlsxReads(multi);
+  putWorkbookFile(multi, v321TwoSheets(), "two.xlsx");
+  await multi.evaluate("parseDataFile(__workbookFile)");
+  // The list of worksheets shows after one read of the names alone.
+  assert.equal(multi.evaluate("Boolean(state.pendingExcel)"), true);
+  assert.deepEqual(reads, [{ type: "array", bookSheets: true }]);
+  multi.elements.get("excelSheetSelect").value = "数据";
+  await multi.evaluate("analyzeSelectedExcelSheet()");
+  assert.deepEqual(reads, [{ type: "array", bookSheets: true }, { type: "array", cellDates: true, cellNF: true, sheets: "数据" }]);
+  assert.equal(multi.evaluate("state.rows.length"), 3);
+  // A single sheet: the names, then that sheet.
+  const single = createExcelContext();
+  const singleReads = countXlsxReads(single);
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.deepEqual(singleReads, [{ type: "array", bookSheets: true }, { type: "array", cellDates: true, cellNF: true, sheets: "S1" }]);
+  assert.equal(single.evaluate("state.rows.length"), 3);
+  // The waiting state keeps the file's bytes and names, never a parsed workbook.
+  assert.deepEqual(JSON.parse(multi.evaluate("JSON.stringify(Object.keys(state.pendingExcel || {}))")), []);
+  const waiting = createExcelContext();
+  countXlsxReads(waiting);
+  const waitingBook = Buffer.from(v321TwoSheets());
+  putWorkbookFile(waiting, waitingBook, "two.xlsx");
+  await waiting.evaluate("parseDataFile(__workbookFile)");
+  assert.deepEqual(JSON.parse(waiting.evaluate("JSON.stringify(Object.keys(state.pendingExcel).sort())")), ["bytes", "fileName", "importId", "sheetNames"]);
+  // (The buffer comes from the test's realm, so instanceof ArrayBuffer would be false in the VM.)
+  assert.equal(waiting.evaluate("Object.prototype.toString.call(state.pendingExcel.bytes)"), "[object ArrayBuffer]");
+  assert.equal(waiting.evaluate("state.pendingExcel.bytes.byteLength"), waitingBook.length);
+  assert.deepEqual(JSON.parse(waiting.evaluate("JSON.stringify(state.pendingExcel.sheetNames)")), ["说明", "数据"]);
+  // A CSV never reads a workbook.
+  const csv = createExcelContext();
+  const csvReads = countXlsxReads(csv);
+  put(csv.context, "Papa", Papa);
+  csv.context.window.Papa = Papa;
+  csv.evaluate('parseCsvText("编号,金额\\nA-1,10\\nA-2,20", "a.csv")');
+  assert.equal(csv.evaluate("state.rows.length"), 2);
+  assert.deepEqual(csvReads, []);
+});
+
+test("v3.2.1 commit 1: reading one sheet gives exactly what reading the whole workbook gives, errors too, in both languages", () => {
+  const scope = createExcelContext();
+  const wide = [Array.from({ length: 201 }, (_, index) => `列${index + 1}`), Array.from({ length: 201 }, (_, index) => index)];
+  const books = [
+    ...["en-formula-errors.xlsx", "公式错误.xlsx", "花名册.xlsx", "门店报表.xlsx"].map((name) => [name, fs.readFileSync(path.join(STAGE3_FIXTURES, name))]),
+    ["excel-import-test.xlsx", fs.readFileSync(path.join(__dirname, "fixtures", "excel-import-test.xlsx"))],
+    ["checks.xlsx", Buffer.from(buildXlsxBuffer([
+      { name: "好表", rows: V321_GOOD_ROWS },
+      { name: "空表", rows: [] },
+      { name: "只有表头", rows: [["编号", "金额"]] },
+      { name: "没有表头", rows: [[1, 2], [3, 4]] },
+      { name: "表头重复", rows: [["编号", "金额", "金额"], ["a", 1, 2]] },
+      { name: "超列", rows: wide },
+      { name: "有标题行", rows: [["2025 年订单"], [], ["编号", "金额"], ["T-1", 10], ["T-2", 20]] }
+    ]))]
+  ];
+  let compared = 0;
+  for (const [name, bytes] of books) {
+    put(scope.context, "__bytes", bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length));
+    const whole = XLSX.read(scope.context.__bytes, { type: "array", cellDates: true, cellNF: true });
+    put(scope.context, "__whole", whole);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(readExcelSheetNames(__bytes))")), whole.SheetNames, name);
+    for (const sheetName of whole.SheetNames) {
+      put(scope.context, "__sheetName", sheetName);
+      for (const language of ["zh", "en"]) {
+        const [one, all] = JSON.parse(scope.evaluate(`(() => {
+          currentLanguage = ${JSON.stringify(language)};
+          const run = (read) => { try { return JSON.stringify(read()); } catch (error) { return "error: " + error.message; } };
+          const one = run(() => readExcelSheet(__bytes, __sheetName));
+          const all = run(() => {
+            const worksheet = __whole.Sheets[__sheetName];
+            if (!worksheet || !worksheet["!ref"]) throw languageError(Lp(\`工作表「\${__sheetName}」为空，请选择包含表头和数据的工作表。\`, \`The worksheet “\${__sheetName}” is empty; choose one with a header row and data.\`));
+            return readExcelSheetTable(worksheet, __sheetName);
+          });
+          currentLanguage = "zh";
+          return JSON.stringify([one, all]);
+        })()`));
+        assert.equal(one, all, `${name} / ${sheetName} / ${language}`);
+        compared += 1;
+      }
+    }
+  }
+  // 4 single sheets, 4 sheets of excel-import-test.xlsx and 7 of checks.xlsx, twice each.
+  assert.equal(compared, 30);
+});
+
+test("v3.2.1 commit 1: the chosen sheet says it is being read; a sheet that fails leaves the list waiting, the error rewritable", async () => {
+  const scope = createExcelContext();
+  putWorkbookFile(scope, buildXlsxBuffer([{ name: "好表", rows: V321_GOOD_ROWS }, { name: "表头重复", rows: [["编号", "金额", "金额"], ["a", 1, 2]] }]), "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  let focused = 0;
+  scope.elements.get("confirmSheetSelection").focus = () => { focused += 1; };
+  scope.elements.get("excelSheetSelect").value = "表头重复";
+  const pending = scope.evaluate("state.pendingExcel");
+  const done = scope.evaluate("analyzeSelectedExcelSheet()");
+  // Before the read: the message, the page busy, the switches locked.
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "正在读取并分析工作表「表头重复」...");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+  assert.equal(scope.elements.get("languageSwitch").disabled, true);
+  await done;
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "工作表「表头重复」包含重复表头「金额」，请修改后重新上传。");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.evaluate("state.pendingExcel") === pending, true);
+  assert.equal(focused, 1);
+  // The error is kept as a function: written again in English (the switch itself is locked while
+  // a sheet waits, so the rewrite is called directly).
+  scope.evaluate('setInterfaceLanguage("en"); rewriteOneOffMessages()');
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "The worksheet “表头重复” has the header “金额” more than once; change it and upload the file again.");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  // A good sheet afterwards: analyzed, and the message is gone, also from the rewrite list.
+  scope.elements.get("excelSheetSelect").value = "好表";
+  await scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.evaluate("state.rows.length"), 3);
+  assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  assert.equal(scope.evaluate("oneOffMessages.has(dom.sheetSelectionMessage)"), false);
+});
+
+test("v3.2.1 commit 1: an unexpected error while the chosen sheet is committed ends the import with the error", async () => {
+  const scope = createExcelContext();
+  putWorkbookFile(scope, v321TwoSheets(), "two.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  scope.evaluate('countDuplicateRows = () => { throw new Error("commit broke"); }');
+  scope.elements.get("excelSheetSelect").value = "数据";
+  let rejected = null;
+  await scope.evaluate("analyzeSelectedExcelSheet()").catch((error) => { rejected = error; });
+  assert.equal(rejected, null);
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.elements.get("csvFile").disabled, false);
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  assert.equal(textOf(scope, "statusPanel"), "commit broke");
+  assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+});
+
+// ---- v3.2.1 commit 1b: the check after the frame in the sheet list ----
+
+// A multi-sheet file waiting in the list, with yieldToBrowser() held until release() is called.
+async function v321HeldSheetList(sheets) {
+  const scope = createExcelContext();
+  const reads = countXlsxReads(scope);
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  putWorkbookFile(scope, buildXlsxBuffer(sheets), "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(scope.evaluate("Boolean(state.pendingExcel)"), true);
+  scope.evaluate("globalThis.__realYield = yieldToBrowser; yieldToBrowser = () => new Promise((resolve) => { globalThis.__releaseYield = resolve; })");
+  return {
+    scope,
+    reads,
+    release: () => scope.evaluate("globalThis.__releaseYield()"),
+    restore: () => scope.evaluate("yieldToBrowser = globalThis.__realYield")
+  };
+}
+
+const V321_NEW_CSV = "城市,人数\n北京,1\n上海,2\n广州,3";
+
+test("v3.2.1 commit 1b: an import begun while a failing sheet waits for its frame is left alone", async () => {
+  const held = await v321HeldSheetList([{ name: "好表", rows: V321_GOOD_ROWS }, { name: "只有表头", rows: [["编号", "金额"]] }]);
+  const { scope, reads } = held;
+  try {
+    assert.equal(reads.length, 1);
+    scope.elements.get("excelSheetSelect").value = "只有表头";
+    const choosing = scope.evaluate("analyzeSelectedExcelSheet()");
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "正在读取并分析工作表「只有表头」...");
+    // Another file begins while the frame is drawn: still being read (loading), its own message.
+    put(scope.context, "__newCsv", V321_NEW_CSV);
+    const importId = scope.evaluate('globalThis.__newImport = beginImport(); setStatus("正在读取 new.csv ..."); __newImport');
+    held.release();
+    await choosing;
+    // The sheet was never read, and nothing of it reached the page or the new import.
+    assert.equal(reads.length, 1);
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+    assert.equal(textOf(scope, "statusPanel"), "正在读取 new.csv ...");
+    assert.doesNotMatch(scope.elements.get("statusPanel").className, /\berror\b/);
+    assert.equal(scope.evaluate("state.activeImportId"), importId);
+    // The new import finishes as its own.
+    scope.evaluate("parseCsvText(__newCsv, \"new.csv\", __newImport)");
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.rows.length"), 3);
+    assert.equal(textOf(scope, "statusPanel"), "new.csv 已成功载入，分析结果已生成。");
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  } finally {
+    held.restore();
+  }
+});
+
+test("v3.2.1 commit 1b: an import done while a readable sheet waits for its frame is not overwritten", async () => {
+  const held = await v321HeldSheetList([{ name: "说明", rows: [["本工作簿为虚构数据"], ["第二行"]] }, { name: "数据", rows: V321_GOOD_ROWS }]);
+  const { scope, reads } = held;
+  try {
+    scope.elements.get("excelSheetSelect").value = "数据";
+    const choosing = scope.evaluate("analyzeSelectedExcelSheet()");
+    put(scope.context, "__newCsv", V321_NEW_CSV);
+    scope.evaluate('parseCsvText(__newCsv, "new.csv")');
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    const status = textOf(scope, "statusPanel");
+    held.release();
+    await choosing;
+    assert.equal(reads.length, 1);
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.sourceSheetName"), "");
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.fields)")), ["城市", "人数"]);
+    assert.equal(scope.evaluate("state.rows.length"), 3);
+    assert.equal(textOf(scope, "statusPanel"), status);
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.equal(textOf(scope, "sheetSelectionMessage"), "");
+  } finally {
+    held.restore();
+  }
+});
+
+// ---- v3.2.1 commit 2: keep a multi-sheet file and switch worksheets ----
+
+// The English scenario's orders as a worksheet (text cells, as the CSV reads them), a second sheet
+// with other orders, and sheets that fail.
+function v321ScenarioRows(shift) {
+  const rows = Papa.parse(englishScenarioCsv().trim(), { header: false }).data;
+  if (!shift) return rows;
+  return rows.map((row, index) => (index === 0 || row[0] === "Total" ? row : row.map((cell, column) => (column === 2 && /^\d+$/.test(cell) ? String(Number(cell) + shift) : cell))));
+}
+const v321ScenarioBook = () => buildXlsxBuffer([
+  { name: "Orders", rows: v321ScenarioRows(0) },
+  { name: "Second", rows: v321ScenarioRows(7) },
+  { name: "Empty", rows: [] },
+  { name: "HeaderOnly", rows: [["ID", "Amount"]] },
+  { name: "Doubled", rows: [["ID", "Amount", "Amount"], ["a", 1, 2]] }
+]);
+const V321_FIXED_TIME = "new Date(2026, 10, 23, 12, 0, 0)";
+
+// A context with the scenario workbook imported and one sheet chosen through the list.
+async function v321ImportSheet(sheetName, { buffer = v321ScenarioBook(), language } = {}) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
+  const reads = countXlsxReads(scope);
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  putWorkbookFile(scope, buffer, "book.xlsx");
+  await scope.evaluate("parseDataFile(__workbookFile)");
+  scope.elements.get("excelSheetSelect").value = sheetName;
+  await scope.evaluate("analyzeSelectedExcelSheet()");
+  assert.equal(scope.evaluate("state.sourceSheetName"), sheetName);
+  return { scope, reads };
+}
+
+// Everything a user could set on an analysis: blanks, both exclusions, a filter, a column type, a
+// breakdown, the standardized check and an open category of problem rows.
+function v321ApplyScenario(scope) {
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  scope.evaluate(`["suspectedTotal", "duplicateRows"].forEach((kind) => handleExclusionClick({ target: { closest: () => ({ dataset: { exclusionKind: kind, exclusionOn: "true" } }) } }))`);
+  // (Applying column settings clears the filters, so the type goes first.)
+  scope.evaluate('stageFieldTypeChange("Rep", "ignore"); applyFieldConfiguration()');
+  scope.evaluate(`(() => {
+    const values = getCategoryFilterOptions("Region").map((option) => option.value);
+    dom.categoryFilterField.value = "Region"; dom.numericFilterField.value = ""; dom.dateFilterField.value = "";
+    state.categoryFilterDraftValues = new Set(values.slice(0, 2));
+    applyFilters();
+  })()`);
+  scope.evaluate('dom.v2MetricField.value = "Amount"; dom.v2GroupField.value = "Region"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "Date"; renderV2Analysis()');
+  scope.evaluate("checkStandardizedExport()");
+  scope.evaluate("openProblemView(state.problemCategories[0])");
+  // Every one of them took: the comparison below can tell a switch that kept any of them.
+  const set = JSON.parse(scope.evaluate(`JSON.stringify({
+    placeholders: Object.keys(state.placeholderConfirmations).length,
+    excluded: state.excludedRows.suspectedTotal.length + state.excludedRows.duplicateRows.length,
+    filter: state.filters.category ? state.filters.category.values.length : 0,
+    types: Object.keys(state.manualFieldTypes).length,
+    custom: Boolean(state.customAnalysis), standardized: Boolean(state.standardizedExport), problems: Boolean(state.problemView)
+  })`));
+  assert.deepEqual(set, { placeholders: 1, excluded: 2, filter: 2, types: 1, custom: true, standardized: true, problems: true });
+}
+
+// What the page shows of an analysis: the report (time fixed), the status bar, the sidebar, the
+// file names and the figures.
+function v321Snapshot(scope) {
+  scope.evaluate(`state.analysisCompletedAt = ${V321_FIXED_TIME}`);
+  return JSON.parse(scope.evaluate(`JSON.stringify({
+    report: buildHtmlReport(buildReportData(${V321_FIXED_TIME}), []),
+    status: dom.statusPanel.textContent, summary: dom.statusNoteSummary.textContent,
+    sourceName: dom.sourceName.textContent, title: dom.sourceName.title, topbar: dom.topbarFileName.textContent,
+    size: dom.sidebarFileSize.textContent,
+    names: [buildReportFileName("html", ${V321_FIXED_TIME}), buildDataExportFileName("filtered", ${V321_FIXED_TIME}), buildStandardizedFileName("data", ${V321_FIXED_TIME}), buildStandardizedFileName("changes", ${V321_FIXED_TIME}), buildProblemRowsFileName(state.problemCategories[0] || { kind: "missing", field: "x" }, ${V321_FIXED_TIME})],
+    fields: state.fields, rows: state.rows.length, types: state.profiles.map((profile) => profile.typeKey),
+    module: document.body.dataset.module ?? null,
+    // The one-off messages of the old analysis (and the switch's own) must be gone as after an import.
+    messages: ["sidebarSheetMessage", "uploadSheetMessage", "placeholderMessage", "fieldConfigMessage", "filterMessage", "problemRowsMessage", "duplicateExclusionMessage", "suspectedTotalMessage", "standardizedExportStatus", "dataExportStatus", "reportExportStatus"].map((id) => [id, document.getElementById(id).textContent])
+  })`));
+}
+
+// The snapshot without the worksheet lists' own messages (a failed switch writes its error there).
+const v321WithoutSheetMessages = (snapshot) => ({ ...snapshot, messages: snapshot.messages.filter(([id]) => !/SheetMessage$/.test(id)) });
+
+test("v3.2.1 commit 2: switching worksheets gives exactly what importing the file and choosing that sheet gives", async () => {
+  for (const language of ["zh", "en"]) {
+    const { scope } = await v321ImportSheet("Orders", { language });
+    v321ApplyScenario(scope);
+    await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+    const fresh = await v321ImportSheet("Second", { language });
+    assert.deepEqual(v321Snapshot(scope), v321Snapshot(fresh.scope), language);
+    assert.equal(scope.evaluate("state.sourceSheetName"), "Second");
+  }
+});
+
+test("v3.2.1 commit 2: a switch clears the filter, the rows left out, the blanks, the column types and the rest", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  v321ApplyScenario(scope);
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  const after = JSON.parse(scope.evaluate(`JSON.stringify({
+    filters: state.filters, excluded: state.excludedRows, placeholders: state.placeholderConfirmations,
+    types: state.manualFieldTypes, drafts: state.fieldTypeDrafts, inferred: Object.fromEntries(state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])),
+    problems: state.problemView, standardized: state.standardizedExport, custom: state.customAnalysis,
+    module: document.body.dataset.module, previewPage: state.previewPage
+  })`));
+  assert.deepEqual(after.filters, JSON.parse(scope.evaluate("JSON.stringify(createEmptyFilterConfig())")));
+  assert.deepEqual(after.excluded, { suspectedTotal: [], duplicateRows: [] });
+  assert.deepEqual(after.placeholders, {});
+  assert.deepEqual(after.types, {});
+  assert.deepEqual(after.drafts, after.inferred);
+  assert.equal(after.problems, null);
+  assert.equal(after.standardized, null);
+  assert.equal(after.custom, null);
+  assert.equal(after.module, "overviewSection");
+  assert.equal(after.previewPage, 1);
+});
+
+test("v3.2.1 commit 2: a sheet that fails leaves the current analysis as it was, the error under the list in both languages", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  v321ApplyScenario(scope);
+  const before = v321Snapshot(scope);
+  const kept = scope.evaluate("state.keptExcel");
+  const importId = scope.evaluate("state.activeImportId");
+  const filters = scope.evaluate("JSON.stringify(state.filters)");
+  const errors = {
+    Empty: ["工作表「Empty」为空，请选择包含表头和数据的工作表。", "The worksheet “Empty” is empty; choose one with a header row and data."],
+    HeaderOnly: ["工作表「HeaderOnly」只有表头，没有可分析的数据行。", "The worksheet “HeaderOnly” has only a header row and no data to analyze."],
+    Doubled: ["工作表「Doubled」包含重复表头「Amount」，请修改后重新上传。", "The worksheet “Doubled” has the header “Amount” more than once; change it and upload the file again."]
+  };
+  for (const [sheet, [zh, en]] of Object.entries(errors)) {
+    const readsBefore = reads.length;
+    await scope.evaluate(`switchExcelSheet(${JSON.stringify(sheet)}, "sidebar")`);
+    assert.equal(reads.length, readsBefore + 1, sheet);
+    assert.equal(textOf(scope, "sidebarSheetMessage"), zh);
+    assert.match(scope.elements.get("sidebarSheetMessage").className, /\berror\b/);
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), en);
+    scope.evaluate('setInterfaceLanguage("zh")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), zh);
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [false, false]);
+    assert.equal(scope.evaluate("state.keptExcel") === kept, true);
+    assert.equal(scope.evaluate("state.activeImportId"), importId);
+    assert.equal(scope.evaluate("JSON.stringify(state.filters)"), filters);
+    assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before), sheet);
+  }
+  // From the upload page the error goes under that list.
+  await scope.evaluate('switchExcelSheet("Empty", "upload")');
+  assert.equal(textOf(scope, "uploadSheetMessage"), errors.Empty[0]);
+  assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before));
+});
+
+test("v3.2.1 commit 2: only a file with more than one sheet keeps its bytes, until the next import of any kind", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  const kept = JSON.parse(scope.evaluate("JSON.stringify({ keys: Object.keys(state.keptExcel).sort(), fileName: state.keptExcel.fileName, sheetNames: state.keptExcel.sheetNames, tag: Object.prototype.toString.call(state.keptExcel.bytes) })"));
+  assert.deepEqual(kept, { keys: ["bytes", "fileName", "sheetNames"], fileName: "book.xlsx", sheetNames: ["Orders", "Second", "Empty", "HeaderOnly", "Doubled"], tag: "[object ArrayBuffer]" });
+  scope.evaluate("globalThis.__keptBytes = state.keptExcel.bytes");
+  // A switch, a failed switch: the same bytes.
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate("state.keptExcel.bytes === __keptBytes"), true);
+  await scope.evaluate('switchExcelSheet("Empty", "sidebar")');
+  assert.equal(scope.evaluate("state.keptExcel.bytes === __keptBytes"), true);
+  // A CSV (the sample button does this too), a single-sheet file, an import error: gone.
+  const again = async (action) => {
+    const next = await v321ImportSheet("Orders");
+    await action(next.scope);
+    return next.scope.evaluate("state.keptExcel");
+  };
+  assert.equal(await again((other) => other.evaluate('parseCsvText("城市,人数\\n北京,1\\n上海,2", "new.csv", beginImport())')), null);
+  assert.equal(await again(async (other) => { putWorkbookFile(other, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx"); await other.evaluate("parseDataFile(__workbookFile)"); }), null);
+  assert.equal(await again(async (other) => { putWorkbookFile(other, Buffer.from("not a zip"), "bad.xlsx"); await other.evaluate("parseDataFile(__workbookFile)"); }), null);
+  // A single-sheet file never keeps them.
+  const single = createExcelContext();
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(single.evaluate("state.rows.length"), 3);
+  assert.equal(single.evaluate("state.keptExcel"), null);
+});
+
+test("v3.2.1 commit 2: while a sheet is read the page is busy and the language locked; a switch reads only that sheet", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  const readsBefore = reads.length;
+  const switching = scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), true);
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [true, true]);
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "正在读取并分析工作表「Second」...");
+  scope.evaluate("switchInterfaceLanguage()");
+  assert.equal(scope.evaluate("currentLanguage"), "zh");
+  // A click on another sheet meanwhile does nothing: the message stays the first one's.
+  const second = scope.evaluate('switchExcelSheet("HeaderOnly", "sidebar")');
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "正在读取并分析工作表「Second」...");
+  await second;
+  await switching;
+  assert.deepEqual(reads.slice(readsBefore), [{ type: "array", cellDates: true, cellNF: true, sheets: "Second" }]);
+  assert.equal(scope.evaluate("state.sourceSheetName"), "Second");
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.deepEqual([scope.elements.get("languageSwitch").disabled, scope.elements.get("sidebarLanguageSwitch").disabled], [false, false]);
+  // The current sheet and a name not in the file: nothing.
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  await scope.evaluate('switchExcelSheet("Nope", "sidebar")');
+  assert.equal(reads.length, readsBefore + 1);
+});
+
+test("v3.2.1 commit 2: an import begun while a switch waits for its frame wins; the switch reads nothing", async () => {
+  const { scope, reads } = await v321ImportSheet("Orders");
+  const readsBefore = reads.length;
+  scope.evaluate("globalThis.__realYield = yieldToBrowser; yieldToBrowser = () => new Promise((resolve) => { globalThis.__releaseYield = resolve; })");
+  try {
+    const switching = scope.evaluate('switchExcelSheet("Second", "sidebar")');
+    scope.evaluate('parseCsvText("城市,人数\\n北京,1\\n上海,2", "new.csv", beginImport())');
+    const status = textOf(scope, "statusPanel");
+    scope.evaluate("__releaseYield()");
+    await switching;
+    assert.equal(reads.length, readsBefore);
+    assert.equal(scope.evaluate("state.sourceFileName"), "new.csv");
+    assert.equal(scope.evaluate("state.rows.length"), 2);
+    assert.equal(scope.evaluate("state.keptExcel"), null);
+    assert.equal(textOf(scope, "statusPanel"), status);
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  } finally {
+    scope.evaluate("yieldToBrowser = __realYield");
+  }
+});
+
+test("v3.2.1 commit 2: a reset clears the worksheet lists and their messages for good", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  await scope.evaluate('switchExcelSheet("Empty", "sidebar")');
+  await scope.evaluate('switchExcelSheet("Empty", "upload")');
+  assert.notEqual(textOf(scope, "sidebarSheetMessage"), "");
+  assert.notEqual(textOf(scope, "uploadSheetMessage"), "");
+  scope.evaluate("beginImport()");
+  for (const place of ["sidebar", "upload"]) {
+    assert.equal(textOf(scope, `${place}SheetMessage`), "", place);
+    assert.equal(scope.evaluate(`oneOffMessages.has(dom.${place}SheetMessage)`), false, place);
+    assert.equal(scope.elements.get(`${place}SheetList`).innerHTML, "", place);
+    assert.equal(scope.elements.get(`${place}SheetPanel`).classList.contains("hidden"), true, place);
+    assert.equal(scope.elements.get(`${place}SheetToggle`).classList.contains("hidden"), true, place);
+  }
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+  assert.equal(scope.evaluate("state.keptExcel"), null);
+});
+
+test("v3.2.1 commit 2: an unexpected error while the other sheet is committed ends the import with the error", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  scope.evaluate('countDuplicateRows = () => { throw new Error("commit broke"); }');
+  let rejected = null;
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")').catch((error) => { rejected = error; });
+  assert.equal(rejected, null);
+  assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+  assert.equal(scope.elements.get("csvFile").disabled, false);
+  assert.equal(scope.elements.get("languageSwitch").disabled, false);
+  assert.equal(textOf(scope, "statusPanel"), "commit broke");
+  assert.match(scope.elements.get("statusPanel").className, /\berror\b/);
+  assert.equal(scope.evaluate("state.rows.length"), 0);
+  assert.equal(scope.evaluate("state.keptExcel"), null);
+});
+
+// ---- v3.2.1 commit 3: the worksheet list in the sidebar ----
+
+// The fake page has no getAttribute / querySelector and records no focus; these give every fake
+// element (they share one prototype) what the worksheet list needs, for one action:
+// setAttribute / getAttribute keep the values (as withRecordedAttributes() does), focus() is
+// recorded, and querySelector('[data-sheet-index="N"]') answers an item whose focus() is recorded
+// with the list it came from. Restored afterwards.
+async function withSheetListDom(action) {
+  const proto = Object.getPrototypeOf(createScriptContext().evaluate("dom.languageSwitch"));
+  const saved = { setAttribute: proto.setAttribute, getAttribute: proto.getAttribute, querySelector: proto.querySelector, focus: proto.focus };
+  const focused = [];
+  proto.setAttribute = function setAttribute(name, value) { (this.__attributes ??= {})[name] = String(value); };
+  proto.getAttribute = function getAttribute(name) { return this.__attributes && name in this.__attributes ? this.__attributes[name] : null; };
+  proto.focus = function focus() { focused.push({ element: this }); };
+  proto.querySelector = function querySelector(selector) {
+    const list = this;
+    const index = /^\[data-sheet-index="(\d+)"\]$/.exec(selector)?.[1];
+    if (index === undefined || !String(list.innerHTML).includes(`data-sheet-index="${index}"`)) return null;
+    return { focus() { focused.push({ list, item: Number(index) }); } };
+  };
+  try {
+    return await action(focused);
+  } finally {
+    Object.assign(proto, saved);
+  }
+}
+
+const EN_MULTI_SHEET = path.join(__dirname, "fixtures", "en-multi-sheet.xlsx");
+
+test("v3.2.1 commit 3: a failed switch puts the focus back on the item that was clicked, in either list", async () => {
+  await withSheetListDom(async (focused) => {
+    for (const place of ["sidebar", "upload"]) {
+      const { scope } = await v321ImportSheet("Orders");
+      // Empty is the third sheet (index 2); the list draws it as a button.
+      assert.match(scope.elements.get(`${place}SheetList`).innerHTML, /data-sheet-index="2"/, place);
+      focused.length = 0;
+      await scope.evaluate(`switchExcelSheet("Empty", "${place}")`);
+      assert.equal(textOf(scope, `${place}SheetMessage`), "工作表「Empty」为空，请选择包含表头和数据的工作表。");
+      assert.equal(focused.length, 1, place);
+      assert.equal(focused[0].list, scope.elements.get(`${place}SheetList`), place);
+      assert.equal(focused[0].item, 2, place);
+    }
+  });
+});
+
+test("v3.2.1 commit 3: with more than one sheet the sidebar names the file alone and the worksheet below it; one sheet as before", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  assert.equal(textOf(scope, "sourceName"), "book.xlsx");
+  assert.equal(scope.elements.get("sourceName").title, "book.xlsx");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "工作表：Orders（共 5 个）");
+  assert.equal(scope.elements.get("sidebarSheetLine").classList.contains("hidden"), false);
+  assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+  // The top bar, the import message and the report keep “file · sheet”.
+  assert.equal(textOf(scope, "topbarFileName"), "book.xlsx · Orders");
+  assert.match(textOf(scope, "statusPanel"), /^book\.xlsx · Orders 已成功载入/);
+  assert.match(scope.evaluate(`buildHtmlReport(buildReportData(${V321_FIXED_TIME}), [])`), /book\.xlsx/);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.equal(textOf(scope, "sidebarSheetLine"), "Worksheet: Orders (5 in this file)");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(textOf(scope, "sourceName"), "book.xlsx");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "工作表：Second（共 5 个）");
+  // A new import of any kind takes the line away at once (before anything is drawn again).
+  scope.evaluate("beginImport()");
+  assert.equal(textOf(scope, "sidebarSheetLine"), "");
+  assert.equal(scope.elements.get("sidebarSheetLine").classList.contains("hidden"), true);
+  // A single sheet: “file · sheet” and no worksheet line or button.
+  const single = createExcelContext();
+  putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+  await single.evaluate("parseDataFile(__workbookFile)");
+  assert.equal(textOf(single, "sourceName"), "one.xlsx · S1");
+  assert.equal(textOf(single, "sidebarSheetLine"), "");
+  assert.equal(single.elements.get("sidebarSheetLine").classList.contains("hidden"), true);
+  assert.equal(single.elements.get("sidebarSheetToggle").classList.contains("hidden"), true);
+  assert.equal(single.elements.get("sidebarSheetList").innerHTML, "");
+});
+
+test("v3.2.1 commit 3: the list marks the sheet open now, makes the others buttons and escapes the names", async () => {
+  const buffer = buildXlsxBuffer([{ name: "a<b>&c", rows: V321_GOOD_ROWS }, { name: "订单", rows: V321_GOOD_ROWS }, { name: "说明", rows: [["备注"]] }]);
+  const { scope } = await v321ImportSheet("a<b>&c", { buffer });
+  const list = scope.elements.get("sidebarSheetList").innerHTML;
+  assert.equal(list, [
+    '<li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">a&lt;b&gt;&amp;c</span><span class="sheet-switch-now">正在分析</span></li>',
+    '<li><button class="sheet-switch-item" type="button" data-sheet-index="1"><span class="sheet-switch-name">订单</span></button></li>',
+    '<li><button class="sheet-switch-item" type="button" data-sheet-index="2"><span class="sheet-switch-name">说明</span></button></li>'
+  ].join(""));
+  assert.equal(scope.elements.get("uploadSheetList").innerHTML, list);
+  scope.evaluate('setInterfaceLanguage("en")');
+  assert.match(scope.elements.get("sidebarSheetList").innerHTML, /<span class="sheet-switch-now">Current<\/span>/);
+  scope.evaluate('setInterfaceLanguage("zh")');
+  // A click on an item switches to it (the index, not the name, is in the markup).
+  await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "1" } }) } }, "sidebar")');
+  assert.equal(scope.evaluate("state.sourceSheetName"), "订单");
+  assert.match(scope.elements.get("sidebarSheetList").innerHTML, /^<li><button[^>]*data-sheet-index="0"><span class="sheet-switch-name">a&lt;b&gt;&amp;c<\/span><\/button><\/li><li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">订单<\/span>/);
+  // Clicks on the current sheet's line or around the items do nothing.
+  await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => null } }, "sidebar")');
+  assert.equal(scope.evaluate("state.sourceSheetName"), "订单");
+});
+
+test("v3.2.1 commit 3: the button opens and closes the list; Escape closes it, gives the focus back and stops there", async () => {
+  await withSheetListDom(async (focused) => {
+    const { scope } = await v321ImportSheet("Orders");
+    const toggle = scope.elements.get("sidebarSheetToggle");
+    const panel = scope.elements.get("sidebarSheetPanel");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(panel.classList.contains("hidden"), true);
+    scope.evaluate('toggleSheetSwitch("sidebar")');
+    assert.deepEqual([toggle.getAttribute("aria-expanded"), panel.classList.contains("hidden")], ["true", false]);
+    const event = { key: "Escape", stopped: 0, prevented: 0, stopPropagation() { this.stopped += 1; }, preventDefault() { this.prevented += 1; } };
+    put(scope.context, "__escape", event);
+    focused.length = 0;
+    scope.evaluate('handleSheetSwitchKeydown(__escape, "sidebar")');
+    assert.deepEqual([toggle.getAttribute("aria-expanded"), panel.classList.contains("hidden")], ["false", true]);
+    assert.deepEqual([event.stopped, event.prevented], [1, 1]);
+    assert.equal(focused.length, 1);
+    assert.equal(focused[0].element, toggle);
+    // Closed: Escape is left to the sidebar (the overlay closes on the next one).
+    scope.evaluate('handleSheetSwitchKeydown(__escape, "sidebar")');
+    assert.deepEqual([event.stopped, event.prevented], [1, 1]);
+    // Other keys do nothing.
+    scope.evaluate('toggleSheetSwitch("sidebar")');
+    put(scope.context, "__enter", { key: "Enter", stopPropagation() { throw new Error("stopped"); }, preventDefault() { throw new Error("prevented"); } });
+    scope.evaluate('handleSheetSwitchKeydown(__enter, "sidebar")');
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    // The list stays open across a language switch and a new render of the sidebar.
+    scope.evaluate('setInterfaceLanguage("en"); renderSidebar()');
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(panel.classList.contains("hidden"), false);
+  });
+});
+
+test("v3.2.1 commit 3: the English multi-sheet fixture is what its generator writes", () => {
+  const bytes = fs.readFileSync(EN_MULTI_SHEET);
+  assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), "1e7e1e61b264d08a95bf933914b5bf5c26e6554d7ce3a6554083675bd77eb32f");
+  const folder = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "en-multi-sheet-"));
+  try {
+    require("node:child_process").execFileSync(process.execPath, [path.join(__dirname, "fixtures", "gen-en-multi-sheet.cjs"), folder]);
+    assert.deepEqual(fs.readFileSync(path.join(folder, "en-multi-sheet.xlsx")), bytes);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+  const names = XLSX.read(bytes, { type: "buffer", bookSheets: true }).SheetNames;
+  assert.deepEqual(names, ["Orders", "Customers", "Notes"]);
+});
+
+test("v3.2.1 commit 3: an English file in English shows no Chinese in the worksheet list, and Chinese → English → Chinese gives it back", async () => {
+  await withSheetListDom(async () => {
+    const buffer = fs.readFileSync(EN_MULTI_SHEET);
+    const { scope } = await v321ImportSheet("Orders", { buffer });
+    scope.evaluate('setSheetSwitchOpen("sidebar", true)');
+    await scope.evaluate('switchExcelSheet("Notes", "sidebar")');
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "工作表「Notes」只有表头，没有可分析的数据行。");
+    const before = elementTexts(scope);
+    scope.evaluate('setInterfaceLanguage("en")');
+    for (const id of ["sidebarSheetLine", "sidebarSheetList", "sidebarSheetMessage", "sourceName"]) {
+      const element = scope.elements.get(id);
+      assert.doesNotMatch(`${element.textContent} ${element.innerHTML}`, ENGLISH_BAD, id);
+    }
+    assert.equal(textOf(scope, "sidebarSheetLine"), "Worksheet: Orders (3 in this file)");
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "The worksheet “Notes” has only a header row and no data to analyze.");
+    assert.match(scope.elements.get("sidebarSheetList").innerHTML, /Current/);
+    assert.equal(scope.elements.get("sidebarSheetToggle").getAttribute("aria-expanded"), "true");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    const after = elementTexts(scope);
+    const changed = Object.keys(before).filter((id) => before[id] !== after[id] && !["languageSwitch", "sidebarLanguageSwitch"].includes(id));
+    assert.deepEqual(changed, []);
+  });
+});
+
+test("v3.2.1 commit 3: the sidebar's markup: the note above the list, every text with an English key", () => {
+  // (The data-i18n keys themselves are checked by the static guard: every Chinese text of the page
+  // has a key and every key an English text.)
+  const html = indexHtmlSource();
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assertInOrder(sidebar, ['<p id="sourceName"', '<p id="sidebarSheetLine"', '<p id="sidebarFileSize"', '<div class="sidebar-file-actions">', '<button id="sidebarSheetToggle"', 'class="nav-new-analysis secondary-button sidebar-new-analysis"', '<div id="sidebarSheetPanel"', '<p class="sheet-switch-note"', '<ul id="sidebarSheetList"', '<p id="sidebarSheetMessage"']);
+  assert.match(sidebar, /<button id="sidebarSheetToggle" class="secondary-button sheet-switch-toggle hidden" type="button" aria-expanded="false" aria-controls="sidebarSheetPanel"><span>换一个工作表<\/span><svg [^>]*aria-hidden="true">/);
+  assert.ok(sidebar.includes('<ul id="sidebarSheetList" class="sheet-switch-list" aria-label="本文件的工作表"></ul>'));
+  assert.ok(sidebar.includes('<p class="sheet-switch-note">换表会重新分析那张表，现在的筛选、不计入分析、按空值处理和改过的字段类型都不会保留。</p>'));
+  assert.ok(sidebar.includes('<p id="sidebarSheetMessage" class="sheet-switch-message" role="status" aria-live="polite"></p>'));
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(english["sheetSwitch.toggle"], "Change worksheet");
+  assert.equal(english["sheetSwitch.list"], "Worksheets in this file");
+  assert.equal(english["sheetSwitch.note"], "Switching analyzes that worksheet from scratch: the filter, excluded rows, cells treated as blank and column types you changed here are not kept.");
+  // R6: on phones the list does not scroll inside the scrolling sidebar.
+  const css = repoFile("style.css");
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"));
+  assert.match(phone.slice(0, phone.indexOf("\n}\n")), /\.sheet-switch-list \{\s*max-height: none;/);
+});
+
+// ---- v3.2.1 commit 4: the way back to the analysis follows the language (R8) ----
+
+test("v3.2.1 commit 4: 回到「…」的分析 on the upload page is written again in the other language, and back byte for byte", async () => {
+  for (const [file, name] of [["csv", "orders.csv"], ["xlsx", "book.xlsx · Orders"]]) {
+    const scope = file === "csv"
+      ? await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh")
+      : (await v321ImportSheet("Orders")).scope;
+    scope.evaluate("showUploadPage()");
+    const chinese = textOf(scope, "returnToAnalysis");
+    assert.equal(chinese, `回到「${name}」的分析`);
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), `Back to the analysis of “${name}”`);
+    scope.evaluate('setInterfaceLanguage("zh")');
+    assert.equal(textOf(scope, "returnToAnalysis"), chinese);
+    // Back to the analysis: the entry is gone, and a later switch does not write it back.
+    scope.evaluate("returnToAnalysis()");
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("zh")');
+    // A new import clears it too, for good.
+    scope.evaluate("showUploadPage(); beginImport()");
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.equal(textOf(scope, "returnToAnalysis"), "");
+  }
+});
+
+test("v3.2.1 commit 4: an upload page opened in English names the way back in English, and a switch writes it in Chinese", async () => {
+  const scope = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "en");
+  scope.evaluate("showUploadPage()");
+  assert.equal(textOf(scope, "returnToAnalysis"), "Back to the analysis of “orders.csv”");
+  scope.evaluate('setInterfaceLanguage("zh")');
+  assert.equal(textOf(scope, "returnToAnalysis"), "回到「orders.csv」的分析");
+});
+
+// ---- v3.2.1 commit 5: long names wrap in the way back to the analysis (R9) ----
+
+// The fake page has no layout: the browser check (no sideways scroll at 390 / 640 / 768 with long
+// names, short names as before) is in the commit's notes; this pins the rule that makes it so.
+test("v3.2.1 commit 5: 回到「…」的分析 may wrap, at any character, and never grows wider than the page", () => {
+  const css = repoFile("style.css");
+  // (Two classes: the shared button rule, later in the file, would win over one.)
+  const start = css.indexOf("\n.upload-hero .return-to-analysis {");
+  assert.ok(start >= 0);
+  const rule = css.slice(start, css.indexOf("}", start) + 1);
+  assert.match(rule, /\bmax-width: 100%;/);
+  assert.match(rule, /\bwhite-space: normal;/);
+  assert.match(rule, /\boverflow-wrap: anywhere;/);
+  // Only this button: the shared button rule still keeps every other button on one line, and the
+  // font is the buttons' own (no size or weight here).
+  assert.match(css.slice(css.indexOf("\n.secondary-button {"), css.indexOf("}", css.indexOf("\n.secondary-button {"))), /white-space: nowrap;/);
+  assert.doesNotMatch(rule, /font-(?:size|weight)/);
+});
+
+// ---- v3.2.1 commit 6: the worksheet list on the upload page ----
+
+const v321ReportHash = (scope) => crypto.createHash("sha256").update(scope.evaluate(`buildHtmlReport(buildReportData(${V321_FIXED_TIME}), [])`)).digest("hex");
+const v321UploadSwitch = (scope) => ({
+  toggleHidden: scope.elements.get("uploadSheetToggle").classList.contains("hidden"),
+  expanded: scope.elements.get("uploadSheetToggle").getAttribute("aria-expanded"),
+  panelHidden: scope.elements.get("uploadSheetPanel").classList.contains("hidden")
+});
+
+test("v3.2.1 commit 6 (T14): the upload page's worksheet button comes with 回到「…」的分析 and goes with it", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    const closed = { toggleHidden: false, expanded: "false", panelHidden: true };
+    // In the analysis it is not there (the sidebar has its own).
+    assert.equal(scope.elements.get("uploadSheetToggle").classList.contains("hidden"), true);
+    assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+    scope.evaluate("showUploadPage()");
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+    assert.deepEqual(v321UploadSwitch(scope), closed);
+    assert.match(scope.elements.get("uploadSheetList").innerHTML, /data-sheet-index="1"><span class="sheet-switch-name">Second</);
+    scope.evaluate('toggleSheetSwitch("upload")');
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    // A language switch keeps it there and open.
+    scope.evaluate('setInterfaceLanguage("en")');
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    scope.evaluate('setInterfaceLanguage("zh")');
+    // Back to the analysis: gone and closed; the next upload page shows it closed.
+    scope.evaluate("returnToAnalysis()");
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+    assert.equal(scope.elements.get("sidebarSheetToggle").classList.contains("hidden"), false);
+    scope.evaluate("showUploadPage()");
+    assert.deepEqual(v321UploadSwitch(scope), closed);
+    // No way back, no button: a sheet being chosen, an import going on.
+    scope.evaluate("returnToAnalysis(); state.pendingExcel = { fileName: \"c.xlsx\" }; showUploadPage()");
+    assert.deepEqual([scope.elements.get("returnToAnalysis").classList.contains("hidden"), v321UploadSwitch(scope).toggleHidden], [true, true]);
+    scope.evaluate("state.pendingExcel = null; showUploadPage(); returnToAnalysis(); document.body.classList.add(\"is-loading\"); showUploadPage()");
+    assert.deepEqual([scope.elements.get("returnToAnalysis").classList.contains("hidden"), v321UploadSwitch(scope).toggleHidden], [true, true]);
+
+    // A CSV and a single-sheet file: the way back, no worksheet button.
+    const csv = await importCsvInLanguage(englishScenarioCsv(), "orders.csv", "zh");
+    const single = createExcelContext();
+    putWorkbookFile(single, buildXlsxBuffer([{ name: "S1", rows: V321_GOOD_ROWS }]), "one.xlsx");
+    await single.evaluate("parseDataFile(__workbookFile)");
+    for (const other of [csv, single]) {
+      other.evaluate("showUploadPage()");
+      assert.equal(other.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+      assert.equal(other.elements.get("uploadSheetToggle").classList.contains("hidden"), true);
+      assert.equal(other.elements.get("uploadSheetList").innerHTML, "");
+    }
+  });
+});
+
+test("v3.2.1 commit 6: a failed switch on the upload page stays there; the way back goes to the same sheet, its report unchanged", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    v321ApplyScenario(scope);
+    scope.evaluate('showModule("qualitySection")');
+    const before = v321Snapshot(scope);
+    const hash = v321ReportHash(scope);
+    scope.evaluate("showUploadPage()");
+    const way = textOf(scope, "returnToAnalysis");
+    assert.equal(way, "回到「book.xlsx · Orders」的分析");
+    scope.evaluate('toggleSheetSwitch("upload")');
+    // Empty is the third sheet (index 2).
+    await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "2" } }) } }, "upload")');
+    assert.equal(textOf(scope, "uploadSheetMessage"), "工作表「Empty」为空，请选择包含表头和数据的工作表。");
+    assert.equal(textOf(scope, "sidebarSheetMessage"), "");
+    // Still the upload page, the way back as it was, nothing busy.
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), false);
+    assert.equal(scope.elements.get("results").classList.contains("hidden"), true);
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), false);
+    assert.equal(textOf(scope, "returnToAnalysis"), way);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: false, expanded: "true", panelHidden: false });
+    assert.equal(scope.evaluate("document.body.classList.contains('is-loading')"), false);
+    assert.equal(scope.elements.get("csvFile").disabled, false);
+    // The way back: the same sheet, the same module, the same report; the list's error is gone.
+    scope.evaluate("returnToAnalysis()");
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), true);
+    assert.equal(scope.evaluate("state.sourceSheetName"), "Orders");
+    assert.equal(v321ReportHash(scope), hash);
+    assert.deepEqual(v321WithoutSheetMessages(v321Snapshot(scope)), v321WithoutSheetMessages(before));
+    assert.equal(textOf(scope, "uploadSheetMessage"), "");
+    assert.equal(scope.evaluate("oneOffMessages.has(dom.uploadSheetMessage)"), false);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+  });
+});
+
+test("v3.2.1 commit 6: a switch from the upload page opens the other sheet's analysis, as importing it does", async () => {
+  await withSheetListDom(async () => {
+    const { scope } = await v321ImportSheet("Orders");
+    v321ApplyScenario(scope);
+    scope.evaluate('showUploadPage(); toggleSheetSwitch("upload")');
+    await scope.evaluate('handleSheetSwitchClick({ target: { closest: () => ({ dataset: { sheetIndex: "1" } }) } }, "upload")');
+    assert.equal(scope.evaluate("document.body.classList.contains('has-results')"), true);
+    assert.equal(scope.elements.get("returnToAnalysis").classList.contains("hidden"), true);
+    assert.deepEqual(v321UploadSwitch(scope), { toggleHidden: true, expanded: "false", panelHidden: true });
+    const fresh = await v321ImportSheet("Second");
+    assert.deepEqual(v321Snapshot(scope), v321Snapshot(fresh.scope));
+  });
+});
+
+test("v3.2.1 commit 6: the upload page's markup is the sidebar's, next to 回到「…」的分析; a wrapped name is left-aligned", () => {
+  const html = indexHtmlSource();
+  const hero = html.slice(html.indexOf('<div class="upload-hero">'), html.indexOf('<div class="workspace-intro">'));
+  const sidebar = html.slice(html.indexOf('<aside id="appSidebar"'), html.indexOf("</aside>"));
+  assertInOrder(hero, ['<div class="return-row">', '<button id="returnToAnalysis"', '<button id="uploadSheetToggle"', "</div>", '<div id="uploadSheetPanel"']);
+  // (Indentation between the tags differs: the upload page's is two levels deeper.)
+  const part = (source, start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)) + end.length).replace(/>\s+</g, "><");
+  for (const [start, end] of [['<button id="{}SheetToggle"', "</button>"], ['<div id="{}SheetPanel"', "</div>"]]) {
+    const upload = part(hero, start.replace("{}", "upload"), end);
+    assert.ok(upload.length > end.length, start);
+    assert.equal(upload.replace(/upload(?=Sheet)/g, "sidebar"), part(sidebar, start.replace("{}", "sidebar"), end), start);
+  }
+  // Short names stay centred on one line; a wrapped long one reads from the left.
+  const css = repoFile("style.css");
+  const start = css.indexOf("\n.upload-hero .return-to-analysis {");
+  assert.match(css.slice(start, css.indexOf("}", start)), /\btext-align: left;/);
+});
+
+// ---- v3.2.1 commit 7: export names carry the worksheet (R2, R2b) ----
+
+const V321_NAME_TIME = "new Date(2026, 10, 23, 14, 30, 5)";
+// The five exports (the changes list also with its first-N cut, the problem rows with and without
+// a column and a writing): [report, data, standardized, changes, changes cut, problem rows, duplicate rows].
+const V321_EXPORT_NAMES = `[
+  buildReportFileName("html", ${V321_NAME_TIME}),
+  buildDataExportFileName("filtered", ${V321_NAME_TIME}),
+  buildStandardizedFileName("data", ${V321_NAME_TIME}),
+  buildStandardizedFileName("changes", ${V321_NAME_TIME}),
+  buildStandardizedFileName("changes", ${V321_NAME_TIME}, 1048575),
+  buildProblemRowsFileName({ kind: "placeholder", field: "金额", key: "N/A" }, ${V321_NAME_TIME}),
+  buildProblemRowsFileName({ kind: "duplicateRows" }, ${V321_NAME_TIME})
+]`;
+
+// The export names of one source in one language. sheetNames: the worksheets of a kept file (more
+// than one), or null for a CSV and a single-sheet file (nothing is kept).
+function v321ExportNames(scope, fileName, sheetName, sheetNames, language) {
+  put(scope.context, "__nameSource", { fileName, sheetName, sheetNames });
+  return JSON.parse(scope.evaluate(`(() => {
+    state.sourceFileName = __nameSource.fileName;
+    state.sourceSheetName = __nameSource.sheetName;
+    state.keptExcel = __nameSource.sheetNames ? { bytes: new ArrayBuffer(0), fileName: __nameSource.fileName, sheetNames: __nameSource.sheetNames } : null;
+    currentLanguage = ${JSON.stringify(language)};
+    const names = ${V321_EXPORT_NAMES};
+    currentLanguage = "zh";
+    return JSON.stringify(names);
+  })()`));
+}
+
+test("v3.2.1 commit 7 (T8): with more than one worksheet the five exports carry it after the file name, in both languages", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", ["订单", "退货"], "zh"), [
+    "2025上半年订单_订单-20261123-143005.html",
+    "2025上半年订单_订单_当前分析_20261123.csv",
+    "2025上半年订单_订单_写法统一_20261123.csv",
+    "2025上半年订单_订单_写法统一改动清单_20261123.csv",
+    "2025上半年订单_订单_写法统一改动清单_前1048575条_20261123.csv",
+    "2025上半年订单_订单_问题行_像是空值的写法_金额_N-A_20261123.csv",
+    "2025上半年订单_订单_问题行_整行重复_20261123.csv"
+  ]);
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", ["订单", "退货"], "en"), [
+    "2025上半年订单_订单-20261123-143005.html",
+    "2025上半年订单_订单_in-analysis_20261123.csv",
+    "2025上半年订单_订单_standardized_20261123.csv",
+    "2025上半年订单_订单_standardized-changes_20261123.csv",
+    "2025上半年订单_订单_standardized-changes_first-1048575_20261123.csv",
+    "2025上半年订单_订单_problem-rows_blank-like_金额_N-A_20261123.csv",
+    "2025上半年订单_订单_problem-rows_duplicate-rows_20261123.csv"
+  ]);
+  // .xls too; unsafe characters in a worksheet name are made safe like those in a file name.
+  assert.equal(v321ExportNames(scope, "2025上半年订单.xls", "一月", ["一月", "二月"], "zh")[1], "2025上半年订单_一月_当前分析_20261123.csv");
+  assert.equal(v321ExportNames(scope, "book.xlsx", "a<b>c", ["a<b>c", "x"], "zh")[1], "book_a-b-c_当前分析_20261123.csv");
+  // The same file with one worksheet: no worksheet in the names (as in 7b6e091).
+  assert.deepEqual(v321ExportNames(scope, "2025上半年订单.xlsx", "订单", null, "zh").slice(0, 2),
+    ["2025上半年订单-20261123-143005.html", "2025上半年订单_当前分析_20261123.csv"]);
+});
+
+test("v3.2.1 commit 7 (T8): a real multi-sheet import names the sheet it analyzes, and the one it switched to", async () => {
+  const { scope } = await v321ImportSheet("Orders");
+  assert.equal(scope.evaluate(`buildDataExportFileName("filtered", ${V321_NAME_TIME})`), "book_Orders_当前分析_20261123.csv");
+  await scope.evaluate('switchExcelSheet("Second", "sidebar")');
+  assert.equal(scope.evaluate(`buildDataExportFileName("filtered", ${V321_NAME_TIME})`), "book_Second_当前分析_20261123.csv");
+  assert.equal(scope.evaluate(`buildReportFileName("html", ${V321_NAME_TIME})`), "book_Second-20261123-143005.html");
+});
+
+test("v3.2.1 commit 7 (T8): a 70-character file name and a 30-character worksheet are both cut, longest first, the labels whole, 80 at most", () => {
+  const scope = createScriptContext();
+  const file = `${"名".repeat(70)}.xlsx`;
+  const sheet = "表".repeat(30);
+  const zh = v321ExportNames(scope, file, sheet, [sheet, "另一张"], "zh");
+  const en = v321ExportNames(scope, file, sheet, [sheet, "另一张"], "en");
+  // Report: the file name loses 21 (49 + "_" + 30 = 80); the data export also makes room for its label.
+  assert.equal(zh[0], `${"名".repeat(49)}_${sheet}-20261123-143005.html`);
+  assert.equal(zh[1], `${"名".repeat(44)}_${sheet}_当前分析_20261123.csv`);
+  assert.equal(en[1], `${"名".repeat(37)}_${sheet}_in-analysis_20261123.csv`);
+  // Long labels (70 + 30 + 20 + 13 + 3 "_" = 136, 56 to cut): the file name comes down to the
+  // worksheet's 30, then the two lose 8 each.
+  assert.equal(en[4], `${"名".repeat(22)}_${"表".repeat(22)}_standardized-changes_first-1048575_20261123.csv`);
+  for (const name of [...zh, ...en]) {
+    const before = name.replace(/(?:-\d{8}-\d{6}\.html|_\d{8}\.csv)$/, "");
+    assert.ok(before.length <= 80, `${before.length} ${name}`);
+    assert.match(before, /^名+_表+_?/, name);
+  }
+});
+
+test("v3.2.1 commit 7 (R2b): the worksheet part is trimmed; a worksheet of spaces adds nothing", () => {
+  const scope = createScriptContext();
+  assert.deepEqual(v321ExportNames(scope, "book.xlsx", " 订单 ", [" 订单 ", "x"], "zh").slice(0, 3),
+    ["book_订单-20261123-143005.html", "book_订单_当前分析_20261123.csv", "book_订单_写法统一_20261123.csv"]);
+  // Spaces only: exactly the names of the same file with one worksheet, the file name part as today
+  // (here with its own trailing space, which the report and the data export trim as they always did).
+  for (const language of ["zh", "en"]) {
+    for (const file of ["book.xlsx", " 前后空格 .xlsx", `${"名".repeat(81)}.xlsx`]) {
+      assert.deepEqual(v321ExportNames(scope, file, "   ", ["   ", "x"], language), v321ExportNames(scope, file, "   ", null, language), `${file} ${language}`);
+    }
+  }
+});
+
+// R2: a CSV and a single-sheet Excel file keep 7b6e091's names byte for byte, over awkward names:
+// spaces around, a name of spaces, unsafe characters, 70–90 characters (the report and the data
+// export cut at 80, the others shorten the name), a space or an emoji at the 80th place, emoji,
+// combining marks, a bidi control, a tab. (Built from code points: no invisible character here.)
+const V321_AWKWARD_STEMS = [
+  "订单", "orders", "a<b>c", `x/y${String.fromCharCode(92)}z`, " 前后空格 ", "trailing ", "", "   ", "...",
+  "名".repeat(70), "名".repeat(75), "名".repeat(76), "名".repeat(80), "名".repeat(81), "名".repeat(90),
+  `${"a".repeat(79)} b`, `${"a".repeat(79)}${String.fromCodePoint(0x1F600)}b`, String.fromCodePoint(0x1F600).repeat(45),
+  String.fromCodePoint(0xE9).repeat(50), `${String.fromCodePoint(0x202E)}rtl`, `tab${String.fromCharCode(9)}here`
+];
+// JSON.stringify([[file, language, the seven names], …]) over the 21 names × .csv/.xlsx/.xls × zh/en,
+// computed by running these same calls on `git archive 7b6e091` (v3.2.0).
+const V321_7B6E091_NAMES_SHA256 = "8fbe080ede4364964e6afcc56d3045c2debdb9df16aae4076b0b97b0c1c4671a";
+
+test("v3.2.1 commit 7 (R2): a CSV and a single-sheet file keep 7b6e091's export names byte for byte, over 21 awkward names", () => {
+  const scope = createScriptContext();
+  const all = [];
+  for (const stem of V321_AWKWARD_STEMS) {
+    for (const ext of [".csv", ".xlsx", ".xls"]) {
+      for (const language of ["zh", "en"]) {
+        const names = v321ExportNames(scope, stem + ext, ext === ".csv" ? "" : "表一", null, language);
+        all.push([stem + ext, language, names]);
+        // The report and the data export: 7b6e091's one sanitize-and-cut of the original name.
+        const base = (stem + ext).split(/[\\/]/).pop().replace(/\.(?:csv|xlsx|xls)$/i, "");
+        assert.equal(names[0], `${oldCutFileName(base || "data-report")}-20261123-143005.html`, JSON.stringify(stem + ext));
+        assert.equal(names[1], `${oldCutFileName(base || "data")}_${language === "zh" ? "当前分析" : "in-analysis"}_20261123.csv`, JSON.stringify(stem + ext));
+      }
+    }
+  }
+  assert.equal(all.length, 126);
+  // All 882 names, as 7b6e091 builds them (computed on a copy of 7b6e091, not on this code).
+  assert.equal(crypto.createHash("sha256").update(JSON.stringify(all)).digest("hex"), V321_7B6E091_NAMES_SHA256);
 });

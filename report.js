@@ -186,12 +186,11 @@ const PROBLEM_KIND_FILE_NAMES = Object.freeze({
 });
 
 // <原文件名>_问题行_<类别>[_<字段>][_<写法>]_<yyyymmdd>.csv (English <name>_problem-rows_<kind>…);
-// only the part before the date is sanitized and shortened, so the date always stays.
+// only the part before the date is sanitized and shortened, so the date always stays. v3.2.1: a
+// multi-sheet file adds _<表名> after the original name (getSourceFileNameParts()).
 function buildProblemRowsFileName(category, now = new Date()) {
-  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
-  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   const parts = [
-    { text: stem, cut: true },
+    ...getSourceFileNameParts("data"),
     { text: L("问题行", "problem-rows"), cut: false },
     { text: PROBLEM_KIND_FILE_NAMES[category.kind] && Lpick(PROBLEM_KIND_FILE_NAMES[category.kind]), cut: false },
     { text: category.field, cut: true },
@@ -377,14 +376,13 @@ function buildStandardizedChangesCsvContent(result, rows, fields, getRowNumber, 
 
 // <原文件名>_写法统一_<yyyymmdd>.csv, <原文件名>_写法统一改动清单[_前N条]_<yyyymmdd>.csv (English
 // _standardized_, _standardized-changes[_first-N]_); only the part before the date is sanitized
-// and shortened, so the date always stays.
+// and shortened, so the date always stays. v3.2.1: a multi-sheet file adds _<表名> after the
+// original name (getSourceFileNameParts()).
 function buildStandardizedFileName(kind, now = new Date(), truncatedTo = 0) {
-  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
-  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   const labels = kind === "changes"
     ? [L("写法统一改动清单", "standardized-changes"), ...(truncatedTo ? [L(`前${truncatedTo}条`, `first-${truncatedTo}`)] : [])]
     : [L("写法统一", "standardized")];
-  return `${buildLabeledFileName([{ text: stem, cut: true }, ...labels.map((text) => ({ text, cut: false }))])}_${formatReportFileDate(now)}.csv`;
+  return `${buildLabeledFileName([...getSourceFileNameParts("data"), ...labels.map((text) => ({ text, cut: false }))])}_${formatReportFileDate(now)}.csv`;
 }
 
 // 导出标准化 CSV / 导出改动清单: from the result of the last check, never computed again.
@@ -595,7 +593,7 @@ function buildReportData(now = new Date()) {
   }));
 
   return {
-    version: "v3.2.0",
+    version: "v3.2.1",
     fileName: getReportSourceFileName(),
     sheetName: state.sourceSheetName || "",
     sourceType: state.sourceType || (state.sourceSheetName ? "excel" : "csv"),
@@ -766,6 +764,26 @@ function getReportSourceFileName() {
   return sourceTitle.split(" · ")[0] || "data-report";
 }
 
+// v3.2.1 (R2): an Excel file with more than one worksheet (its bytes are kept for 换一个工作表).
+function isMultiSheetSource() {
+  return Boolean(state.keptExcel && state.sourceSheetName);
+}
+
+// v3.2.1 (R2b): the worksheet in the export names of such a file, trimmed; "" when that leaves
+// nothing (the names are then those of a single-sheet file).
+function getSheetFileNamePart() {
+  return isMultiSheetSource() ? state.sourceSheetName.trim() : "";
+}
+
+// v3.2.1: how every export name begins: the original name without its extension, then the
+// worksheet (see above); buildLabeledFileName() may cut both, the longest first.
+function getSourceFileNameParts(fallback) {
+  const originalName = getReportSourceFileName().split(/[\\/]/).pop() || fallback;
+  const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || fallback;
+  const sheet = getSheetFileNamePart();
+  return sheet ? [{ text: stem, cut: true }, { text: sheet, cut: true }] : [{ text: stem, cut: true }];
+}
+
 // Every date field uses the trend chart's current metric / aggregate selection.
 function buildReportDateTrends() {
   const { metricField, aggregate } = getDateChartSelection();
@@ -880,7 +898,7 @@ function normalizeReportSnapshot(reportData = {}) {
   const dataScale = reportData.dataScale || {};
   return {
     ...reportData,
-    version: reportData.version || "v3.2.0",
+    version: reportData.version || "v3.2.1",
     fileName: reportData.fileName || "data-report",
     sheetName: reportData.sheetName || "",
     // Snapshots from before v2.2.0 have no header detection.
@@ -1365,6 +1383,8 @@ function buildHtmlReportTable(headers, rows, emptyMessage) {
 
 // v3.2.0: always .html; the extension parameter stays so the callers do not change.
 function buildReportFileName(extension, now = new Date()) {
+  // v3.2.1 (R2): with the worksheet, both parts may be cut; a CSV and a single-sheet file as before.
+  if (getSheetFileNamePart()) return `${buildLabeledFileName(getSourceFileNameParts("data-report"))}-${formatReportFileTimestamp(now)}.html`;
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data-report";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data-report";
   return `${sanitizeFileName(stem)}-${formatReportFileTimestamp(now)}.html`;
@@ -1372,6 +1392,7 @@ function buildReportFileName(extension, now = new Date()) {
 
 function buildDataExportFileName(mode, now = new Date()) {
   const suffix = L("当前分析", "in-analysis");
+  if (getSheetFileNamePart()) return `${buildLabeledFileName([...getSourceFileNameParts("data"), { text: suffix, cut: false }])}_${formatReportFileDate(now)}.csv`;
   const originalName = getReportSourceFileName().split(/[\\/]/).pop() || "data";
   const stem = originalName.replace(/\.(?:csv|xlsx|xls)$/i, "") || "data";
   return `${sanitizeFileName(stem)}_${suffix}_${formatReportFileDate(now)}.csv`;

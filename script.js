@@ -153,6 +153,14 @@ dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
+// v3.2.1 换一个工作表: each list's button, its items (one delegated listener) and Escape.
+SHEET_SWITCH_PLACES.forEach((place) => {
+  const { toggle, panel, list } = sheetSwitchElements(place);
+  toggle.addEventListener("click", () => toggleSheetSwitch(place));
+  list.addEventListener("click", (event) => handleSheetSwitchClick(event, place));
+  [toggle, panel].forEach((element) => element.addEventListener("keydown", (event) => handleSheetSwitchKeydown(event, place)));
+});
+
 [dom.languageSwitch, dom.sidebarLanguageSwitch].forEach((button) => button.addEventListener("click", switchInterfaceLanguage));
 
 
@@ -321,8 +329,11 @@ function showUploadPage() {
   resetStatusNote();
   setImportBusy(false);
   const sourceDisplayName = state.sourceSheetName ? `${state.sourceFileName} · ${state.sourceSheetName}` : state.sourceFileName;
-  dom.returnToAnalysis.textContent = canReturn ? formatReturnToAnalysis(sourceDisplayName) : "";
+  // v3.2.1 (R8): kept as a function, so a language switch writes it again (rewriteLanguageTexts()).
+  writeLanguageText(dom.returnToAnalysis, canReturn ? () => formatReturnToAnalysis(sourceDisplayName) : "");
   dom.returnToAnalysis.classList.toggle("hidden", !canReturn);
+  // v3.2.1: 换一个工作表 comes with the way back (a multi-sheet file only).
+  renderSheetSwitches();
   window.scrollTo({ top: 0, behavior: "instant" });
   if (canReturn) dom.returnToAnalysis.focus();
   else dom.fileInput.focus();
@@ -333,7 +344,9 @@ function showUploadPage() {
 function returnToAnalysis() {
   if (!state.rows.length || !state.importStatus) return;
   dom.returnToAnalysis.classList.add("hidden");
-  dom.returnToAnalysis.textContent = "";
+  writeLanguageText(dom.returnToAnalysis, "");
+  // v3.2.1: and the upload page's 换一个工作表 goes, its list closed and its message cleared.
+  renderSheetSwitches();
   document.body.classList.add("has-results");
   dom.results.classList.remove("hidden");
   // v3.2.0: the message is written again from its figures, in the current language.

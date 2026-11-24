@@ -115,6 +115,10 @@ const I18N_EN = Object.freeze({
   "sheet.title": "Choose a worksheet to analyze",
   "sheet.label": "Worksheet",
   "sheet.confirm": "Analyze this worksheet",
+  // v3.2.1 换一个工作表 (the sidebar's list; the upload page uses the same words).
+  "sheetSwitch.toggle": "Change worksheet",
+  "sheetSwitch.list": "Worksheets in this file",
+  "sheetSwitch.note": "Switching analyzes that worksheet from scratch: the filter, excluded rows, cells treated as blank and column types you changed here are not kept.",
   "sample.title": "What it checks for",
   "sample.note": "A few rows of the sample data",
   "sample.tableWrap": "A few rows of the sample data, scrolls sideways",
@@ -806,6 +810,20 @@ function formatSchemaSearchPlaceholder(fieldCount) {
 function formatReturnToAnalysis(sourceName) {
   return L(`回到「${sourceName}」的分析`, `Back to the analysis of “${sourceName}”`);
 }
+
+// v3.2.1: while a worksheet is read and analyzed (chosen from the list of a new file). The name is
+// the user's, shown as it is.
+function formatSheetReading(sheetName) {
+  return L(`正在读取并分析工作表「${sheetName}」...`, `Reading and analyzing the worksheet “${sheetName}” ...`);
+}
+
+// v3.2.1: the sidebar's line under the file name of a file with more than one worksheet.
+function formatSheetLine(sheetName, count) {
+  return L(`工作表：${sheetName}（共 ${formatInteger(count)} 个）`, `Worksheet: ${sheetName} (${formatInteger(count)} in this file)`);
+}
+
+// v3.2.1: the mark of the sheet under analysis in the worksheet list.
+const SHEET_SWITCH_OPEN_NOW = Lp("正在分析", "Current");
 
 // One line of "公式错误单元格": 「利润率」：3 个（#DIV/0! 2 个、#REF! 1 个），第 3、5、9 行。
 function formatFormulaError({ field, count, byError, lines, fieldIgnored = false }) {

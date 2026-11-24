@@ -84,6 +84,9 @@ const state = {
   problemViewOpener: null,
   fieldTypeDrafts: Object.create(null),
   pendingExcel: null,
+  // v3.2.1: { bytes, fileName, sheetNames } of the Excel file with more than one worksheet under
+  // analysis, for 换一个工作表; null for a CSV, a single-sheet file and after every reset.
+  keptExcel: null,
   activeFileReader: null,
   activeImportId: 0,
   charts: {},
@@ -286,7 +289,18 @@ const dom = {
   reportExportStatus: document.getElementById("reportExportStatus"),
   // v3.2.0: the language switch, in the top bar of the upload page and at the sidebar's foot.
   languageSwitch: document.getElementById("languageSwitch"),
-  sidebarLanguageSwitch: document.getElementById("sidebarLanguageSwitch")
+  sidebarLanguageSwitch: document.getElementById("sidebarLanguageSwitch"),
+  // v3.2.1 换一个工作表: one button and list in the sidebar and one on the upload page (the same
+  // markup, ids prefixed by the place).
+  sidebarSheetToggle: document.getElementById("sidebarSheetToggle"),
+  sidebarSheetPanel: document.getElementById("sidebarSheetPanel"),
+  sidebarSheetList: document.getElementById("sidebarSheetList"),
+  sidebarSheetMessage: document.getElementById("sidebarSheetMessage"),
+  sidebarSheetLine: document.getElementById("sidebarSheetLine"),
+  uploadSheetToggle: document.getElementById("uploadSheetToggle"),
+  uploadSheetPanel: document.getElementById("uploadSheetPanel"),
+  uploadSheetList: document.getElementById("uploadSheetList"),
+  uploadSheetMessage: document.getElementById("uploadSheetMessage")
 };
 
 // A category field with more distinct values than this is too scattered for
@@ -554,6 +568,110 @@ function renderSidebar() {
   const confirmedCount = Object.values(state.placeholderConfirmations).reduce((sum, keys) => sum + keys.length, 0);
   dom.sidebarPlaceholderRow.classList.toggle("hidden", confirmedCount === 0);
   dom.sidebarPlaceholderValue.textContent = confirmedCount ? L(`${formatInteger(confirmedCount)} 处`, formatInteger(confirmedCount)) : "";
+  renderSheetSwitches();
+}
+
+// ---- 换一个工作表 (v3.2.1) ----
+
+// The sidebar's worksheet line and both lists, from state.keptExcel (nothing shows without it).
+// Items carry their index in the file, never the name. Whether a list is open and its message
+// stay as they are, so a language switch (which draws the sidebar again) keeps them. The upload
+// page's button shows only with 回到「…」的分析 (showUploadPage() and returnToAnalysis() call this);
+// without it that list is closed and its message (a failed switch's error) gone.
+function renderSheetSwitches() {
+  const kept = state.keptExcel;
+  dom.sidebarSheetLine.textContent = kept ? formatSheetLine(state.sourceSheetName, kept.sheetNames.length) : "";
+  dom.sidebarSheetLine.classList.toggle("hidden", !kept);
+  SHEET_SWITCH_PLACES.forEach((place) => {
+    const { toggle, list } = sheetSwitchElements(place);
+    const shown = Boolean(kept) && (place === "sidebar" || !dom.returnToAnalysis.classList.contains("hidden"));
+    toggle.classList.toggle("hidden", !shown);
+    if (!shown) {
+      setSheetSwitchOpen(place, false);
+      writeSheetSwitchMessage(place, "");
+    }
+    if (!kept) {
+      list.innerHTML = "";
+      return;
+    }
+    list.innerHTML = kept.sheetNames.map((name, index) => (name === state.sourceSheetName
+      ? `<li class="sheet-switch-current" aria-current="true"><span class="sheet-switch-name">${escapeHtml(name)}</span><span class="sheet-switch-now">${escapeHtml(Lpick(SHEET_SWITCH_OPEN_NOW))}</span></li>`
+      : `<li><button class="sheet-switch-item" type="button" data-sheet-index="${index}"><span class="sheet-switch-name">${escapeHtml(name)}</span></button></li>`)).join("");
+  });
+}
+
+function toggleSheetSwitch(place) {
+  setSheetSwitchOpen(place, sheetSwitchElements(place).toggle.getAttribute("aria-expanded") !== "true");
+}
+
+// A click on another sheet of a list (one delegated listener per list, script.js). Returns the
+// switch's promise (or undefined) so a test can wait for it.
+function handleSheetSwitchClick(event, place) {
+  const button = event.target.closest?.("[data-sheet-index]");
+  if (!button || !state.keptExcel) return undefined;
+  const sheetName = state.keptExcel.sheetNames[Number(button.dataset.sheetIndex)];
+  return sheetName === undefined ? undefined : switchExcelSheet(sheetName, place);
+}
+
+// Escape closes an open list and gives the focus back to its button. It stops there, so the
+// phone and narrow sidebar (which closes on Escape) closes only on the next one.
+function handleSheetSwitchKeydown(event, place) {
+  const { toggle } = sheetSwitchElements(place);
+  if (event.key !== "Escape" || toggle.getAttribute("aria-expanded") !== "true") return;
+  event.preventDefault();
+  event.stopPropagation();
+  setSheetSwitchOpen(place, false);
+  toggle.focus();
+}
+// place: "sidebar" or "upload", the list a switch was started from.
+const SHEET_SWITCH_PLACES = Object.freeze(["sidebar", "upload"]);
+
+function sheetSwitchElements(place) {
+  return {
+    toggle: dom[`${place}SheetToggle`],
+    panel: dom[`${place}SheetPanel`],
+    list: dom[`${place}SheetList`],
+    message: dom[`${place}SheetMessage`]
+  };
+}
+
+function setSheetSwitchOpen(place, open) {
+  const { toggle, panel } = sheetSwitchElements(place);
+  toggle.setAttribute("aria-expanded", String(open));
+  panel.classList.toggle("hidden", !open);
+}
+
+// While a sheet is read the list says it is busy. Its buttons stay enabled (disabling the focused
+// one would drop the focus); switchExcelSheet() ignores clicks while the page is loading.
+function setSheetSwitchBusy(place, busy) {
+  sheetSwitchElements(place).list.setAttribute("aria-busy", String(busy));
+}
+
+// The reading message and a switch's error, under the list; a one-off message, so a language
+// switch writes it again.
+function writeSheetSwitchMessage(place, message, tone = "") {
+  writeOneOffMessage(sheetSwitchElements(place).message, "sheet-switch-message", message, tone);
+}
+
+// After a failed switch: the item that was clicked, or the list's button.
+function focusSheetSwitchItem(place, sheetName) {
+  const { toggle, list } = sheetSwitchElements(place);
+  const index = state.keptExcel ? state.keptExcel.sheetNames.indexOf(sheetName) : -1;
+  const item = index >= 0 ? list.querySelector?.(`[data-sheet-index="${index}"]`) : null;
+  (item || toggle).focus();
+}
+
+function clearSheetSwitches() {
+  dom.sidebarSheetLine.textContent = "";
+  dom.sidebarSheetLine.classList.add("hidden");
+  SHEET_SWITCH_PLACES.forEach((place) => {
+    const { toggle, list } = sheetSwitchElements(place);
+    setSheetSwitchOpen(place, false);
+    toggle.classList.add("hidden");
+    list.innerHTML = "";
+    list.removeAttribute("aria-busy");
+    writeSheetSwitchMessage(place, "");
+  });
 }
 
 // Open by default from 1100 px, closed below; once the user opens or closes it, body carries
@@ -722,9 +840,12 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.categoryStats = buildCategoryStats(state.filteredRows);
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
-  // The sidebar's file name (v3.0.0); report.js reads its title for the report.
-  dom.sourceName.textContent = sourceDisplayName;
-  dom.sourceName.title = sourceDisplayName;
+  // The sidebar's file name (v3.0.0). report.js names the report after state.sourceFileName and
+  // reads this title only when that is empty. v3.2.1: a file with more than one worksheet shows the
+  // file alone here; the worksheet has its own line below (renderSheetSwitches()).
+  const sidebarSourceName = state.keptExcel ? sourceName : sourceDisplayName;
+  dom.sourceName.textContent = sidebarSourceName;
+  dom.sourceName.title = sidebarSourceName;
   dom.topbarFileName.textContent = sourceDisplayName;
   dom.topbarFileName.title = sourceDisplayName;
   dom.sheetSelectionPanel.classList.add("hidden");
@@ -3076,6 +3197,10 @@ function resetAnalysisState() {
   state.problemCategories = [];
   state.fieldTypeDrafts = Object.create(null);
   state.pendingExcel = null;
+  // v3.2.1: the kept bytes go with the analysis (another file, the sample, an import error);
+  // switchExcelSheet() holds them across its own reset and gives them back.
+  state.keptExcel = null;
+  clearSheetSwitches();
   state.sourceFileName = "";
   state.sourceSheetName = "";
   state.sourceType = "";
@@ -3113,7 +3238,7 @@ function resetAnalysisState() {
   state.importStatus = null;
   state.returnModule = null;
   dom.returnToAnalysis.classList.add("hidden");
-  dom.returnToAnalysis.textContent = "";
+  writeLanguageText(dom.returnToAnalysis, "");
   writeLanguageText(dom.reportTitle, () => L("数据分析工作区", "Analysis workspace"));
   dom.overviewCards.innerHTML = "";
   setChartInsight(dom.categoryChartInsight, "");

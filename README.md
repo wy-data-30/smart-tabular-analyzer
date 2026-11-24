@@ -4,7 +4,7 @@
 
 Formerly Smart Tabular Analyzer. The repository name and URLs are unchanged.
 
-**Current release:** v3.2.0
+**Current release:** v3.2.1
 
 ## Language
 
@@ -33,7 +33,7 @@ The project is a static website with no backend service, database, account syste
 
 ## Core Features
 
-- Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbook selection, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages.
+- Import CSV, `.xlsx`, and `.xls` files, including multi-sheet workbooks, Chinese field names and values, and CSV encoding options for Auto Detect, UTF-8, GBK, and GB18030. Excel cells formatted as percentages are shown as percentages. For a workbook with more than one worksheet, choose a worksheet when you upload it; while you analyze it, you can switch to another worksheet of the same file from the sidebar or the upload page without uploading it again.
 - Skip title, note, and blank rows above the header automatically, and state in the status bar and reports which row the header was found on.
 - Describe CSV parse warnings (such as a row with fewer cells than the header) in the interface language with the file line they are on; the quality page shows how many warnings there are and how many lines they cover, and the “more data columns than the header” and “unclosed quote” errors name their line too. A file separated by semicolons, tabs, or bars that comes out as a single column gets a hint.
 - Preview the data page by page (50 rows a page, with the file row in the first column, following the filters) and summarize the dataset size, field composition, missing values, and duplicate rows.
@@ -50,7 +50,7 @@ The project is a static website with no backend service, database, account syste
 - Generate descriptive statistics, categorical Top 10 frequencies, numeric distributions (small integer ranges such as ratings are counted per value), and date trends that show record counts by default or the average or sum of a chosen numeric field.
 - Apply categorical, numeric, and date filters, and run grouped analysis (one metric, one grouping field, optionally a date field).
 - Show one data-grounded conclusion under the category chart and one under the date trend chart, each following the field selected in that chart and without inferring external business context; the trend conclusion compares record counts and flags a possibly incomplete last month or year, and the category conclusion says so instead of summarizing a field whose values are too scattered. Reports carry the same sentences.
-- Export the rows of the current analysis (the filtered rows, without the rows left out) to CSV in the browser, with a file name ending in “_当前分析_<date>” (current analysis), while preserving field order and neutralizing spreadsheet-formula prefixes.
+- Export the rows of the current analysis (the filtered rows, without the rows left out) to CSV in the browser, with a file name ending in `_in-analysis_<date>` (`_当前分析_<date>` in the Chinese interface), while preserving field order and neutralizing spreadsheet-formula prefixes. For a workbook with more than one worksheet, the file names of this export, the standardized table, its change list, the problem rows, and the HTML report add the worksheet name after the file name (such as `orders_Sheet1_in-analysis_20261123.csv`).
 - Export with unified writing: first click “检查会改哪些格” (check which cells will change) to see, field by field, how many cells would be rewritten and which stay as written; then export every original row with dates written as YYYY-MM-DD, numbers without units, 万/亿, full-width characters, thousands separators, or currency signs, values confirmed as blank emptied, and edge whitespace removed from text. A change list can be exported too, naming every cell rewritten or kept as written (file row, field, original value, exported value, action).
 - Export the analysis as an HTML report (print it to PDF from the browser); the report records the applied filters and embeds the currently rendered charts for offline viewing.
 
@@ -210,7 +210,8 @@ npm run test:regression
 - Problem rows can be viewed and exported on the quality page only; the report does not include the problem-row tables, and there is no view of all problem rows together.
 - The English interface changes the words only; tables are read by the same rules in both languages. Total labels and units are mostly Chinese (the Latin ones are Total, Grand Total, Subtotal, Sub-total, Sum and kg, cm, mm, km), so English tables are only partly read; reading them more fully is planned for the next version.
 - Amounts written with "$" and thousands separators (such as $5,400.00) are read as plain numbers, so they are not pointed out on the Data quality page; the standardized export writes them without the sign and separators.
-- File names are cut to 80 characters before the date: only the original file name and the user's column or value in it are shortened, never the words the tool adds, so different exports of one file never share a name.
+- File names are cut to 80 characters before the date: only the original file name, the worksheet name (for a workbook with more than one worksheet), and the user's column or value in it are shortened, never the words the tool adds, so different exports of one file never share a name.
+- A workbook with more than one worksheet keeps the file's contents (up to 25 MB) in the browser's memory while you analyze it, so that you can switch worksheets; they are released when you import another file, use the sample data or refresh the page, or when an import fails. Switching worksheets of an `.xls` file still reads the whole file, which is slower for a large file.
 - The project focuses on basic exploratory analysis rather than advanced data cleaning, forecasting, or machine learning.
 - Analysis results are not persisted; refreshing the page clears the current analysis.
 - The third-party libraries are self-hosted in `vendor/`; upgrading them means replacing those files, their integrity values, and their license files.

@@ -449,3 +449,28 @@ v3.2.0 加了英文界面（见 `docs/ARCHITECTURE.md`“界面语言（v3.2.0�
 - ⑫ 按目录枚举的断言：示例 7 → 8 个、`scopes.length` 15 → 18、疑似合计 / 公式错误 / 日期写法 / 常量列 / 写法不一样各清单加上新文件、写法统一的格数加三项、疑似空值写法加英文示例的 Amount N/A 和 Sales rep —；v2.8.1 摘要护栏照 v2.11.0 的做法跳过三个新文件（`v2.8.1-guard.json` 没动）；`fetch` 的断言改钉 `` fetch(`examples/${sampleName}`) `` 和 `const sampleName = L("sample-orders.csv", "sample-orders-en.csv")`（basic 和 core 各一处）。
 
 **测不到、要在浏览器里看的**：英文浏览器打开不带参数的地址是英文、没有中文闪一下；`?lang=en` 下删掉 `script.js` 或让自检失败，页面 3 秒内出现；导航在 642–1366 两种语言都没有被裁的项（640 以下是手机布局，导航是可以横向滑动的一条，后几项在屏外（v3.0.0 起如此，这一版不改））；切换前后图表一样；打印英文报告（`docs/RELEASE_CHECKLIST.md` 第 7、8 节）。
+
+## 17. v3.2.1 新增测试固定了什么
+
+v3.2.1 让多工作表的 Excel 不用重新上传就能换工作表（见 `docs/ARCHITECTURE.md`“换工作表（v3.2.1）”）。完整回归从 636 条变成 669 条，新增 33 条，没有删去。新测试都在 `basic-data-processing.test.cjs` 末尾，名字以 `v3.2.1 commit N` 开头，按提交分组。英文多表夹具 `tests/fixtures/en-multi-sheet.xlsx`（3 张表：Orders、Customers、Notes，Notes 只有表头）由同目录的 `gen-en-multi-sheet.cjs` 用 `vendor/` 的 SheetJS 生成，两次生成逐字节相同，测试钉住 sha256 并重新生成比较。它不放 `stage3/`，因为那个目录会被按目录枚举的护栏和计数断言用上，而多表文件在那些地方要先选表。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `commit 1: a multi-sheet file reads its names first…` | `XLSX.read` 的调用次数和选项（给它包一层计数）：多表出选表面板时 1 次 `{ type: "array", bookSheets: true }`，选表后第 2 次带 `sheets: 表名`；单表 2 次；CSV 0 次。`pendingExcel` 只有 `bytes / fileName / sheetNames / importId`，`bytes` 是 ArrayBuffer |
+| `commit 1: reading one sheet gives exactly what reading the whole workbook gives…` | stage3 的 4 个 xlsx、`excel-import-test.xlsx` 的 4 张、7 张自造的表（含空表、只有表头、没有表头、表头重复、超列、有标题行），中英文：`readExcelSheet()` 和“整本读 + 同样的步骤”结果或报错原文逐字相同。钉的是 SheetJS 的行为，升级 SheetJS 时有用 |
+| `commit 1: the chosen sheet says it is being read…`、`commit 1b`（2 条） | 选表后先出读表提示、加载中、语言按钮禁用；读失败时报错留在面板、焦点回“分析所选工作表”、报错切换语言能重写；选好表后 `#sheetSelectionMessage` 清空（R10）。让出那一帧期间开始了别的导入（失败的表、能读的表各一条）时，选表这一路什么都不做 |
+| `commit 1 / commit 2: an unexpected error while … is committed…`（2 条，R11） | 让 `countDuplicateRows()` 抛错：Promise 不被拒绝，不再加载中，文件输入和语言按钮可用，状态栏是报错 |
+| `commit 2`（其余 7 条） | 换表的结果和重新上传选那张逐项相同（报告、状态栏、侧栏、五种文件名、一次性消息；先设好筛选、两类不计入分析、按空值处理、字段类型、自定义分析、写法统一检查、问题行，否则分不出）；这些都被清空、打开数据概览；读失败时当前分析不变、报错写在列表下面并能切换语言；只有多表文件留字节，字节在换表和换失败后都是同一个对象，任何一次新导入都清掉；读表时加载中、语言锁住、只读那一张；让出那一帧期间开始的导入优先；重置清掉两个列表和提示 |
+| `commit 3`（7 条） | 换表失败后焦点回到点的那一项（侧栏和上传页的列表都测；假 DOM 临时补 `getAttribute` / `querySelector` / `focus`，`withSheetListDom()`，`finally` 里还原）；多表时 `#sourceName` 只写文件名、下一行写工作表，单表照旧；列表标出当前那张、其余是按钮、名字转义、点了按序号换；按钮开合、Escape 收起并 `stopPropagation`、切换语言后仍展开；英文夹具和生成器；英文文件在英文界面里列表没有汉字、中→英→中逐字节回到原样；侧栏标记（说明句在列表上面，三个 `I18N_EN` 键，640 以下列表不限高） |
+| `commit 4`（2 条，R8） | 上传页“回到「…」的分析”切换语言后重写、切回逐字节相同；回到分析或新导入后清空，不会被切换写回 |
+| `commit 5`（1 条，R9） | 样式规则：`.upload-hero .return-to-analysis` 有 `max-width: 100%`、`white-space: normal`、`overflow-wrap: anywhere`，没有字号字重；按钮共用规则仍是 `nowrap`。必须是两个类：只用一个类时会被后面的 `.secondary-button` 盖掉 |
+| `commit 6`（4 条） | 上传页的按钮只跟着“回到”出现：多表时有，单表、CSV、选表中、导入中都没有；回到分析后隐藏并收起（T14）。上传页换表失败时留在上传页、“回到”还在，回去是原来那张表，报告 sha256 和换表前相同，报错清空。从上传页换表成功和重新导入那张相同。上传页的标记去掉缩进后和侧栏的相同；`text-align: left` |
+| `commit 7`（5 条，R2、R2b） | 多表时中英文 7 个文件名逐字写死；真实导入和换表后的名字；70 字原名 + 30 字表名的截断逐字写死，日期前不超过 80；表名先 trim，全是空格时和单表相同；CSV 和单表 Excel 用 21 个刁钻原名 × 3 种扩展名 × 中英文，报告和当前分析的行逐个和 7b6e091 的公式比，882 个名字整体的 sha256 是在 `git archive 7b6e091` 上用同样的调用算出的 |
+
+**改动的现有断言**（每个提交的完整清单和改坏结果在实施汇总里）：
+
+- ① 读一张表：`readExcelWorkbook()` 删去，测试里经过它的 4 处改用 `readExcelSheet()`（`importXlsxSheet()` 助手、偏移表的两处、`importExcelSheet()` 的一处），断言不变。选表那条测试多断言一句读表提示。`destructive-qa` 里 `showExcelSheetSelection()` 改传 ArrayBuffer，并加断言 `bytes`、`sheetNames`、`importId`，不再有 `workbook`（收紧）。
+- ②、③、⑥：`index.html` 有意改动，整页 sha256 依次换成 `71260d2e…`、`7331133e…`、`95ef087e…`，每次在汇总里贴了 diff。
+- 其余提交没有改现有断言。
+
+**测不到、要在浏览器里看的**：列表在 1366 / 1100 / 768 / 640 / 390 宽下中英文的样子，包括长表名折行、30 张表时列表自己滚动、640 以下和“换一个文件”并排、箭头看得见；读表提示真的先画出来；1100 以下的侧栏换表成功后关上、焦点在“数据概览”标题；Tab 和 Escape 的实际焦点；上传页长名时没有横向滚动；改过磁盘上的文件后仍能换表；读表时的内存（`docs/RELEASE_CHECKLIST.md` 第 4、7 节）。

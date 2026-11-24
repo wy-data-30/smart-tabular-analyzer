@@ -93,6 +93,7 @@
    `公式错误.xlsx` 和 v2.8.0 的测试要全部通过。`.ods` 在 `parseDataFile()` 上传时就被拒绝；SheetJS 读 ODS 时错误单元格整个读不出来，所以以后若要支持 ODS，公式错误列不出。
    升级 SheetJS 时，还要确认 `sheet_to_json({ raw: true })` 在 `cellDates: true` 下对带日期格式的文本格和布尔格的返回值（见 `docs/ARCHITECTURE.md` 的“日期格式下的文本和布尔单元格”）：0.20.3 把文本格读成 Invalid Date 或日期（空串和空格是 1899-12-31，文本“45418”是 2024-05-06），布尔 TRUE 读成 1900-01-01，单元格对象本身的 `t` 和 `v` 是对的；`restoreNonDateCellsUnderDateFormat()` 依赖这一点。如果新版改了这个行为，这个函数可能就不再需要，先看 v2.8.1 的测试再决定。
    升级 SheetJS 时，还要确认日期单元格（`t: "n"` 带日期格式、`t: "d"`、1900 / 1904 日期系统、只有时间的格）经 `sheet_to_json({ raw: true })` 仍返回 Date：v2.9.0 的“日期写法混用”靠这一点认出 Excel 日期单元格（`buildExcelTabularData()` 记下 `dateCells`），文本格和布尔格不能返回 Date（v2.8.1 已换回原值）。`花名册.xlsx` 的 24 个日期单元格和 v2.9.0 的 Excel 测试要全部通过。
+   升级 SheetJS 时，还要确认换工作表（v3.2.1，见 `docs/ARCHITECTURE.md` 的“换工作表（v3.2.1）”）依赖的这些行为没变：`bookSheets: true` 只返回 `SheetNames`、不解析单元格；`sheets: 名字` 只解析那一张（xlsx），名字比较不分大小写；读 `.xls` 时不理会 `sheets`，仍读整个文件。v3.2.1 的“只读一张 = 整本读”等价测试和 `XLSX.read` 调用次数测试要全部通过。
 6. 发布后确认线上 `vendor/` 下三个文件都返回 200。
 
 不要只替换文件而保留旧 SRI，否则浏览器会拒绝执行脚本。
@@ -148,7 +149,7 @@ https://wy-data-30.github.io/smart-tabular-analyzer/
 1. 确认扩展名与 ZIP/OLE 签名一致。
 2. 检查工作表 `!ref`、行列上限和是否为空。
 3. 表头默认是第一个非空行；它通不过表头校验时，会在前 10 行内自动跳过标题行、说明行和空行（见 `docs/ARCHITECTURE.md` 的“表头行检测”）。最终选定的表头必须是唯一、非空的文本表头；识别不出时显示原来的报错，第一个非空行像标题时附加删除标题行的提示。
-4. 多工作表问题重点检查 `pendingExcel` 和 `activeImportId` 是否仍有效。
+4. 多工作表问题重点检查 `pendingExcel`、`keptExcel`（换工作表，v3.2.1）和 `activeImportId` 是否仍有效。
 
 ### 筛选后统计不一致
 
