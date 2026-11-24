@@ -106,17 +106,22 @@ function isDateObject(value) {
 }
 
 // The three date matchers capture the time suffix as their last group ("" without one);
-// the groups before it are unchanged.
+// the groups before it are unchanged. v3.3.0: the patterns are built once (they were built on
+// every call); none has the g or y flag, so match() never depends on lastIndex.
+const YEAR_FIRST_DATE_PATTERN = new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`);
+const DAY_OR_MONTH_FIRST_DATE_PATTERN = new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`);
+const CHINESE_DATE_PATTERN = new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`);
+
 function matchYearFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`));
+  return raw.match(YEAR_FIRST_DATE_PATTERN);
 }
 
 function matchDayOrMonthFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`));
+  return raw.match(DAY_OR_MONTH_FIRST_DATE_PATTERN);
 }
 
 function matchChineseDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`));
+  return raw.match(CHINESE_DATE_PATTERN);
 }
 
 function hasPercentToken(value) {

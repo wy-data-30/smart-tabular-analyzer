@@ -1583,3 +1583,41 @@ test("v2.10.0 guard: every rewritten number reads back as the field parser's num
   })))`));
   assert.deepEqual(bad, []);
 });
+
+// v3.3.0 ①: the three date matchers use patterns built once at load, not a new RegExp per call
+// (toDate() runs them for every date-like cell). The counter is checked on a RegExp built here.
+test("v3.3.0 date matchers build no RegExp per call and match as before", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const Original = RegExp;
+    let built = 0;
+    RegExp = new Proxy(Original, { construct(target, args) { built += 1; return Reflect.construct(target, args); } });
+    try {
+      new RegExp("a");
+      const sanity = built;
+      built = 0;
+      const texts = ["2024-05-06", "2024/5/6 10:30", "06/05/2024", "13.05.2024", "2024年5月6日", "2024 年 5 月 6 10:30", "2024-13-45", "abc"];
+      const matches = texts.map((text) => [matchYearFirstDate(text), matchDayOrMonthFirstDate(text), matchChineseDate(text)].map((match) => match && [...match]));
+      for (let i = 0; i < 10000; i += 1) {
+        matchYearFirstDate("2024-05-06");
+        matchDayOrMonthFirstDate("06/05/2024");
+        matchChineseDate("2024年5月6日");
+      }
+      return { sanity, built, matches };
+    } finally {
+      RegExp = Original;
+    }
+  })())`));
+  assert.equal(result.sanity, 1);
+  assert.equal(result.built, 0);
+  assert.deepEqual(result.matches, [
+    [["2024-05-06", "2024", "-", "05", "06", ""], null, null],
+    [["2024/5/6 10:30", "2024", "/", "5", "6", " 10:30"], null, null],
+    [null, ["06/05/2024", "06", "/", "05", "2024", ""], null],
+    [null, ["13.05.2024", "13", ".", "05", "2024", ""], null],
+    [null, null, ["2024年5月6日", "2024", "5", "6", ""]],
+    [null, null, ["2024 年 5 月 6 10:30", "2024", "5", "6", " 10:30"]],
+    [["2024-13-45", "2024", "-", "13", "45", ""], null, null],
+    [null, null, null]
+  ]);
+});
