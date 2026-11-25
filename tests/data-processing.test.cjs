@@ -1866,3 +1866,43 @@ test("v3.3.0 units: a text column says nothing about units it read, only about a
   const kg = Array.from({ length: 12 }, (_, i) => `${1 + i}kg`);
   assert.deepEqual(lines("重", kg), ["numeric", ["「重」：按\"kg\"读取了 12 个值（1kg、2kg、3kg）"]]);
 });
+
+// ---- v3.3.0 ⑥: accounting dashes and brackets after a currency sign ----
+test("v3.3.0 accounting: a dash after a currency sign is zero; brackets after it are negative; a lone dash is not a number", () => {
+  const { context, evaluate } = createScriptContext();
+  const read = (values) => {
+    context.__values = values;
+    return JSON.parse(evaluate("JSON.stringify(__values.map((value) => toPlainNumber(value)))"));
+  };
+  const yen = String.fromCharCode(0xffe5);
+  assert.deepEqual(read(["$-", " $-   ", "$ -", "\u20ac-", `${yen}-`, "\u00a3-", "\u00a5-"]), [0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(read(["$(1,200.00)", "$( 5 )", "$(0)", "\u20ac(12.5)"]), [-1200, -5, 0, -12.5]);
+  // As before.
+  assert.deepEqual(read(["($1,200.00)", "-$1,200.00", "$-1,200.00", "$900", "-$5", "(5)"]), [-1200, -1200, -1200, 900, -5, -5]);
+  // Still not numbers: a lone dash (a maybe-tier placeholder), two dashes, a sign before the
+  // currency with a dash, brackets with a dash, a dash then a percent, nested brackets.
+  assert.deepEqual(read(["-", "$--", "-$-", "($-)", "$-%", "$((5))", "$(5", "$ ( )"]), [null, null, null, null, null, null, null, null]);
+  assert.equal(evaluate('placeholderTier("-")'), "maybe");
+});
+
+test("v3.3.0 accounting: the standardized table writes $- as 0 and $(1,200.00) as -1200.00, reading back the same number", () => {
+  const { context, evaluate } = createScriptContext();
+  const values = [" $-   ", "$ -", "\u20ac-", "$(1,200.00)", "$( 5 )", "$(0)", "$(0.50)", "\u20ac(12.5)", "($1,200.00)", "$900"];
+  context.__values = values;
+  const cells = JSON.parse(evaluate(`JSON.stringify(__values.map((value) => {
+    const result = standardizeNumberCell(value, buildNumberStrategy(__values), [], "");
+    return [result.value, result.action, toPlainNumber(result.value) === toPlainNumber(value) || (toPlainNumber(result.value) === 0 && toPlainNumber(value) === 0)];
+  }))`));
+  assert.deepEqual(cells, [
+    ["0", "number", true], ["0", "number", true], ["0", "number", true],
+    ["-1200.00", "number", true], ["-5", "number", true], ["0", "number", true], ["-0.50", "number", true], ["-12.5", "number", true],
+    ["-1200.00", "number", true], ["900", "number", true]
+  ]);
+  // A lone dash stays as written (a placeholder that is not confirmed).
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(standardizeNumberCell("-", buildNumberStrategy(["-", "5"]), [], ""))')), { value: "-", action: "keptPendingPlaceholder" });
+});
+
+test("v3.3.0 accounting: CSV export does not quote $- or $(1,200.00), and keeps a negative as it was", () => {
+  const { evaluate } = createScriptContext();
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["$-", "$(1,200.00)", "-$1,200.00", "-5", "-", "=1+1"].map(sanitizeCsvExportValue))')), ["$-", "$(1,200.00)", "-$1,200.00", "-5", "'-", "'=1+1"]);
+});

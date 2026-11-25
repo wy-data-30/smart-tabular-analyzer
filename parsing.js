@@ -267,6 +267,7 @@ function toPlainNumber(value) {
 
   const currencyMatches = numericText.match(/[$￥¥€£]/g) || [];
   if (currencyMatches.length > 1) return null;
+  let innerNegative = false;
   if (currencyMatches.length === 1) {
     const currencyIndex = numericText.search(/[$￥¥€£]/);
     const beforeCurrency = numericText.slice(0, currencyIndex).trim();
@@ -274,7 +275,15 @@ function toPlainNumber(value) {
     const validPrefix = beforeCurrency === "" || /^[+-]$/.test(beforeCurrency);
     const validSuffix = afterCurrency === "";
     if (!validPrefix && !validSuffix) return null;
-    numericText = `${beforeCurrency}${afterCurrency}`;
+    // v3.3.0: Excel's accounting format writes zero as "$-" and a negative as "$(1,200.00)".
+    if (!isAccountingNegative && !isPercent && beforeCurrency === "") {
+      if (afterCurrency === "-") return 0;
+      const inner = afterCurrency.match(/^\((.*)\)$/);
+      if (inner) {
+        innerNegative = true;
+        numericText = inner[1].trim();
+      } else numericText = afterCurrency;
+    } else numericText = `${beforeCurrency}${afterCurrency}`;
   }
 
   const plainNumberPattern = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
@@ -287,7 +296,7 @@ function toPlainNumber(value) {
 
   let parsed = Number(cleaned);
   if (!Number.isFinite(parsed)) return null;
-  if (isAccountingNegative) parsed = -Math.abs(parsed);
+  if (isAccountingNegative || innerNegative) parsed = -Math.abs(parsed);
   if (isPercent) parsed /= 100;
   return parsed;
 }
@@ -549,12 +558,21 @@ function plainNumberTextOf(text) {
   if (isAccountingNegative) numericText = numericText.slice(1, -1);
   numericText = numericText.trim();
   const currencyIndex = numericText.search(CURRENCY_SYMBOL_PATTERN);
-  if (currencyIndex >= 0) numericText = `${numericText.slice(0, currencyIndex).trim()}${numericText.slice(currencyIndex + 1).trim()}`;
+  let innerNegative = false;
+  if (currencyIndex >= 0) {
+    const before = numericText.slice(0, currencyIndex).trim();
+    const after = numericText.slice(currencyIndex + 1).trim();
+    // v3.3.0: "$-" is zero, "$(1,200.00)" negative, as toPlainNumber() reads them.
+    if (!isAccountingNegative && before === "" && after === "-") return "0";
+    const inner = !isAccountingNegative && before === "" ? after.match(/^\((.*)\)$/) : null;
+    if (inner) innerNegative = true;
+    numericText = inner ? inner[1].trim() : `${before}${after}`;
+  }
   const [, sign, body] = numericText.match(/^([-+]?)(.*)$/);
   let digits = body.replace(/[, \u00A0]/g, "");
   if (digits.startsWith(".")) digits = `0${digits}`;
   if (digits.endsWith(".")) digits = digits.slice(0, -1);
-  return `${isAccountingNegative || sign === "-" ? "-" : ""}${digits}`;
+  return `${isAccountingNegative || innerNegative || sign === "-" ? "-" : ""}${digits}`;
 }
 
 // shiftDecimalNumber() as text: the point moves, no digit of the source is dropped, only the
