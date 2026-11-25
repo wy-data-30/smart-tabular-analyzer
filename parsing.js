@@ -1,6 +1,8 @@
 // 单元格值的缺失判断与解析：像是空值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和“同一个值，写法不一样”，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响），以及导出写法统一的表时单个单元格的标准写法。
 
-const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
+// v3.3.0: a 12-hour clock with AM / PM ("2:30 PM", "12:05:09 a.m.", hours 1-12) after a space,
+// never after T (R5); or the 24-hour clock after a space or T, with an optional zone.
+const DATE_TIME_SUFFIX_PATTERN = "(?: (?:0?[1-9]|1[0-2]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?\\s?[AaPp]\\.?[Mm]\\.?|[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
 function isYearOnlyDateValue(value, strategy = {}) {
   if (!strategy.allowYearOnly || isDateObject(value) || isMissing(value)) return false;
@@ -30,10 +32,12 @@ function displayValue(value) {
 
 // Cell texts often used for "no data". They stay ordinary values until the user
 // confirms them per field and key. "common" keys can be confirmed together;
-// "maybe" keys are also real answers in some columns (有/无, 北美 NA).
+// "maybe" keys are also real answers in some columns (有/无, 北美 NA; v3.3.0: None as an
+// answer such as "damage: None", Unknown as a category, TBD as a status, ? as "not sure",
+// n.a. as "not applicable").
 const PLACEHOLDER_VALUES = Object.freeze({
-  common: Object.freeze(["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"]),
-  maybe: Object.freeze(["无", "暂无", "-", "/", "NA"])
+  common: Object.freeze(["N/A", "n/a", "#N/A", "NULL", "null", "Null", "NaN", "nan", "NAN", "—", "——", "--"]),
+  maybe: Object.freeze(["无", "暂无", "-", "/", "NA", "None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."])
 });
 
 const PLACEHOLDER_TIER_BY_KEY = new Map([
@@ -45,13 +49,17 @@ const PLACEHOLDER_TIER_BY_KEY = new Map([
 // result, so a cell longer than two UTF-16 units per key character cannot match.
 const PLACEHOLDER_MAX_CELL_LENGTH = 2 * Math.max(...[...PLACEHOLDER_TIER_BY_KEY.keys()].map((key) => key.length));
 
+// v3.3.0: NFKC never changes a pure ASCII text, so those cells skip it (the limit grew to 14
+// with Unknown, and ID-like cells such as "ORDER-LONG-1" now fall within it).
+const PLACEHOLDER_NON_ASCII = /[^\x00-\x7F]/;
+
 // The list key of a text cell (trimmed, NFKC, trimmed again), or "" when the
 // whole cell is not on the list.
 function placeholderKey(value) {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > PLACEHOLDER_MAX_CELL_LENGTH) return "";
-  const key = trimmed.normalize("NFKC").trim();
+  const key = PLACEHOLDER_NON_ASCII.test(trimmed) ? trimmed.normalize("NFKC").trim() : trimmed;
   return PLACEHOLDER_TIER_BY_KEY.has(key) ? key : "";
 }
 
@@ -72,9 +80,13 @@ function analysisValue(value, confirmedKeys) {
 
 // Whole-cell labels of a total or subtotal row, simplified and traditional. A Chinese
 // keyword may follow a prefix of at most 12 characters ("上海小计"); a Latin label is the
-// whole cell.
+// whole cell, or (v3.3.0) Total / Subtotal / Sub-total / Totals after a prefix of 1–40
+// characters and a space, hyphen, en dash or colon, as Excel's Subtotal command writes it
+// ("East Total", "East - Subtotal"). A word first ("Total East") is not a label: it reads
+// like a name ("Total Card, Inc.") or a column ("Total Units").
 const TOTAL_LABEL_CHINESE_PATTERN = /^(.{0,12})(?:合计|总计|小计|总和|汇总|累计|合計|總計|小計|總和|匯總|彙總|累計)$/su;
-const TOTAL_LABEL_LATIN_PATTERN = /^(?:total|grandtotal|subtotal|sub-total|sum)$/i;
+const TOTAL_LABEL_LATIN_PATTERN = /^(?:total|totals|grandtotal|subtotal|sub-total|sum)$/i;
+const TOTAL_LABEL_ENGLISH_PREFIX_PATTERN = /^(.{1,40}?)\s*[\s\-\u2013:]\s*(?:total|subtotal|sub-total|totals)$/isu;
 // A prefix that is exactly one of these makes a status ("已汇总", "尚未匯總"), not a total.
 // Only the whole prefix counts: 南非小计 and 无锡合计 stay labels.
 const TOTAL_LABEL_STATUS_PREFIXES = new Set(["已", "未", "不", "无", "無", "非", "待", "是否", "尚未", "暂未", "暂不", "暫未", "暫不"]);
@@ -88,10 +100,14 @@ const TOTAL_LABEL_PREFILTER = /[计总計總]|t\s*o\s*t\s*a\s*l|s\s*u\s*m|[^\x00
 // bracketed note), or "" when the whole cell is not a label.
 function totalRowLabel(value) {
   if (typeof value !== "string" || !TOTAL_LABEL_PREFILTER.test(value)) return "";
-  const text = value.normalize("NFKC").replace(/\s+/g, "").replace(/:+$/, "").replace(/\([^()]*\)$/, "").replace(/:+$/, "");
+  const normalized = value.normalize("NFKC");
+  const text = normalized.replace(/\s+/g, "").replace(/:+$/, "").replace(/\([^()]*\)$/, "").replace(/:+$/, "");
   const chinese = text.match(TOTAL_LABEL_CHINESE_PATTERN);
   if (chinese) return TOTAL_LABEL_STATUS_PREFIXES.has(chinese[1]) ? "" : text;
-  return TOTAL_LABEL_LATIN_PATTERN.test(text) ? text : "";
+  if (TOTAL_LABEL_LATIN_PATTERN.test(text)) return text;
+  // The prefix form needs its spaces, so it is read from the text before they go.
+  const spaced = normalized.trim().replace(/:+$/, "").replace(/\([^()]*\)$/, "").trim().replace(/:+$/, "").trim();
+  return TOTAL_LABEL_ENGLISH_PREFIX_PATTERN.test(spaced) ? text : "";
 }
 
 function isPlausibleYear(value) {
@@ -106,17 +122,32 @@ function isDateObject(value) {
 }
 
 // The three date matchers capture the time suffix as their last group ("" without one);
-// the groups before it are unchanged.
+// the groups before it are unchanged. v3.3.0: the patterns are built once (they were built on
+// every call); none has the g or y flag, so match() never depends on lastIndex.
+const YEAR_FIRST_DATE_PATTERN = new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`);
+const DAY_OR_MONTH_FIRST_DATE_PATTERN = new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4}|\\d{2})(${DATE_TIME_SUFFIX_PATTERN})$`);
+// v3.3.0: Excel's d-mmm-yy ("5-Mar-25"), the one English date with a two-digit year.
+const EXCEL_SHORT_DATE_PATTERN = /^\d{1,2}-[a-z]{3,9}-\d{2}(?:\s|$)/i;
+const CHINESE_DATE_PATTERN = new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`);
+
 function matchYearFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`));
+  return raw.match(YEAR_FIRST_DATE_PATTERN);
 }
 
 function matchDayOrMonthFirstDate(raw) {
-  return raw.match(new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`));
+  const match = raw.match(DAY_OR_MONTH_FIRST_DATE_PATTERN);
+  // v3.3.0: a two-digit year only after slashes (3/5/25): "1.13.22" is a version number.
+  return match && match[4].length === 2 && match[2] !== "/" ? null : match;
+}
+
+// v3.3.0: a two-digit year as Excel reads it: 00-29 are 2000-2029, 30-99 are 1930-1999.
+function fullYearOf(text) {
+  const year = Number(text);
+  return String(text).length === 2 ? (year < 30 ? 2000 + year : 1900 + year) : year;
 }
 
 function matchChineseDate(raw) {
-  return raw.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`));
+  return raw.match(CHINESE_DATE_PATTERN);
 }
 
 function hasPercentToken(value) {
@@ -136,20 +167,42 @@ const FULLWIDTH_NUMBER_CHARS = Object.freeze({
 // any case and compare in lower case. No "g": 4G / 5G and 8G / 16G are not grams.
 const NUMBER_UNITS = Object.freeze(["千克", "公斤", "小时", "分钟", "元", "克", "斤", "吨", "件", "个", "箱", "台", "人", "次", "秒", "天", "米", "岁", "kg", "cm", "mm", "km"]);
 
-// Sign, a plain or comma-grouped number, 万 / 亿 right after it, then optional
-// space and a unit.
-const NUMBER_WITH_UNIT_PATTERN = new RegExp(`^([+-]?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?|\\.\\d+))(万|亿)?(?:\\s*(${NUMBER_UNITS.join("|")}))?$`, "i");
+// v3.3.0: English units, each spelling with the unit it reads as (singular, plural and
+// abbreviation are one unit, named as below). Whole words of two letters or more only: no
+// g, m, h, s, d, k, in or mi. Currency codes may also come first (USD 200, US$200). Currencies
+// are never converted: 5,400 USD and $900 in one column are one kind of money.
+const ENGLISH_NUMBER_UNITS = Object.freeze({
+  usd: "USD", eur: "EUR", gbp: "GBP", jpy: "JPY", cny: "CNY", rmb: "CNY", cad: "CAD", aud: "AUD", hkd: "HKD", chf: "CHF", inr: "INR", sgd: "SGD",
+  pcs: "pcs", pc: "pcs", pieces: "pcs", piece: "pcs", units: "units", unit: "units",
+  lbs: "lb", lb: "lb", oz: "oz",
+  hours: "hours", hour: "hours", hrs: "hours", hr: "hours", minutes: "minutes", minute: "minutes", mins: "minutes", min: "minutes",
+  days: "days", day: "days", weeks: "weeks", week: "weeks", months: "months", month: "months", years: "years", year: "years", yrs: "years", yr: "years",
+  miles: "miles", mile: "miles", ft: "ft", feet: "ft"
+});
+const ENGLISH_CURRENCY_PREFIXES = Object.freeze({ usd: "USD", "us$": "USD", eur: "EUR", gbp: "GBP", jpy: "JPY", cny: "CNY", rmb: "CNY", cad: "CAD", aud: "AUD", hkd: "HKD", chf: "CHF", inr: "INR", sgd: "SGD" });
+const escapeNumberUnitText = (unit) => unit.replace(/[$]/g, "\\$");
+// Longer spellings first, so "hours" is not read as "hour" plus "s".
+const NUMBER_UNIT_SPELLINGS = [...NUMBER_UNITS, ...Object.keys(ENGLISH_NUMBER_UNITS)].sort((a, b) => b.length - a.length);
+
+// An optional currency code in front (v3.3.0), sign, a plain or comma-grouped number,
+// 万 / 亿 right after it, then optional space, a unit and (English units only) a dot.
+const NUMBER_WITH_UNIT_PATTERN = new RegExp(`^(?:(${Object.keys(ENGLISH_CURRENCY_PREFIXES).map(escapeNumberUnitText).join("|")})\\s*)?([+-]?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?|\\.\\d+))(万|亿)?(?:\\s*(${NUMBER_UNIT_SPELLINGS.join("|")})\\.?)?$`, "i");
 
 function toHalfwidthNumberText(text) {
   return text.replace(/[０-９，．－＋％]/g, (char) => FULLWIDTH_NUMBER_CHARS[char]);
 }
 
 // { numberText, magnitude, unit } for a trimmed, half-width text with 万 / 亿, a
-// unit or both; otherwise null.
+// unit or both; otherwise null. A Chinese unit or kg, cm, mm, km is its lower-case
+// spelling; an English unit or currency code is its name (USD, pcs, hours …).
 function matchNumberWithUnit(text) {
   const match = text.match(NUMBER_WITH_UNIT_PATTERN);
-  if (!match || (!match[2] && !match[3])) return null;
-  return { numberText: match[1], magnitude: match[2] || "", unit: (match[3] || "").toLowerCase() };
+  if (!match || (!match[1] && !match[3] && !match[4]) || (match[1] && match[4])) return null;
+  const spelling = (match[4] || "").toLowerCase();
+  // A trailing dot belongs to an English abbreviation only ("5 lbs."), never to 元 or kg.
+  if (/\.$/.test(match[0]) && !ENGLISH_NUMBER_UNITS[spelling]) return null;
+  const unit = match[1] ? ENGLISH_CURRENCY_PREFIXES[match[1].toLowerCase()] : (ENGLISH_NUMBER_UNITS[spelling] || spelling);
+  return { numberText: match[2], magnitude: match[3] || "", unit };
 }
 
 // A field's number strategy from its non-missing values. Only number-like values
@@ -226,6 +279,7 @@ function toPlainNumber(value) {
 
   const currencyMatches = numericText.match(/[$￥¥€£]/g) || [];
   if (currencyMatches.length > 1) return null;
+  let innerNegative = false;
   if (currencyMatches.length === 1) {
     const currencyIndex = numericText.search(/[$￥¥€£]/);
     const beforeCurrency = numericText.slice(0, currencyIndex).trim();
@@ -233,7 +287,15 @@ function toPlainNumber(value) {
     const validPrefix = beforeCurrency === "" || /^[+-]$/.test(beforeCurrency);
     const validSuffix = afterCurrency === "";
     if (!validPrefix && !validSuffix) return null;
-    numericText = `${beforeCurrency}${afterCurrency}`;
+    // v3.3.0: Excel's accounting format writes zero as "$-" and a negative as "$(1,200.00)".
+    if (!isAccountingNegative && !isPercent && beforeCurrency === "") {
+      if (afterCurrency === "-") return 0;
+      const inner = afterCurrency.match(/^\((.*)\)$/);
+      if (inner) {
+        innerNegative = true;
+        numericText = inner[1].trim();
+      } else numericText = afterCurrency;
+    } else numericText = `${beforeCurrency}${afterCurrency}`;
   }
 
   const plainNumberPattern = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/;
@@ -246,7 +308,7 @@ function toPlainNumber(value) {
 
   let parsed = Number(cleaned);
   if (!Number.isFinite(parsed)) return null;
-  if (isAccountingNegative) parsed = -Math.abs(parsed);
+  if (isAccountingNegative || innerNegative) parsed = -Math.abs(parsed);
   if (isPercent) parsed /= 100;
   return parsed;
 }
@@ -292,7 +354,7 @@ function toDate(value, strategy = {}) {
   if (dayOrMonthFirst) {
     const first = Number(dayOrMonthFirst[1]);
     const second = Number(dayOrMonthFirst[3]);
-    const year = Number(dayOrMonthFirst[4]);
+    const year = fullYearOf(dayOrMonthFirst[4]);
     if (first > 12) return buildUtcDate(year, second, first);
     if (second > 12) return buildUtcDate(year, first, second);
     if (first === second) return buildUtcDate(year, first, second);
@@ -313,6 +375,13 @@ function parseEnglishCalendarDate(raw) {
 // zone was written (both are syntax only and never move the day).
 function readEnglishCalendarDate(raw) {
   let text = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
+  // v3.3.0: an ordinal day ("5th", "1st", "22nd") reads as its number when the suffix fits it
+  // (1st, 2nd, 3rd, 11th-13th, 21st …); "1th" or "11st" stays as written and is not a date.
+  text = text.replace(/\b(\d{1,2})(st|nd|rd|th)(?=$|[\s,./-])/i, (whole, day, suffix) => {
+    const n = Number(day);
+    const fit = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+    return suffix.toLowerCase() === fit ? day : whole;
+  });
   let timeBeforeYear = false;
 
   // Remove one validated clock, either after the date or between Month Day
@@ -344,8 +413,10 @@ function readEnglishCalendarDate(raw) {
   const yearFirst = !monthFirst && /^\d{4}$/.test(parts[1]);
   const year = yearFirst ? parts[1] : parts[3];
   const day = monthFirst ? parts[2] : yearFirst ? parts[3] : parts[1];
-  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(day)) return null;
-  const calendarDate = buildUtcDate(Number(year), month, Number(day));
+  // v3.3.0: a two-digit year only in Excel's d-mmm-yy ("5-Mar-25"); "Jan 1, 25" stays unread.
+  const excelShort = EXCEL_SHORT_DATE_PATTERN.test(raw.trim());
+  if (!(/^\d{4}$/.test(year) || (excelShort && /^\d{2}$/.test(year))) || !/^\d{1,2}$/.test(day)) return null;
+  const calendarDate = buildUtcDate(fullYearOf(year), month, Number(day));
   if (!calendarDate) return null;
 
   // A zone is syntax only: applying its offset would change the written day.
@@ -381,7 +452,9 @@ function dateStyleOf(value, strategy = {}) {
   const yearFirst = matchYearFirstDate(raw);
   if (yearFirst) return DATE_STYLE_BY_SEPARATOR[yearFirst[2]];
   const dayOrMonthFirst = matchDayOrMonthFirstDate(raw);
-  if (!dayOrMonthFirst) return "english";
+  // v3.3.0 (R1): a two-digit year is a style of its own, whatever the order (3/5/25, 5-Mar-25).
+  if (!dayOrMonthFirst) return EXCEL_SHORT_DATE_PATTERN.test(raw) ? "twoDigitYear" : "english";
+  if (dayOrMonthFirst[4].length === 2) return "twoDigitYear";
   const first = Number(dayOrMonthFirst[1]);
   const second = Number(dayOrMonthFirst[3]);
   if (first > 12) return "dmy";
@@ -508,12 +581,21 @@ function plainNumberTextOf(text) {
   if (isAccountingNegative) numericText = numericText.slice(1, -1);
   numericText = numericText.trim();
   const currencyIndex = numericText.search(CURRENCY_SYMBOL_PATTERN);
-  if (currencyIndex >= 0) numericText = `${numericText.slice(0, currencyIndex).trim()}${numericText.slice(currencyIndex + 1).trim()}`;
+  let innerNegative = false;
+  if (currencyIndex >= 0) {
+    const before = numericText.slice(0, currencyIndex).trim();
+    const after = numericText.slice(currencyIndex + 1).trim();
+    // v3.3.0: "$-" is zero, "$(1,200.00)" negative, as toPlainNumber() reads them.
+    if (!isAccountingNegative && before === "" && after === "-") return "0";
+    const inner = !isAccountingNegative && before === "" ? after.match(/^\((.*)\)$/) : null;
+    if (inner) innerNegative = true;
+    numericText = inner ? inner[1].trim() : `${before}${after}`;
+  }
   const [, sign, body] = numericText.match(/^([-+]?)(.*)$/);
   let digits = body.replace(/[, \u00A0]/g, "");
   if (digits.startsWith(".")) digits = `0${digits}`;
   if (digits.endsWith(".")) digits = digits.slice(0, -1);
-  return `${isAccountingNegative || sign === "-" ? "-" : ""}${digits}`;
+  return `${isAccountingNegative || innerNegative || sign === "-" ? "-" : ""}${digits}`;
 }
 
 // shiftDecimalNumber() as text: the point moves, no digit of the source is dropped, only the
@@ -539,7 +621,9 @@ function standardizeNumberCell(value, strategy, confirmedKeys = [], currencyMode
   if (PLAIN_NUMBER_TEXT_PATTERN.test(raw)) return raw === value ? unchangedCell(value) : { value: raw, action: "trim" };
   const text = strategy && strategy.fullwidth ? toHalfwidthNumberText(raw) : raw;
   if (/%/.test(text)) return { value, action: "keptPercent" };
-  if (/[eE]/.test(text)) return { value, action: "keptScientific" };
+  // v3.3.0: only the number decides: the e of "200 EUR", "2 years" or "10 miles" is the unit's.
+  const unitMatch = toPlainNumber(text) === null ? matchNumberWithUnit(text) : null;
+  if (/[eE]/.test(unitMatch ? unitMatch.numberText : text)) return { value, action: "keptScientific" };
   if (currencyMode === "mixed" && CURRENCY_SYMBOL_PATTERN.test(text)) return { value, action: "keptCurrencyMix" };
   let standardized;
   if (toPlainNumber(text) !== null) standardized = plainNumberTextOf(text);

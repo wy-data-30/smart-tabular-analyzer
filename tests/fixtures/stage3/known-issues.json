@@ -289,5 +289,33 @@
     "suspectedTotals": [
       { "line": 12, "label": "Subtotal", "field": "Item", "matches": [{ "scope": "segment", "fields": ["Qty"], "firstLine": 2, "lastLine": 11, "rowCount": 10, "contiguous": true }] }
     ]
+  },
+  "en-subtotal.csv": {
+    "encoding": "UTF-8 BOM，CRLF（v3.3.0，英文表）",
+    "headerFileLine": 1,
+    "dataRows": 20,
+    "fileLineOf": "dataRow + 1",
+    "issues": [
+      { "id": "U1", "type": "疑似合计行（Excel 分类汇总的前缀写法）", "field": "Region", "value": "East Total 22 / 2250 = 第 2–5 行之和", "fileLines": [6] },
+      { "id": "U2", "type": "疑似合计行（Excel 分类汇总的前缀写法）", "field": "Region", "value": "North Total 14 / 1430 = 第 7–9 行之和", "fileLines": [10] },
+      { "id": "U3", "type": "疑似合计行（Excel 分类汇总的前缀写法）", "field": "Region", "value": "South Total 22 / 2270 = 第 11–15 行之和", "fileLines": [16] },
+      { "id": "U4", "type": "疑似合计行（Excel 分类汇总的前缀写法）", "field": "Region", "value": "West Total 14 / 1370 = 第 17–19 行之和", "fileLines": [20] },
+      { "id": "U5", "type": "疑似合计行（整格 Grand Total）", "field": "Region", "value": "Grand Total 72 / 7320 = 上方 15 行明细之和（中间隔着 4 个小计）", "fileLines": [21] },
+      { "id": "U6", "type": "反例：同一字样多数对不上", "field": "Report", "value": "Weekly Total 5 行（报表名称）都不等于它上面的明细之和：这一组都不算字样，去掉后重新核对，不挡小计的加数", "fileLines": [3, 7, 12, 15, 17] }
+    ],
+    "expectedTypes": [
+      { "field": "Region", "nonMissing": 20, "numericRate": "0/20", "dateRate": "0/20", "uniqueRate": "9/20", "expected": "category" },
+      { "field": "Rep", "nonMissing": 15, "numericRate": "0/15", "dateRate": "0/15", "uniqueRate": "4/15", "expected": "category", "reason": "小计行和合计行是空格子" },
+      { "field": "Report", "nonMissing": 15, "numericRate": "0/15", "dateRate": "0/15", "uniqueRate": "3/15", "expected": "category" },
+      { "field": "Quantity", "nonMissing": 20, "numericRate": "20/20", "dateRate": "0/20", "uniqueRate": "12/20", "expected": "numeric" },
+      { "field": "Amount", "nonMissing": 20, "numericRate": "20/20", "dateRate": "0/20", "uniqueRate": "20/20", "expected": "numeric" }
+    ],
+    "suspectedTotals": [
+      { "line": 6, "label": "East Total", "field": "Region", "matches": [{ "scope": "segment", "fields": ["Quantity", "Amount"], "firstLine": 2, "lastLine": 5, "rowCount": 4, "contiguous": true }] },
+      { "line": 10, "label": "North Total", "field": "Region", "matches": [{ "scope": "segment", "fields": ["Quantity", "Amount"], "firstLine": 7, "lastLine": 9, "rowCount": 3, "contiguous": true }] },
+      { "line": 16, "label": "South Total", "field": "Region", "matches": [{ "scope": "segment", "fields": ["Quantity", "Amount"], "firstLine": 11, "lastLine": 15, "rowCount": 5, "contiguous": true }] },
+      { "line": 20, "label": "West Total", "field": "Region", "matches": [{ "scope": "segment", "fields": ["Quantity", "Amount"], "firstLine": 17, "lastLine": 19, "rowCount": 3, "contiguous": true }] },
+      { "line": 21, "label": "Grand Total", "field": "Region", "matches": [{ "scope": "above", "fields": ["Quantity", "Amount"], "firstLine": 2, "lastLine": 19, "rowCount": 15, "contiguous": false }] }
+    ]
   }
 }

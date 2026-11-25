@@ -3158,7 +3158,8 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 18);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv) and 8 examples.
+  assert.equal(scopes.length, 19);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3276,7 +3277,8 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 18);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv) and 8 examples.
+  assert.equal(scopes.length, 19);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -4626,7 +4628,7 @@ test("v2.8.0 fixtures: the store report's row 33 and the region table match know
 
 test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error (v2.11.0: the sample button's file has one total)", async () => {
   const scopes = await importEveryQualityFile();
-  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "en-subtotal.csv", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
   assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "公式错误.xlsx"]);
 });
 
@@ -4908,7 +4910,7 @@ test("v2.8.0 page: the sentences for row ranges, many columns and missing row nu
   assert.equal(line({ line: null, label: "合计", matches: [{ ...match, firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于上方 3 行明细之和。");
   assert.equal(line({ line: null, label: "合计", matches: [{ ...match, scope: "all", firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于全表 3 行明细之和。");
   assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, rowCount: 1000, firstLine: 2, lastLine: 1001 }] }), "第 14 行「合计」：额等于第 2–1001 行之和（1,000 行）。");
-  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, fields: ["a", "b", "c", "d", "e"] }, { ...match, scope: "all", fields: ["a", "b", "c", "d", "e", "f"] }] }), "第 14 行「合计」：a、b、c、d、e等于第 2–13 行之和（12 行）；a、b、c、d、e 等 6 列等于第 2–13 行之和（12 行）。");
+  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, fields: ["a", "b", "c", "d", "e"] }, { ...match, scope: "all", fields: ["a", "b", "c", "d", "e", "f"] }] }), "第 14 行「合计」：a、b、c、d、e 等于第 2–13 行之和（12 行）；a、b、c、d、e 等 6 列等于第 2–13 行之和（12 行）。");
 
   const error = (item) => evaluate(`formatFormulaError(${JSON.stringify(item)})`);
   const base = { field: "额", count: 2, byError: { "#N/A": 2 }, lines: [3, 4] };
@@ -5278,7 +5280,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
   const actual = {};
   for (const fileName of STAGE3_IMPORT_FILES) {
-    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx"].includes(fileName)) continue;
+    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx", "en-subtotal.csv"].includes(fileName)) continue;
     const scope = await importStage3Fixture(fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -5436,7 +5438,8 @@ test("v2.9.0 guard: dateStyleOf() is null exactly when toDate() is null", () => 
   assert.deepEqual(result.mismatches, []);
   assert.ok(result.checked > 100000, String(result.checked));
   assert.ok(result.readable > 5000, String(result.readable));
-  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
+  // v3.3.0: the year "24" after slashes is a two-digit year now, a style of its own (R1).
+  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "twoDigitYear", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
 });
 
 test("v2.9.0 date styles: the fixture, the roster and the sample button's file (v2.11.0), and no other file", async () => {
@@ -6336,7 +6339,7 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
     assert.equal(types(again), types(scope), name);
   }
   assert.deepEqual(totals, {
-    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
+    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "en-subtotal.csv": 0, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
     "sample-data.csv": 0, "sample-orders-en.csv": 12, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
   });
 });
@@ -9035,12 +9038,17 @@ test("v3.1.0 quality page: the totals section of 分区小计表 names the total
   }
 });
 
+// v3.3.0: a real total, a subtotal that only equals the row above, and three labels that are each
+// alone in their group and add up to nothing. (taskTableCsv() flags nothing since v3.3.0: its label
+// groups mostly do not add up; see the v3.3.0 test.)
+const singleLabelTotalsCsv = () => ["任务名,工时", "整理需求,2", "编写代码,4", "测试,8", "本周合计,14", "部署,4", "部署小计,4", "周报汇总,7", "数据汇总,9", "月度汇总,5"].join("\n") + "\n";
+
 test("v3.1.0 quality page: 另有 N 行 names the labelled rows whose numbers do not add up, only where something was checked", async () => {
-  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
-  assert.equal(tasks.evaluate("state.totalLabelRows.length"), 95);
-  assert.equal(tasks.evaluate("state.suspectedTotals.length"), 6);
-  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("另有 89 行也带这类字样，但数字对不上，没有列出。"));
-  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
+  const tasks = await importCsvFile(singleLabelTotalsCsv(), "single-labels.csv");
+  assert.equal(tasks.evaluate("state.totalLabelRows.length"), 5);
+  assert.equal(tasks.evaluate("state.suspectedTotals.length"), 2);
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("另有 3 行也带这类字样，但数字对不上，没有列出。"));
+  assert.ok(htmlText(tasks, "suspectedTotalDetails").includes("其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。"));
   tasks.evaluate('stageFieldTypeChange("工时", "ignore"); applyFieldConfiguration()');
   assert.equal(isHidden(tasks, "suspectedTotalSection"), true);
   assert.equal(tasks.evaluate("formatUnmatchedTotalLabels(95, 0, false)"), "");
@@ -9441,9 +9449,9 @@ test("v3.1.0 report: the totals section has the page's 只等于上面一行 and
   assert.ok(excludedReport.html.includes("<p>不计入分析：疑似合计行 5 行（第 5、8、10、14、15 行）。</p>"));
   assert.ok(excludedReport.html.includes(`<p>${single}</p>`));
 
-  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  const tasks = await importCsvFile(singleLabelTotalsCsv(), "single-labels.csv");
   const tasksReport = reportOf(tasks);
-  for (const sentence of ["另有 89 行也带这类字样，但数字对不上，没有列出。", "其中 6 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
+  for (const sentence of ["另有 3 行也带这类字样，但数字对不上，没有列出。", "其中 1 行只等于上面一行，可能不是合计行，先点“查看”确认。"]) {
     assert.ok(htmlText(tasks, "suspectedTotalDetails").includes(sentence));
     assert.ok(tasksReport.html.includes(`<p>${sentence}</p>`), sentence);
   }
@@ -10071,8 +10079,8 @@ test("v3.2.0 format.js: the 18 constants are frozen [中文, English] pairs, and
       pairs += 1;
     }
   }
-  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 10, VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
-  assert.equal(pairs, 13 + 2 + 10 + 13 + 4 + 13);
+  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 11 (v3.3.0: twoDigitYear), VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
+  assert.equal(pairs, 13 + 2 + 11 + 13 + 4 + 13);
   // The page notes, as index.html will have them in English (commit 9 checks I18N_EN against these).
   assert.equal(scope.evaluate("SUSPECTED_TOTAL_NOTE[1]"), "These rows still count as ordinary data, so their numbers are counted again in sums, averages and the check for unusually high or low values.");
   assert.equal(scope.evaluate("LOOK_ALIKE_NOTE[1]").split(": ")[0], "Leading or trailing spaces");
@@ -10470,7 +10478,8 @@ test("v3.2.0 format.js English wording: values (not categories), treated as blan
   assert.equal(en('formatProblemCategoryLabel({ kind: "parseWarnings", count: 1 })'), "Reading issues (1 issue)");
   assert.deepEqual(JSON.parse(en("JSON.stringify(Object.fromEntries(Object.entries(DATE_STYLE_NAMES).map(([key, pair]) => [key, pair[1]])))")), {
     excelCell: "Excel date cell", ymdDash: "text YYYY-MM-DD", ymdSlash: "text YYYY/MM/DD", ymdDot: "text YYYY.MM.DD", chinese: "text with Chinese year/month/day characters",
-    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only"
+    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only",
+    twoDigitYear: "text with a two-digit year"
   });
   assert.equal(en("Lpick(VISIBLE_TEXT_OTHER)"), "[whitespace]");
   assert.equal(en('I18N_EN["sidebar.status"]'), "Current status");
@@ -11122,7 +11131,7 @@ test("v3.2.0 fix: English chart axis titles are capitalized; the words in senten
 // the download link points at it; the Chinese interface is as before.
 const SAMPLE_ORDERS_EN = "sample-orders-en.csv";
 // Compared after dropping the CR of every CRLF, like SAMPLE_ORDERS_LF_SHA256.
-const SAMPLE_ORDERS_EN_LF_SHA256 = "0b79436e00095497f163a5e69d42ea66e07fefc356a203f2035319a786031479";
+const SAMPLE_ORDERS_EN_LF_SHA256 = "900a6751488c8f8f785722a34fb368f95c9704ae6b036a6b3a6905f63f859f78";
 const sampleOrdersEnLfText = () => fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8").replace(/\r\n/g, "\n");
 const sampleOrdersEnLines = () => sampleOrdersEnLfText().slice(1, -1).split("\n");
 const PILLS_ZERO_EN = ["Blanks: 0", "Duplicate rows: 0", "Numbers or dates not recognized: 0 values", "Unusually high or low values: 0 columns", "Duplicate IDs: 0 columns", "Values that may mean blank: 0 columns"];
@@ -11150,13 +11159,14 @@ test("v3.2.0 commit 12: the English sample holds the planned rows, title and tot
   const data = lines.slice(2, 43).map(cells);
   assert.equal(data.length, 41);
   assert.equal(data.reduce((sum, row) => sum + Number(row[6]), 0), 800);
-  const amounts = data.map((row) => Number(row[7].replace(/[$,]/g, ""))).filter(Number.isFinite);
+  // v3.3.0: three amounts are written "5,400 USD" (they were "$5,400.00").
+  const amounts = data.map((row) => Number(row[7].replace(/[$,]| USD$/g, ""))).filter(Number.isFinite);
   assert.equal(amounts.length, 40);
   assert.equal(amounts.reduce((sum, value) => sum + value, 0), 123440);
   // The Chinese sample has the same numbers, row by row.
   const chinese = sampleOrdersLines().slice(2, 43).map(cells);
   assert.deepEqual(data.map((row) => row[6]), chinese.map((row) => row[6]));
-  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
+  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]| USD$/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
 });
 
 test("v3.2.0 commit 12: the sample button and the download link follow the language; the Chinese ones are as before", async () => {
@@ -11226,7 +11236,8 @@ const SAMPLE_ORDERS_EN_FIXES = {
   duplicate: (lines) => lines.filter((line, index) => !(line.startsWith("SO-1018,") && line === lines[index - 1])),
   na: (lines) => lines.map((line) => (line.startsWith("SO-1026,") ? line.replace(",N/A,", ",1560,") : line)),
   dash: (lines) => lines.map((line) => (line.startsWith("SO-1014,") ? line.replace(/,\u2014$/, ",Emma Chen") : line)),
-  money: (lines) => lines.map((line) => line.replace(/,"?\$([\d,]+)\.00"?,/, (match, number) => `,${number.replace(/,/g, "")},`)),
+  // Thousands separators only inside a quoted cell ("5,400 USD"); 900 USD has no quotes.
+  money: (lines) => lines.map((line) => line.replace(/,(?:"([\d,]+) USD"|(\d+) USD),/, (match, quoted, plain) => `,${(quoted || plain).replace(/,/g, "")},`)),
   date: (lines) => lines.map((line) => line
     .replace(/^(SO-\d+),(\d{2})\/(\d{2})\/(\d{4}),/, "$1,$4-$2-$3,")
     .replace(/^(SO-\d+),"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})",/, (match, id, month, day, year) => `${id},${year}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun"].indexOf(month) + 1).padStart(2, "0")}-${day.padStart(2, "0")},`)),
@@ -11255,11 +11266,10 @@ test("v3.2.0 commit 12: without its problems the English sample flags nothing, a
     duplicate: { pills: pills({ "Duplicate rows": "Duplicate rows: 1", "Duplicate IDs": "Duplicate IDs: 1 column" }), sections: [], note: false, cells: 0 },
     na: { pills: pills({ "Numbers or dates not recognized": "Numbers or dates not recognized: 1 value", "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 1 },
     dash: { pills: pills({ "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 0 },
-    // $5,400.00, $900.00 and $1,050.00 are plain numbers to the current rules ($ and the thousands
-    // separator are read without a unit, unlike 5400元), so the quality page has nothing to say;
-    // only the standardized table writes them as 5400.00, 900.00 and 1050.00. Six of the seven
+    // v3.3.0: 5,400 USD, 900 USD and 1,050 USD are read by unit, like 5400元 in the Chinese sample:
+    // the quality page names them and the standardized table writes 5400, 900 and 1050. All seven
     // problems put in the sample are flagged.
-    money: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 3 },
+    money: { pills: PILLS_ZERO_EN, sections: ["numberConversionSection"], note: false, cells: 3 },
     date: { pills: PILLS_ZERO_EN, sections: ["dateStyleSection"], note: false, cells: 5 },
     space: { pills: PILLS_ZERO_EN, sections: ["lookAlikeSection"], note: false, cells: 3 }
   };
@@ -11295,7 +11305,9 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
     ["Customer type", "category"], ["Quantity", "numeric"], ["Amount", "numeric"], ["Sales rep", "category"]
   ]);
   assert.deepEqual(sampleOrdersPills(scope), ["Blanks: 6", "Duplicate rows: 1", "Numbers or dates not recognized: 1 value", "Unusually high or low values: 2 columns", "Duplicate IDs: 1 column", "Values that may mean blank: 2 columns"]);
-  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "dateStyleSection", "lookAlikeSection"]);
+  // v3.3.0: the amounts in USD are read by unit, like 5400元 in the Chinese sample.
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "numberConversionSection", "dateStyleSection", "lookAlikeSection"]);
+  assert.equal(sampleOrdersText(scope, "numberConversionDetails"), "“Amount”: read 3 values as “USD” (5,400 USD, 900 USD, 1,050 USD)");
   assert.equal(scope.elements.get("categoryChartInsight").textContent, "In “Region”, the most common value is “East”: 9 times, 22.0%.");
   assert.equal(scope.elements.get("dateChartInsight").textContent, "By the date column “Order date”, the record count rises from 2025-01 to 2025-06, by about 66.7%.");
   assert.equal(scope.evaluate("dom.categoryChartField.value"), "Region");
@@ -11683,7 +11695,8 @@ test("v3.2.0 commit 13: the same file in Chinese and in English gives the same n
     // both languages (R3), or “(Blank)” and “（空值）” sort to different places.
     ["orders.csv", (language) => importCsvInLanguage(englishScenarioCsv(), "orders.csv", language)]
   ];
-  assert.equal(files.length, 13);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv), two samples, one scenario.
+  assert.equal(files.length, 14);
   const gaps = [];
   await withRecordedAttributes(async () => {
   for (const [name, open] of files) {
@@ -12725,4 +12738,396 @@ test("v3.2.2 repository: the page and both reports link to sheet-checkup only", 
     assert.deepEqual((report.match(/<footer>[^<]*<a href="([^"]*)">/) || []).slice(1), [newUrl], lang);
   }
   assert.equal(JSON.parse(repoFile("package.json")).name, "sheet-checkup");
+});
+
+// ---- v3.3.0 ②: English subtotal labels and label groups that mostly do not add up ----
+// The tables below are built by the generators of the v3.3.0 review (totals.cjs), seeded, so
+// their rows are fixed. A label group is a field and a normalized label; a group of two or more
+// rows of which fewer than half add up is dropped and everything is checked again without it.
+const seededPick = (seed) => {
+  let state = seed;
+  const random = () => ((state = (state * 1103515245 + 12345) % 2147483648) / 2147483648);
+  return { random, pick: (list) => list[Math.floor(random() * list.length)] };
+};
+const csvOfRows = (header, rows) => [header.join(","), ...rows.map((row) => row.map((value) => (/[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : value)).join(","))].join("\n") + "\n";
+
+// Excel's Subtotal command: five regions, a labelled subtotal under each, a grand total last.
+function excelSubtotalCsv(label = (region) => `${region} Total`, grand = "Grand Total") {
+  const { random, pick } = seededPick(777);
+  const rows = [];
+  let grandQuantity = 0;
+  let grandAmount = 0;
+  for (const region of ["East", "North", "South", "West", "Central"]) {
+    let quantity = 0;
+    let amount = 0;
+    const count = 3 + Math.floor(random() * 4);
+    for (let i = 0; i < count; i += 1) {
+      const qty = 1 + Math.floor(random() * 12);
+      const amt = qty * pick([15, 20, 35, 50]);
+      rows.push([region, pick(["Pens", "Paper", "Desk", "Chair"]), qty, amt]);
+      quantity += qty;
+      amount += amt;
+    }
+    rows.push([label(region), "", quantity, amount]);
+    grandQuantity += quantity;
+    grandAmount += amount;
+  }
+  if (grand) rows.push([grand, "", grandQuantity, grandAmount]);
+  return csvOfRows(["Region", "Product", "Quantity", "Amount"], rows);
+}
+
+// Seven ordinary tables whose labels are values, not totals (the review's false positives).
+const NORMAL_TOTAL_TABLES = {
+  metric: () => { const { random, pick } = seededPick(12345); return csvOfRows(["Date", "Metric", "Value"], Array.from({ length: 300 }, (_, i) => [`2025-01-${String(1 + (i % 28)).padStart(2, "0")}`, pick(["Order Total", "Tax Total", "Shipping", "Discount"]), 1 + Math.floor(random() * 9)])); },
+  timesheet: () => { const { pick } = seededPick(12345); return csvOfRows(["Employee", "Task", "Hours"], Array.from({ length: 300 }, () => [pick(["Ann", "Bo", "Cy", "Di"]), pick(["Weekly Total", "Client call", "Reporting", "Admin", "Review"]), pick([2, 4, 8])])); },
+  brand: () => { const { random, pick } = seededPick(12345); return csvOfRows(["Brand", "Product", "Units"], Array.from({ length: 300 }, () => { const brand = pick(["Total", "Crest", "Sensodyne"]); return [brand, brand === "Total" ? "Colgate Total" : pick(["Colgate Total", "Pro-Health", "Whitening"]), 1 + Math.floor(random() * 9)]; })); },
+  kpi: () => { const { pick } = seededPick(12345); return csvOfRows(["KPI", "Aggregation", "Weight"], Array.from({ length: 300 }, (_, i) => [`KPI-${i}`, pick(["Sum", "Average", "Count", "Max"]), pick([1, 2, 5])])); },
+  orderType: () => { const { random, pick } = seededPick(12345); return csvOfRows(["Order", "Type", "Amount"], Array.from({ length: 300 }, (_, i) => [`O-${i}`, pick(["Order Total", "Refund", "Credit"]), Math.floor(random() * 90000) + 1000])); },
+  tasksZh: () => { const { pick } = seededPick(12345); return csvOfRows(["员工", "任务", "工时"], Array.from({ length: 300 }, () => [pick(["张三", "李四", "王五"]), pick(["数据汇总", "周报汇总", "客户拜访", "报价单", "会议"]), pick([1, 2, 4, 8])])); },
+  statusZh: () => { const { random, pick } = seededPick(12345); return csvOfRows(["单号", "状态", "数量"], Array.from({ length: 300 }, (_, i) => [`D${1000 + i}`, pick(["已汇总", "未汇总", "汇总", "待处理"]), 1 + Math.floor(random() * 9)])); }
+};
+
+// The brand table with a real grand total at the bottom; extraLabel adds one labelled row on top
+// that is alone in its group and adds up to nothing.
+function brandWithGrandTotalCsv(extraLabel = "") {
+  const { random, pick } = seededPick(12345);
+  const rows = Array.from({ length: 300 }, () => { const brand = pick(["Total", "Crest", "Sensodyne"]); return [brand, brand === "Total" ? "Colgate Total" : pick(["Pro-Health", "Whitening"]), 1 + Math.floor(random() * 9)]; });
+  rows.push(["Grand Total", "", rows.reduce((sum, row) => sum + row[2], 0)]);
+  if (extraLabel) rows.unshift([extraLabel, "", 3]);
+  return csvOfRows(["Brand", "Product", "Units"], rows);
+}
+
+const totalsOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals.map((item) => [item.line, item.label]))"));
+
+test("v3.3.0 totalRowLabel(): an English prefix before Total / Subtotal / Sub-total / Totals, and Totals alone", () => {
+  const { context, evaluate } = createScriptContext();
+  const label = (value) => {
+    put(context, "__label", value);
+    return evaluate("totalRowLabel(__label)");
+  };
+  const enDash = String.fromCharCode(0x2013);
+  const prefix40 = "A".repeat(40);
+  for (const [value, expected] of [
+    ["East Total", "EastTotal"], ["East Subtotal", "EastSubtotal"], ["East Sub-total", "EastSub-total"], ["East Totals", "EastTotals"],
+    ["East - Total", "East-Total"], [`East ${enDash} Total`, `East${enDash}Total`], ["East:Total", "East:Total"], ["East: Total", "East:Total"],
+    ["East Total (USD)", "EastTotal"], ["East Total:", "EastTotal"], ["EAST TOTAL", "EASTTOTAL"], ["  east total  ", "easttotal"],
+    ["North-East Region Total", "North-EastRegionTotal"], [`${prefix40} Total`, `${prefix40}Total`], ["Totals", "Totals"], ["TOTALS:", "TOTALS"],
+    // A label like any other prefix: metric columns full of it lose it as a group that mostly does not add up.
+    ["Net Total", "NetTotal"],
+    // Unchanged: the whole-cell words and the Chinese labels.
+    ["Total", "Total"], ["Grand Total", "GrandTotal"], ["Subtotal", "Subtotal"], ["Sum", "Sum"], ["上海小计", "上海小计"]
+  ]) assert.equal(label(value), expected, value);
+  for (const value of ["Teetotal", "Total East", "Total for East", "Subtotal: East", "Overall", "Summary", `A${prefix40} Total`, "Total Card, Inc.", "Total Units", "-Total", "East Totality", "East Total Units", "已汇总"]) {
+    assert.equal(label(value), "", value);
+  }
+});
+
+test("v3.3.0 totals: Excel's subtotal rows are flagged in all three writings, with or without a grand total", async () => {
+  for (const [name, csv, expected] of [
+    ["East Total", excelSubtotalCsv(), [[6, "East Total"], [10, "North Total"], [17, "South Total"], [23, "West Total"], [29, "Central Total"], [30, "Grand Total"]]],
+    ["East Subtotal", excelSubtotalCsv((region) => `${region} Subtotal`), [[6, "East Subtotal"], [10, "North Subtotal"], [17, "South Subtotal"], [23, "West Subtotal"], [29, "Central Subtotal"], [30, "Grand Total"]]],
+    ["East - Total", excelSubtotalCsv((region) => `${region} - Total`), [[6, "East - Total"], [10, "North - Total"], [17, "South - Total"], [23, "West - Total"], [29, "Central - Total"], [30, "Grand Total"]]],
+    ["no grand total", excelSubtotalCsv(undefined, ""), [[6, "East Total"], [10, "North Total"], [17, "South Total"], [23, "West Total"], [29, "Central Total"]]]
+  ]) {
+    const scope = await importCsvFile(csv, "subtotal.csv");
+    assert.deepEqual(totalsOf(scope), expected, name);
+    assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), expected.length, name);
+    scope.evaluate('setRowExclusion("suspectedTotal", true)');
+    const quantity = JSON.parse(scope.evaluate('JSON.stringify(state.numericStats.find((item) => item.field === "Quantity"))'));
+    // 23 detail rows remain in every writing (28 or 29 rows minus the flagged ones).
+    assert.equal(quantity.count, 23, name);
+    assert.equal(quantity.max, 12, name);
+    assert.equal(quantity.mean.toFixed(1), "7.1", name);
+  }
+});
+
+test("v3.3.0 totals: seven ordinary tables whose labels are values flag nothing", async () => {
+  const expected = { metric: 144, timesheet: 62, brand: 168, kpi: 65, orderType: 98, tasksZh: 115, statusZh: 85 };
+  for (const [name, make] of Object.entries(NORMAL_TOTAL_TABLES)) {
+    const scope = await importCsvFile(make(), `${name}.csv`);
+    assert.equal(scope.evaluate("state.totalLabelRows.length"), expected[name], name);
+    assert.deepEqual(totalsOf(scope), [], name);
+    assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 0, name);
+    assert.equal(isHidden(scope, "suspectedTotalSection"), true, name);
+  }
+});
+
+test("v3.3.0 totals: a brand called Total gives way to the real grand total; 另有 N 行 leaves the dropped group out", async () => {
+  const brand = await importCsvFile(brandWithGrandTotalCsv(), "brand.csv");
+  assert.deepEqual(totalsOf(brand), [[302, "Grand Total"]]);
+  assert.equal(brand.evaluate("state.totalLabelRows.length"), 96);
+  assert.equal(brand.evaluate("state.suspectedTotalLabelCount"), 1);
+  assert.equal(brand.evaluate("getSuspectedTotalExtras().labelRows"), 1);
+  assert.doesNotMatch(htmlText(brand, "suspectedTotalDetails"), /也带这类字样/);
+
+  const extra = await importCsvFile(brandWithGrandTotalCsv("Promo Subtotal"), "brand-extra.csv");
+  assert.deepEqual(totalsOf(extra), [[303, "Grand Total"]]);
+  assert.equal(extra.evaluate("state.suspectedTotalLabelCount"), 2);
+  assert.ok(htmlText(extra, "suspectedTotalDetails").includes("另有 1 行也带这类字样，但数字对不上，没有列出。"));
+  assert.ok(reportOf(extra).html.includes("<p>另有 1 行也带这类字样，但数字对不上，没有列出。</p>"));
+});
+
+test("v3.3.0 totals: label groups are per field: the same word in another column is its own group", async () => {
+  // Region's two "Total" rows add up; Note's four "Total" rows do not. Grouping by the word alone
+  // would make one group of six with two matches and drop the real subtotals.
+  const csv = csvOfRows(["Region", "Note", "Amount"], [
+    ["East", "", 10], ["East", "", 20], ["Total", "", 30], ["West", "", 5], ["West", "", 7], ["Total", "", 12],
+    ["North", "Total", 3], ["North", "Total", 4], ["North", "Total", 5], ["North", "Total", 6]
+  ]);
+  const scope = await importCsvFile(csv, "two-columns.csv");
+  assert.deepEqual(totalsOf(scope), [[4, "Total"], [7, "Total"]]);
+  assert.equal(scope.evaluate("state.totalLabelRows.length"), 6);
+  assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 2);
+});
+
+test("v3.3.0 totals: a group of which exactly half adds up stays; only fewer than half drops it", async () => {
+  // Four "Total" rows in one column: rows 4 and 7 add up, rows 9 and 11 do not.
+  const csv = csvOfRows(["Region", "Amount"], [
+    ["East", 10], ["East", 20], ["Total", 30], ["West", 5], ["West", 7], ["Total", 12],
+    ["North", 3], ["Total", 999], ["South", 4], ["Total", 888]
+  ]);
+  const scope = await importCsvFile(csv, "half.csv");
+  assert.equal(scope.evaluate("state.totalLabelRows.length"), 4);
+  assert.deepEqual(totalsOf(scope), [[4, "Total"], [7, "Total"]]);
+  assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 4);
+  assert.ok(htmlText(scope, "suspectedTotalDetails").includes("另有 2 行也带这类字样，但数字对不上，没有列出。"));
+});
+
+test("v3.3.0 totals: Chinese tables keep their results (three subtotals, one off by rounding)", async () => {
+  const csv = csvOfRows(["门店", "销售额"], [["A店", 100.4], ["B店", 200.3], ["华东小计", 300.7], ["C店", 50.2], ["D店", 49.9], ["华南小计", 101.5], ["E店", 10], ["F店", 20], ["华北小计", 30], ["合计", 432.8]]);
+  const scope = await importCsvFile(csv, "stores.csv");
+  assert.deepEqual(totalsOf(scope), [[4, "华东小计"], [10, "华北小计"], [11, "合计"]]);
+  assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 4);
+  assert.ok(htmlText(scope, "suspectedTotalDetails").includes("另有 1 行也带这类字样，但数字对不上，没有列出。"));
+});
+
+test("v3.3.0 totals: groups are dropped in at most three rounds; checkTotalRows() runs at most eight times", () => {
+  const scope = createScriptContext();
+  // A chain: "G0 Total" never adds up; "Gk Total" equals the one detail row since the previous
+  // label, which holds only while the previous label is a boundary. Two identical sections.
+  const run = (groups) => JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const rows = [];
+    for (let i = 0; i < 50; i += 1) rows.push({ Label: "row " + i, Value: String(1 + (i % 7)) });
+    // Each section's G0 differs by far more than 0.5% from any sum it could be compared with.
+    for (let s = 0; s < 2; s += 1) {
+      rows.push({ Label: "G0 Total", Value: String(1000000 * (s + 1)) });
+      for (let k = 1; k < ${groups}; k += 1) { const value = String(7 + k * 3); rows.push({ Label: "detail " + k, Value: value }, { Label: "G" + k + " Total", Value: value }); }
+    }
+    const fields = ["Label", "Value"];
+    const profiles = fields.map((field) => buildColumnProfile(field, rows));
+    const original = checkTotalRows;
+    let calls = 0;
+    checkTotalRows = (...args) => { calls += 1; return original(...args); };
+    try {
+      const check = checkSuspectedTotals(rows, fields, profiles, (row) => rows.indexOf(row) + 2, findTotalLabelRows(rows, fields));
+      return { calls, labelRowCount: check.labelRowCount, totals: check.totals.map((item) => item.label), summary: buildSuspectedTotalSummary(rows, fields, profiles, () => null).length };
+    } finally {
+      checkTotalRows = original;
+    }
+  })())`));
+  // G0..G2 are dropped in three rounds, then one last check: G3 no longer adds up, G4 still does.
+  assert.deepEqual(run(5), { calls: 8, labelRowCount: 4, totals: ["G4 Total", "G4 Total"], summary: 2 });
+  // Fifty groups that never add up go in one round: two checks, nothing left.
+  const many = JSON.parse(scope.evaluate(`JSON.stringify((() => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ Label: "Item " + (1 + (i % 50)) + " Total", Value: String(1 + ((i * 7) % 13)) }));
+    const fields = ["Label", "Value"];
+    const profiles = fields.map((field) => buildColumnProfile(field, rows));
+    const original = checkTotalRows;
+    let calls = 0;
+    checkTotalRows = (...args) => { calls += 1; return original(...args); };
+    try {
+      const check = checkSuspectedTotals(rows, fields, profiles, () => null, findTotalLabelRows(rows, fields));
+      return { calls, labelRowCount: check.labelRowCount, totals: check.totals.length };
+    } finally {
+      checkTotalRows = original;
+    }
+  })())`));
+  assert.deepEqual(many, { calls: 2, labelRowCount: 0, totals: 0 });
+});
+
+test("v3.3.0 totals: labels carry a lower-case key; suspected totals and rebuilds add no key and scan no cell", async () => {
+  const scope = await importCsvFile(excelSubtotalCsv(), "subtotal.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.totalLabelRows.slice(0, 2))")), [
+    { index: 4, field: "Region", label: "East Total", key: "easttotal" },
+    { index: 8, field: "Region", label: "North Total", key: "northtotal" }
+  ]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(Object.keys(state.suspectedTotals[0]))")), ["index", "line", "field", "label", "matches"]);
+  assert.equal(scope.evaluate("Array.isArray(buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows))"), true);
+  const calls = scope.evaluate(`(() => {
+    const original = totalRowLabel;
+    let count = 0;
+    totalRowLabel = (value) => { count += 1; return original(value); };
+    stageFieldTypeChange("Product", "ignore");
+    applyFieldConfiguration();
+    totalRowLabel = original;
+    return count;
+  })()`);
+  assert.equal(calls, 0);
+  assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 6);
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 0);
+});
+
+test("v3.3.0 totals: a group that stops adding up brings its left-out rows back, and says so when flagged again", async () => {
+  // Region "Total" three times: rows 5 and 9 add up (row 9 only by Amount), row 12 adds up to nothing.
+  const csv = csvOfRows(["Region", "Qty", "Amount"], [
+    ["East", 2, 20], ["East", 3, 30], ["East", 4, 40], ["Total", 9, 90],
+    ["West", 1, 10], ["West", 5, 50], ["West", 6, 60], ["Total", 99, 120],
+    ["North", 7, 70], ["North", 8, 80], ["Total", 1, 1]
+  ]);
+  const scope = await importCsvFile(csv, "groups.csv");
+  const view = () => JSON.parse(scope.evaluate(`JSON.stringify({
+    flagged: state.suspectedTotals.map((item) => item.line),
+    excluded: state.excludedRows.suspectedTotal.map((index) => getSourceRowNumber(state.rows[index])),
+    included: getIncludedRows().length
+  })`));
+  assert.deepEqual(view(), { flagged: [5, 9], excluded: [], included: 11 });
+  scope.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(view(), { flagged: [5, 9], excluded: [5, 9], included: 9 });
+  // Without Amount only row 5 adds up: one of three, so the whole group goes and both rows come back.
+  scope.evaluate('stageFieldTypeChange("Amount", "category"); applyFieldConfiguration()');
+  assert.deepEqual(view(), { flagged: [], excluded: [], included: 11 });
+  assert.ok(textOf(scope, "fieldConfigMessage").includes("有 2 行不再是疑似合计行，已恢复计入分析。"));
+  scope.evaluate('stageFieldTypeChange("Amount", "numeric"); applyFieldConfiguration()');
+  assert.deepEqual(view(), { flagged: [5, 9], excluded: [], included: 11 });
+  assert.ok(textOf(scope, "fieldConfigMessage").includes("第 5、9 行又被标为疑似合计行，目前仍计入分析，可以再设为不计入分析。"));
+});
+
+test("v3.3.0 totals: the task table of v3.1.0 has three label groups that mostly do not add up and flags nothing", async () => {
+  const tasks = await importCsvFile(taskTableCsv(), "task-table.csv");
+  assert.equal(tasks.evaluate("state.totalLabelRows.length"), 95);
+  assert.equal(tasks.evaluate("state.suspectedTotals.length"), 0);
+  assert.equal(tasks.evaluate("state.suspectedTotalLabelCount"), 0);
+  assert.equal(isHidden(tasks, "suspectedTotalSection"), true);
+  assert.equal(tasks.evaluate("getSuspectedTotalExtras()"), null);
+});
+
+// v3.3.0 ②b: in the Chinese sentence a space separates a field list that ends in an ASCII letter or
+// digit from 等于; Chinese names, the "等 N 列" form and the English sentence are as before.
+test("v3.3.0 totals: the Chinese sentence puts a space between an English field name and 等于", () => {
+  const match = { scope: "segment", fields: ["额"], firstLine: 2, lastLine: 5, rowCount: 4, contiguous: true };
+  const line = (fields, language) => {
+    const { evaluate } = createScriptContext(language ? { language } : {});
+    return evaluate(`formatSuspectedTotal(${JSON.stringify({ line: 6, label: "East Total", matches: [{ ...match, fields }] })})`);
+  };
+  assert.equal(line(["Quantity", "Amount"]), "第 6 行「East Total」：Quantity、Amount 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["Q1"]), "第 6 行「East Total」：Q1 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["金额USD"]), "第 6 行「East Total」：金额USD 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["销售额", "成本"]), "第 6 行「East Total」：销售额、成本等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["金额", "Amount", "额"]), "第 6 行「East Total」：金额、Amount、额等于第 2–5 行之和（4 行）。");
+  // Not ASCII, so no space: a full-width letter and a closing bracket.
+  assert.equal(line([String.fromCharCode(0xff31)]), `第 6 行「East Total」：${String.fromCharCode(0xff31)}等于第 2–5 行之和（4 行）。`);
+  assert.equal(line(["Amount (USD)"]), "第 6 行「East Total」：Amount (USD)等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["A", "B", "C", "D", "E", "F"]), "第 6 行「East Total」：A、B、C、D、E 等 6 列等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["Quantity", "Amount"], "en"), "Row 6 “East Total”: Quantity, Amount equal the sum of rows 2–5 (4 rows).");
+});
+
+// ---- v3.3.0 ③: None and new spellings that may mean blank ----
+test("v3.3.0 placeholders: None and Unknown are listed one by one, never confirmed with the common writings, and stay as written", async () => {
+  // 金额: 16 numbers, None twice, Unknown twice (numeric); 损坏程度: an answer column with None.
+  const lines = ["编号,金额,损坏程度"];
+  for (let i = 0; i < 20; i += 1) {
+    const amount = i === 3 || i === 9 ? "None" : i === 5 || i === 13 ? "Unknown" : String(100 + i * 10);
+    lines.push(`R-${1000 + i},${amount},${i % 4 === 0 ? "None" : ["Minor", "Medium", "Substantial"][i % 3]}`);
+  }
+  const scope = await importCsvFile(`${lines.join("\n")}\n`, "damage.csv");
+  const placeholders = () => JSON.parse(scope.evaluate("JSON.stringify(state.placeholders.map((item) => [item.field, item.key, item.tier, item.count]))"));
+  assert.deepEqual(placeholders(), [["金额", "None", "maybe", 2], ["金额", "Unknown", "maybe", 2], ["损坏程度", "None", "maybe", 5]]);
+  assert.equal(scope.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  // Not confirmed, so still values that are not numbers: as before for None, and now listed for Unknown too.
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 4);
+  assert.equal(qualityPill(scope.elements, "像是空值的写法").text, "像是空值的写法：2 个字段");
+  // Nothing of the common tier is here, so "常见写法全部按空值处理" has nothing to confirm.
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.placeholderConfirmations)")), {});
+  assert.doesNotMatch(scope.elements.get("placeholderDetails").innerHTML, /常见写法全部按空值处理/);
+  // The standardized table keeps them as written and says why.
+  scope.evaluate("checkStandardizedExport()");
+  const changes = scope.evaluate("buildStandardizedChangesCsvContent(state.standardizedExport, state.rows, state.fields, getSourceRowNumber)").replace(/^\uFEFF/, "").split("\r\n").filter(Boolean);
+  assert.deepEqual(changes, [
+    "文件行号,字段,原值,导出值,处理",
+    "5,金额,None,None,像是空值的写法，未确认",
+    "7,金额,Unknown,Unknown,像是空值的写法，未确认",
+    "11,金额,None,None,像是空值的写法，未确认",
+    "15,金额,Unknown,Unknown,像是空值的写法，未确认"
+  ]);
+  // Confirming one writing of one field is the user's call, writing by writing.
+  scope.evaluate('updatePlaceholderConfirmations({ ...state.placeholderConfirmations, "金额": ["Unknown"] })');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 2);
+  assert.equal(scope.evaluate('getFieldProfile("金额").missingCount'), 2);
+});
+
+test("v3.3.0 placeholders: the report's one note names a writing once even when several columns hold it", async () => {
+  // Like biopics: "-" in two columns, Unknown in a third.
+  const lines = ["编号,票房,主演,种族已知"];
+  for (let i = 0; i < 12; i += 1) lines.push(`F-${100 + i},${i % 4 === 0 ? "-" : `${i}00`},${i === 5 ? "-" : `演员${i}`},${i % 3 === 0 ? "Unknown" : "Known"}`);
+  const csv = `${lines.join("\n")}\n`;
+  const zh = reportOf(await importCsvFile(csv, "films.csv")).html;
+  assert.ok(zh.includes("<p>说明：「-」「Unknown」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。</p>"));
+  assert.doesNotMatch(zh, /「-」「Unknown」「-」/);
+  const en = reportOf(await importCsvInLanguage(csv, "films.csv", "en")).html;
+  assert.ok(en.includes("<p>Note: “-”, “Unknown” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.</p>"));
+  // Only "-", twice: the Chinese old sentence as before; the English one names it once, singular.
+  const dashOnly = csv.replace(/Unknown/g, "Known");
+  assert.ok(reportOf(await importCsvFile(dashOnly, "films.csv")).html.includes("<p>说明：「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。在会计格式里，「-」通常表示 0。</p>"));
+  assert.ok(reportOf(await importCsvInLanguage(dashOnly, "films.csv", "en")).html.includes("<p>Note: “-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.</p>"));
+});
+
+// ---- v3.3.0 ⑧: two-digit years ----
+test("v3.3.0 two-digit years: mixed with four-digit years in a column, the quality page names the two styles (R1)", async () => {
+  const csv = ["编号,Hired", "E-1,3/5/2025", "E-2,3/6/2025", "E-3,3/7/2025", "E-4,3/13/25", "E-5,3/14/25"].join("\n") + "\n";
+  const zh = await importCsvFile(csv, "hired.csv");
+  assert.equal(zh.evaluate('getFieldProfile("Hired").typeKey'), "date");
+  assert.equal(zh.evaluate("formatDateStyleLine(state.dateStyles[0])"), "「Hired」：主写法是 文本 月/日/年 3 个（如 3/5/2025）；另有 2 行是别的写法：文本 两位年份 2 个（如 3/13/25）。");
+  assert.equal(isHidden(zh, "dateStyleSection"), false);
+  assert.ok(htmlText(zh, "dateStyleDetails").includes("「Hired」：主写法是 文本 月/日/年 3 个（如 3/5/2025）；另有 2 行是别的写法：文本 两位年份 2 个（如 3/13/25）。"));
+  const category = zh.evaluate('JSON.stringify(state.problemCategories.find((c) => c.kind === "dateStyle"))');
+  const notes = JSON.parse(zh.evaluate(`JSON.stringify(listProblemRows(${category}).items.map((item) => item.note))`));
+  assert.deepEqual(notes, ["文本 两位年份（主写法是 文本 月/日/年）", "文本 两位年份（主写法是 文本 月/日/年）"]);
+  const en = await importCsvInLanguage(csv, "hired.csv", "en");
+  assert.equal(en.evaluate("formatDateStyleLine(state.dateStyles[0])"), "“Hired”: the main format is text MM/DD/YYYY: 3 (e.g. 3/5/2025); 2 other rows use other formats: text with a two-digit year: 2 (e.g. 3/13/25).");
+  // A column of two-digit years only is one style: no hint.
+  const only = await importCsvFile(["编号,Hired", "E-1,3/5/25", "E-2,3/6/25", "E-3,3/13/25", "E-4,5-Mar-25"].join("\n") + "\n", "only.csv");
+  assert.equal(only.evaluate('getFieldProfile("Hired").typeKey'), "date");
+  assert.equal(only.evaluate("state.dateStyles.length"), 0);
+  assert.equal(isHidden(only, "dateStyleSection"), true);
+});
+
+// ---- v3.3.0 ⑨: the English sample in USD and an English subtotal fixture ----
+test("v3.3.0 English sample: three amounts in USD, read by unit like 5400元 in the Chinese sample", async () => {
+  const lines = sampleOrdersEnLines();
+  assert.equal(Buffer.byteLength(`${sampleOrdersEnLfText()}`), 3306);
+  for (const [id, cell] of [["SO-1005", "\"5,400 USD\""], ["SO-1019", "900 USD"], ["SO-1031", "\"1,050 USD\""]]) {
+    assert.ok(lines.find((line) => line.startsWith(`${id},`)).includes(`,${cell},`), id);
+  }
+  assert.doesNotMatch(sampleOrdersEnLfText(), /\$\d/);
+  const scope = await importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "en");
+  assert.equal(scope.evaluate('getFieldProfile("Amount").typeKey'), "numeric");
+  assert.equal(scope.evaluate('getFieldProfile("Amount").numberStrategy.unit'), "USD");
+  assert.equal(isHidden(scope, "numberConversionSection"), false);
+  assert.ok(htmlText(scope, "numberConversionDetails").includes("“Amount”: read 3 values as “USD” (5,400 USD, 900 USD, 1,050 USD)"));
+  const zh = await importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "zh");
+  // The page escapes the straight quotes of the Chinese sentence.
+  assert.ok(htmlText(zh, "numberConversionDetails").includes("「Amount」：按&quot;USD&quot;读取了 3 个值（5,400 USD、900 USD、1,050 USD）"));
+});
+
+test("v3.3.0 fixture: en-subtotal.csv has Excel's subtotals and a grand total, and a Weekly Total column that is not one", async () => {
+  const bytes = fs.readFileSync(path.join(STAGE3_FIXTURES, "en-subtotal.csv"));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = bytes.toString("utf8");
+  assert.equal(text.split("\r\n").length - 1, 21);
+  assert.equal(text.split("\n").length - 1, 21);
+  const expected = knownIssues["en-subtotal.csv"];
+  for (const language of ["zh", "en"]) {
+    const scope = await importStage3Fixture("en-subtotal.csv", language);
+    const summary = importedSummary(scope.evaluate);
+    assert.equal(summary.rows, expected.dataRows, language);
+    assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected), language);
+    const totals = JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals.map(({ line, label, field, matches }) => ({ line, label, field, matches })))"));
+    assert.deepEqual(totals, expected.suspectedTotals, language);
+    // Ten labelled rows: the five totals and five "Weekly Total" reports, which mostly do not add up.
+    assert.equal(scope.evaluate("state.totalLabelRows.length"), 10, language);
+    assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 5, language);
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /也带这类字样|more rows? also ha/, language);
+  }
 });

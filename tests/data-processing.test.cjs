@@ -285,14 +285,14 @@ for (const method of ["median", "sum", "avg"]) {
   });
 }
 
-test("public current version markers agree on v3.2.2", () => {
+test("public current version markers agree on v3.3.0", () => {
   const root = path.join(__dirname, "..");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.2.2");
-  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.2\.2/);
-  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.2\.2/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version, "3.3.0");
+  assert.match(fs.readFileSync(path.join(root, "README.md"), "utf8"), /\*\*Current release:\*\* v3\.3\.0/);
+  assert.match(fs.readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /\*\*当前版本：\*\* v3\.3\.0/);
   const { evaluate } = createScriptContext();
-  assert.equal(evaluate("buildReportData().version"), "v3.2.2");
-  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.2.2");
+  assert.equal(evaluate("buildReportData().version"), "v3.3.0");
+  assert.equal(evaluate("normalizeReportSnapshot({}).version"), "v3.3.0");
 
   // index.html cache-busting parameters must follow package.json.
   const packageVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -412,8 +412,11 @@ test("placeholder spellings never convert or give number strategy evidence (cont
     const strategies = [
       {},
       { unit: "", unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true },
-      ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
+      ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true })),
+      // v3.3.0: English units and currency codes, keyed by the name matchNumberWithUnit() returns.
+      ...[...new Set([...Object.values(ENGLISH_NUMBER_UNITS), ...Object.values(ENGLISH_CURRENCY_PREFIXES)])].map((unit) => ({ unit, unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
     ];
+    // v3.3.0: 28 writings (None moved to the maybe tier with Unknown, TBD, ?, n.a. and their cases).
     return {
       formCount: forms.length,
       converted: forms.filter((form) => strategies.some((strategy) => toNumber(form, strategy) !== null)),
@@ -421,7 +424,7 @@ test("placeholder spellings never convert or give number strategy evidence (cont
       strategy: buildNumberStrategy(forms)
     };
   })())`));
-  assert.equal(result.formCount, 57);
+  assert.equal(result.formCount, 84);
   assert.deepEqual(result.converted, []);
   assert.deepEqual(result.matched, []);
   assert.deepEqual(result.strategy, { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: false });
@@ -548,14 +551,16 @@ test("ID names cover row-number headers and Chinese names ending in ID", () => {
   const { context, evaluate } = createScriptContext();
   const isIdName = (name) => evaluate(`isIdFieldName(${JSON.stringify(name)})`);
 
-  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id"]) {
+  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id",
+    "Order Number", "Order No", "Order No.", "Invoice number", "ticket_no", "Phone Number", "Number", "No"]) {
     assert.equal(isIdName(name), true, name);
   }
-  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量"]) {
+  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量",
+    "Number of employees", "number_of_items", "no_previous", "No Show", "Number Sold"]) {
     assert.equal(isIdName(name), false, name);
   }
-  // Already true before v2.1.4 (deferred finding 6 of v2.1.3); kept unchanged on purpose.
-  assert.equal(isIdName("Number of employees"), true);
+  // v3.3.0 (the other half of deferred finding 6 of v2.1.3): number and no count only as the last
+  // word, so "Number of employees" is a count now. id, uuid, guid, code and key are unchanged.
   assert.equal(isIdName("Key metric"), true);
 
   context.__countRows = Array.from({ length: 12 }, (_, index) => ({ 学号数量: String(index + 1) }));
@@ -1216,14 +1221,17 @@ test("ID duplicate texts: row numbers, identical rows, overflow and the repeated
 test("the placeholder list has a common tier and a maybe-valid tier", () => {
   const { evaluate } = createScriptContext();
   assert.deepEqual(JSON.parse(evaluate("JSON.stringify(PLACEHOLDER_VALUES)")), {
-    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"],
-    maybe: ["无", "暂无", "-", "/", "NA"]
+    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "NaN", "nan", "NAN", "—", "——", "--"],
+    maybe: ["无", "暂无", "-", "/", "NA", "None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."]
   });
   assert.equal(evaluate('placeholderTier("N/A")'), "common");
   assert.equal(evaluate('placeholderTier("——")'), "common");
   assert.equal(evaluate('placeholderTier("无")'), "maybe");
   assert.equal(evaluate('placeholderTier("NA")'), "maybe");
   assert.equal(evaluate('placeholderTier("缺考")'), "");
+  // v3.3.0: None is an answer in some columns ("damage: None"), so it moved to the maybe tier.
+  assert.equal(evaluate('placeholderTier("None")'), "maybe");
+  assert.equal(evaluate('placeholderTier("na")'), "");
 });
 
 test("placeholder keys trim, apply NFKC and trim again, then match the whole cell", () => {
@@ -1582,4 +1590,411 @@ test("v2.10.0 guard: every rewritten number reads back as the field parser's num
     return result.value === value ? [] : [["kept changed", value, result.value]];
   })))`));
   assert.deepEqual(bad, []);
+});
+
+// v3.3.0 ①: the three date matchers use patterns built once at load, not a new RegExp per call
+// (toDate() runs them for every date-like cell). The counter is checked on a RegExp built here.
+test("v3.3.0 date matchers build no RegExp per call and match as before", () => {
+  const { evaluate } = createScriptContext();
+  const result = JSON.parse(evaluate(`JSON.stringify((() => {
+    const Original = RegExp;
+    let built = 0;
+    RegExp = new Proxy(Original, { construct(target, args) { built += 1; return Reflect.construct(target, args); } });
+    try {
+      new RegExp("a");
+      const sanity = built;
+      built = 0;
+      const texts = ["2024-05-06", "2024/5/6 10:30", "06/05/2024", "13.05.2024", "2024年5月6日", "2024 年 5 月 6 10:30", "2024-13-45", "abc"];
+      const matches = texts.map((text) => [matchYearFirstDate(text), matchDayOrMonthFirstDate(text), matchChineseDate(text)].map((match) => match && [...match]));
+      for (let i = 0; i < 10000; i += 1) {
+        matchYearFirstDate("2024-05-06");
+        matchDayOrMonthFirstDate("06/05/2024");
+        matchChineseDate("2024年5月6日");
+      }
+      return { sanity, built, matches };
+    } finally {
+      RegExp = Original;
+    }
+  })())`));
+  assert.equal(result.sanity, 1);
+  assert.equal(result.built, 0);
+  assert.deepEqual(result.matches, [
+    [["2024-05-06", "2024", "-", "05", "06", ""], null, null],
+    [["2024/5/6 10:30", "2024", "/", "5", "6", " 10:30"], null, null],
+    [null, ["06/05/2024", "06", "/", "05", "2024", ""], null],
+    [null, ["13.05.2024", "13", ".", "05", "2024", ""], null],
+    [null, null, ["2024年5月6日", "2024", "5", "6", ""]],
+    [null, null, ["2024 年 5 月 6 10:30", "2024", "5", "6", " 10:30"]],
+    [["2024-13-45", "2024", "-", "13", "45", ""], null, null],
+    [null, null, null]
+  ]);
+});
+
+// ---- v3.3.0 ③: None and new spellings that may mean blank ----
+test("v3.3.0 placeholders: the new maybe-tier writings, full-width forms included; look-alikes that are not on the list", () => {
+  const { context, evaluate } = createScriptContext();
+  const key = (value) => {
+    context.__placeholderValue = value;
+    return evaluate("placeholderKey(__placeholderValue)");
+  };
+  const tier = (value) => evaluate(`placeholderTier(placeholderKey(${JSON.stringify(value)}))`);
+  for (const value of ["None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."]) {
+    assert.equal(key(value), value, value);
+    assert.equal(key(` ${value} `), value, value);
+    assert.equal(tier(value), "maybe", value);
+  }
+  // Full-width forms through NFKC: ？ (U+FF1F), ＵＮＫＮＯＷＮ, ｎ．ａ．
+  const fullWidth = (text) => text.replace(/[!-~]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0xfee0));
+  assert.equal(key(String.fromCharCode(0xff1f)), "?");
+  assert.equal(key(fullWidth("UNKNOWN")), "UNKNOWN");
+  assert.equal(key(fullWidth("n.a.")), "n.a.");
+  // Whole cells only: near misses and other "no data" words are not on the list.
+  for (const value of ["na", "NONE.", "Nones", "(blank)", "Missing", "nil", "??", "TBD?", "n/a.", "N.A", "Unknown value"]) {
+    assert.equal(key(value), "", value);
+  }
+  // "常见写法全部按空值处理" covers the common tier only, which no longer holds any None.
+  assert.equal(evaluate("PLACEHOLDER_VALUES.common.some((key) => key.toLowerCase() === 'none')"), false);
+});
+
+test("v3.3.0 placeholders: the cell length limit follows the longest writing (14), and pure ASCII cells skip NFKC", () => {
+  const { context, evaluate } = createScriptContext();
+  assert.equal(evaluate("PLACEHOLDER_MAX_CELL_LENGTH"), 14);
+  // 14 units can still match (UNKNOWN in full width with spaces would be longer; the limit is on the trimmed text).
+  context.__cells = ["UNKNOWN", `${" ".repeat(20)}UNKNOWN`, "x".repeat(14), "x".repeat(15)];
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__cells.map(placeholderKey))")), ["UNKNOWN", "UNKNOWN", "", ""]);
+  // NFKC leaves every ASCII code unit and every ASCII writing on the list as it is, so skipping it changes nothing.
+  const identity = JSON.parse(evaluate(`JSON.stringify((() => {
+    const units = Array.from({ length: 128 }, (_, code) => String.fromCharCode(code));
+    const writings = [...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe].filter((text) => /^[\\x00-\\x7F]*$/.test(text));
+    return { units: units.filter((text) => text.normalize("NFKC") !== text).length, writings: writings.filter((text) => text.normalize("NFKC") !== text).length, writingCount: writings.length };
+  })())`));
+  assert.deepEqual(identity, { units: 0, writings: 0, writingCount: 24 });
+  const calls = JSON.parse(evaluate(`JSON.stringify((() => {
+    const original = String.prototype.normalize;
+    let count = 0;
+    String.prototype.normalize = function (...args) { count += 1; return original.apply(this, args); };
+    try {
+      const ascii = ["Item-0001abc", "UNKNOWN", "n.a.", "?", "ORDER-LONG-1"].map(placeholderKey);
+      const asciiCalls = count;
+      count = 0;
+      const wide = [String.fromCharCode(0xff1f), "暂无"].map(placeholderKey);
+      return { ascii, asciiCalls, wide, wideCalls: count };
+    } finally {
+      String.prototype.normalize = original;
+    }
+  })())`));
+  assert.deepEqual(calls, { ascii: ["", "UNKNOWN", "n.a.", "?", ""], asciiCalls: 0, wide: ["?", "暂无"], wideCalls: 2 });
+});
+
+// The maybe-tier note of 3594fba, written out here: a column whose maybe writings are all among
+// the five of v2.4.0 keeps it byte for byte in both languages.
+function oldPlaceholderNotes(keys, language) {
+  const maybe = keys.filter((key) => ["无", "暂无", "-", "/", "NA"].includes(key));
+  if (!maybe.length) return "";
+  const dash = keys.includes("-");
+  if (language === "zh") return `「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。${dash ? "在会计格式里，「-」通常表示 0。" : ""}`;
+  const examples = [maybe.some((key) => key !== "NA") ? "a yes/no answer" : "", maybe.includes("NA") ? "NA for North America" : ""].filter(Boolean).join(", or ");
+  const sentence = maybe.length === 1
+    ? `“${maybe[0]}” may also be a real value (for example ${examples}); make sure that in this column it means there is no data.`
+    : `${maybe.map((key) => `“${key}”`).join(", ")} may also be real values (for example ${examples}); make sure that in this column they mean there is no data.`;
+  return `${sentence}${dash ? " In accounting formats, “-” usually means 0." : ""}`;
+}
+
+test("v3.3.0 placeholders: a column with only the five old maybe writings keeps the old note in both languages (31 subsets)", () => {
+  const old = ["无", "暂无", "-", "/", "NA"];
+  for (const language of ["zh", "en"]) {
+    const { evaluate } = createScriptContext({ language });
+    let checked = 0;
+    for (let mask = 1; mask < 32; mask += 1) {
+      const subset = old.filter((_, index) => mask & (1 << index));
+      for (const keys of [subset, ["N/A", ...subset], [...subset, "NULL"]]) {
+        assert.equal(evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`), oldPlaceholderNotes(keys, language), `${language} ${keys.join(" ")}`);
+        checked += 1;
+      }
+    }
+    assert.equal(checked, 93);
+    assert.equal(evaluate('formatPlaceholderNotes(["N/A", "NULL"])'), "");
+  }
+});
+
+test("v3.3.0 placeholders: a column with a new maybe writing names only its own writings, each kind with its example", () => {
+  const zh = createScriptContext({ language: "zh" });
+  const en = createScriptContext({ language: "en" });
+  const note = (scope, keys) => scope.evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`);
+  assert.equal(note(zh, ["None"]), "「None」也可能是有效值（例如表示“没有”的回答，比如损坏程度：None），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["None", "none"]), "「None」「none」也可能是有效值（例如表示“没有”的回答，比如损坏程度：None），请确认这一列里它们确实表示没有数据。");
+  assert.equal(note(zh, ["Unknown"]), "「Unknown」也可能是有效值（例如单独的一个选项），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["TBD"]), "「TBD」也可能是有效值（例如表示“待定”的状态），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["?"]), "「?」也可能是有效值（例如问卷里的“不确定”），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["n.a."]), "「n.a.」也可能是有效值（例如“不适用”），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["N/A", "UNKNOWN", "-"]), "「UNKNOWN」「-」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["None", "Unknown", "TBD", "?", "n.a.", "NA", "无"]), "「None」「Unknown」「TBD」「?」「n.a.」「NA」「无」也可能是有效值（例如“有/无”选项；北美地区；表示“没有”的回答，比如损坏程度：None；单独的一个选项；表示“待定”的状态；问卷里的“不确定”；“不适用”），请确认这一列里它们确实表示没有数据。");
+
+  assert.equal(note(en, ["None"]), "“None” may also be a real value (for example an answer meaning “none”, such as damage: None); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["None", "none"]), "“None”, “none” may also be real values (for example an answer meaning “none”, such as damage: None); make sure that in this column they mean there is no data.");
+  assert.equal(note(en, ["Unknown"]), "“Unknown” may also be a real value (for example an option of its own); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["TBD"]), "“TBD” may also be a real value (for example a status such as “to be decided”); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["?"]), "“?” may also be a real value (for example “not sure” in a survey); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["N.A."]), "“N.A.” may also be a real value (for example “not applicable”); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["N/A", "UNKNOWN", "-"]), "“UNKNOWN”, “-” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["None", "Unknown", "TBD", "?", "n.a.", "NA", "无"]), "“None”, “Unknown”, “TBD”, “?”, “n.a.”, “NA”, “无” may also be real values (for example a yes/no answer; or NA for North America; or an answer meaning “none”, such as damage: None; or an option of its own; or a status such as “to be decided”; or “not sure” in a survey; or “not applicable”); make sure that in this column they mean there is no data.");
+});
+
+// The report passes the writings of every column at once, so a writing can come twice; each is
+// named once. The Chinese old sentence is fixed text and stays byte for byte; the English old
+// sentence loses the repeat and is singular when one writing is left (an intended fix).
+test("v3.3.0 placeholders: a writing that comes twice is named once, in both languages and both sentences", () => {
+  const zh = createScriptContext({ language: "zh" });
+  const en = createScriptContext({ language: "en" });
+  const note = (scope, keys) => scope.evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`);
+  assert.equal(note(zh, ["-", "Unknown", "-"]), "「-」「Unknown」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["NA", "-", "NA", "None", "none"]), "「NA」「-」「None」「none」也可能是有效值（例如“有/无”选项；北美地区；表示“没有”的回答，比如损坏程度：None），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["Unknown", "Unknown"]), "「Unknown」也可能是有效值（例如单独的一个选项），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["-", "-", "NA", "NA"]), "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(en, ["-", "-"]), "“-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["NA", "-", "NA"]), "“NA”, “-” may also be real values (for example a yes/no answer, or NA for North America); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["-", "Unknown", "-"]), "“-”, “Unknown” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+});
+
+// ---- v3.3.0 ④: number and no count as IDs only as the last word ----
+test("v3.3.0 ID names: a column of counts 0-9 is numeric unless number / no is its last word", () => {
+  const { context, evaluate } = createScriptContext();
+  const counts = [12, 7, 30, 15, 22, 9, 41, 3, 18, 26, 11, 5, 33, 14, 8, 20].map((n) => String(n % 10));
+  const typeOf = (name) => {
+    context.__rows = counts.map((value) => ({ [name]: value }));
+    return evaluate(`buildColumnProfile(${JSON.stringify(name)}, __rows).typeKey`);
+  };
+  for (const name of ["Number of Records", "No. of items", "no_previous", "num_of_items", "number_of_items", "No Show", "Number Sold"]) {
+    assert.equal(typeOf(name), "numeric", name);
+  }
+  for (const name of ["number", "Order Number", "Order No", "Order No.", "Customer No", "No", "No.", "Number", "#", "Invoice number", "ticket_no", "Phone Number", "Lot no."]) {
+    assert.equal(typeOf(name), "id", name);
+  }
+  // Known (ARCHITECTURE): a count whose last word is number still reads as an ID.
+  assert.equal(typeOf("Total Number"), "id");
+});
+
+test("v3.3.0 ID names: a survey header with the word yes is a question, so its last word no is not an ID", () => {
+  const { context, evaluate } = createScriptContext();
+  const answers = Array.from({ length: 16 }, (_, index) => (index % 3 ? "Yes" : "No"));
+  const view = (name) => {
+    context.__rows = answers.map((value) => ({ [name]: value }));
+    return [evaluate(`isIdFieldName(${JSON.stringify(name)})`), evaluate(`buildColumnProfile(${JSON.stringify(name)}, __rows).typeKey`)];
+  };
+  for (const name of ["Returning customer: Yes or No", "Smoker Yes No", "Smoker_yes_no", "Smoker yes/no", "YES/NO", "Yes-No", "(Yes) or No", "Returning customer? Yes, No"]) {
+    assert.deepEqual(view(name), [false, "category"], name);
+  }
+  // Not a separate word: "Yesterday", "Eyes". And ordinary IDs stay IDs.
+  for (const name of ["Yesterday No", "Eyes No", "Room No", "Order No.", "Order Number", "No"]) {
+    assert.deepEqual(view(name), [true, "id"], name);
+  }
+  // Only the number / no rule gives way: id, uuid, guid, code and key are unchanged.
+  for (const name of ["Yes code", "yes_id", "Yes Key"]) assert.equal(view(name)[0], true, name);
+});
+
+// ---- v3.3.0 ⑤: English units and currency codes ----
+// [value, number read with the column's own strategy, the strategy's unit]
+const readWithOwnStrategy = (evaluate, value) => JSON.parse(evaluate(`JSON.stringify((() => {
+  const value = ${JSON.stringify(value)};
+  const strategy = buildNumberStrategy([value, value]);
+  return [toNumber(value, strategy), strategy.unit];
+})())`));
+
+test("v3.3.0 units: every English spelling reads as its unit's name, in any case; a dot only after an English unit", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, number, unit] of [
+    ["200 USD", 200, "USD"], ["200 usd", 200, "USD"], ["5,400 USD", 5400, "USD"], ["-200 USD", -200, "USD"], ["300 RMB", 300, "CNY"], ["300 CNY", 300, "CNY"],
+    ["9 EUR", 9, "EUR"], ["9 GBP", 9, "GBP"], ["9 JPY", 9, "JPY"], ["9 CAD", 9, "CAD"], ["9 AUD", 9, "AUD"], ["9 HKD", 9, "HKD"], ["9 CHF", 9, "CHF"], ["9 INR", 9, "INR"], ["9 SGD", 9, "SGD"],
+    ["12 pcs", 12, "pcs"], ["1 pc", 1, "pcs"], ["3 pieces", 3, "pcs"], ["1 piece", 1, "pcs"], ["12 units", 12, "units"], ["1 unit", 1, "units"],
+    ["5 lbs", 5, "lb"], ["5 lb", 5, "lb"], ["5 lbs.", 5, "lb"], ["5 oz", 5, "oz"],
+    ["8 hours", 8, "hours"], ["1 hour", 1, "hours"], ["8 hrs", 8, "hours"], ["8 hr", 8, "hours"], ["30 minutes", 30, "minutes"], ["1 minute", 1, "minutes"], ["30 mins", 30, "minutes"], ["30 min", 30, "minutes"],
+    ["5 days", 5, "days"], ["1 day", 1, "days"], ["3 weeks", 3, "weeks"], ["1 week", 1, "weeks"], ["2 months", 2, "months"], ["1 month", 1, "months"],
+    ["2 years", 2, "years"], ["1 year", 1, "years"], ["2 yrs", 2, "years"], ["1 yr", 1, "years"], ["10 miles", 10, "miles"], ["1 mile", 1, "miles"], ["6 ft", 6, "ft"], ["6 feet", 6, "ft"], ["6 FT", 6, "ft"]
+  ]) assert.deepEqual(readWithOwnStrategy(evaluate, value), [number, unit], value);
+  // The dot is English only; Chinese units and kg, cm, mm, km take none.
+  for (const value of ["5 kg.", "200元.", "3 cm.", "5 lbs.."]) assert.deepEqual(readWithOwnStrategy(evaluate, value), [null, ""], value);
+});
+
+test("v3.3.0 units: currency codes in front; what is not read", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, number] of [["USD 200", 200], ["USD200", 200], ["US$200", 200], ["us$ 1,050.50", 1050.5], ["Usd 200", 200], ["USD -200", -200], ["RMB 300", 300]]) {
+    assert.deepEqual(readWithOwnStrategy(evaluate, value), [number, value.toLowerCase().startsWith("rmb") ? "CNY" : "USD"], value);
+  }
+  // A code on both sides, single letters, in and mi, K / M, degrees, CR, words around the number.
+  for (const value of ["USD 200 USD", "200 USD EUR", "5 g", "5 m", "5 h", "5 s", "5 d", "5 k", "6 in", "3 mi", "1.2K", "3.4M", "$1.2M", "72°F", "1,234.50 CR", "Day 3", "2 for $5", "(200 USD)", "USD -", "127 Hours long"]) {
+    assert.deepEqual(readWithOwnStrategy(evaluate, value), [null, ""], value);
+  }
+  // Chinese units keep their own lower-case key in the strategy (the summary guard depends on it).
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5kg", "6 KG", "200元"]).units)')), { kg: 2, 元: 1 });
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5 usd", "6 USD", "US$7"]).units)')), { USD: 3 });
+});
+
+test("v3.3.0 units: two units in a column read none; a currency sign beside its code is no conflict", () => {
+  const { evaluate } = createScriptContext();
+  const column = (values) => JSON.parse(evaluate(`JSON.stringify((() => { const values = ${JSON.stringify(values)}; const s = buildNumberStrategy(values); return [s.unit, s.unitConflict, s.units, values.map((v) => toNumber(v, s))]; })())`));
+  assert.deepEqual(column(["200 USD", "300 EUR"]), ["", true, { USD: 1, EUR: 1 }, [null, null]]);
+  assert.deepEqual(column(["10 kg", "10 lb"]), ["", true, { kg: 1, lb: 1 }, [null, null]]);
+  assert.deepEqual(column(["5,400 USD", "$900"]), ["USD", false, { USD: 1 }, [5400, 900]]);
+  assert.deepEqual(column(["1 hour", "8 hours", "8 hrs"]), ["hours", false, { hours: 3 }, [1, 8, 8]]);
+});
+
+test("v3.3.0 units: the standardized table writes English units as plain numbers; only the number decides scientific notation", () => {
+  const { evaluate } = createScriptContext();
+  const cell = (value, column = [value, value]) => JSON.parse(evaluate(`JSON.stringify((() => { const s = buildNumberStrategy(${JSON.stringify(column)}); const r = standardizeNumberCell(${JSON.stringify(value)}, s, [], ""); return [r.value, r.action]; })())`));
+  for (const [value, expected] of [["200 EUR", "200"], ["2 years", "2"], ["10 miles", "10"], ["5 pieces", "5"], ["6 feet", "6"], ["3 weeks", "3"], ["1 minute", "1"], ["USD 1,050.50", "1050.50"], ["US$200", "200"], ["5 lbs.", "5"], ["1.2万 USD", "12000"]]) {
+    assert.deepEqual(cell(value), [expected, "number"], value);
+  }
+  for (const value of ["1e3", "1.2E5", "-3e-2"]) assert.deepEqual(cell(value), [value, "keptScientific"], value);
+  // Chinese units and plain numbers as before.
+  assert.deepEqual(cell("2,200元"), ["2200", "number"]);
+  assert.deepEqual(cell(" 300 "), ["300", "trim"]);
+});
+
+test("v3.3.0 units: a text column says nothing about units it read, only about a conflict; number columns as before", () => {
+  const { context, evaluate } = createScriptContext();
+  const lines = (field, values) => {
+    context.__rows = values.map((value) => ({ [field]: value }));
+    return JSON.parse(evaluate(`JSON.stringify((() => { const profile = buildColumnProfile(${JSON.stringify(field)}, __rows); return [profile.typeKey, buildNumberConversionSummary([profile]).map(formatNumberConversion)]; })())`));
+  };
+  // Repeated, so the column is text, not an ID column.
+  const titles = ["Jaws", "Heat", "Up", "Cars", "Big", "127 Hours", "Jaws", "Heat", "Up", "Cars", "Big", "127 Hours"];
+  assert.deepEqual(lines("title", titles), ["category", []]);
+  const mixed = ["2 kg", "3 斤", "4 kg", "5 斤", "6 kg", "7 斤", "2 kg", "3 斤", "4 kg", "5 斤", "6 kg", "7 斤"];
+  assert.deepEqual(lines("重量", mixed), ["category", ["「重量」：同时出现 kg（6 个）和 斤（6 个），没有按单位读取，这些值不能读成数字。"]]);
+  const usd = Array.from({ length: 12 }, (_, i) => `${100 + i * 7} USD`);
+  assert.deepEqual(lines("Amount", usd), ["numeric", ["「Amount」：按\"USD\"读取了 12 个值（100 USD、107 USD、114 USD）"]]);
+  const kg = Array.from({ length: 12 }, (_, i) => `${1 + i}kg`);
+  assert.deepEqual(lines("重", kg), ["numeric", ["「重」：按\"kg\"读取了 12 个值（1kg、2kg、3kg）"]]);
+});
+
+// ---- v3.3.0 ⑥: accounting dashes and brackets after a currency sign ----
+test("v3.3.0 accounting: a dash after a currency sign is zero; brackets after it are negative; a lone dash is not a number", () => {
+  const { context, evaluate } = createScriptContext();
+  const read = (values) => {
+    context.__values = values;
+    return JSON.parse(evaluate("JSON.stringify(__values.map((value) => toPlainNumber(value)))"));
+  };
+  const yen = String.fromCharCode(0xffe5);
+  assert.deepEqual(read(["$-", " $-   ", "$ -", "\u20ac-", `${yen}-`, "\u00a3-", "\u00a5-"]), [0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(read(["$(1,200.00)", "$( 5 )", "$(0)", "\u20ac(12.5)"]), [-1200, -5, 0, -12.5]);
+  // As before.
+  assert.deepEqual(read(["($1,200.00)", "-$1,200.00", "$-1,200.00", "$900", "-$5", "(5)"]), [-1200, -1200, -1200, 900, -5, -5]);
+  // Still not numbers: a lone dash (a maybe-tier placeholder), two dashes, a sign before the
+  // currency with a dash, brackets with a dash, a dash then a percent, nested brackets.
+  assert.deepEqual(read(["-", "$--", "-$-", "($-)", "$-%", "$((5))", "$(5", "$ ( )"]), [null, null, null, null, null, null, null, null]);
+  assert.equal(evaluate('placeholderTier("-")'), "maybe");
+});
+
+test("v3.3.0 accounting: the standardized table writes $- as 0 and $(1,200.00) as -1200.00, reading back the same number", () => {
+  const { context, evaluate } = createScriptContext();
+  const values = [" $-   ", "$ -", "\u20ac-", "$(1,200.00)", "$( 5 )", "$(0)", "$(0.50)", "\u20ac(12.5)", "($1,200.00)", "$900"];
+  context.__values = values;
+  const cells = JSON.parse(evaluate(`JSON.stringify(__values.map((value) => {
+    const result = standardizeNumberCell(value, buildNumberStrategy(__values), [], "");
+    return [result.value, result.action, toPlainNumber(result.value) === toPlainNumber(value) || (toPlainNumber(result.value) === 0 && toPlainNumber(value) === 0)];
+  }))`));
+  assert.deepEqual(cells, [
+    ["0", "number", true], ["0", "number", true], ["0", "number", true],
+    ["-1200.00", "number", true], ["-5", "number", true], ["0", "number", true], ["-0.50", "number", true], ["-12.5", "number", true],
+    ["-1200.00", "number", true], ["900", "number", true]
+  ]);
+  // A lone dash stays as written (a placeholder that is not confirmed).
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(standardizeNumberCell("-", buildNumberStrategy(["-", "5"]), [], ""))')), { value: "-", action: "keptPendingPlaceholder" });
+});
+
+// ---- v3.3.0 ⑦: 12-hour clock and ordinal days ----
+// [toDate with mdy, dateStyleOf with mdy, dateTextHasTime, standardizeDateCell with mdy]
+const readDate = (evaluate, value) => JSON.parse(evaluate(`JSON.stringify((() => {
+  const value = ${JSON.stringify(value)};
+  const strategy = { order: "mdy" };
+  const date = toDate(value, strategy);
+  const cell = standardizeDateCell(value, strategy);
+  return [date ? date.toISOString().slice(0, 10) : null, dateStyleOf(value, strategy), date ? dateTextHasTime(value.trim()) : null, cell.value + " / " + cell.action];
+})())`));
+
+test("v3.3.0 dates: a 12-hour clock after a space, hours 1-12; the date is kept and the cell stays as written", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, date, style] of [
+    ["3/5/2025 2:30 PM", "2025-03-05", "mdy"], ["3/5/2025 2:30:15 PM", "2025-03-05", "mdy"], ["3/5/2025 2:30 p.m.", "2025-03-05", "mdy"],
+    ["3/5/2025 2:30pm", "2025-03-05", "mdy"], ["3/5/2025 12:00 AM", "2025-03-05", "mdy"], ["3/5/2025 12:59 am", "2025-03-05", "mdy"], ["3/5/2025 9:05 A.M.", "2025-03-05", "mdy"],
+    ["2025-03-05 2:30 PM", "2025-03-05", "ymdDash"], ["2025/3/5 11:59:59 PM", "2025-03-05", "ymdSlash"], ["2025年3月5日 2:30 PM", "2025-03-05", "chinese"]
+  ]) assert.deepEqual(readDate(evaluate, value), [date, style, true, `${value} / keptTime`], value);
+  // Hours outside 1-12 with AM / PM, a broken clock, and (R5) a 12-hour clock after T are not dates.
+  for (const value of ["3/5/2025 0:30 AM", "3/5/2025 13:30 PM", "3/5/2025 2:60 PM", "3/5/2025 2:30 XM", "3/5/2025 2:30 PMM", "3/5/2025 2:30 P", "3/5/2025 2:30 A", "3/5/2025 2:30 P.", "2025-03-05T2:30 PM", "2025-03-05T02:30 PM"]) {
+    assert.deepEqual(readDate(evaluate, value).slice(0, 2), [null, null], value);
+  }
+  // The 24-hour clock is as before, with T too.
+  for (const value of ["3/5/2025 14:30", "2025-03-05T14:30", "2025-03-05 00:30"]) assert.equal(readDate(evaluate, value)[0], "2025-03-05", value);
+});
+
+test("v3.3.0 dates: an English day may be an ordinal with the right suffix", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, date] of [
+    ["March 5th, 2025", "2025-03-05"], ["5th March 2025", "2025-03-05"], ["March 1st, 2025", "2025-03-01"], ["March 2nd, 2025", "2025-03-02"], ["March 3rd 2025", "2025-03-03"],
+    ["March 11th, 2025", "2025-03-11"], ["March 12th, 2025", "2025-03-12"], ["March 13th, 2025", "2025-03-13"], ["March 21st, 2025", "2025-03-21"], ["March 22nd, 2025", "2025-03-22"],
+    ["March 23rd, 2025", "2025-03-23"], ["March 31st, 2025", "2025-03-31"], ["Wednesday, March 5th, 2025", "2025-03-05"], ["Mar 5TH, 2025", "2025-03-05"], ["March 5th, 2025 2:30 PM", "2025-03-05"]
+  ]) assert.equal(readDate(evaluate, value)[0], date, value);
+  for (const value of ["March 1th, 2025", "March 11st, 2025", "March 12nd, 2025", "March 13rd, 2025", "March 2th, 2025", "March 22th, 2025", "the 5th of March 2025", "March 32nd, 2025", "5th 3 2025"]) {
+    assert.equal(readDate(evaluate, value)[0], null, value);
+  }
+  // Without a time it is rewritten like any English date; the weekday is still not checked.
+  assert.deepEqual(readDate(evaluate, "March 5th, 2025"), ["2025-03-05", "english", false, "2025-03-05 / date"]);
+});
+
+test("v3.3.0 dates: neither a 12-hour clock nor an ordinal is a new date style", () => {
+  const { evaluate } = createScriptContext();
+  const style = (value) => evaluate(`dateStyleOf(${JSON.stringify(value)}, { order: "mdy" })`);
+  assert.equal(style("3/5/2025 2:30 PM"), style("3/6/2025"));
+  assert.equal(style("2025-03-05 2:30 PM"), style("2025-03-06"));
+  assert.equal(style("March 5th, 2025"), style("Mar 6, 2025"));
+  assert.equal(style("5th March 2025"), style("6 March 2025"));
+});
+
+// ---- v3.3.0 ⑧: two-digit years ----
+const dateIn = (evaluate, value, order) => evaluate(`(() => { const d = toDate(${JSON.stringify(value)}, { order: ${JSON.stringify(order)} }); return d ? d.toISOString().slice(0, 10) : null; })()`);
+
+test("v3.3.0 two-digit years: slashes and Excel's d-mmm-yy only; 00-29 are 2000-2029, 30-99 are 1930-1999", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, none, mdy, dmy] of [
+    ["3/5/25", null, "2025-03-05", "2025-05-03"], ["03/05/25", null, "2025-03-05", "2025-05-03"],
+    ["13/5/25", "2025-05-13", "2025-05-13", "2025-05-13"], ["3/13/25", "2025-03-13", "2025-03-13", "2025-03-13"], ["5/5/25", "2025-05-05", "2025-05-05", "2025-05-05"],
+    ["12/31/99", "1999-12-31", "1999-12-31", "1999-12-31"], ["1/1/00", "2000-01-01", "2000-01-01", "2000-01-01"], ["1/1/29", "2029-01-01", "2029-01-01", "2029-01-01"], ["1/1/30", "1930-01-01", "1930-01-01", "1930-01-01"],
+    ["5-Mar-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["05-Mar-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["5-March-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["5-Mar-25 2:30 PM", "2025-03-05", "2025-03-05", "2025-03-05"],
+    ["3/5/25 14:30", null, "2025-03-05", "2025-05-03"], ["2/30/25", null, null, null]
+  ]) assert.deepEqual(["none", "mdy", "dmy"].map((order) => dateIn(evaluate, value, order)), [none, mdy, dmy], value);
+  // The column's day / month order is decided as before, two-digit years counted.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["3/13/25", "3/5/25"].map((v, i, all) => [buildDateStrategy("x", all).order, toDate(v, buildDateStrategy("x", all)).toISOString().slice(0, 10)]))')), [["mdy", "2025-03-13"], ["mdy", "2025-03-05"]]);
+  assert.equal(evaluate('buildDateStrategy("x", ["13/3/25", "5/3/25"]).order'), "dmy");
+  // Known: a year-first two-digit date reads day first (25/03/05 is 2005-03-25).
+  assert.equal(dateIn(evaluate, "25/03/05", "none"), "2005-03-25");
+});
+
+test("v3.3.0 two-digit years: not after dots or dashes (version numbers stay text), not in Mar 5, 25", () => {
+  const { context, evaluate } = createScriptContext();
+  for (const value of ["3.5.25", "3-5-25", "1.13.22", "13.5.25", "13-5-25", "Mar 5, 25", "Jan 1, 25", "5 Mar 25", "March 5, 25", "Wed, 5-Mar-25", "5-Mar-2", "5/3/2", "5/3/025"]) {
+    assert.deepEqual(["none", "mdy", "dmy"].map((order) => dateIn(evaluate, value, order)), [null, null, null], value);
+  }
+  context.__rows = ["1.13.22", "1.13.23", "2.0.1", "2.1.10", "1.13.22", "3.0.0"].map((v) => ({ 版本: v }));
+  assert.equal(evaluate('buildColumnProfile("版本", __rows).typeKey'), "category");
+});
+
+test("v3.3.0 two-digit years: a style of their own (R1); the standardized table writes four digits", () => {
+  const { evaluate } = createScriptContext();
+  const style = (value, order = "mdy") => evaluate(`dateStyleOf(${JSON.stringify(value)}, { order: ${JSON.stringify(order)} })`);
+  for (const value of ["3/5/25", "03/05/25", "3/13/25", "13/5/25", "5/5/25", "5-Mar-25", "05-Mar-25", "3/5/25 2:30 PM"]) assert.equal(style(value), "twoDigitYear", value);
+  assert.equal(style("3/5/2025"), "mdy");
+  assert.equal(style("Mar 5, 2025"), "english");
+  // The others are as before; Excel date cells are not text.
+  assert.equal(evaluate('dateStyleOf(new Date(Date.UTC(2025, 2, 5)), {})'), "excelCell");
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["3/5/25", "5-Mar-25", "3/5/25 2:30 PM", " 3/5/25 "].map((v) => standardizeDateCell(v, { order: "mdy" })))')), [
+    { value: "2025-03-05", action: "date" }, { value: "2025-03-05", action: "date" }, { value: "3/5/25 2:30 PM", action: "keptTime" }, { value: "2025-03-05", action: "date" }
+  ]);
+  // Order unknown: kept, and said why.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(standardizeDateCell("3/5/25", { order: "none" }))')), { value: "3/5/25", action: "keptDateOrder" });
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify([Lp("文本 两位年份", "text with a two-digit year"), DATE_STYLE_NAMES.twoDigitYear])')), [["文本 两位年份", "text with a two-digit year"], ["文本 两位年份", "text with a two-digit year"]]);
+});
+
+test("v3.3.0 accounting: CSV export does not quote $- or $(1,200.00), and keeps a negative as it was", () => {
+  const { evaluate } = createScriptContext();
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["$-", "$(1,200.00)", "-$1,200.00", "-5", "-", "=1+1"].map(sanitizeCsvExportValue))')), ["$-", "$(1,200.00)", "-$1,200.00", "-5", "'-", "'=1+1"]);
 });

@@ -433,11 +433,16 @@ function formatTotalAddends({ scope, firstLine, lastLine, rowCount, contiguous }
 }
 
 // "销售额、成本等于第 5–32 行之和（28 行）": the 说明 of a suspected total's problem row.
+// v3.3.0: in the Chinese sentence a field list that ends in an ASCII letter or digit ("Quantity",
+// "Q1") is set off from 等于 by a space; Chinese names and "等 N 列" are followed directly.
 function formatSuspectedTotalMatches(item) {
-  return item.matches.map((match) => L(
-    `${formatTotalMatchedFields(match.fields)}等于${formatTotalAddends(match)}`,
-    `${formatTotalMatchedFields(match.fields)} ${match.fields.length === 1 ? "equals" : "equal"} ${formatTotalAddends(match)}`
-  )).join(L("；", "; "));
+  return item.matches.map((match) => {
+    const fields = formatTotalMatchedFields(match.fields);
+    return L(
+      `${fields}${/[A-Za-z0-9]$/.test(fields) ? " " : ""}等于${formatTotalAddends(match)}`,
+      `${fields} ${match.fields.length === 1 ? "equals" : "equal"} ${formatTotalAddends(match)}`
+    );
+  }).join(L("；", "; "));
 }
 
 // One line of "疑似合计 / 小计行".
@@ -1014,6 +1019,21 @@ const PLACEHOLDER_MAYBE_NOTE = Lp(
 );
 const PLACEHOLDER_DASH_NOTE = Lp("在会计格式里，「-」通常表示 0。", "In accounting formats, “-” usually means 0.");
 
+// v3.3.0: the five maybe writings of v2.4.0 come first in PLACEHOLDER_VALUES.maybe (its test pins
+// the order). A column whose maybe writings are all among them keeps PLACEHOLDER_MAYBE_NOTE byte
+// for byte; one with a newer writing gets a sentence that names only its own writings, with one
+// example per kind of writing below, in this order.
+const PLACEHOLDER_MAYBE_OLD_KEYS = Object.freeze(PLACEHOLDER_VALUES.maybe.slice(0, 5));
+const PLACEHOLDER_MAYBE_EXAMPLES = Object.freeze([
+  [(key) => PLACEHOLDER_MAYBE_OLD_KEYS.includes(key) && key !== "NA", Lp("“有/无”选项", "a yes/no answer")],
+  [(key) => key === "NA", Lp("北美地区", "NA for North America")],
+  [(key) => key.toLowerCase() === "none", Lp("表示“没有”的回答，比如损坏程度：None", "an answer meaning “none”, such as damage: None")],
+  [(key) => key.toLowerCase() === "unknown", Lp("单独的一个选项", "an option of its own")],
+  [(key) => key.toLowerCase() === "tbd", Lp("表示“待定”的状态", "a status such as “to be decided”")],
+  [(key) => key === "?", Lp("问卷里的“不确定”", "“not sure” in a survey")],
+  [(key) => key.toLowerCase() === "n.a.", Lp("“不适用”", "“not applicable”")]
+]);
+
 // 「N/A」, plus "（原文：Ｎ／Ａ、N/A）" when a raw text differs from the key.
 function formatPlaceholderValue({ key, rawValues }) {
   if (!rawValues.some((value) => value !== key)) return L(`「${key}」`, `“${key}”`);
@@ -1051,13 +1071,22 @@ function formatConfirmedPlaceholder(entry) {
   );
 }
 
+// keys can repeat (the report passes the writings of every column at once): each is named once.
 function formatPlaceholderNotes(keys) {
-  const maybe = keys.filter((key) => placeholderTier(key) === "maybe");
+  const maybe = [...new Set(keys.filter((key) => placeholderTier(key) === "maybe"))];
   if (!maybe.length) return "";
   const dash = keys.includes("-");
+  if (maybe.every((key) => PLACEHOLDER_MAYBE_OLD_KEYS.includes(key))) {
+    return L(
+      `${PLACEHOLDER_MAYBE_NOTE[0]}${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
+      `${PLACEHOLDER_MAYBE_NOTE[1](maybe)}${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
+    );
+  }
+  const examples = PLACEHOLDER_MAYBE_EXAMPLES.filter(([fits]) => maybe.some(fits)).map(([, example]) => Lpick(example));
+  const one = maybe.length === 1;
   return L(
-    `${PLACEHOLDER_MAYBE_NOTE[0]}${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
-    `${PLACEHOLDER_MAYBE_NOTE[1](maybe)}${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
+    `${maybe.map((key) => `「${key}」`).join("")}也可能是有效值（例如${examples.join("；")}），请确认这一列里${one ? "它" : "它们"}确实表示没有数据。${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
+    `${one ? `“${maybe[0]}” may also be a real value` : `${maybe.map((key) => `“${key}”`).join(", ")} may also be real values`} (for example ${examples.join("; or ")}); make sure that in this column ${one ? "it means" : "they mean"} there is no data.${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
   );
 }
 
@@ -1161,7 +1190,9 @@ const DATE_STYLE_NAMES = Object.freeze({
   mdy: Lp("文本 月/日/年", "text MM/DD/YYYY"),
   dayMonthSame: Lp("文本 日和月相同（看不出先后）", "text with the same day and month (order unclear)"),
   english: Lp("文本 英文月份", "text with English month names"),
-  yearOnly: Lp("只写年份", "year only")
+  yearOnly: Lp("只写年份", "year only"),
+  // v3.3.0 (R1): 3/5/25 and 5-Mar-25, whatever the day / month order.
+  twoDigitYear: Lp("文本 两位年份", "text with a two-digit year")
 });
 
 const VISIBLE_TEXT_NAMES = Object.freeze({

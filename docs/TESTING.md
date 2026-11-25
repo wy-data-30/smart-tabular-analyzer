@@ -40,8 +40,8 @@ GitHub Actions 在每次 push 和 Pull Request 时使用 Node.js 22 运行 `npm 
 | `tests/core.test.cjs` | 启动自检、应用脚本顺序和顶层名字唯一性、DOM ID、相对资源路径、vendor 依赖与 SRI、许可证、`.nojekyll`、字段修正、报告生成和其他静态/集成断言。 |
 | `tests/fixtures/` | `english-date-corpus.cjs` 被 `tests/data-processing.test.cjs` 引用，用于英文日期解析断言；`stage3/` 见下文；其余 CSV/XLSX 文件目前只用于手工回归，自动测试没有读取。 |
 | `tests/fixtures/examples/` | `sample-data.csv`、`sample-sales.csv`、`sample-students.csv`、`sample-survey.csv`、`sample-used-products.csv`、`sample-user-behavior.csv`：只给测试用的 6 个示例（后 5 个 v2.7.0 从 `examples/` 移来，`sample-data.csv` v2.11.0 移来，字节不变）；`examples/` 里只有“使用示例数据”按钮加载的 `sample-orders.csv` 和 v3.2.0 英文界面加载的 `sample-orders-en.csv`。`basic-data-processing.test.cjs` 经 `listExampleCsvFiles()` / `readExampleCsv()` 读两个目录，覆盖 8 个文件。内容按 utf8 文本读取，LF 和 CRLF 都通过（v2.11.0 的内容测试去掉 CR 后再比较），所以不需要 `.gitattributes` 规则。 |
-| `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`分区小计表.csv`（5 行小计 / 总计，带空格、冒号和括号注释的标签）和 `公式错误.xlsx`（4 个字段 7 个错误格，含 #SPILL! 和整行错误的行）是 v2.8.0 加的。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，手工加条目，保持一行一条的格式，不要用 `JSON.stringify` 重写；v2.8.0 的测试读取其中合计行和公式错误的预期，其余条目仍供人工核对；v2.5.0 起订单表金额按“元”读取 2200元、3500元，金额那条预期改为数值率 29/30，`expectedTotals.formatProblems` 从 5 改为 3。`写法不一致.csv`（UTF-8 BOM、CRLF，表头在第 1 行，24 行：日期写法混用、常量列和写法细节不同的值，不可见字符在生成脚本里写 `\u` 转义）是 v2.9.0 加的，它的预期（`dateStyles`、`constantFields`、`lookAlikes`）由测试读取。v3.2.0 加了两个英文夹具：`en-issues.csv`（UTF-8 BOM、CRLF，20 行：按单位读取 kg、像是数字的文本列、整列只有一个值、写法不一样、只有不可见字符的格、读取时有疑问 2 处）和 `en-formula-errors.xlsx`（Margin 列 4 个公式错误，最后一行 Subtotal），预期都在 `known-issues.json`。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 10 个夹具（可选第二个参数是界面语言）；它用真实 PapaParse 包一层计数，并记下每次调用的 `header` 选项，表头在第 1 行的 CSV 正好调用两次（主解析一次，`header: false` 的行号扫描一次）。 |
-| `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 10 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关（SheetJS 写出的 xlsx 在同一台机器上两次生成也逐字节相同）。不单独在 CI 中运行；v3.2.0 起有一条测试在临时目录里跑它，逐字节比较全部夹具。 |
+| `tests/fixtures/stage3/` | 表头检测的验收夹具，内容全部虚构、固定。`订单表.csv`（GBK、CRLF，表头在第 1 行）和 `花名册.xlsx`（表头在第 1 行）是“不能误跳表头”的反例；`成绩表.csv`（UTF-8 BOM，标题行补了逗号）、`成绩表-标题无逗号.csv` 和 `门店报表.xlsx`（合并单元格标题 + 制表日期 + 空行，第 4 行是表头，含 0.00% 毛利率和合计行）是正例。`分区小计表.csv`（5 行小计 / 总计，带空格、冒号和括号注释的标签）和 `公式错误.xlsx`（4 个字段 7 个错误格，含 #SPILL! 和整行错误的行）是 v2.8.0 加的。`known-issues.json` 是按构造方式手写的已知问题清单和字段类型预期，手工加条目，保持一行一条的格式，不要用 `JSON.stringify` 重写；v2.8.0 的测试读取其中合计行和公式错误的预期，其余条目仍供人工核对；v2.5.0 起订单表金额按“元”读取 2200元、3500元，金额那条预期改为数值率 29/30，`expectedTotals.formatProblems` 从 5 改为 3。`写法不一致.csv`（UTF-8 BOM、CRLF，表头在第 1 行，24 行：日期写法混用、常量列和写法细节不同的值，不可见字符在生成脚本里写 `\u` 转义）是 v2.9.0 加的，它的预期（`dateStyles`、`constantFields`、`lookAlikes`）由测试读取。v3.2.0 加了两个英文夹具：`en-issues.csv`（UTF-8 BOM、CRLF，20 行：按单位读取 kg、像是数字的文本列、整列只有一个值、写法不一样、只有不可见字符的格、读取时有疑问 2 处）和 `en-formula-errors.xlsx`（Margin 列 4 个公式错误，最后一行 Subtotal），预期都在 `known-issues.json`。v3.3.0 加了 `en-subtotal.csv`（UTF-8 BOM、CRLF，20 行：Excel 分类汇总导出的 4 行“East Total”这类小计和一行 Grand Total，另有一列 Report 里的“Weekly Total”是报表名、不是合计），预期也在 `known-issues.json`。`tests/basic-data-processing.test.cjs` 经 `importStage3Fixture()` 读取这 11 个夹具（可选第二个参数是界面语言）；它用真实 PapaParse 包一层计数，并记下每次调用的 `header` 选项，表头在第 1 行的 CSV 正好调用两次（主解析一次，`header: false` 的行号扫描一次）。 |
+| `tests/fixtures/stage3/gen-fixtures.cjs` | 重新生成上述 11 个夹具：在仓库根目录运行 `node tests/fixtures/stage3/gen-fixtures.cjs [输出目录]`，不带参数时写回本目录。只依赖 `vendor/` 里的 SheetJS 和 Node 自带的 `TextDecoder`（反推 GBK 编码表），输出与已提交文件逐字节一致，与运行时区无关（SheetJS 写出的 xlsx 在同一台机器上两次生成也逐字节相同）。不单独在 CI 中运行；v3.2.0 起有一条测试在临时目录里跑它，逐字节比较全部夹具。 |
 | `tests/create-excel-fixture.mjs` | 辅助夹具生成脚本，不属于 npm 测试入口，并引用未写入 `package.json` 的外部工具。 |
 
 测试环境不是完整浏览器：Chart.js、PapaParse、SheetJS、FileReader 或下载 API 会按测试需要注入替身。真实浏览器布局、触控交互、canvas 像素和 Excel/WPS 打开效果仍需手工回归。
@@ -425,7 +425,7 @@ v3.2.0 加了英文界面（见 `docs/ARCHITECTURE.md`“界面语言（v3.2.0�
 | `v3.2.0 long file names: …`（3 条）、`v3.2.0 report.js: long English names keep their label words (R1)` | 长原文件名下各个导出不同名，类别词、前N条 / first-N、日期不截；原来不超过 80 个字符的文件名逐字节不变（含 80、79 字符、标签前有空格的边界） |
 | `v3.2.0 static guard: …`（5 条） | 分词器自检（9 个脚本的汉字全在注释或字面量里）、白名单项都存在且字面量个数恰好相等、规则 1 和 2 对全部脚本生效、审查的 13 个自测用例、`index.html` 每段中文有键且每个键有英文；产品名的三处（`<title>`、品牌链接、顶栏名字）用 `page.title`、`brand.label`、`brand.name` |
 | `v3.2.0 language: …`（10 条） | `?lang=` 优先（只认小写）、浏览器第一语言、都没有时中文；`<head>` 内联脚本和 `pickInterfaceLanguage()` 一致、不定义全局名字；CSS 3 秒兜底；测试上下文可选英文并走真实启动；`L` / `Lp` / `Lpick` / `enCount`；静态文字切换和逐字节切回；启动时读下页面原文；每个键的英文保留数字；切换按钮的文字、`lang`、`?lang=`、模块保留、导入中等待 |
-| `v3.2.0 format.js: …`（5 条）、`v3.2.0 format.js English wording: …` | 18 个成对常量冻结、英文无汉字；每句英文保留中文的数字；逐句钉住的英文；第二档空值写法的说明只列这一列找到的写法（R11）；逐行文字不调 `L()` |
+| `v3.2.0 format.js: …`（5 条）、`v3.2.0 format.js English wording: …` | 18 个成对常量冻结、英文无汉字；每句英文保留中文的数字；逐句钉住的英文；第二档空值写法的说明只列这一列找到的写法（R11；v3.3.0 起中文也分两种句子，见第 19 节）；逐行文字不调 `L()` |
 | `v3.2.0 app.js: …`（7 条）、`v3.2.0 app.js English wording: …` | 英文界面不出现脚本里的中文、每个元素数字和中文相同；筛选顺序两种语言相同（R3）；导入消息存数据；一次性消息切换后重写、切回逐字节；重建消息点击时两种语言都生成；“（不计入分析）”后缀每张列表取一次；趋势数字留给切换用、随分析一起清掉 |
 | `v3.2.0 profiling.js / stats.js / importer.js / quality.js / script.js: …`（8 条，含 `v3.2.0 quality.js English wording: …`） | 类型名成对、`profile.type` 仍是中文；空值组键是中文、显示 “(Blank)”；`#错误` 两种语言相同；读取疑问存代码和参数；趋势结论拆成算和拼句、切换时不重算；问题行说明的英文；自检提示和示例消息的英文 |
 | `v3.2.0 report.js: …`（8 条，含 R10；R1 那条见上）、`v3.2.0 report.js English wording: …` | 英文报告 `<html lang="en">`、没有汉字、数字和中文报告相同；英文文件名用计划里的词；导出加的 CSV 列跟语言；旧快照的句子原样；导出状态行切换后重写；R10（报告文件名的“已载入”回退） |
@@ -433,7 +433,7 @@ v3.2.0 加了英文界面（见 `docs/ARCHITECTURE.md`“界面语言（v3.2.0�
 | `v3.2.0 commit 10: …`（2 条） | 三个模块顶上的提示条（白卡片、句子在左、按钮在右）；导出区“共 42 行 / 42 rows”，`<strong>` 里只有数字 |
 | `v3.2.0 commit 11: …`（6 条） | 中→英→中整页逐字节回到原样并保留状态（测试里模拟浏览器 `<select>` 改写选项后丢掉选择）；切到英文和一开始就是英文完全相同；只重画不重算；问题行页码保留；状态栏、导入报错、工作表消息切换后重写；`role="status"` 确认句 |
 | `v3.2.0 fix: English chart axis titles are capitalized…` | 英文纵轴标题首字母大写，句子里的写法仍是小写，中文不变 |
-| `v3.2.0 commit 12: …`（8 条） | 英文示例的字节（去掉 CR 后 sha256 `SAMPLE_ORDERS_EN_LF_SHA256`）、合计行连重复行一起算；按钮和下载链接跟语言；上传页英文那几行等于英文示例的行；干净版零提示、每类问题单独放进去只出自己的提示（`$` 金额不提示，写明原因）；英文界面下的状态句、pill、各节和行号、两句结论；两个英文夹具对 `known-issues.json`；生成器逐字节 |
+| `v3.2.0 commit 12: …`（8 条） | 英文示例的字节（去掉 CR 后 sha256 `SAMPLE_ORDERS_EN_LF_SHA256`）、合计行连重复行一起算；按钮和下载链接跟语言；上传页英文那几行等于英文示例的行；干净版零提示、每类问题单独放进去只出自己的提示（`$` 金额不提示，写明原因；v3.3.0 起示例改成 USD，七类都提示，见第 19 节）；英文界面下的状态句、pill、各节和行号、两句结论；两个英文夹具对 `known-issues.json`；生成器逐字节 |
 | `v3.2.0 commit 13: each language shows only its own product name…` | 中文界面只有“表格体检”、英文界面只有 “Sheet Checkup”，旧名两种都没有（页面元素、报告 title / h1 / 页脚、全部文件名、英文表） |
 | `v3.2.0 commit 13: in English, no output of any operation…` | 英文界面导入英文示例、两个英文夹具、⑪ 的英文场景表和测试里构造的两个文件（只有 1 列的 CSV：没有行号的读取疑问；工作簿：错误码读不出的错误格和 Excel 日期单元格），走导入、报告、自定义分析、每一类问题行（4 遍）、筛选、导出、不计入分析、按空值处理和撤销、字段草稿 / 应用 / 恢复、写法统一和两个导出、日期趋势、清除筛选；约 4.8 万份输出（元素文字和属性、图表标题、下载的文件名和全文）没有汉字和全角标点。允许的只有：两个切换按钮的“中文”；`FORMULA_ERROR_FALLBACK` “#错误”（单元格数据）。`BLANK_GROUP_KEY` 实测 0 次，钉住 0 次、不开例外。钉住 11 类问题行都打开过，以及每类由哪个文件触发 |
 | `v3.2.0 commit 13: the same file in Chinese and in English…` | stage3 全部、两个示例和英文场景表（括号开头的值和空值同列），中英各导入一次，在导入后、自定义分析后、全部按空值处理加写法统一检查后比较：state（计数、profile、统计、问题行和行号、筛选顺序、写法统一结果、分组结果）逐字相等，报告快照去掉字符串后相等，报告和每个元素的数字序列相等；报告的分析时间两边固定成同一时刻 |
@@ -495,3 +495,46 @@ v3.2.2 只把仓库地址换成 sheet-checkup：页面页脚的 GitHub 链接、
 **改坏验证**：页面页脚、中文报告页脚、英文报告页脚分别改回旧地址，各有原来的测试和新护栏失败；`package.json` 的 name 改回旧名、旧仓库名只写进 `index.html` 的一段注释，前者只有新护栏失败，后者是新护栏和 `index.html` 哈希失败。
 
 **测不到、要在线上看的**：GitHub 上改名之后旧的 github.io 地址（含 `?lang=en` 和示例 CSV 的深链接）和 github.com 旧仓库地址能跳到新地址；这些不在仓库的测试里。
+
+## 19. v3.3.0 新增测试固定了什么
+
+v3.3.0 加了英文表格的读法（见 `docs/ARCHITECTURE.md`“英文表格的读法（v3.3.0）”）：英文合计字样和“同一字样过半”、None / Unknown 等空值写法、编号字段名、英文单位和货币代码、货币符号后的会计写法、AM/PM 和序数日、两位年份。完整回归从 670 条变成 709 条，新增 39 条（`data-processing` 22 条、`basic-data-processing` 17 条），没有删去。新测试名字都以 `v3.3.0` 开头；每条都先在改前的代码上跑过、确认失败（护栏性质的几条改前就通过，下表写明）。
+
+| 测试 | 固定的内容 |
+| --- | --- |
+| `v3.3.0 date matchers build no RegExp per call…` | 用 `Proxy` 给全局 `RegExp` 计 `construct` 次数：三个日期匹配器各调 1 万次构造 0 次（改前 30024 次）；8 个样本的匹配结果逐组钉死 |
+| `v3.3.0 totalRowLabel(): an English prefix…` | 16 个正例（East Total、East - Total、East – Total、East:Total、East Total (USD)、EAST TOTAL、恰好 40 个字符的前缀、Totals、TOTALS: 等）的返回值；反例 Total East、Total for East、Subtotal: East、Overall、Summary、Teetotal、41 个字符的前缀、Total Units、East Totality、已汇总 等 |
+| `v3.3.0 totals: …`（11 条） | Excel 分类汇总三种写法全部标出（有没有 Grand Total 都测）；七张“字样是值”的普通表一行不标（指标长表、工时表、品牌叫 Total、KPI、订单类型、中文任务名、中文状态）；品牌表 + 真 Grand Total 只标真合计，`suspectedTotalLabelCount` 不数被去掉的组，再加一行单独的 Promo Subtotal 时页面和报告写“另有 1 行”；组按“列 + 字样”分；恰好一半对得上的组留下，不到一半才去；中文表结果不变；最多去 3 轮、`checkTotalRows()` 最多 8 次（链式表）；`findTotalLabelRows()` 的 `key` 是小写，`state.suspectedTotals` 的每一项不加键、重建不重新扫格；组不再对上时已不计入分析的行恢复计入、再被标出时提醒；v3.1.0 的任务表三组字样一行不标；中文句子里英文字段名和“等于”之间有空格 |
+| `v3.3.0 placeholders: …`（5 条 data-processing、2 条 basic） | 新的第二档写法（含全角形式）和清单外的近似写法；单元格长度上限 14、纯 ASCII 不做 NFKC；只有原来五个第二档写法时中英文说明句逐字节不变（31 个子集）；有新写法时只列这一列的写法、每种给例子；同一写法只列一次；None、Unknown 逐个列出，“常见写法全部按空值处理”不含它们，原值不变；报告的全表一句里同一写法只列一次 |
+| `v3.3.0 ID names: …`（2 条） | 同一列 0–9 的计数换 21 个字段名：number / no 只在最后一个词时判 ID；字段名有单独的 yes 时结尾的 no 不算 |
+| `v3.3.0 units: …`（5 条） | 每个英文拼写读成规范名、大小写不分、只有英文单位能带点；前置货币代码和读不出的写法（`1.2K`、`72°F`、`USD -`、`6 in`…）；两种单位整列不读、`$` 和 USD 同列不冲突；写法统一的表把英文单位写成纯数字，科学计数法只看数字部分（R4）；非数值字段只说单位冲突（R2） |
+| `v3.3.0 accounting: …`（3 条） | `$-`、`€-`、`￥-` 读成 0，`$(1,200.00)` 读成 −1200，单独的 `-` 不是数；写法统一的表写成 `0`、`-1200.00` 并读回同一个数；CSV 导出不给它们加 `'`（护栏性质，改前就通过） |
+| `v3.3.0 dates: …`（3 条） | 12 小时制只跟在空格后面、小时 1–12，读出日期、写法统一的表保持原值；序数日后缀要对（11th、21st、22nd、23rd 对，1th、11st 不对）；两者都不是新写法 |
+| `v3.3.0 two-digit years: …`（3 条 data-processing、1 条 basic） | 只收斜杠和 `d-mmm-yy`，00–29 / 30–99 的分界，三种日月顺序下的读法；点号、横杠、`Mar 5, 25` 不收；两位年份是单独一种写法 `twoDigitYear`，写法统一的表写成四位；一列里两位、四位混用时质量页中英文写出两种写法 |
+| `v3.3.0 English sample: three amounts in USD…` | 英文示例 LF 3306 字节，三格是 `"5,400 USD"`、`900 USD`、`"1,050 USD"`，文件里不再有 `$` 加数字；英文界面 Amount 是数值、单位 USD，“按单位读取的数字”可见 |
+| `v3.3.0 fixture: en-subtotal.csv…` | BOM 和 21 个 CRLF；中英文各导入一次：行数、5 列类型、5 条疑似合计（4 个小计 `segment`，Grand Total 是 `above`、跨 15 行、不连续）等于 `known-issues.json`；Report 列的 Weekly Total 不标 |
+
+**改动的现有断言**（每个提交的原文、改后和改坏结果在实施汇总里）：
+
+- ② `v3.1.0 quality page: 另有 N 行…` 和 `v3.1.0 report: …` 原来用任务表（95 行字样、标 6 行、“另有 89 行”），新规则下这张表一行都不标（另写新测试钉住）；改用 `singleLabelTotalsCsv()`（5 行字样、标 2 行、“另有 3 行”“其中 1 行”）。新表在改前的代码上同样通过，数字都是精确相等，测的仍是句子怎么出现。
+- ②b `v2.8.0 page: the sentences for row ranges…`：英文字段名后的“等于”前多一个空格（`a、b、c、d、e 等于`），“等 6 列等于”不变。
+- ③ `data-processing` 契约 17 前提的护栏 `formCount` 57 → 84（清单变长）；两档清单的断言照新清单，另加 `placeholderTier("None") === "maybe"`、`placeholderTier("na") === ""`。
+- ④ `ID names cover row-number headers…`：原来钉着 `Number of employees` 判 ID（注释写“v2.1.4 前就如此，有意保留”），改成不判；正例多 8 个、反例多 5 个，没有删名字。
+- ⑤ 契约 17 前提的护栏的策略列表加英文单位（加一行），`formCount 84`、`converted: []`、`matched: []` 原样通过。
+- ⑧ `dateStyleOf() is null exactly when toDate() is null` 的写法键清单加 `twoDigitYear`；成对常量计数 `DATE_STYLE_NAMES` 10 → 11；英文写法名表加一项。
+- ⑨ 按目录枚举的断言：stage3 + 示例 18 → 19（两处）、中英比较的文件 13 → 14；v2.8.1 摘要护栏的跳过名单加 `en-subtotal.csv`；有疑似合计的文件清单和写法统一改动数表加上它；`SAMPLE_ORDERS_EN_LF_SHA256` 换成 `900a6751…59f78`（字节数 3306 不变）；英文示例金额的读法和“无问题版”的替换正则认 ` USD`；金额那一类的提示从 `[]` 变成 `["numberConversionSection"]`，英文界面显示的小节加这一节并钉住句子。
+- ①、⑥、⑦ 没有改现有断言。两个结果护栏（v2.8.1 摘要、报告文字哈希 `GUARD_REPORT_SHA256`）每个提交都原样通过，没有重新生成；静态护栏只把白名单里的 `matchChineseDate` 改成 `CHINESE_DATE_PATTERN`（个数仍是 1）。
+
+**等价比较（`equivalence.cjs`，不进仓库）**：“不含新写法的表结果不变”靠它检查。脚本在仓库外，和 `harness.cjs`、`corpus.txt` 放在一起，原文在维护记录里。用法：
+
+```text
+node equivalence.cjs <改前副本> <改后副本> <输出.json> [--allow "<表>|<键>" …] [--only corpus|fixtures]
+```
+
+- 两个副本是 `git archive` 或 `git worktree` 出的两份完整仓库（只读）；`harness.cjs` 用各自的 `tests/test-context.cjs` 和 `vendor/` 建上下文，走真实 PapaParse 和 SheetJS 导入。
+- 比较的表：corpus 120 张（`corpus.txt` 列的 96 张公开数据 CSV，加 Power BI 示例工作簿的 24 张工作表；数据仓库和提交号见审查报告附录 C）和改前副本 `tests/fixtures`、`examples` 里的 26 张表（改后副本新加的夹具不参加）。每张表中英文各导入一次。
+- 比较的项：摘要（类型、自动识别的类型、认不出的数、单位、标签行、疑似合计、空值写法、编号重复、像是数字的文本列、整行重复、疑似非唯一 ID、常量列、偏大或偏小、写法不一样、日期写法、读取疑问数、`buildNumberConversionSummary()` 的结果）、导入后的状态栏，以及中英文 HTML 报告（分析和导出时间固定成 2026-10-25T00:00:00Z，版本号换成同一个占位）。
+- `--allow "<表>|<键>"` 列出这个提交允许的不同（表名是相对数据目录或仓库的路径，工作表写在 `#` 后面）；其余任何不同都记 UNEXPECTED，退出码 1。每个提交和上一个提交比一次、和 v3.2.2（`3594fba`）比一次。
+- 它分得清对错：v3.2.2 对审查原型跑 `--only corpus`，35 处不同正好落在审查时的 7 张表上。
+
+**测不到、要在浏览器里看的**：质量页疑似合计、像是空值的写法、按单位读取的数字、日期写法混用几节在 1366 / 390 宽下中英文的样子（各提交的截图在实施汇总里）；Edge 里导入、筛选、清除筛选、改字段类型的耗时和 v3.2.2 比（发版提交量）。

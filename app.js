@@ -43,6 +43,9 @@ const state = {
   // buildSuspectedTotalSummary() of the original rows; imports, field configuration and
   // placeholder confirmations rebuild it, filters do not.
   suspectedTotals: [],
+  // v3.3.0: the labelled rows the totals check ended with (checkSuspectedTotals()), without
+  // the label groups that mostly do not add up; written with suspectedTotals, for "另有 N 行".
+  suspectedTotalLabelCount: 0,
   // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
   // import; those cells read as "" and count as missing.
   sourceFormulaErrors: new WeakMap(),
@@ -829,7 +832,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalLabelRows = findTotalLabelRows(rows, fields);
-  state.suspectedTotals = buildSuspectedTotalSummary(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  const totalCheck = checkSuspectedTotals(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  state.suspectedTotals = totalCheck.totals;
+  state.suspectedTotalLabelCount = totalCheck.labelRowCount;
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   refreshFormatConsistency();
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
@@ -1988,7 +1993,9 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置�
   state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
-  state.suspectedTotals = buildSuspectedTotalSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  const totalCheck = checkSuspectedTotals(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
+  state.suspectedTotals = totalCheck.totals;
+  state.suspectedTotalLabelCount = totalCheck.labelRowCount;
   const exclusionChanges = intersectExcludedTotals();
   refreshFormatConsistency();
   clearStandardizedExport();
@@ -2314,7 +2321,8 @@ function getSuspectedTotalExtras() {
   if (!state.suspectedTotals.length) return null;
   return {
     singleRow: state.suspectedTotals.filter((item) => item.matches.every((match) => match.rowCount === 1)).length,
-    labelRows: state.totalLabelRows.length,
+    // v3.3.0: the labelled rows still checked, not every labelled row (dropped groups are values).
+    labelRows: state.suspectedTotalLabelCount,
     checked: state.profiles.some((profile) => profile.typeKey === "numeric")
   };
 }
@@ -3180,6 +3188,7 @@ function resetAnalysisState() {
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
+  state.suspectedTotalLabelCount = 0;
   state.formatScans = createFormatScans();
   state.dateStyles = [];
   state.constantFields = [];

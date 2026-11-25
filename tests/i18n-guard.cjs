@@ -208,7 +208,7 @@ const I18N_WHITELIST = Object.freeze([
   ["parsing.js", "TOTAL_LABEL_CHINESE_PATTERN", 1, "合计字样"],
   ["parsing.js", "TOTAL_LABEL_STATUS_PREFIXES", 13, "合计字样的状态前缀"],
   ["parsing.js", "TOTAL_LABEL_PREFILTER", 1, "合计预筛"],
-  ["parsing.js", "matchChineseDate", 1, "中文日期"],
+  ["parsing.js", "CHINESE_DATE_PATTERN", 1, "中文日期"],
   ["parsing.js", "FULLWIDTH_NUMBER_CHARS", 5, "全角数字标点"],
   ["parsing.js", "toHalfwidthNumberText", 1, "全角数字标点"],
   ["parsing.js", "NUMBER_UNITS", 18, "中文单位"],

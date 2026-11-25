@@ -4,7 +4,7 @@ SO-1001,2025-01-03,East,Office supplies,Notebook,Business,40,3200,Emma Chen
 SO-1002,2025-01-06,North,Electronics,Wireless mouse,Individual,6,900,Liam Lee
 SO-1003,2025-01-09,South,Furniture,Office chair,Business,8,5760,Olivia Wang
 SO-1004,2025-01-14,Southwest,Office supplies,Printer paper,Business,60,1800,Noah Zhao
-SO-1005,2025-01-20,East,Electronics,Monitor,Business,3,"$5,400.00",Emma Chen
+SO-1005,2025-01-20,East,Electronics,Monitor,Business,3,"5,400 USD",Emma Chen
 SO-1006,2025-01-25,Northwest,Furniture,Desk,Business,2,2600,Ava Chen
 SO-1007,2025-02-05,North,Office supplies,Gel pen,Individual,50,750,Liam Lee
 SO-1008,2025-02-11,South ,Electronics,Keyboard,Individual,10,1800,Olivia Wang
@@ -19,7 +19,7 @@ SO-1016,2025-03-18,Northwest,Office supplies,Folder,Business,80,960,Ava Chen
 SO-1017,03/21/2025,North,Electronics,Keyboard,Individual,9,1620,Liam Lee
 SO-1018,2025-03-28,South,Furniture,Desk,Business,3,3900,Olivia Wang
 SO-1018,2025-03-28,South,Furniture,Desk,Business,3,3900,Olivia Wang
-SO-1019,2025-04-02,East,Office supplies,Gel pen,Individual,60,$900.00,Emma Chen
+SO-1019,2025-04-02,East,Office supplies,Gel pen,Individual,60,900 USD,Emma Chen
 SO-1020,2025-04-08,Southwest,Electronics,Monitor,Business,4,7200,Noah Zhao
 SO-1021,2025-04-11,Northwest,Furniture,Office chair,Individual,4,2880,Ava Chen
 SO-1022,"Apr 16, 2025",North,Office supplies,Notebook,Business,30,2400,Liam Lee
@@ -31,7 +31,7 @@ SO-1027,2025-05-13,North,Furniture,Desk,Individual,2,2600,Liam Lee
 SO-1028,2025-05-16,East,Office supplies,Printer paper,Business,55,1650,Emma Chen
 SO-1029,2025-05-21,East ,Electronics,Monitor,Business,4,7200,Emma Chen
 SO-1030,2025-05-27,Southwest,Furniture,Conference table,Business,1,5200,Noah Zhao
-SO-1031,2025-06-03,Northwest,Office supplies,Gel pen,Individual,70,"$1,050.00",Ava Chen
+SO-1031,2025-06-03,Northwest,Office supplies,Gel pen,Individual,70,"1,050 USD",Ava Chen
 SO-1032,2025-06-06,North,Electronics,Wireless mouse,Business,12,1800,Liam Lee
 SO-1033,06/10/2025,South,Furniture,File cabinet,Business,3,3150,Olivia Wang
 SO-1034,2025-06-13,east,Electronics,Keyboard,Individual,8,1440,Emma Chen
