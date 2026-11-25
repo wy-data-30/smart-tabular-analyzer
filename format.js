@@ -1190,7 +1190,9 @@ const DATE_STYLE_NAMES = Object.freeze({
   mdy: Lp("文本 月/日/年", "text MM/DD/YYYY"),
   dayMonthSame: Lp("文本 日和月相同（看不出先后）", "text with the same day and month (order unclear)"),
   english: Lp("文本 英文月份", "text with English month names"),
-  yearOnly: Lp("只写年份", "year only")
+  yearOnly: Lp("只写年份", "year only"),
+  // v3.3.0 (R1): 3/5/25 and 5-Mar-25, whatever the day / month order.
+  twoDigitYear: Lp("文本 两位年份", "text with a two-digit year")
 });
 
 const VISIBLE_TEXT_NAMES = Object.freeze({

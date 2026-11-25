@@ -5436,7 +5436,8 @@ test("v2.9.0 guard: dateStyleOf() is null exactly when toDate() is null", () => 
   assert.deepEqual(result.mismatches, []);
   assert.ok(result.checked > 100000, String(result.checked));
   assert.ok(result.readable > 5000, String(result.readable));
-  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
+  // v3.3.0: the year "24" after slashes is a two-digit year now, a style of its own (R1).
+  assert.deepEqual(result.styles, ["chinese", "dayMonthSame", "dmy", "english", "mdy", "twoDigitYear", "yearOnly", "ymdDash", "ymdDot", "ymdSlash"]);
 });
 
 test("v2.9.0 date styles: the fixture, the roster and the sample button's file (v2.11.0), and no other file", async () => {
@@ -10076,8 +10077,8 @@ test("v3.2.0 format.js: the 18 constants are frozen [中文, English] pairs, and
       pairs += 1;
     }
   }
-  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 10, VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
-  assert.equal(pairs, 13 + 2 + 10 + 13 + 4 + 13);
+  // 13 single sentences, EXCLUSION_KIND_LABELS 2, DATE_STYLE_NAMES 11 (v3.3.0: twoDigitYear), VISIBLE_TEXT_NAMES 13, LOOK_ALIKE_REASON_NAMES 4, STANDARDIZE_ACTION_LABELS 13.
+  assert.equal(pairs, 13 + 2 + 11 + 13 + 4 + 13);
   // The page notes, as index.html will have them in English (commit 9 checks I18N_EN against these).
   assert.equal(scope.evaluate("SUSPECTED_TOTAL_NOTE[1]"), "These rows still count as ordinary data, so their numbers are counted again in sums, averages and the check for unusually high or low values.");
   assert.equal(scope.evaluate("LOOK_ALIKE_NOTE[1]").split(": ")[0], "Leading or trailing spaces");
@@ -10475,7 +10476,8 @@ test("v3.2.0 format.js English wording: values (not categories), treated as blan
   assert.equal(en('formatProblemCategoryLabel({ kind: "parseWarnings", count: 1 })'), "Reading issues (1 issue)");
   assert.deepEqual(JSON.parse(en("JSON.stringify(Object.fromEntries(Object.entries(DATE_STYLE_NAMES).map(([key, pair]) => [key, pair[1]])))")), {
     excelCell: "Excel date cell", ymdDash: "text YYYY-MM-DD", ymdSlash: "text YYYY/MM/DD", ymdDot: "text YYYY.MM.DD", chinese: "text with Chinese year/month/day characters",
-    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only"
+    dmy: "text DD/MM/YYYY", mdy: "text MM/DD/YYYY", dayMonthSame: "text with the same day and month (order unclear)", english: "text with English month names", yearOnly: "year only",
+    twoDigitYear: "text with a two-digit year"
   });
   assert.equal(en("Lpick(VISIBLE_TEXT_OTHER)"), "[whitespace]");
   assert.equal(en('I18N_EN["sidebar.status"]'), "Current status");
@@ -13063,4 +13065,24 @@ test("v3.3.0 placeholders: the report's one note names a writing once even when 
   const dashOnly = csv.replace(/Unknown/g, "Known");
   assert.ok(reportOf(await importCsvFile(dashOnly, "films.csv")).html.includes("<p>说明：「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。在会计格式里，「-」通常表示 0。</p>"));
   assert.ok(reportOf(await importCsvInLanguage(dashOnly, "films.csv", "en")).html.includes("<p>Note: “-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.</p>"));
+});
+
+// ---- v3.3.0 ⑧: two-digit years ----
+test("v3.3.0 two-digit years: mixed with four-digit years in a column, the quality page names the two styles (R1)", async () => {
+  const csv = ["编号,Hired", "E-1,3/5/2025", "E-2,3/6/2025", "E-3,3/7/2025", "E-4,3/13/25", "E-5,3/14/25"].join("\n") + "\n";
+  const zh = await importCsvFile(csv, "hired.csv");
+  assert.equal(zh.evaluate('getFieldProfile("Hired").typeKey'), "date");
+  assert.equal(zh.evaluate("formatDateStyleLine(state.dateStyles[0])"), "「Hired」：主写法是 文本 月/日/年 3 个（如 3/5/2025）；另有 2 行是别的写法：文本 两位年份 2 个（如 3/13/25）。");
+  assert.equal(isHidden(zh, "dateStyleSection"), false);
+  assert.ok(htmlText(zh, "dateStyleDetails").includes("「Hired」：主写法是 文本 月/日/年 3 个（如 3/5/2025）；另有 2 行是别的写法：文本 两位年份 2 个（如 3/13/25）。"));
+  const category = zh.evaluate('JSON.stringify(state.problemCategories.find((c) => c.kind === "dateStyle"))');
+  const notes = JSON.parse(zh.evaluate(`JSON.stringify(listProblemRows(${category}).items.map((item) => item.note))`));
+  assert.deepEqual(notes, ["文本 两位年份（主写法是 文本 月/日/年）", "文本 两位年份（主写法是 文本 月/日/年）"]);
+  const en = await importCsvInLanguage(csv, "hired.csv", "en");
+  assert.equal(en.evaluate("formatDateStyleLine(state.dateStyles[0])"), "“Hired”: the main format is text MM/DD/YYYY: 3 (e.g. 3/5/2025); 2 other rows use other formats: text with a two-digit year: 2 (e.g. 3/13/25).");
+  // A column of two-digit years only is one style: no hint.
+  const only = await importCsvFile(["编号,Hired", "E-1,3/5/25", "E-2,3/6/25", "E-3,3/13/25", "E-4,5-Mar-25"].join("\n") + "\n", "only.csv");
+  assert.equal(only.evaluate('getFieldProfile("Hired").typeKey'), "date");
+  assert.equal(only.evaluate("state.dateStyles.length"), 0);
+  assert.equal(isHidden(only, "dateStyleSection"), true);
 });

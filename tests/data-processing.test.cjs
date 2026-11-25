@@ -1920,7 +1920,7 @@ test("v3.3.0 dates: a 12-hour clock after a space, hours 1-12; the date is kept 
     ["2025-03-05 2:30 PM", "2025-03-05", "ymdDash"], ["2025/3/5 11:59:59 PM", "2025-03-05", "ymdSlash"], ["2025年3月5日 2:30 PM", "2025-03-05", "chinese"]
   ]) assert.deepEqual(readDate(evaluate, value), [date, style, true, `${value} / keptTime`], value);
   // Hours outside 1-12 with AM / PM, a broken clock, and (R5) a 12-hour clock after T are not dates.
-  for (const value of ["3/5/2025 0:30 AM", "3/5/2025 13:30 PM", "3/5/2025 2:60 PM", "3/5/2025 2:30 XM", "3/5/2025 2:30 PMM", "2025-03-05T2:30 PM", "2025-03-05T02:30 PM"]) {
+  for (const value of ["3/5/2025 0:30 AM", "3/5/2025 13:30 PM", "3/5/2025 2:60 PM", "3/5/2025 2:30 XM", "3/5/2025 2:30 PMM", "3/5/2025 2:30 P", "3/5/2025 2:30 A", "3/5/2025 2:30 P.", "2025-03-05T2:30 PM", "2025-03-05T02:30 PM"]) {
     assert.deepEqual(readDate(evaluate, value).slice(0, 2), [null, null], value);
   }
   // The 24-hour clock is as before, with T too.
@@ -1948,6 +1948,50 @@ test("v3.3.0 dates: neither a 12-hour clock nor an ordinal is a new date style",
   assert.equal(style("2025-03-05 2:30 PM"), style("2025-03-06"));
   assert.equal(style("March 5th, 2025"), style("Mar 6, 2025"));
   assert.equal(style("5th March 2025"), style("6 March 2025"));
+});
+
+// ---- v3.3.0 ⑧: two-digit years ----
+const dateIn = (evaluate, value, order) => evaluate(`(() => { const d = toDate(${JSON.stringify(value)}, { order: ${JSON.stringify(order)} }); return d ? d.toISOString().slice(0, 10) : null; })()`);
+
+test("v3.3.0 two-digit years: slashes and Excel's d-mmm-yy only; 00-29 are 2000-2029, 30-99 are 1930-1999", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, none, mdy, dmy] of [
+    ["3/5/25", null, "2025-03-05", "2025-05-03"], ["03/05/25", null, "2025-03-05", "2025-05-03"],
+    ["13/5/25", "2025-05-13", "2025-05-13", "2025-05-13"], ["3/13/25", "2025-03-13", "2025-03-13", "2025-03-13"], ["5/5/25", "2025-05-05", "2025-05-05", "2025-05-05"],
+    ["12/31/99", "1999-12-31", "1999-12-31", "1999-12-31"], ["1/1/00", "2000-01-01", "2000-01-01", "2000-01-01"], ["1/1/29", "2029-01-01", "2029-01-01", "2029-01-01"], ["1/1/30", "1930-01-01", "1930-01-01", "1930-01-01"],
+    ["5-Mar-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["05-Mar-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["5-March-25", "2025-03-05", "2025-03-05", "2025-03-05"], ["5-Mar-25 2:30 PM", "2025-03-05", "2025-03-05", "2025-03-05"],
+    ["3/5/25 14:30", null, "2025-03-05", "2025-05-03"], ["2/30/25", null, null, null]
+  ]) assert.deepEqual(["none", "mdy", "dmy"].map((order) => dateIn(evaluate, value, order)), [none, mdy, dmy], value);
+  // The column's day / month order is decided as before, two-digit years counted.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["3/13/25", "3/5/25"].map((v, i, all) => [buildDateStrategy("x", all).order, toDate(v, buildDateStrategy("x", all)).toISOString().slice(0, 10)]))')), [["mdy", "2025-03-13"], ["mdy", "2025-03-05"]]);
+  assert.equal(evaluate('buildDateStrategy("x", ["13/3/25", "5/3/25"]).order'), "dmy");
+  // Known: a year-first two-digit date reads day first (25/03/05 is 2005-03-25).
+  assert.equal(dateIn(evaluate, "25/03/05", "none"), "2005-03-25");
+});
+
+test("v3.3.0 two-digit years: not after dots or dashes (version numbers stay text), not in Mar 5, 25", () => {
+  const { context, evaluate } = createScriptContext();
+  for (const value of ["3.5.25", "3-5-25", "1.13.22", "13.5.25", "13-5-25", "Mar 5, 25", "Jan 1, 25", "5 Mar 25", "March 5, 25", "Wed, 5-Mar-25", "5-Mar-2", "5/3/2", "5/3/025"]) {
+    assert.deepEqual(["none", "mdy", "dmy"].map((order) => dateIn(evaluate, value, order)), [null, null, null], value);
+  }
+  context.__rows = ["1.13.22", "1.13.23", "2.0.1", "2.1.10", "1.13.22", "3.0.0"].map((v) => ({ 版本: v }));
+  assert.equal(evaluate('buildColumnProfile("版本", __rows).typeKey'), "category");
+});
+
+test("v3.3.0 two-digit years: a style of their own (R1); the standardized table writes four digits", () => {
+  const { evaluate } = createScriptContext();
+  const style = (value, order = "mdy") => evaluate(`dateStyleOf(${JSON.stringify(value)}, { order: ${JSON.stringify(order)} })`);
+  for (const value of ["3/5/25", "03/05/25", "3/13/25", "13/5/25", "5/5/25", "5-Mar-25", "05-Mar-25", "3/5/25 2:30 PM"]) assert.equal(style(value), "twoDigitYear", value);
+  assert.equal(style("3/5/2025"), "mdy");
+  assert.equal(style("Mar 5, 2025"), "english");
+  // The others are as before; Excel date cells are not text.
+  assert.equal(evaluate('dateStyleOf(new Date(Date.UTC(2025, 2, 5)), {})'), "excelCell");
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["3/5/25", "5-Mar-25", "3/5/25 2:30 PM", " 3/5/25 "].map((v) => standardizeDateCell(v, { order: "mdy" })))')), [
+    { value: "2025-03-05", action: "date" }, { value: "2025-03-05", action: "date" }, { value: "3/5/25 2:30 PM", action: "keptTime" }, { value: "2025-03-05", action: "date" }
+  ]);
+  // Order unknown: kept, and said why.
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(standardizeDateCell("3/5/25", { order: "none" }))')), { value: "3/5/25", action: "keptDateOrder" });
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify([Lp("文本 两位年份", "text with a two-digit year"), DATE_STYLE_NAMES.twoDigitYear])')), [["文本 两位年份", "text with a two-digit year"], ["文本 两位年份", "text with a two-digit year"]]);
 });
 
 test("v3.3.0 accounting: CSV export does not quote $- or $(1,200.00), and keeps a negative as it was", () => {

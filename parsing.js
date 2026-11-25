@@ -125,7 +125,9 @@ function isDateObject(value) {
 // the groups before it are unchanged. v3.3.0: the patterns are built once (they were built on
 // every call); none has the g or y flag, so match() never depends on lastIndex.
 const YEAR_FIRST_DATE_PATTERN = new RegExp(`^(\\d{4})([-/.])(\\d{1,2})\\2(\\d{1,2})(${DATE_TIME_SUFFIX_PATTERN})$`);
-const DAY_OR_MONTH_FIRST_DATE_PATTERN = new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4})(${DATE_TIME_SUFFIX_PATTERN})$`);
+const DAY_OR_MONTH_FIRST_DATE_PATTERN = new RegExp(`^(\\d{1,2})([-/.])(\\d{1,2})\\2(\\d{4}|\\d{2})(${DATE_TIME_SUFFIX_PATTERN})$`);
+// v3.3.0: Excel's d-mmm-yy ("5-Mar-25"), the one English date with a two-digit year.
+const EXCEL_SHORT_DATE_PATTERN = /^\d{1,2}-[a-z]{3,9}-\d{2}(?:\s|$)/i;
 const CHINESE_DATE_PATTERN = new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?(${DATE_TIME_SUFFIX_PATTERN})$`);
 
 function matchYearFirstDate(raw) {
@@ -133,7 +135,15 @@ function matchYearFirstDate(raw) {
 }
 
 function matchDayOrMonthFirstDate(raw) {
-  return raw.match(DAY_OR_MONTH_FIRST_DATE_PATTERN);
+  const match = raw.match(DAY_OR_MONTH_FIRST_DATE_PATTERN);
+  // v3.3.0: a two-digit year only after slashes (3/5/25): "1.13.22" is a version number.
+  return match && match[4].length === 2 && match[2] !== "/" ? null : match;
+}
+
+// v3.3.0: a two-digit year as Excel reads it: 00-29 are 2000-2029, 30-99 are 1930-1999.
+function fullYearOf(text) {
+  const year = Number(text);
+  return String(text).length === 2 ? (year < 30 ? 2000 + year : 1900 + year) : year;
 }
 
 function matchChineseDate(raw) {
@@ -344,7 +354,7 @@ function toDate(value, strategy = {}) {
   if (dayOrMonthFirst) {
     const first = Number(dayOrMonthFirst[1]);
     const second = Number(dayOrMonthFirst[3]);
-    const year = Number(dayOrMonthFirst[4]);
+    const year = fullYearOf(dayOrMonthFirst[4]);
     if (first > 12) return buildUtcDate(year, second, first);
     if (second > 12) return buildUtcDate(year, first, second);
     if (first === second) return buildUtcDate(year, first, second);
@@ -403,8 +413,10 @@ function readEnglishCalendarDate(raw) {
   const yearFirst = !monthFirst && /^\d{4}$/.test(parts[1]);
   const year = yearFirst ? parts[1] : parts[3];
   const day = monthFirst ? parts[2] : yearFirst ? parts[3] : parts[1];
-  if (!/^\d{4}$/.test(year) || !/^\d{1,2}$/.test(day)) return null;
-  const calendarDate = buildUtcDate(Number(year), month, Number(day));
+  // v3.3.0: a two-digit year only in Excel's d-mmm-yy ("5-Mar-25"); "Jan 1, 25" stays unread.
+  const excelShort = EXCEL_SHORT_DATE_PATTERN.test(raw.trim());
+  if (!(/^\d{4}$/.test(year) || (excelShort && /^\d{2}$/.test(year))) || !/^\d{1,2}$/.test(day)) return null;
+  const calendarDate = buildUtcDate(fullYearOf(year), month, Number(day));
   if (!calendarDate) return null;
 
   // A zone is syntax only: applying its offset would change the written day.
@@ -440,7 +452,9 @@ function dateStyleOf(value, strategy = {}) {
   const yearFirst = matchYearFirstDate(raw);
   if (yearFirst) return DATE_STYLE_BY_SEPARATOR[yearFirst[2]];
   const dayOrMonthFirst = matchDayOrMonthFirstDate(raw);
-  if (!dayOrMonthFirst) return "english";
+  // v3.3.0 (R1): a two-digit year is a style of its own, whatever the order (3/5/25, 5-Mar-25).
+  if (!dayOrMonthFirst) return EXCEL_SHORT_DATE_PATTERN.test(raw) ? "twoDigitYear" : "english";
+  if (dayOrMonthFirst[4].length === 2) return "twoDigitYear";
   const first = Number(dayOrMonthFirst[1]);
   const second = Number(dayOrMonthFirst[3]);
   if (first > 12) return "dmy";

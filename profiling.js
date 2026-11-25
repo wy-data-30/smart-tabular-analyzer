@@ -226,7 +226,7 @@ function buildDateStrategy(field, values) {
     if (!match) return;
     const first = Number(match[1]);
     const second = Number(match[3]);
-    const year = Number(match[4]);
+    const year = fullYearOf(match[4]);
     if (first > 12 && second <= 12 && buildUtcDate(year, second, first)) dmyEvidence += 1;
     if (second > 12 && first <= 12 && buildUtcDate(year, first, second)) mdyEvidence += 1;
   });
