@@ -433,11 +433,16 @@ function formatTotalAddends({ scope, firstLine, lastLine, rowCount, contiguous }
 }
 
 // "销售额、成本等于第 5–32 行之和（28 行）": the 说明 of a suspected total's problem row.
+// v3.3.0: in the Chinese sentence a field list that ends in an ASCII letter or digit ("Quantity",
+// "Q1") is set off from 等于 by a space; Chinese names and "等 N 列" are followed directly.
 function formatSuspectedTotalMatches(item) {
-  return item.matches.map((match) => L(
-    `${formatTotalMatchedFields(match.fields)}等于${formatTotalAddends(match)}`,
-    `${formatTotalMatchedFields(match.fields)} ${match.fields.length === 1 ? "equals" : "equal"} ${formatTotalAddends(match)}`
-  )).join(L("；", "; "));
+  return item.matches.map((match) => {
+    const fields = formatTotalMatchedFields(match.fields);
+    return L(
+      `${fields}${/[A-Za-z0-9]$/.test(fields) ? " " : ""}等于${formatTotalAddends(match)}`,
+      `${fields} ${match.fields.length === 1 ? "equals" : "equal"} ${formatTotalAddends(match)}`
+    );
+  }).join(L("；", "; "));
 }
 
 // One line of "疑似合计 / 小计行".

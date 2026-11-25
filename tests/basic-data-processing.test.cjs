@@ -4908,7 +4908,7 @@ test("v2.8.0 page: the sentences for row ranges, many columns and missing row nu
   assert.equal(line({ line: null, label: "合计", matches: [{ ...match, firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于上方 3 行明细之和。");
   assert.equal(line({ line: null, label: "合计", matches: [{ ...match, scope: "all", firstLine: null, lastLine: null, rowCount: 3 }] }), "有一行「合计」：额等于全表 3 行明细之和。");
   assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, rowCount: 1000, firstLine: 2, lastLine: 1001 }] }), "第 14 行「合计」：额等于第 2–1001 行之和（1,000 行）。");
-  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, fields: ["a", "b", "c", "d", "e"] }, { ...match, scope: "all", fields: ["a", "b", "c", "d", "e", "f"] }] }), "第 14 行「合计」：a、b、c、d、e等于第 2–13 行之和（12 行）；a、b、c、d、e 等 6 列等于第 2–13 行之和（12 行）。");
+  assert.equal(line({ line: 14, label: "合计", matches: [{ ...match, fields: ["a", "b", "c", "d", "e"] }, { ...match, scope: "all", fields: ["a", "b", "c", "d", "e", "f"] }] }), "第 14 行「合计」：a、b、c、d、e 等于第 2–13 行之和（12 行）；a、b、c、d、e 等 6 列等于第 2–13 行之和（12 行）。");
 
   const error = (item) => evaluate(`formatFormulaError(${JSON.stringify(item)})`);
   const base = { field: "额", count: 2, byError: { "#N/A": 2 }, lines: [3, 4] };
@@ -12992,4 +12992,24 @@ test("v3.3.0 totals: the task table of v3.1.0 has three label groups that mostly
   assert.equal(tasks.evaluate("state.suspectedTotalLabelCount"), 0);
   assert.equal(isHidden(tasks, "suspectedTotalSection"), true);
   assert.equal(tasks.evaluate("getSuspectedTotalExtras()"), null);
+});
+
+// v3.3.0 ②b: in the Chinese sentence a space separates a field list that ends in an ASCII letter or
+// digit from 等于; Chinese names, the "等 N 列" form and the English sentence are as before.
+test("v3.3.0 totals: the Chinese sentence puts a space between an English field name and 等于", () => {
+  const match = { scope: "segment", fields: ["额"], firstLine: 2, lastLine: 5, rowCount: 4, contiguous: true };
+  const line = (fields, language) => {
+    const { evaluate } = createScriptContext(language ? { language } : {});
+    return evaluate(`formatSuspectedTotal(${JSON.stringify({ line: 6, label: "East Total", matches: [{ ...match, fields }] })})`);
+  };
+  assert.equal(line(["Quantity", "Amount"]), "第 6 行「East Total」：Quantity、Amount 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["Q1"]), "第 6 行「East Total」：Q1 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["金额USD"]), "第 6 行「East Total」：金额USD 等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["销售额", "成本"]), "第 6 行「East Total」：销售额、成本等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["金额", "Amount", "额"]), "第 6 行「East Total」：金额、Amount、额等于第 2–5 行之和（4 行）。");
+  // Not ASCII, so no space: a full-width letter and a closing bracket.
+  assert.equal(line([String.fromCharCode(0xff31)]), `第 6 行「East Total」：${String.fromCharCode(0xff31)}等于第 2–5 行之和（4 行）。`);
+  assert.equal(line(["Amount (USD)"]), "第 6 行「East Total」：Amount (USD)等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["A", "B", "C", "D", "E", "F"]), "第 6 行「East Total」：A、B、C、D、E 等 6 列等于第 2–5 行之和（4 行）。");
+  assert.equal(line(["Quantity", "Amount"], "en"), "Row 6 “East Total”: Quantity, Amount equal the sum of rows 2–5 (4 rows).");
 });
