@@ -1019,6 +1019,21 @@ const PLACEHOLDER_MAYBE_NOTE = Lp(
 );
 const PLACEHOLDER_DASH_NOTE = Lp("在会计格式里，「-」通常表示 0。", "In accounting formats, “-” usually means 0.");
 
+// v3.3.0: the five maybe writings of v2.4.0 come first in PLACEHOLDER_VALUES.maybe (its test pins
+// the order). A column whose maybe writings are all among them keeps PLACEHOLDER_MAYBE_NOTE byte
+// for byte; one with a newer writing gets a sentence that names only its own writings, with one
+// example per kind of writing below, in this order.
+const PLACEHOLDER_MAYBE_OLD_KEYS = Object.freeze(PLACEHOLDER_VALUES.maybe.slice(0, 5));
+const PLACEHOLDER_MAYBE_EXAMPLES = Object.freeze([
+  [(key) => PLACEHOLDER_MAYBE_OLD_KEYS.includes(key) && key !== "NA", Lp("“有/无”选项", "a yes/no answer")],
+  [(key) => key === "NA", Lp("北美地区", "NA for North America")],
+  [(key) => key.toLowerCase() === "none", Lp("表示“没有”的回答，比如损坏程度：None", "an answer meaning “none”, such as damage: None")],
+  [(key) => key.toLowerCase() === "unknown", Lp("单独的一个选项", "an option of its own")],
+  [(key) => key.toLowerCase() === "tbd", Lp("表示“待定”的状态", "a status such as “to be decided”")],
+  [(key) => key === "?", Lp("问卷里的“不确定”", "“not sure” in a survey")],
+  [(key) => key.toLowerCase() === "n.a.", Lp("“不适用”", "“not applicable”")]
+]);
+
 // 「N/A」, plus "（原文：Ｎ／Ａ、N/A）" when a raw text differs from the key.
 function formatPlaceholderValue({ key, rawValues }) {
   if (!rawValues.some((value) => value !== key)) return L(`「${key}」`, `“${key}”`);
@@ -1056,13 +1071,22 @@ function formatConfirmedPlaceholder(entry) {
   );
 }
 
+// keys can repeat (the report passes the writings of every column at once): each is named once.
 function formatPlaceholderNotes(keys) {
-  const maybe = keys.filter((key) => placeholderTier(key) === "maybe");
+  const maybe = [...new Set(keys.filter((key) => placeholderTier(key) === "maybe"))];
   if (!maybe.length) return "";
   const dash = keys.includes("-");
+  if (maybe.every((key) => PLACEHOLDER_MAYBE_OLD_KEYS.includes(key))) {
+    return L(
+      `${PLACEHOLDER_MAYBE_NOTE[0]}${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
+      `${PLACEHOLDER_MAYBE_NOTE[1](maybe)}${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
+    );
+  }
+  const examples = PLACEHOLDER_MAYBE_EXAMPLES.filter(([fits]) => maybe.some(fits)).map(([, example]) => Lpick(example));
+  const one = maybe.length === 1;
   return L(
-    `${PLACEHOLDER_MAYBE_NOTE[0]}${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
-    `${PLACEHOLDER_MAYBE_NOTE[1](maybe)}${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
+    `${maybe.map((key) => `「${key}」`).join("")}也可能是有效值（例如${examples.join("；")}），请确认这一列里${one ? "它" : "它们"}确实表示没有数据。${dash ? PLACEHOLDER_DASH_NOTE[0] : ""}`,
+    `${one ? `“${maybe[0]}” may also be a real value` : `${maybe.map((key) => `“${key}”`).join(", ")} may also be real values`} (for example ${examples.join("; or ")}); make sure that in this column ${one ? "it means" : "they mean"} there is no data.${dash ? ` ${PLACEHOLDER_DASH_NOTE[1]}` : ""}`
   );
 }
 

@@ -30,10 +30,12 @@ function displayValue(value) {
 
 // Cell texts often used for "no data". They stay ordinary values until the user
 // confirms them per field and key. "common" keys can be confirmed together;
-// "maybe" keys are also real answers in some columns (有/无, 北美 NA).
+// "maybe" keys are also real answers in some columns (有/无, 北美 NA; v3.3.0: None as an
+// answer such as "damage: None", Unknown as a category, TBD as a status, ? as "not sure",
+// n.a. as "not applicable").
 const PLACEHOLDER_VALUES = Object.freeze({
-  common: Object.freeze(["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"]),
-  maybe: Object.freeze(["无", "暂无", "-", "/", "NA"])
+  common: Object.freeze(["N/A", "n/a", "#N/A", "NULL", "null", "Null", "NaN", "nan", "NAN", "—", "——", "--"]),
+  maybe: Object.freeze(["无", "暂无", "-", "/", "NA", "None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."])
 });
 
 const PLACEHOLDER_TIER_BY_KEY = new Map([
@@ -45,13 +47,17 @@ const PLACEHOLDER_TIER_BY_KEY = new Map([
 // result, so a cell longer than two UTF-16 units per key character cannot match.
 const PLACEHOLDER_MAX_CELL_LENGTH = 2 * Math.max(...[...PLACEHOLDER_TIER_BY_KEY.keys()].map((key) => key.length));
 
+// v3.3.0: NFKC never changes a pure ASCII text, so those cells skip it (the limit grew to 14
+// with Unknown, and ID-like cells such as "ORDER-LONG-1" now fall within it).
+const PLACEHOLDER_NON_ASCII = /[^\x00-\x7F]/;
+
 // The list key of a text cell (trimmed, NFKC, trimmed again), or "" when the
 // whole cell is not on the list.
 function placeholderKey(value) {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > PLACEHOLDER_MAX_CELL_LENGTH) return "";
-  const key = trimmed.normalize("NFKC").trim();
+  const key = PLACEHOLDER_NON_ASCII.test(trimmed) ? trimmed.normalize("NFKC").trim() : trimmed;
   return PLACEHOLDER_TIER_BY_KEY.has(key) ? key : "";
 }
 

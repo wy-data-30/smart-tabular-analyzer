@@ -13013,3 +13013,54 @@ test("v3.3.0 totals: the Chinese sentence puts a space between an English field 
   assert.equal(line(["A", "B", "C", "D", "E", "F"]), "第 6 行「East Total」：A、B、C、D、E 等 6 列等于第 2–5 行之和（4 行）。");
   assert.equal(line(["Quantity", "Amount"], "en"), "Row 6 “East Total”: Quantity, Amount equal the sum of rows 2–5 (4 rows).");
 });
+
+// ---- v3.3.0 ③: None and new spellings that may mean blank ----
+test("v3.3.0 placeholders: None and Unknown are listed one by one, never confirmed with the common writings, and stay as written", async () => {
+  // 金额: 16 numbers, None twice, Unknown twice (numeric); 损坏程度: an answer column with None.
+  const lines = ["编号,金额,损坏程度"];
+  for (let i = 0; i < 20; i += 1) {
+    const amount = i === 3 || i === 9 ? "None" : i === 5 || i === 13 ? "Unknown" : String(100 + i * 10);
+    lines.push(`R-${1000 + i},${amount},${i % 4 === 0 ? "None" : ["Minor", "Medium", "Substantial"][i % 3]}`);
+  }
+  const scope = await importCsvFile(`${lines.join("\n")}\n`, "damage.csv");
+  const placeholders = () => JSON.parse(scope.evaluate("JSON.stringify(state.placeholders.map((item) => [item.field, item.key, item.tier, item.count]))"));
+  assert.deepEqual(placeholders(), [["金额", "None", "maybe", 2], ["金额", "Unknown", "maybe", 2], ["损坏程度", "None", "maybe", 5]]);
+  assert.equal(scope.evaluate('getFieldProfile("金额").typeKey'), "numeric");
+  // Not confirmed, so still values that are not numbers: as before for None, and now listed for Unknown too.
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 4);
+  assert.equal(qualityPill(scope.elements, "像是空值的写法").text, "像是空值的写法：2 个字段");
+  // Nothing of the common tier is here, so "常见写法全部按空值处理" has nothing to confirm.
+  scope.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.placeholderConfirmations)")), {});
+  assert.doesNotMatch(scope.elements.get("placeholderDetails").innerHTML, /常见写法全部按空值处理/);
+  // The standardized table keeps them as written and says why.
+  scope.evaluate("checkStandardizedExport()");
+  const changes = scope.evaluate("buildStandardizedChangesCsvContent(state.standardizedExport, state.rows, state.fields, getSourceRowNumber)").replace(/^\uFEFF/, "").split("\r\n").filter(Boolean);
+  assert.deepEqual(changes, [
+    "文件行号,字段,原值,导出值,处理",
+    "5,金额,None,None,像是空值的写法，未确认",
+    "7,金额,Unknown,Unknown,像是空值的写法，未确认",
+    "11,金额,None,None,像是空值的写法，未确认",
+    "15,金额,Unknown,Unknown,像是空值的写法，未确认"
+  ]);
+  // Confirming one writing of one field is the user's call, writing by writing.
+  scope.evaluate('updatePlaceholderConfirmations({ ...state.placeholderConfirmations, "金额": ["Unknown"] })');
+  assert.equal(scope.evaluate('getFieldProfile("金额").conversionFailureCount'), 2);
+  assert.equal(scope.evaluate('getFieldProfile("金额").missingCount'), 2);
+});
+
+test("v3.3.0 placeholders: the report's one note names a writing once even when several columns hold it", async () => {
+  // Like biopics: "-" in two columns, Unknown in a third.
+  const lines = ["编号,票房,主演,种族已知"];
+  for (let i = 0; i < 12; i += 1) lines.push(`F-${100 + i},${i % 4 === 0 ? "-" : `${i}00`},${i === 5 ? "-" : `演员${i}`},${i % 3 === 0 ? "Unknown" : "Known"}`);
+  const csv = `${lines.join("\n")}\n`;
+  const zh = reportOf(await importCsvFile(csv, "films.csv")).html;
+  assert.ok(zh.includes("<p>说明：「-」「Unknown」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。</p>"));
+  assert.doesNotMatch(zh, /「-」「Unknown」「-」/);
+  const en = reportOf(await importCsvInLanguage(csv, "films.csv", "en")).html;
+  assert.ok(en.includes("<p>Note: “-”, “Unknown” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.</p>"));
+  // Only "-", twice: the Chinese old sentence as before; the English one names it once, singular.
+  const dashOnly = csv.replace(/Unknown/g, "Known");
+  assert.ok(reportOf(await importCsvFile(dashOnly, "films.csv")).html.includes("<p>说明：「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。在会计格式里，「-」通常表示 0。</p>"));
+  assert.ok(reportOf(await importCsvInLanguage(dashOnly, "films.csv", "en")).html.includes("<p>Note: “-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.</p>"));
+});

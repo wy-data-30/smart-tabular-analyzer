@@ -414,6 +414,7 @@ test("placeholder spellings never convert or give number strategy evidence (cont
       { unit: "", unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true },
       ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
     ];
+    // v3.3.0: 28 writings (None moved to the maybe tier with Unknown, TBD, ?, n.a. and their cases).
     return {
       formCount: forms.length,
       converted: forms.filter((form) => strategies.some((strategy) => toNumber(form, strategy) !== null)),
@@ -421,7 +422,7 @@ test("placeholder spellings never convert or give number strategy evidence (cont
       strategy: buildNumberStrategy(forms)
     };
   })())`));
-  assert.equal(result.formCount, 57);
+  assert.equal(result.formCount, 84);
   assert.deepEqual(result.converted, []);
   assert.deepEqual(result.matched, []);
   assert.deepEqual(result.strategy, { unit: "", unitConflict: false, units: {}, allowMagnitude: false, fullwidth: false });
@@ -1216,14 +1217,17 @@ test("ID duplicate texts: row numbers, identical rows, overflow and the repeated
 test("the placeholder list has a common tier and a maybe-valid tier", () => {
   const { evaluate } = createScriptContext();
   assert.deepEqual(JSON.parse(evaluate("JSON.stringify(PLACEHOLDER_VALUES)")), {
-    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "None", "none", "NaN", "nan", "NAN", "—", "——", "--"],
-    maybe: ["无", "暂无", "-", "/", "NA"]
+    common: ["N/A", "n/a", "#N/A", "NULL", "null", "Null", "NaN", "nan", "NAN", "—", "——", "--"],
+    maybe: ["无", "暂无", "-", "/", "NA", "None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."]
   });
   assert.equal(evaluate('placeholderTier("N/A")'), "common");
   assert.equal(evaluate('placeholderTier("——")'), "common");
   assert.equal(evaluate('placeholderTier("无")'), "maybe");
   assert.equal(evaluate('placeholderTier("NA")'), "maybe");
   assert.equal(evaluate('placeholderTier("缺考")'), "");
+  // v3.3.0: None is an answer in some columns ("damage: None"), so it moved to the maybe tier.
+  assert.equal(evaluate('placeholderTier("None")'), "maybe");
+  assert.equal(evaluate('placeholderTier("na")'), "");
 });
 
 test("placeholder keys trim, apply NFKC and trim again, then match the whole cell", () => {
@@ -1620,4 +1624,130 @@ test("v3.3.0 date matchers build no RegExp per call and match as before", () => 
     [["2024-13-45", "2024", "-", "13", "45", ""], null, null],
     [null, null, null]
   ]);
+});
+
+// ---- v3.3.0 ③: None and new spellings that may mean blank ----
+test("v3.3.0 placeholders: the new maybe-tier writings, full-width forms included; look-alikes that are not on the list", () => {
+  const { context, evaluate } = createScriptContext();
+  const key = (value) => {
+    context.__placeholderValue = value;
+    return evaluate("placeholderKey(__placeholderValue)");
+  };
+  const tier = (value) => evaluate(`placeholderTier(placeholderKey(${JSON.stringify(value)}))`);
+  for (const value of ["None", "none", "NONE", "Unknown", "unknown", "UNKNOWN", "TBD", "tbd", "?", "n.a.", "N.A."]) {
+    assert.equal(key(value), value, value);
+    assert.equal(key(` ${value} `), value, value);
+    assert.equal(tier(value), "maybe", value);
+  }
+  // Full-width forms through NFKC: ？ (U+FF1F), ＵＮＫＮＯＷＮ, ｎ．ａ．
+  const fullWidth = (text) => text.replace(/[!-~]/g, (char) => String.fromCharCode(char.charCodeAt(0) + 0xfee0));
+  assert.equal(key(String.fromCharCode(0xff1f)), "?");
+  assert.equal(key(fullWidth("UNKNOWN")), "UNKNOWN");
+  assert.equal(key(fullWidth("n.a.")), "n.a.");
+  // Whole cells only: near misses and other "no data" words are not on the list.
+  for (const value of ["na", "NONE.", "Nones", "(blank)", "Missing", "nil", "??", "TBD?", "n/a.", "N.A", "Unknown value"]) {
+    assert.equal(key(value), "", value);
+  }
+  // "常见写法全部按空值处理" covers the common tier only, which no longer holds any None.
+  assert.equal(evaluate("PLACEHOLDER_VALUES.common.some((key) => key.toLowerCase() === 'none')"), false);
+});
+
+test("v3.3.0 placeholders: the cell length limit follows the longest writing (14), and pure ASCII cells skip NFKC", () => {
+  const { context, evaluate } = createScriptContext();
+  assert.equal(evaluate("PLACEHOLDER_MAX_CELL_LENGTH"), 14);
+  // 14 units can still match (UNKNOWN in full width with spaces would be longer; the limit is on the trimmed text).
+  context.__cells = ["UNKNOWN", `${" ".repeat(20)}UNKNOWN`, "x".repeat(14), "x".repeat(15)];
+  assert.deepEqual(JSON.parse(evaluate("JSON.stringify(__cells.map(placeholderKey))")), ["UNKNOWN", "UNKNOWN", "", ""]);
+  // NFKC leaves every ASCII code unit and every ASCII writing on the list as it is, so skipping it changes nothing.
+  const identity = JSON.parse(evaluate(`JSON.stringify((() => {
+    const units = Array.from({ length: 128 }, (_, code) => String.fromCharCode(code));
+    const writings = [...PLACEHOLDER_VALUES.common, ...PLACEHOLDER_VALUES.maybe].filter((text) => /^[\\x00-\\x7F]*$/.test(text));
+    return { units: units.filter((text) => text.normalize("NFKC") !== text).length, writings: writings.filter((text) => text.normalize("NFKC") !== text).length, writingCount: writings.length };
+  })())`));
+  assert.deepEqual(identity, { units: 0, writings: 0, writingCount: 24 });
+  const calls = JSON.parse(evaluate(`JSON.stringify((() => {
+    const original = String.prototype.normalize;
+    let count = 0;
+    String.prototype.normalize = function (...args) { count += 1; return original.apply(this, args); };
+    try {
+      const ascii = ["Item-0001abc", "UNKNOWN", "n.a.", "?", "ORDER-LONG-1"].map(placeholderKey);
+      const asciiCalls = count;
+      count = 0;
+      const wide = [String.fromCharCode(0xff1f), "暂无"].map(placeholderKey);
+      return { ascii, asciiCalls, wide, wideCalls: count };
+    } finally {
+      String.prototype.normalize = original;
+    }
+  })())`));
+  assert.deepEqual(calls, { ascii: ["", "UNKNOWN", "n.a.", "?", ""], asciiCalls: 0, wide: ["?", "暂无"], wideCalls: 2 });
+});
+
+// The maybe-tier note of 3594fba, written out here: a column whose maybe writings are all among
+// the five of v2.4.0 keeps it byte for byte in both languages.
+function oldPlaceholderNotes(keys, language) {
+  const maybe = keys.filter((key) => ["无", "暂无", "-", "/", "NA"].includes(key));
+  if (!maybe.length) return "";
+  const dash = keys.includes("-");
+  if (language === "zh") return `「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。${dash ? "在会计格式里，「-」通常表示 0。" : ""}`;
+  const examples = [maybe.some((key) => key !== "NA") ? "a yes/no answer" : "", maybe.includes("NA") ? "NA for North America" : ""].filter(Boolean).join(", or ");
+  const sentence = maybe.length === 1
+    ? `“${maybe[0]}” may also be a real value (for example ${examples}); make sure that in this column it means there is no data.`
+    : `${maybe.map((key) => `“${key}”`).join(", ")} may also be real values (for example ${examples}); make sure that in this column they mean there is no data.`;
+  return `${sentence}${dash ? " In accounting formats, “-” usually means 0." : ""}`;
+}
+
+test("v3.3.0 placeholders: a column with only the five old maybe writings keeps the old note in both languages (31 subsets)", () => {
+  const old = ["无", "暂无", "-", "/", "NA"];
+  for (const language of ["zh", "en"]) {
+    const { evaluate } = createScriptContext({ language });
+    let checked = 0;
+    for (let mask = 1; mask < 32; mask += 1) {
+      const subset = old.filter((_, index) => mask & (1 << index));
+      for (const keys of [subset, ["N/A", ...subset], [...subset, "NULL"]]) {
+        assert.equal(evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`), oldPlaceholderNotes(keys, language), `${language} ${keys.join(" ")}`);
+        checked += 1;
+      }
+    }
+    assert.equal(checked, 93);
+    assert.equal(evaluate('formatPlaceholderNotes(["N/A", "NULL"])'), "");
+  }
+});
+
+test("v3.3.0 placeholders: a column with a new maybe writing names only its own writings, each kind with its example", () => {
+  const zh = createScriptContext({ language: "zh" });
+  const en = createScriptContext({ language: "en" });
+  const note = (scope, keys) => scope.evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`);
+  assert.equal(note(zh, ["None"]), "「None」也可能是有效值（例如表示“没有”的回答，比如损坏程度：None），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["None", "none"]), "「None」「none」也可能是有效值（例如表示“没有”的回答，比如损坏程度：None），请确认这一列里它们确实表示没有数据。");
+  assert.equal(note(zh, ["Unknown"]), "「Unknown」也可能是有效值（例如单独的一个选项），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["TBD"]), "「TBD」也可能是有效值（例如表示“待定”的状态），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["?"]), "「?」也可能是有效值（例如问卷里的“不确定”），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["n.a."]), "「n.a.」也可能是有效值（例如“不适用”），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["N/A", "UNKNOWN", "-"]), "「UNKNOWN」「-」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["None", "Unknown", "TBD", "?", "n.a.", "NA", "无"]), "「None」「Unknown」「TBD」「?」「n.a.」「NA」「无」也可能是有效值（例如“有/无”选项；北美地区；表示“没有”的回答，比如损坏程度：None；单独的一个选项；表示“待定”的状态；问卷里的“不确定”；“不适用”），请确认这一列里它们确实表示没有数据。");
+
+  assert.equal(note(en, ["None"]), "“None” may also be a real value (for example an answer meaning “none”, such as damage: None); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["None", "none"]), "“None”, “none” may also be real values (for example an answer meaning “none”, such as damage: None); make sure that in this column they mean there is no data.");
+  assert.equal(note(en, ["Unknown"]), "“Unknown” may also be a real value (for example an option of its own); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["TBD"]), "“TBD” may also be a real value (for example a status such as “to be decided”); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["?"]), "“?” may also be a real value (for example “not sure” in a survey); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["N.A."]), "“N.A.” may also be a real value (for example “not applicable”); make sure that in this column it means there is no data.");
+  assert.equal(note(en, ["N/A", "UNKNOWN", "-"]), "“UNKNOWN”, “-” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["None", "Unknown", "TBD", "?", "n.a.", "NA", "无"]), "“None”, “Unknown”, “TBD”, “?”, “n.a.”, “NA”, “无” may also be real values (for example a yes/no answer; or NA for North America; or an answer meaning “none”, such as damage: None; or an option of its own; or a status such as “to be decided”; or “not sure” in a survey; or “not applicable”); make sure that in this column they mean there is no data.");
+});
+
+// The report passes the writings of every column at once, so a writing can come twice; each is
+// named once. The Chinese old sentence is fixed text and stays byte for byte; the English old
+// sentence loses the repeat and is singular when one writing is left (an intended fix).
+test("v3.3.0 placeholders: a writing that comes twice is named once, in both languages and both sentences", () => {
+  const zh = createScriptContext({ language: "zh" });
+  const en = createScriptContext({ language: "en" });
+  const note = (scope, keys) => scope.evaluate(`formatPlaceholderNotes(${JSON.stringify(keys)})`);
+  assert.equal(note(zh, ["-", "Unknown", "-"]), "「-」「Unknown」也可能是有效值（例如“有/无”选项；单独的一个选项），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["NA", "-", "NA", "None", "none"]), "「NA」「-」「None」「none」也可能是有效值（例如“有/无”选项；北美地区；表示“没有”的回答，比如损坏程度：None），请确认这一列里它们确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(zh, ["Unknown", "Unknown"]), "「Unknown」也可能是有效值（例如单独的一个选项），请确认这一列里它确实表示没有数据。");
+  assert.equal(note(zh, ["-", "-", "NA", "NA"]), "「无」「暂无」「-」「/」「NA」也可能是有效值（例如“有/无”选项、北美地区），请确认这一列里它确实表示没有数据。在会计格式里，「-」通常表示 0。");
+  assert.equal(note(en, ["-", "-"]), "“-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["NA", "-", "NA"]), "“NA”, “-” may also be real values (for example a yes/no answer, or NA for North America); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+  assert.equal(note(en, ["-", "Unknown", "-"]), "“-”, “Unknown” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
 });
