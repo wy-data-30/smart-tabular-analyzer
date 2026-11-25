@@ -252,7 +252,12 @@ function buildNumberConversionSummary(profiles) {
   return profiles.flatMap((profile) => {
     const strategy = profile.numberStrategy;
     if (profile.typeKey === "ignore" || !strategy || !(hasNumberStrategySwitch(strategy) || strategy.unitConflict)) return [];
-    const { unitCount, unitSamples, magnitudeCount, fullwidthCount } = profile.numberReadings;
+    // v3.3.0: a column not read as numbers says nothing about what its strategy read (a film
+    // called "127 Hours" among titles); a unit conflict is still named, since it is often why
+    // the column is not numbers.
+    const { unitCount, unitSamples, magnitudeCount, fullwidthCount } = profile.typeKey === "numeric"
+      ? profile.numberReadings
+      : { unitCount: 0, unitSamples: [], magnitudeCount: 0, fullwidthCount: 0 };
     const conflictUnits = strategy.unitConflict
       ? Object.entries(strategy.units).map(([unit, count]) => ({ unit, count })).sort((a, b) => b.count - a.count)
       : [];

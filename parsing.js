@@ -155,20 +155,42 @@ const FULLWIDTH_NUMBER_CHARS = Object.freeze({
 // any case and compare in lower case. No "g": 4G / 5G and 8G / 16G are not grams.
 const NUMBER_UNITS = Object.freeze(["千克", "公斤", "小时", "分钟", "元", "克", "斤", "吨", "件", "个", "箱", "台", "人", "次", "秒", "天", "米", "岁", "kg", "cm", "mm", "km"]);
 
-// Sign, a plain or comma-grouped number, 万 / 亿 right after it, then optional
-// space and a unit.
-const NUMBER_WITH_UNIT_PATTERN = new RegExp(`^([+-]?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?|\\.\\d+))(万|亿)?(?:\\s*(${NUMBER_UNITS.join("|")}))?$`, "i");
+// v3.3.0: English units, each spelling with the unit it reads as (singular, plural and
+// abbreviation are one unit, named as below). Whole words of two letters or more only: no
+// g, m, h, s, d, k, in or mi. Currency codes may also come first (USD 200, US$200). Currencies
+// are never converted: 5,400 USD and $900 in one column are one kind of money.
+const ENGLISH_NUMBER_UNITS = Object.freeze({
+  usd: "USD", eur: "EUR", gbp: "GBP", jpy: "JPY", cny: "CNY", rmb: "CNY", cad: "CAD", aud: "AUD", hkd: "HKD", chf: "CHF", inr: "INR", sgd: "SGD",
+  pcs: "pcs", pc: "pcs", pieces: "pcs", piece: "pcs", units: "units", unit: "units",
+  lbs: "lb", lb: "lb", oz: "oz",
+  hours: "hours", hour: "hours", hrs: "hours", hr: "hours", minutes: "minutes", minute: "minutes", mins: "minutes", min: "minutes",
+  days: "days", day: "days", weeks: "weeks", week: "weeks", months: "months", month: "months", years: "years", year: "years", yrs: "years", yr: "years",
+  miles: "miles", mile: "miles", ft: "ft", feet: "ft"
+});
+const ENGLISH_CURRENCY_PREFIXES = Object.freeze({ usd: "USD", "us$": "USD", eur: "EUR", gbp: "GBP", jpy: "JPY", cny: "CNY", rmb: "CNY", cad: "CAD", aud: "AUD", hkd: "HKD", chf: "CHF", inr: "INR", sgd: "SGD" });
+const escapeNumberUnitText = (unit) => unit.replace(/[$]/g, "\\$");
+// Longer spellings first, so "hours" is not read as "hour" plus "s".
+const NUMBER_UNIT_SPELLINGS = [...NUMBER_UNITS, ...Object.keys(ENGLISH_NUMBER_UNITS)].sort((a, b) => b.length - a.length);
+
+// An optional currency code in front (v3.3.0), sign, a plain or comma-grouped number,
+// 万 / 亿 right after it, then optional space, a unit and (English units only) a dot.
+const NUMBER_WITH_UNIT_PATTERN = new RegExp(`^(?:(${Object.keys(ENGLISH_CURRENCY_PREFIXES).map(escapeNumberUnitText).join("|")})\\s*)?([+-]?(?:\\d{1,3}(?:,\\d{3})+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?|\\.\\d+))(万|亿)?(?:\\s*(${NUMBER_UNIT_SPELLINGS.join("|")})\\.?)?$`, "i");
 
 function toHalfwidthNumberText(text) {
   return text.replace(/[０-９，．－＋％]/g, (char) => FULLWIDTH_NUMBER_CHARS[char]);
 }
 
 // { numberText, magnitude, unit } for a trimmed, half-width text with 万 / 亿, a
-// unit or both; otherwise null.
+// unit or both; otherwise null. A Chinese unit or kg, cm, mm, km is its lower-case
+// spelling; an English unit or currency code is its name (USD, pcs, hours …).
 function matchNumberWithUnit(text) {
   const match = text.match(NUMBER_WITH_UNIT_PATTERN);
-  if (!match || (!match[2] && !match[3])) return null;
-  return { numberText: match[1], magnitude: match[2] || "", unit: (match[3] || "").toLowerCase() };
+  if (!match || (!match[1] && !match[3] && !match[4]) || (match[1] && match[4])) return null;
+  const spelling = (match[4] || "").toLowerCase();
+  // A trailing dot belongs to an English abbreviation only ("5 lbs."), never to 元 or kg.
+  if (/\.$/.test(match[0]) && !ENGLISH_NUMBER_UNITS[spelling]) return null;
+  const unit = match[1] ? ENGLISH_CURRENCY_PREFIXES[match[1].toLowerCase()] : (ENGLISH_NUMBER_UNITS[spelling] || spelling);
+  return { numberText: match[2], magnitude: match[3] || "", unit };
 }
 
 // A field's number strategy from its non-missing values. Only number-like values
@@ -558,7 +580,9 @@ function standardizeNumberCell(value, strategy, confirmedKeys = [], currencyMode
   if (PLAIN_NUMBER_TEXT_PATTERN.test(raw)) return raw === value ? unchangedCell(value) : { value: raw, action: "trim" };
   const text = strategy && strategy.fullwidth ? toHalfwidthNumberText(raw) : raw;
   if (/%/.test(text)) return { value, action: "keptPercent" };
-  if (/[eE]/.test(text)) return { value, action: "keptScientific" };
+  // v3.3.0: only the number decides: the e of "200 EUR", "2 years" or "10 miles" is the unit's.
+  const unitMatch = toPlainNumber(text) === null ? matchNumberWithUnit(text) : null;
+  if (/[eE]/.test(unitMatch ? unitMatch.numberText : text)) return { value, action: "keptScientific" };
   if (currencyMode === "mixed" && CURRENCY_SYMBOL_PATTERN.test(text)) return { value, action: "keptCurrencyMix" };
   let standardized;
   if (toPlainNumber(text) !== null) standardized = plainNumberTextOf(text);

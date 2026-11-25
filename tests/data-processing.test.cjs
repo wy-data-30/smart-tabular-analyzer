@@ -412,7 +412,9 @@ test("placeholder spellings never convert or give number strategy evidence (cont
     const strategies = [
       {},
       { unit: "", unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true },
-      ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
+      ...NUMBER_UNITS.map((unit) => ({ unit: unit.toLowerCase(), unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true })),
+      // v3.3.0: English units and currency codes, keyed by the name matchNumberWithUnit() returns.
+      ...[...new Set([...Object.values(ENGLISH_NUMBER_UNITS), ...Object.values(ENGLISH_CURRENCY_PREFIXES)])].map((unit) => ({ unit, unitConflict: false, units: {}, allowMagnitude: true, fullwidth: true }))
     ];
     // v3.3.0: 28 writings (None moved to the maybe tier with Unknown, TBD, ?, n.a. and their cases).
     return {
@@ -1788,4 +1790,79 @@ test("v3.3.0 ID names: a survey header with the word yes is a question, so its l
   }
   // Only the number / no rule gives way: id, uuid, guid, code and key are unchanged.
   for (const name of ["Yes code", "yes_id", "Yes Key"]) assert.equal(view(name)[0], true, name);
+});
+
+// ---- v3.3.0 ⑤: English units and currency codes ----
+// [value, number read with the column's own strategy, the strategy's unit]
+const readWithOwnStrategy = (evaluate, value) => JSON.parse(evaluate(`JSON.stringify((() => {
+  const value = ${JSON.stringify(value)};
+  const strategy = buildNumberStrategy([value, value]);
+  return [toNumber(value, strategy), strategy.unit];
+})())`));
+
+test("v3.3.0 units: every English spelling reads as its unit's name, in any case; a dot only after an English unit", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, number, unit] of [
+    ["200 USD", 200, "USD"], ["200 usd", 200, "USD"], ["5,400 USD", 5400, "USD"], ["-200 USD", -200, "USD"], ["300 RMB", 300, "CNY"], ["300 CNY", 300, "CNY"],
+    ["9 EUR", 9, "EUR"], ["9 GBP", 9, "GBP"], ["9 JPY", 9, "JPY"], ["9 CAD", 9, "CAD"], ["9 AUD", 9, "AUD"], ["9 HKD", 9, "HKD"], ["9 CHF", 9, "CHF"], ["9 INR", 9, "INR"], ["9 SGD", 9, "SGD"],
+    ["12 pcs", 12, "pcs"], ["1 pc", 1, "pcs"], ["3 pieces", 3, "pcs"], ["1 piece", 1, "pcs"], ["12 units", 12, "units"], ["1 unit", 1, "units"],
+    ["5 lbs", 5, "lb"], ["5 lb", 5, "lb"], ["5 lbs.", 5, "lb"], ["5 oz", 5, "oz"],
+    ["8 hours", 8, "hours"], ["1 hour", 1, "hours"], ["8 hrs", 8, "hours"], ["8 hr", 8, "hours"], ["30 minutes", 30, "minutes"], ["1 minute", 1, "minutes"], ["30 mins", 30, "minutes"], ["30 min", 30, "minutes"],
+    ["5 days", 5, "days"], ["1 day", 1, "days"], ["3 weeks", 3, "weeks"], ["1 week", 1, "weeks"], ["2 months", 2, "months"], ["1 month", 1, "months"],
+    ["2 years", 2, "years"], ["1 year", 1, "years"], ["2 yrs", 2, "years"], ["1 yr", 1, "years"], ["10 miles", 10, "miles"], ["1 mile", 1, "miles"], ["6 ft", 6, "ft"], ["6 feet", 6, "ft"], ["6 FT", 6, "ft"]
+  ]) assert.deepEqual(readWithOwnStrategy(evaluate, value), [number, unit], value);
+  // The dot is English only; Chinese units and kg, cm, mm, km take none.
+  for (const value of ["5 kg.", "200元.", "3 cm.", "5 lbs.."]) assert.deepEqual(readWithOwnStrategy(evaluate, value), [null, ""], value);
+});
+
+test("v3.3.0 units: currency codes in front; what is not read", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, number] of [["USD 200", 200], ["USD200", 200], ["US$200", 200], ["us$ 1,050.50", 1050.5], ["Usd 200", 200], ["USD -200", -200], ["RMB 300", 300]]) {
+    assert.deepEqual(readWithOwnStrategy(evaluate, value), [number, value.toLowerCase().startsWith("rmb") ? "CNY" : "USD"], value);
+  }
+  // A code on both sides, single letters, in and mi, K / M, degrees, CR, words around the number.
+  for (const value of ["USD 200 USD", "200 USD EUR", "5 g", "5 m", "5 h", "5 s", "5 d", "5 k", "6 in", "3 mi", "1.2K", "3.4M", "$1.2M", "72°F", "1,234.50 CR", "Day 3", "2 for $5", "(200 USD)", "USD -", "127 Hours long"]) {
+    assert.deepEqual(readWithOwnStrategy(evaluate, value), [null, ""], value);
+  }
+  // Chinese units keep their own lower-case key in the strategy (the summary guard depends on it).
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5kg", "6 KG", "200元"]).units)')), { kg: 2, 元: 1 });
+  assert.deepEqual(JSON.parse(evaluate('JSON.stringify(buildNumberStrategy(["5 usd", "6 USD", "US$7"]).units)')), { USD: 3 });
+});
+
+test("v3.3.0 units: two units in a column read none; a currency sign beside its code is no conflict", () => {
+  const { evaluate } = createScriptContext();
+  const column = (values) => JSON.parse(evaluate(`JSON.stringify((() => { const values = ${JSON.stringify(values)}; const s = buildNumberStrategy(values); return [s.unit, s.unitConflict, s.units, values.map((v) => toNumber(v, s))]; })())`));
+  assert.deepEqual(column(["200 USD", "300 EUR"]), ["", true, { USD: 1, EUR: 1 }, [null, null]]);
+  assert.deepEqual(column(["10 kg", "10 lb"]), ["", true, { kg: 1, lb: 1 }, [null, null]]);
+  assert.deepEqual(column(["5,400 USD", "$900"]), ["USD", false, { USD: 1 }, [5400, 900]]);
+  assert.deepEqual(column(["1 hour", "8 hours", "8 hrs"]), ["hours", false, { hours: 3 }, [1, 8, 8]]);
+});
+
+test("v3.3.0 units: the standardized table writes English units as plain numbers; only the number decides scientific notation", () => {
+  const { evaluate } = createScriptContext();
+  const cell = (value, column = [value, value]) => JSON.parse(evaluate(`JSON.stringify((() => { const s = buildNumberStrategy(${JSON.stringify(column)}); const r = standardizeNumberCell(${JSON.stringify(value)}, s, [], ""); return [r.value, r.action]; })())`));
+  for (const [value, expected] of [["200 EUR", "200"], ["2 years", "2"], ["10 miles", "10"], ["5 pieces", "5"], ["6 feet", "6"], ["3 weeks", "3"], ["1 minute", "1"], ["USD 1,050.50", "1050.50"], ["US$200", "200"], ["5 lbs.", "5"], ["1.2万 USD", "12000"]]) {
+    assert.deepEqual(cell(value), [expected, "number"], value);
+  }
+  for (const value of ["1e3", "1.2E5", "-3e-2"]) assert.deepEqual(cell(value), [value, "keptScientific"], value);
+  // Chinese units and plain numbers as before.
+  assert.deepEqual(cell("2,200元"), ["2200", "number"]);
+  assert.deepEqual(cell(" 300 "), ["300", "trim"]);
+});
+
+test("v3.3.0 units: a text column says nothing about units it read, only about a conflict; number columns as before", () => {
+  const { context, evaluate } = createScriptContext();
+  const lines = (field, values) => {
+    context.__rows = values.map((value) => ({ [field]: value }));
+    return JSON.parse(evaluate(`JSON.stringify((() => { const profile = buildColumnProfile(${JSON.stringify(field)}, __rows); return [profile.typeKey, buildNumberConversionSummary([profile]).map(formatNumberConversion)]; })())`));
+  };
+  // Repeated, so the column is text, not an ID column.
+  const titles = ["Jaws", "Heat", "Up", "Cars", "Big", "127 Hours", "Jaws", "Heat", "Up", "Cars", "Big", "127 Hours"];
+  assert.deepEqual(lines("title", titles), ["category", []]);
+  const mixed = ["2 kg", "3 斤", "4 kg", "5 斤", "6 kg", "7 斤", "2 kg", "3 斤", "4 kg", "5 斤", "6 kg", "7 斤"];
+  assert.deepEqual(lines("重量", mixed), ["category", ["「重量」：同时出现 kg（6 个）和 斤（6 个），没有按单位读取，这些值不能读成数字。"]]);
+  const usd = Array.from({ length: 12 }, (_, i) => `${100 + i * 7} USD`);
+  assert.deepEqual(lines("Amount", usd), ["numeric", ["「Amount」：按\"USD\"读取了 12 个值（100 USD、107 USD、114 USD）"]]);
+  const kg = Array.from({ length: 12 }, (_, i) => `${1 + i}kg`);
+  assert.deepEqual(lines("重", kg), ["numeric", ["「重」：按\"kg\"读取了 12 个值（1kg、2kg、3kg）"]]);
 });
