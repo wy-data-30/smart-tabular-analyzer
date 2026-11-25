@@ -1,0 +1,21 @@
+﻿Region,Rep,Report,Quantity,Amount
+East,Ann,Daily,4,400
+East,Bo,Weekly Total,9,950
+East,Cy,Monthly,6,600
+East,Di,Daily,3,300
+East Total,,,22,2250
+North,Ann,Weekly Total,7,700
+North,Bo,Daily,5,520
+North,Cy,Monthly,2,210
+North Total,,,14,1430
+South,Di,Daily,8,800
+South,Ann,Weekly Total,3,330
+South,Bo,Monthly,6,640
+South,Cy,Daily,1,90
+South,Di,Weekly Total,4,410
+South Total,,,22,2270
+West,Bo,Weekly Total,5,480
+West,Cy,Daily,2,200
+West,Ann,Monthly,7,690
+West Total,,,14,1370
+Grand Total,,,72,7320

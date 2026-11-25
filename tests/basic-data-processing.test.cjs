@@ -3158,7 +3158,8 @@ const conversionCheckCounts = (scope) => JSON.parse(scope.evaluate(`JSON.stringi
 
 test("guard: the shared conversion check counts every field's failures as its profile does, for both types", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 18);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv) and 8 examples.
+  assert.equal(scopes.length, 19);
   const orders = scopes.find(([fileName]) => fileName === "订单表.csv")[1];
   orders.evaluate("confirmAllCommonPlaceholders()");
   scopes.push(["订单表.csv（全部确认后）", orders]);
@@ -3276,7 +3277,8 @@ const problemRowCheck = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((()
 
 test("every problem-row list matches its quality count on the stage3 fixtures and examples", async () => {
   const scopes = await importEveryQualityFile();
-  assert.equal(scopes.length, 18);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv) and 8 examples.
+  assert.equal(scopes.length, 19);
   for (const [fileName, scope] of scopes) {
     const { names, mismatches } = problemRowCheck(scope);
     assert.deepEqual(mismatches, [], fileName);
@@ -4626,7 +4628,7 @@ test("v2.8.0 fixtures: the store report's row 33 and the region table match know
 
 test("v2.8.0 fixtures: no other fixture or example has a suspected total or a formula error (v2.11.0: the sample button's file has one total)", async () => {
   const scopes = await importEveryQualityFile();
-  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
+  assert.deepEqual(scopes.filter(([, scope]) => suspectedTotals(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "en-subtotal.csv", "分区小计表.csv", "门店报表.xlsx", "sample-orders-en.csv", "sample-orders.csv"]);
   assert.deepEqual(scopes.filter(([, scope]) => formulaErrors(scope).length).map(([fileName]) => fileName), ["en-formula-errors.xlsx", "公式错误.xlsx"]);
 });
 
@@ -5278,7 +5280,7 @@ test("v2.9.0 guard: everything v2.8.1 computed stays the same on the stage3 fixt
   const expected = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "v2.8.1-guard.json"), "utf8"));
   const actual = {};
   for (const fileName of STAGE3_IMPORT_FILES) {
-    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx"].includes(fileName)) continue;
+    if (["写法不一致.csv", "en-issues.csv", "en-formula-errors.xlsx", "en-subtotal.csv"].includes(fileName)) continue;
     const scope = await importStage3Fixture(fileName);
     actual[fileName] = v281GuardDigest(scope);
     scope.evaluate("confirmAllCommonPlaceholders()");
@@ -6337,7 +6339,7 @@ test("v2.10.0 all fixtures and examples: rows and exports unchanged, counts = li
     assert.equal(types(again), types(scope), name);
   }
   assert.deepEqual(totals, {
-    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
+    "en-formula-errors.xlsx": 0, "en-issues.csv": 20, "en-subtotal.csv": 0, "公式错误.xlsx": 0, "写法不一致.csv": 13, "分区小计表.csv": 14, "成绩表-标题无逗号.csv": 3, "成绩表.csv": 3, "花名册.xlsx": 8, "订单表.csv": 36, "门店报表.xlsx": 0,
     "sample-data.csv": 0, "sample-orders-en.csv": 12, "sample-orders.csv": 11, "sample-sales.csv": 0, "sample-students.csv": 0, "sample-survey.csv": 0, "sample-used-products.csv": 0, "sample-user-behavior.csv": 119
   });
 });
@@ -11129,7 +11131,7 @@ test("v3.2.0 fix: English chart axis titles are capitalized; the words in senten
 // the download link points at it; the Chinese interface is as before.
 const SAMPLE_ORDERS_EN = "sample-orders-en.csv";
 // Compared after dropping the CR of every CRLF, like SAMPLE_ORDERS_LF_SHA256.
-const SAMPLE_ORDERS_EN_LF_SHA256 = "0b79436e00095497f163a5e69d42ea66e07fefc356a203f2035319a786031479";
+const SAMPLE_ORDERS_EN_LF_SHA256 = "900a6751488c8f8f785722a34fb368f95c9704ae6b036a6b3a6905f63f859f78";
 const sampleOrdersEnLfText = () => fs.readFileSync(path.join(REPO_ROOT, "examples", SAMPLE_ORDERS_EN), "utf8").replace(/\r\n/g, "\n");
 const sampleOrdersEnLines = () => sampleOrdersEnLfText().slice(1, -1).split("\n");
 const PILLS_ZERO_EN = ["Blanks: 0", "Duplicate rows: 0", "Numbers or dates not recognized: 0 values", "Unusually high or low values: 0 columns", "Duplicate IDs: 0 columns", "Values that may mean blank: 0 columns"];
@@ -11157,13 +11159,14 @@ test("v3.2.0 commit 12: the English sample holds the planned rows, title and tot
   const data = lines.slice(2, 43).map(cells);
   assert.equal(data.length, 41);
   assert.equal(data.reduce((sum, row) => sum + Number(row[6]), 0), 800);
-  const amounts = data.map((row) => Number(row[7].replace(/[$,]/g, ""))).filter(Number.isFinite);
+  // v3.3.0: three amounts are written "5,400 USD" (they were "$5,400.00").
+  const amounts = data.map((row) => Number(row[7].replace(/[$,]| USD$/g, ""))).filter(Number.isFinite);
   assert.equal(amounts.length, 40);
   assert.equal(amounts.reduce((sum, value) => sum + value, 0), 123440);
   // The Chinese sample has the same numbers, row by row.
   const chinese = sampleOrdersLines().slice(2, 43).map(cells);
   assert.deepEqual(data.map((row) => row[6]), chinese.map((row) => row[6]));
-  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
+  assert.deepEqual(data.map((row) => Number(row[7].replace(/[$,]| USD$/g, ""))), chinese.map((row) => Number(row[7].replace(/元$/, ""))));
 });
 
 test("v3.2.0 commit 12: the sample button and the download link follow the language; the Chinese ones are as before", async () => {
@@ -11233,7 +11236,8 @@ const SAMPLE_ORDERS_EN_FIXES = {
   duplicate: (lines) => lines.filter((line, index) => !(line.startsWith("SO-1018,") && line === lines[index - 1])),
   na: (lines) => lines.map((line) => (line.startsWith("SO-1026,") ? line.replace(",N/A,", ",1560,") : line)),
   dash: (lines) => lines.map((line) => (line.startsWith("SO-1014,") ? line.replace(/,\u2014$/, ",Emma Chen") : line)),
-  money: (lines) => lines.map((line) => line.replace(/,"?\$([\d,]+)\.00"?,/, (match, number) => `,${number.replace(/,/g, "")},`)),
+  // Thousands separators only inside a quoted cell ("5,400 USD"); 900 USD has no quotes.
+  money: (lines) => lines.map((line) => line.replace(/,(?:"([\d,]+) USD"|(\d+) USD),/, (match, quoted, plain) => `,${(quoted || plain).replace(/,/g, "")},`)),
   date: (lines) => lines.map((line) => line
     .replace(/^(SO-\d+),(\d{2})\/(\d{2})\/(\d{4}),/, "$1,$4-$2-$3,")
     .replace(/^(SO-\d+),"([A-Z][a-z]{2}) (\d{1,2}), (\d{4})",/, (match, id, month, day, year) => `${id},${year}-${String(["Jan", "Feb", "Mar", "Apr", "May", "Jun"].indexOf(month) + 1).padStart(2, "0")}-${day.padStart(2, "0")},`)),
@@ -11262,11 +11266,10 @@ test("v3.2.0 commit 12: without its problems the English sample flags nothing, a
     duplicate: { pills: pills({ "Duplicate rows": "Duplicate rows: 1", "Duplicate IDs": "Duplicate IDs: 1 column" }), sections: [], note: false, cells: 0 },
     na: { pills: pills({ "Numbers or dates not recognized": "Numbers or dates not recognized: 1 value", "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 1 },
     dash: { pills: pills({ "Values that may mean blank": "Values that may mean blank: 1 column" }), sections: [], note: false, cells: 0 },
-    // $5,400.00, $900.00 and $1,050.00 are plain numbers to the current rules ($ and the thousands
-    // separator are read without a unit, unlike 5400元), so the quality page has nothing to say;
-    // only the standardized table writes them as 5400.00, 900.00 and 1050.00. Six of the seven
+    // v3.3.0: 5,400 USD, 900 USD and 1,050 USD are read by unit, like 5400元 in the Chinese sample:
+    // the quality page names them and the standardized table writes 5400, 900 and 1050. All seven
     // problems put in the sample are flagged.
-    money: { pills: PILLS_ZERO_EN, sections: [], note: false, cells: 3 },
+    money: { pills: PILLS_ZERO_EN, sections: ["numberConversionSection"], note: false, cells: 3 },
     date: { pills: PILLS_ZERO_EN, sections: ["dateStyleSection"], note: false, cells: 5 },
     space: { pills: PILLS_ZERO_EN, sections: ["lookAlikeSection"], note: false, cells: 3 }
   };
@@ -11302,7 +11305,9 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
     ["Customer type", "category"], ["Quantity", "numeric"], ["Amount", "numeric"], ["Sales rep", "category"]
   ]);
   assert.deepEqual(sampleOrdersPills(scope), ["Blanks: 6", "Duplicate rows: 1", "Numbers or dates not recognized: 1 value", "Unusually high or low values: 2 columns", "Duplicate IDs: 1 column", "Values that may mean blank: 2 columns"]);
-  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "dateStyleSection", "lookAlikeSection"]);
+  // v3.3.0: the amounts in USD are read by unit, like 5400元 in the Chinese sample.
+  assert.deepEqual(sampleOrdersShownSections(scope), ["suspectedTotalSection", "numberConversionSection", "dateStyleSection", "lookAlikeSection"]);
+  assert.equal(sampleOrdersText(scope, "numberConversionDetails"), "“Amount”: read 3 values as “USD” (5,400 USD, 900 USD, 1,050 USD)");
   assert.equal(scope.elements.get("categoryChartInsight").textContent, "In “Region”, the most common value is “East”: 9 times, 22.0%.");
   assert.equal(scope.elements.get("dateChartInsight").textContent, "By the date column “Order date”, the record count rises from 2025-01 to 2025-06, by about 66.7%.");
   assert.equal(scope.evaluate("dom.categoryChartField.value"), "Region");
@@ -11690,7 +11695,8 @@ test("v3.2.0 commit 13: the same file in Chinese and in English gives the same n
     // both languages (R3), or “(Blank)” and “（空值）” sort to different places.
     ["orders.csv", (language) => importCsvInLanguage(englishScenarioCsv(), "orders.csv", language)]
   ];
-  assert.equal(files.length, 13);
+  // v3.3.0: 11 stage3 fixtures (en-subtotal.csv), two samples, one scenario.
+  assert.equal(files.length, 14);
   const gaps = [];
   await withRecordedAttributes(async () => {
   for (const [name, open] of files) {
@@ -13085,4 +13091,43 @@ test("v3.3.0 two-digit years: mixed with four-digit years in a column, the quali
   assert.equal(only.evaluate('getFieldProfile("Hired").typeKey'), "date");
   assert.equal(only.evaluate("state.dateStyles.length"), 0);
   assert.equal(isHidden(only, "dateStyleSection"), true);
+});
+
+// ---- v3.3.0 ⑨: the English sample in USD and an English subtotal fixture ----
+test("v3.3.0 English sample: three amounts in USD, read by unit like 5400元 in the Chinese sample", async () => {
+  const lines = sampleOrdersEnLines();
+  assert.equal(Buffer.byteLength(`${sampleOrdersEnLfText()}`), 3306);
+  for (const [id, cell] of [["SO-1005", "\"5,400 USD\""], ["SO-1019", "900 USD"], ["SO-1031", "\"1,050 USD\""]]) {
+    assert.ok(lines.find((line) => line.startsWith(`${id},`)).includes(`,${cell},`), id);
+  }
+  assert.doesNotMatch(sampleOrdersEnLfText(), /\$\d/);
+  const scope = await importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "en");
+  assert.equal(scope.evaluate('getFieldProfile("Amount").typeKey'), "numeric");
+  assert.equal(scope.evaluate('getFieldProfile("Amount").numberStrategy.unit'), "USD");
+  assert.equal(isHidden(scope, "numberConversionSection"), false);
+  assert.ok(htmlText(scope, "numberConversionDetails").includes("“Amount”: read 3 values as “USD” (5,400 USD, 900 USD, 1,050 USD)"));
+  const zh = await importCsvInLanguage(readExampleCsv(SAMPLE_ORDERS_EN), SAMPLE_ORDERS_EN, "zh");
+  // The page escapes the straight quotes of the Chinese sentence.
+  assert.ok(htmlText(zh, "numberConversionDetails").includes("「Amount」：按&quot;USD&quot;读取了 3 个值（5,400 USD、900 USD、1,050 USD）"));
+});
+
+test("v3.3.0 fixture: en-subtotal.csv has Excel's subtotals and a grand total, and a Weekly Total column that is not one", async () => {
+  const bytes = fs.readFileSync(path.join(STAGE3_FIXTURES, "en-subtotal.csv"));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const text = bytes.toString("utf8");
+  assert.equal(text.split("\r\n").length - 1, 21);
+  assert.equal(text.split("\n").length - 1, 21);
+  const expected = knownIssues["en-subtotal.csv"];
+  for (const language of ["zh", "en"]) {
+    const scope = await importStage3Fixture("en-subtotal.csv", language);
+    const summary = importedSummary(scope.evaluate);
+    assert.equal(summary.rows, expected.dataRows, language);
+    assert.deepEqual(summary.types, expected.expectedTypes.map((item) => item.expected), language);
+    const totals = JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotals.map(({ line, label, field, matches }) => ({ line, label, field, matches })))"));
+    assert.deepEqual(totals, expected.suspectedTotals, language);
+    // Ten labelled rows: the five totals and five "Weekly Total" reports, which mostly do not add up.
+    assert.equal(scope.evaluate("state.totalLabelRows.length"), 10, language);
+    assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 5, language);
+    assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /也带这类字样|more rows? also ha/, language);
+  }
 });

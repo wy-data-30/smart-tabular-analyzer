@@ -374,6 +374,25 @@ fs.writeFileSync(path.join(OUT, "en-issues.csv"),
   XLSX.utils.book_append_sheet(wb, ws, "Orders");
   fs.writeFileSync(path.join(OUT, "en-formula-errors.xlsx"), XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 }
+// ---------- 10. en-subtotal.csv（v3.3.0）：Excel 分类汇总，每个大区下面一行 “East Total” 这样的小计，最后一行 Grand Total ----------
+// Report 列里 5 行 “Weekly Total” 是报表名称，不是合计：这一组 5 行都对不上，整组不算字样，
+// 去掉后重新核对，4 个小计和 Grand Total 都对得上。Rep、Report 在小计行和合计行是空格子。
+{
+  const header = ["Region", "Rep", "Report", "Quantity", "Amount"];
+  const rows = [
+    ["East", "Ann", "Daily", 4, 400], ["East", "Bo", "Weekly Total", 9, 950], ["East", "Cy", "Monthly", 6, 600], ["East", "Di", "Daily", 3, 300],
+    ["East Total", "", "", 22, 2250],
+    ["North", "Ann", "Weekly Total", 7, 700], ["North", "Bo", "Daily", 5, 520], ["North", "Cy", "Monthly", 2, 210],
+    ["North Total", "", "", 14, 1430],
+    ["South", "Di", "Daily", 8, 800], ["South", "Ann", "Weekly Total", 3, 330], ["South", "Bo", "Monthly", 6, 640], ["South", "Cy", "Daily", 1, 90], ["South", "Di", "Weekly Total", 4, 410],
+    ["South Total", "", "", 22, 2270],
+    ["West", "Bo", "Weekly Total", 5, 480], ["West", "Cy", "Daily", 2, 200], ["West", "Ann", "Monthly", 7, 690],
+    ["West Total", "", "", 14, 1370],
+    ["Grand Total", "", "", 72, 7320]
+  ];
+  fs.writeFileSync(path.join(OUT, "en-subtotal.csv"), Buffer.from(`${BOM}${[header, ...rows].map(csvLine).join("\r\n")}\r\n`, "utf8"));
+}
+
 console.log(`fixtures written to ${OUT}`);
 for (const name of fs.readdirSync(OUT).sort()) {
   console.log(`${name}\t${fs.statSync(path.join(OUT, name)).size} bytes`);
