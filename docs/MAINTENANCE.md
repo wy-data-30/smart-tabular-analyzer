@@ -40,6 +40,7 @@
 - 手动类型修正不改写原值，只记录转换失败并跳过无效值。
 - 调整规则前应增加中文字段、混合类型、百分比、货币、年份和歧义日期测试。
 - 标准化导出（v2.10.0）的单格规则（`standardizeDateCell()`、`standardizeNumberCell()`、`standardizeTextCell()`）跟着 `toDate()`、`toPlainNumber()`、`toNumberWithStrategy()` 和三个日期匹配器走。改这些函数的任何路径时，同步看单格规则：两条语料护栏（改写后同一天、改写后读回同一个数）和数字的兜底会抓到不一致，兜底触发时那一格保持原值、记“无法安全改写”。
+- v3.3.0 起三个日期匹配器的正则是模块常量（`YEAR_FIRST_DATE_PATTERN`、`DAY_OR_MONTH_FIRST_DATE_PATTERN`、`CHINESE_DATE_PATTERN`），有“每次调用不构造 RegExp”的护栏；改日期读法时改这几个常量和 `DATE_TIME_SUFFIX_PATTERN`、`EXCEL_SHORT_DATE_PATTERN`、`fullYearOf()`，`CHINESE_DATE_PATTERN` 含汉字，在 `tests/i18n-guard.cjs` 的白名单里。改英文单位表（`ENGLISH_NUMBER_UNITS`、`ENGLISH_CURRENCY_PREFIXES`）或空值写法清单（`PLACEHOLDER_VALUES`）时，契约 17 的前提护栏（清单写法在任何数字策略下都读不成数，策略列表含英文单位）要照样通过；改合计字样或“同一字样过半”时跑 `en-subtotal.csv` 和 v3.3.0 的七张普通表的测试。不含新写法的表结果是否不变，用 `docs/TESTING.md` 第 19 节的等价比较检查。
 
 ### 质量与统计
 
