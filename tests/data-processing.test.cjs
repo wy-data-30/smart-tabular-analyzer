@@ -1902,6 +1902,54 @@ test("v3.3.0 accounting: the standardized table writes $- as 0 and $(1,200.00) a
   assert.deepEqual(JSON.parse(evaluate('JSON.stringify(standardizeNumberCell("-", buildNumberStrategy(["-", "5"]), [], ""))')), { value: "-", action: "keptPendingPlaceholder" });
 });
 
+// ---- v3.3.0 ⑦: 12-hour clock and ordinal days ----
+// [toDate with mdy, dateStyleOf with mdy, dateTextHasTime, standardizeDateCell with mdy]
+const readDate = (evaluate, value) => JSON.parse(evaluate(`JSON.stringify((() => {
+  const value = ${JSON.stringify(value)};
+  const strategy = { order: "mdy" };
+  const date = toDate(value, strategy);
+  const cell = standardizeDateCell(value, strategy);
+  return [date ? date.toISOString().slice(0, 10) : null, dateStyleOf(value, strategy), date ? dateTextHasTime(value.trim()) : null, cell.value + " / " + cell.action];
+})())`));
+
+test("v3.3.0 dates: a 12-hour clock after a space, hours 1-12; the date is kept and the cell stays as written", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, date, style] of [
+    ["3/5/2025 2:30 PM", "2025-03-05", "mdy"], ["3/5/2025 2:30:15 PM", "2025-03-05", "mdy"], ["3/5/2025 2:30 p.m.", "2025-03-05", "mdy"],
+    ["3/5/2025 2:30pm", "2025-03-05", "mdy"], ["3/5/2025 12:00 AM", "2025-03-05", "mdy"], ["3/5/2025 12:59 am", "2025-03-05", "mdy"], ["3/5/2025 9:05 A.M.", "2025-03-05", "mdy"],
+    ["2025-03-05 2:30 PM", "2025-03-05", "ymdDash"], ["2025/3/5 11:59:59 PM", "2025-03-05", "ymdSlash"], ["2025年3月5日 2:30 PM", "2025-03-05", "chinese"]
+  ]) assert.deepEqual(readDate(evaluate, value), [date, style, true, `${value} / keptTime`], value);
+  // Hours outside 1-12 with AM / PM, a broken clock, and (R5) a 12-hour clock after T are not dates.
+  for (const value of ["3/5/2025 0:30 AM", "3/5/2025 13:30 PM", "3/5/2025 2:60 PM", "3/5/2025 2:30 XM", "3/5/2025 2:30 PMM", "2025-03-05T2:30 PM", "2025-03-05T02:30 PM"]) {
+    assert.deepEqual(readDate(evaluate, value).slice(0, 2), [null, null], value);
+  }
+  // The 24-hour clock is as before, with T too.
+  for (const value of ["3/5/2025 14:30", "2025-03-05T14:30", "2025-03-05 00:30"]) assert.equal(readDate(evaluate, value)[0], "2025-03-05", value);
+});
+
+test("v3.3.0 dates: an English day may be an ordinal with the right suffix", () => {
+  const { evaluate } = createScriptContext();
+  for (const [value, date] of [
+    ["March 5th, 2025", "2025-03-05"], ["5th March 2025", "2025-03-05"], ["March 1st, 2025", "2025-03-01"], ["March 2nd, 2025", "2025-03-02"], ["March 3rd 2025", "2025-03-03"],
+    ["March 11th, 2025", "2025-03-11"], ["March 12th, 2025", "2025-03-12"], ["March 13th, 2025", "2025-03-13"], ["March 21st, 2025", "2025-03-21"], ["March 22nd, 2025", "2025-03-22"],
+    ["March 23rd, 2025", "2025-03-23"], ["March 31st, 2025", "2025-03-31"], ["Wednesday, March 5th, 2025", "2025-03-05"], ["Mar 5TH, 2025", "2025-03-05"], ["March 5th, 2025 2:30 PM", "2025-03-05"]
+  ]) assert.equal(readDate(evaluate, value)[0], date, value);
+  for (const value of ["March 1th, 2025", "March 11st, 2025", "March 12nd, 2025", "March 13rd, 2025", "March 2th, 2025", "March 22th, 2025", "the 5th of March 2025", "March 32nd, 2025", "5th 3 2025"]) {
+    assert.equal(readDate(evaluate, value)[0], null, value);
+  }
+  // Without a time it is rewritten like any English date; the weekday is still not checked.
+  assert.deepEqual(readDate(evaluate, "March 5th, 2025"), ["2025-03-05", "english", false, "2025-03-05 / date"]);
+});
+
+test("v3.3.0 dates: neither a 12-hour clock nor an ordinal is a new date style", () => {
+  const { evaluate } = createScriptContext();
+  const style = (value) => evaluate(`dateStyleOf(${JSON.stringify(value)}, { order: "mdy" })`);
+  assert.equal(style("3/5/2025 2:30 PM"), style("3/6/2025"));
+  assert.equal(style("2025-03-05 2:30 PM"), style("2025-03-06"));
+  assert.equal(style("March 5th, 2025"), style("Mar 6, 2025"));
+  assert.equal(style("5th March 2025"), style("6 March 2025"));
+});
+
 test("v3.3.0 accounting: CSV export does not quote $- or $(1,200.00), and keeps a negative as it was", () => {
   const { evaluate } = createScriptContext();
   assert.deepEqual(JSON.parse(evaluate('JSON.stringify(["$-", "$(1,200.00)", "-$1,200.00", "-5", "-", "=1+1"].map(sanitizeCsvExportValue))')), ["$-", "$(1,200.00)", "-$1,200.00", "-5", "'-", "'=1+1"]);

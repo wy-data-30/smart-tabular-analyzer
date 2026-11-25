@@ -1,6 +1,8 @@
 // 单元格值的缺失判断与解析：像是空值的写法清单，合计 / 小计行的标签，日期的写法，首尾空格和“同一个值，写法不一样”，把原始文本安全地转换为数值（可按字段的数字策略读取单位、万/亿和全角数字）和日历日期（按书写的日历日，不受时区影响），以及导出写法统一的表时单个单元格的标准写法。
 
-const DATE_TIME_SUFFIX_PATTERN = "(?:[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
+// v3.3.0: a 12-hour clock with AM / PM ("2:30 PM", "12:05:09 a.m.", hours 1-12) after a space,
+// never after T (R5); or the 24-hour clock after a space or T, with an optional zone.
+const DATE_TIME_SUFFIX_PATTERN = "(?: (?:0?[1-9]|1[0-2]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?\\s?[AaPp]\\.?[Mm]\\.?|[ T](?:[01]?\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d{1,9})?)?(?:Z|[+-](?:[01]\\d|2[0-3])(?::?[0-5]\\d)?)?)?";
 
 function isYearOnlyDateValue(value, strategy = {}) {
   if (!strategy.allowYearOnly || isDateObject(value) || isMissing(value)) return false;
@@ -363,6 +365,13 @@ function parseEnglishCalendarDate(raw) {
 // zone was written (both are syntax only and never move the day).
 function readEnglishCalendarDate(raw) {
   let text = raw.replace(/^(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?),?\s+/i, "");
+  // v3.3.0: an ordinal day ("5th", "1st", "22nd") reads as its number when the suffix fits it
+  // (1st, 2nd, 3rd, 11th-13th, 21st …); "1th" or "11st" stays as written and is not a date.
+  text = text.replace(/\b(\d{1,2})(st|nd|rd|th)(?=$|[\s,./-])/i, (whole, day, suffix) => {
+    const n = Number(day);
+    const fit = n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+    return suffix.toLowerCase() === fit ? day : whole;
+  });
   let timeBeforeYear = false;
 
   // Remove one validated clock, either after the date or between Month Day
