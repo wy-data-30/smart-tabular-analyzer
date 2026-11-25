@@ -4,7 +4,7 @@
 
 Formerly Smart Tabular Analyzer. Since v3.2.2 the repository is called sheet-checkup; old links redirect to the new ones.
 
-**Current release:** v3.2.2
+**Current release:** v3.3.0
 
 ## Language
 
@@ -196,7 +196,7 @@ npm run test:regression
 - Excel formula error cells (#N/A, #DIV/0!, and so on) are imported as missing values and listed under “公式错误单元格” (formula error cells), not among suspected missing values. Not listed: rows where every cell is an error (they are not imported), columns with no header and only errors, and errors in the header or title rows. In a CSV, “#DIV/0!” is plain text: it counts as a format problem in a numeric column, and #N/A is a suspected missing value.
 - Numbers with units must be written as a whole cell of number, optional 万 / 亿, and optional unit. ￥2200元 (a currency sign and a unit), (2200元) (an accounting negative with a unit), 1.2 万 (a space before 万), and 2200元/件 are not read and still count as format problems. g, m, and 分 are not recognized as units, because they are ambiguous (4G / 5G, meters or minutes, points or cents); neither are single letters (h, s, d, k), in, or mi. 1.2K, 3.4M, $1.2M, 72°F, and 1,234.50 CR are not read.
 - When one column mixes units, such as kg and 千克, kg and 克, or USD and EUR, nothing is converted between them and the whole column is not read by unit, even when only a few lb values are mixed into a kg column; the quality page says which units appeared and how often. If the values of such a column are also all different, it may be detected as an ID column; the conflict sentence says why.
-- Currencies are not converted. A currency sign is not a unit: when one column mixes $900 and €900, both are read as plain numbers and added together, with no warning (as in v3.2.2); 5,400 USD and $900 in one column are read in USD, not as a unit conflict.
+- Currencies are not converted. A currency sign is not a unit: when one column mixes $900 and €900, both are read as plain numbers and added together, with no warning (as in earlier versions); 5,400 USD and $900 in one column are read in USD, not as a unit conflict.
 - A field named in 万元 whose values are written like 1.2万 is still read in 元, as 12000.
 - In accounting formats a “-” on its own usually means 0, but it is still listed as a suspected missing value and never read as 0. A currency sign followed only by a dash, such as “$-”, “€-”, or “￥-”, is read as 0, and “$(1,200.00)” as −1200; a dash after a currency code (“USD -”, “US$ -”) is not read as 0.
 - Excel cells are read by their stored value: an ID shown as 001012 through a number format is checked and shown as 1012, and the number 1012 and the text 1012 count as the same ID.

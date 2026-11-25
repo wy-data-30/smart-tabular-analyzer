@@ -525,7 +525,7 @@ v3.3.0 加了英文表格的读法（见 `docs/ARCHITECTURE.md`“英文表格�
 - ⑨ 按目录枚举的断言：stage3 + 示例 18 → 19（两处）、中英比较的文件 13 → 14；v2.8.1 摘要护栏的跳过名单加 `en-subtotal.csv`；有疑似合计的文件清单和写法统一改动数表加上它；`SAMPLE_ORDERS_EN_LF_SHA256` 换成 `900a6751…59f78`（字节数 3306 不变）；英文示例金额的读法和“无问题版”的替换正则认 ` USD`；金额那一类的提示从 `[]` 变成 `["numberConversionSection"]`，英文界面显示的小节加这一节并钉住句子。
 - ①、⑥、⑦ 没有改现有断言。两个结果护栏（v2.8.1 摘要、报告文字哈希 `GUARD_REPORT_SHA256`）每个提交都原样通过，没有重新生成；静态护栏只把白名单里的 `matchChineseDate` 改成 `CHINESE_DATE_PATTERN`（个数仍是 1）。
 
-**等价比较（`equivalence.cjs`，不进仓库）**：“不含新写法的表结果不变”靠它检查。脚本在仓库外（和 `harness.cjs`、`corpus.txt` 放在一起，原文在维护记录里（不在仓库）），用法：
+**等价比较（`equivalence.cjs`，不进仓库）**：“不含新写法的表结果不变”靠它检查。脚本在仓库外，和 `harness.cjs`、`corpus.txt` 放在一起，原文在维护记录里。用法：
 
 ```text
 node equivalence.cjs <改前副本> <改后副本> <输出.json> [--allow "<表>|<键>" …] [--only corpus|fixtures]
