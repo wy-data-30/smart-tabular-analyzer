@@ -288,14 +288,16 @@ const SUSPECTED_TOTAL_LIST_LIMIT = 20;
 // rows since the previous total, every detail row above it, every detail row.
 const SUSPECTED_TOTAL_SCOPES = Object.freeze(["segment", "above", "all"]);
 
-// Rows with a total label, in row order: { index, field, label } with the first
-// labelled field in field order (any field, ignored ones too) and the cell's text.
+// Rows with a total label, in row order: { index, field, label, key } with the first
+// labelled field in field order (any field, ignored ones too), the cell's text and (v3.3.0)
+// the normalized label in lower case, which groups the rows that say the same thing.
 function findTotalLabelRows(rows, fields) {
   const found = [];
   rows.forEach((row, index) => {
     for (const field of fields) {
-      if (totalRowLabel(row[field])) {
-        found.push({ index, field, label: String(row[field]).trim() });
+      const label = totalRowLabel(row[field]);
+      if (label) {
+        found.push({ index, field, label: String(row[field]).trim(), key: label.toLowerCase() });
         return;
       }
     }
@@ -391,20 +393,64 @@ function checkTotalRows(columns, rowCount, labelled, boundaries, targets) {
 // a row that merely says "合计" in a note must not hide the real total below it. The
 // rows that passed stay. getRowNumber(row) gives a row's file row or null. labelRows comes
 // from findTotalLabelRows(): labels depend only on rows and fields, so a rebuild reuses them.
+// The returned array is checkSuspectedTotals(…).totals.
 function buildSuspectedTotalSummary(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
-  if (!labelRows.length) return [];
+  return checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows).totals;
+}
+
+// v3.3.0: a label group is a field and a label key. A group of two or more rows of which fewer
+// than half add up holds ordinary values ("Total" as a brand, "周报汇总" as a task), so its rows
+// stop being labels and everything is checked again without them: a dropped row no longer
+// hides other rows' sums. Dropping one group can break the totals of another, so groups are
+// dropped in at most this many rounds; after the last one the check runs once more and its
+// result stands.
+const SUSPECTED_TOTAL_GROUP_ROUNDS = 3;
+
+const totalLabelGroupOf = (item) => JSON.stringify([item.field, item.key]);
+
+// The groups of two or more labelled rows of which fewer than half are in hits.
+function findUnmatchedTotalLabelGroups(labelRows, hits) {
+  const labelled = new Map();
+  const flagged = new Map();
+  labelRows.forEach((item) => {
+    const group = totalLabelGroupOf(item);
+    labelled.set(group, (labelled.get(group) || 0) + 1);
+    if (hits.has(item.index)) flagged.set(group, (flagged.get(group) || 0) + 1);
+  });
+  return new Set([...labelled].filter(([group, count]) => count > 1 && (flagged.get(group) || 0) * 2 < count).map(([group]) => group));
+}
+
+// The two passes of v2.8.0 over these labelled rows: index -> matches.
+function checkLabelledTotalRows(columns, rowCount, labelRows) {
+  const labelled = new Set(labelRows.map((item) => item.index));
+  const first = checkTotalRows(columns, rowCount, labelled, labelled, labelled);
+  const failed = new Set(labelRows.map((item) => item.index).filter((index) => !first.has(index)));
+  if (!failed.size) return first;
+  const second = checkTotalRows(columns, rowCount, labelled, new Set(first.keys()), failed);
+  return new Map([...first, ...second]);
+}
+
+// { totals, labelRowCount }: totals in row order as buildSuspectedTotalSummary() returns them;
+// labelRowCount counts the labelled rows of the last check (the "另有 N 行" sentence leaves the
+// dropped groups out). Numbers are read once for every round.
+function checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
+  if (!labelRows.length) return { totals: [], labelRowCount: 0 };
   const columns = profiles.filter((profile) => profile.typeKey === "numeric").map((profile) => {
     const parseNumber = getNumberParser(profile.numberStrategy);
     const field = profile.field;
     return { field, numbers: rows.map((row) => (isMissingOrConfirmed(row[field], profile.confirmedKeys) ? null : parseNumber(row[field]))) };
   });
-  if (!columns.length) return [];
-  const labelled = new Set(labelRows.map((item) => item.index));
-  const first = checkTotalRows(columns, rows.length, labelled, labelled, labelled);
-  const failed = new Set(labelRows.map((item) => item.index).filter((index) => !first.has(index)));
-  const second = failed.size ? checkTotalRows(columns, rows.length, labelled, new Set(first.keys()), failed) : new Map();
-  return labelRows.flatMap(({ index, field, label }) => {
-    const matches = first.get(index) || second.get(index);
+  if (!columns.length) return { totals: [], labelRowCount: labelRows.length };
+  let active = labelRows;
+  let hits = checkLabelledTotalRows(columns, rows.length, active);
+  for (let round = 0; round < SUSPECTED_TOTAL_GROUP_ROUNDS; round += 1) {
+    const dropped = findUnmatchedTotalLabelGroups(active, hits);
+    if (!dropped.size) break;
+    active = active.filter((item) => !dropped.has(totalLabelGroupOf(item)));
+    hits = active.length ? checkLabelledTotalRows(columns, rows.length, active) : new Map();
+  }
+  const totals = active.flatMap(({ index, field, label }) => {
+    const matches = hits.get(index);
     if (!matches) return [];
     return [{
       index,
@@ -421,6 +467,7 @@ function buildSuspectedTotalSummary(rows, fields, profiles, getRowNumber, labelR
       }))
     }];
   });
+  return { totals, labelRowCount: active.length };
 }
 
 // Formula errors by field, in field order: { field, count, byError, lines }. They are

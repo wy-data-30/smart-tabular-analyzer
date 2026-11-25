@@ -72,9 +72,13 @@ function analysisValue(value, confirmedKeys) {
 
 // Whole-cell labels of a total or subtotal row, simplified and traditional. A Chinese
 // keyword may follow a prefix of at most 12 characters ("上海小计"); a Latin label is the
-// whole cell.
+// whole cell, or (v3.3.0) Total / Subtotal / Sub-total / Totals after a prefix of 1–40
+// characters and a space, hyphen, en dash or colon, as Excel's Subtotal command writes it
+// ("East Total", "East - Subtotal"). A word first ("Total East") is not a label: it reads
+// like a name ("Total Card, Inc.") or a column ("Total Units").
 const TOTAL_LABEL_CHINESE_PATTERN = /^(.{0,12})(?:合计|总计|小计|总和|汇总|累计|合計|總計|小計|總和|匯總|彙總|累計)$/su;
-const TOTAL_LABEL_LATIN_PATTERN = /^(?:total|grandtotal|subtotal|sub-total|sum)$/i;
+const TOTAL_LABEL_LATIN_PATTERN = /^(?:total|totals|grandtotal|subtotal|sub-total|sum)$/i;
+const TOTAL_LABEL_ENGLISH_PREFIX_PATTERN = /^(.{1,40}?)\s*[\s\-\u2013:]\s*(?:total|subtotal|sub-total|totals)$/isu;
 // A prefix that is exactly one of these makes a status ("已汇总", "尚未匯總"), not a total.
 // Only the whole prefix counts: 南非小计 and 无锡合计 stay labels.
 const TOTAL_LABEL_STATUS_PREFIXES = new Set(["已", "未", "不", "无", "無", "非", "待", "是否", "尚未", "暂未", "暂不", "暫未", "暫不"]);
@@ -88,10 +92,14 @@ const TOTAL_LABEL_PREFILTER = /[计总計總]|t\s*o\s*t\s*a\s*l|s\s*u\s*m|[^\x00
 // bracketed note), or "" when the whole cell is not a label.
 function totalRowLabel(value) {
   if (typeof value !== "string" || !TOTAL_LABEL_PREFILTER.test(value)) return "";
-  const text = value.normalize("NFKC").replace(/\s+/g, "").replace(/:+$/, "").replace(/\([^()]*\)$/, "").replace(/:+$/, "");
+  const normalized = value.normalize("NFKC");
+  const text = normalized.replace(/\s+/g, "").replace(/:+$/, "").replace(/\([^()]*\)$/, "").replace(/:+$/, "");
   const chinese = text.match(TOTAL_LABEL_CHINESE_PATTERN);
   if (chinese) return TOTAL_LABEL_STATUS_PREFIXES.has(chinese[1]) ? "" : text;
-  return TOTAL_LABEL_LATIN_PATTERN.test(text) ? text : "";
+  if (TOTAL_LABEL_LATIN_PATTERN.test(text)) return text;
+  // The prefix form needs its spaces, so it is read from the text before they go.
+  const spaced = normalized.trim().replace(/:+$/, "").replace(/\([^()]*\)$/, "").trim().replace(/:+$/, "").trim();
+  return TOTAL_LABEL_ENGLISH_PREFIX_PATTERN.test(spaced) ? text : "";
 }
 
 function isPlausibleYear(value) {
