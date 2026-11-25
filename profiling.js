@@ -187,11 +187,19 @@ function getDateGranularity(field) {
   return getFieldProfile(field)?.dateStrategy?.granularity || "day";
 }
 
+// v3.3.0: the word yes on its own (start, end, whitespace or punctuation around it), as in a
+// survey header "Returning customer: Yes or No"; "Yesterday" and "Eyes" do not count.
+const ID_NAME_YES_WORD = /(^|[\s\p{P}])yes($|[\s\p{P}])/iu;
+
 function isIdFieldName(field) {
   const name = String(field || "").trim();
   return /^(?:序号|行号|行序号|index|idx|no\.|row no\.?|#)$/i.test(name)
     || /[\u4e00-\u9fff]\s*id$/i.test(name)
-    || /(^|[_\-\s])(id|uuid|guid|code|key|number|no)([_\-\s]|$)/i.test(name)
+    || /(^|[_\-\s])(id|uuid|guid|code|key)([_\-\s]|$)/i.test(name)
+    // v3.3.0: "number" / "no" only as the last word ("Order Number", "Invoice No."): in
+    // "Number of …", "No Show" or "no_previous" they are counts and answers, not IDs. A name
+    // with the word yes ("Smoker Yes No") is a yes/no question, so its last no is an answer.
+    || (/(^|[_\-\s])(number|no\.?)$/i.test(name) && !ID_NAME_YES_WORD.test(name))
     || /[a-z0-9](?:Id|ID|Uuid|UUID|Guid|GUID|Code|CODE|Key|KEY|Number|NUMBER|No|NO)$/.test(name)
     || /^(?:user|customer|order|product|account|session|event|device|student|employee|member|record)(?:id|uuid|guid|code|key|number|no)$/i.test(name)
     || /编号|编码|代码|订单号|账号|工号|主键|用户ID|事件ID|会话ID/i.test(name)

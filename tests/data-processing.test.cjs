@@ -549,14 +549,16 @@ test("ID names cover row-number headers and Chinese names ending in ID", () => {
   const { context, evaluate } = createScriptContext();
   const isIdName = (name) => evaluate(`isIdFieldName(${JSON.stringify(name)})`);
 
-  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id"]) {
+  for (const name of ["序号", "行号", "行序号", "Index", "IDX", "No.", "Row No.", "Row No", "#", " 序号 ", "学生ID", "客户 ID", "视频id",
+    "Order Number", "Order No", "Order No.", "Invoice number", "ticket_no", "Phone Number", "Number", "No"]) {
     assert.equal(isIdName(name), true, name);
   }
-  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量"]) {
+  for (const name of ["序号说明", "index_value", "indexes", "noise", "No. of employees", "指数", "身份证明", "ID卡", "IDEA", "Android", "学号数量",
+    "Number of employees", "number_of_items", "no_previous", "No Show", "Number Sold"]) {
     assert.equal(isIdName(name), false, name);
   }
-  // Already true before v2.1.4 (deferred finding 6 of v2.1.3); kept unchanged on purpose.
-  assert.equal(isIdName("Number of employees"), true);
+  // v3.3.0 (the other half of deferred finding 6 of v2.1.3): number and no count only as the last
+  // word, so "Number of employees" is a count now. id, uuid, guid, code and key are unchanged.
   assert.equal(isIdName("Key metric"), true);
 
   context.__countRows = Array.from({ length: 12 }, (_, index) => ({ 学号数量: String(index + 1) }));
@@ -1750,4 +1752,40 @@ test("v3.3.0 placeholders: a writing that comes twice is named once, in both lan
   assert.equal(note(en, ["-", "-"]), "“-” may also be a real value (for example a yes/no answer); make sure that in this column it means there is no data. In accounting formats, “-” usually means 0.");
   assert.equal(note(en, ["NA", "-", "NA"]), "“NA”, “-” may also be real values (for example a yes/no answer, or NA for North America); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
   assert.equal(note(en, ["-", "Unknown", "-"]), "“-”, “Unknown” may also be real values (for example a yes/no answer; or an option of its own); make sure that in this column they mean there is no data. In accounting formats, “-” usually means 0.");
+});
+
+// ---- v3.3.0 ④: number and no count as IDs only as the last word ----
+test("v3.3.0 ID names: a column of counts 0-9 is numeric unless number / no is its last word", () => {
+  const { context, evaluate } = createScriptContext();
+  const counts = [12, 7, 30, 15, 22, 9, 41, 3, 18, 26, 11, 5, 33, 14, 8, 20].map((n) => String(n % 10));
+  const typeOf = (name) => {
+    context.__rows = counts.map((value) => ({ [name]: value }));
+    return evaluate(`buildColumnProfile(${JSON.stringify(name)}, __rows).typeKey`);
+  };
+  for (const name of ["Number of Records", "No. of items", "no_previous", "num_of_items", "number_of_items", "No Show", "Number Sold"]) {
+    assert.equal(typeOf(name), "numeric", name);
+  }
+  for (const name of ["number", "Order Number", "Order No", "Order No.", "Customer No", "No", "No.", "Number", "#", "Invoice number", "ticket_no", "Phone Number", "Lot no."]) {
+    assert.equal(typeOf(name), "id", name);
+  }
+  // Known (ARCHITECTURE): a count whose last word is number still reads as an ID.
+  assert.equal(typeOf("Total Number"), "id");
+});
+
+test("v3.3.0 ID names: a survey header with the word yes is a question, so its last word no is not an ID", () => {
+  const { context, evaluate } = createScriptContext();
+  const answers = Array.from({ length: 16 }, (_, index) => (index % 3 ? "Yes" : "No"));
+  const view = (name) => {
+    context.__rows = answers.map((value) => ({ [name]: value }));
+    return [evaluate(`isIdFieldName(${JSON.stringify(name)})`), evaluate(`buildColumnProfile(${JSON.stringify(name)}, __rows).typeKey`)];
+  };
+  for (const name of ["Returning customer: Yes or No", "Smoker Yes No", "Smoker_yes_no", "Smoker yes/no", "YES/NO", "Yes-No", "(Yes) or No", "Returning customer? Yes, No"]) {
+    assert.deepEqual(view(name), [false, "category"], name);
+  }
+  // Not a separate word: "Yesterday", "Eyes". And ordinary IDs stay IDs.
+  for (const name of ["Yesterday No", "Eyes No", "Room No", "Order No.", "Order Number", "No"]) {
+    assert.deepEqual(view(name), [true, "id"], name);
+  }
+  // Only the number / no rule gives way: id, uuid, guid, code and key are unchanged.
+  for (const name of ["Yes code", "yes_id", "Yes Key"]) assert.equal(view(name)[0], true, name);
 });
