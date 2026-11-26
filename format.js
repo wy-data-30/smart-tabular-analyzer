@@ -1246,12 +1246,15 @@ function formatLookAlikeReasons(reasons) {
   return reasons.map((reason) => Lpick(LOOK_ALIKE_REASON_NAMES[reason])).join(Lpick(LIST_SEPARATOR));
 }
 
-// 「HD」2 个 / 「ＨＤ」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）
-function formatLookAlikeGroup({ variants, variantCount = variants.length, reasons }) {
+// 「HD」2 个（主写法） / 「ＨＤ」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）. v3.4.0: the main
+// writing (lookAlikeMainText()) is marked; a group tied for the most frequent has none.
+function formatLookAlikeGroup(group) {
+  const { variants, variantCount = variants.length, reasons } = group;
   const more = variantCount > variants.length;
+  const main = lookAlikeMainText(group);
   return L(
-    `${variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个`).join(" / ")}${more ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`,
-    `${variants.map(({ text, count }) => `“${formatVisibleText(text)}” ${formatInteger(count)}`).join(" / ")}${more ? ` and more, ${formatInteger(variantCount)} ways in all` : ""} (${formatLookAlikeReasons(reasons)})`
+    `${variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个${text === main ? "（主写法）" : ""}`).join(" / ")}${more ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`,
+    `${variants.map(({ text, count }) => `“${formatVisibleText(text)}” ${formatInteger(count)}${text === main ? " (most common)" : ""}`).join(" / ")}${more ? ` and more, ${formatInteger(variantCount)} ways in all` : ""} (${formatLookAlikeReasons(reasons)})`
   );
 }
 
@@ -1290,13 +1293,13 @@ function formatDateStyleRowNote(key, mainKey) {
 
 // The words of a look-alike problem row's 说明 (one call per listed row).
 const LOOK_ALIKE_ROW_NOTE_WORDS = Lp({
-  group: (position, reasons) => `第 ${position} 组（${reasons}）`,
+  group: (position, reasons, main) => `第 ${position} 组（${reasons}${main === null ? "" : `，主写法是「${main}」`}）`,
   invisibleOnly: "只有不可见字符",
   edge: "首尾空格",
   joiner: "，",
   value: (parts, text) => `${parts}：「${text}」`
 }, {
-  group: (position, reasons) => `group ${position} (${reasons})`,
+  group: (position, reasons, main) => `group ${position} (${reasons}${main === null ? "" : `, most often written “${main}”`})`,
   invisibleOnly: "only invisible characters",
   edge: "leading or trailing spaces",
   joiner: ", ",
@@ -1308,7 +1311,7 @@ const LOOK_ALIKE_ROW_NOTE_WORDS = Lp({
 function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
   const words = Lpick(LOOK_ALIKE_ROW_NOTE_WORDS);
   const parts = [];
-  if (group) parts.push(words.group(group.position + 1, formatLookAlikeReasons(group.reasons)));
+  if (group) parts.push(words.group(group.position + 1, formatLookAlikeReasons(group.reasons), group.main === undefined || group.main === null ? null : formatVisibleText(group.main)));
   if (invisibleOnly) parts.push(words.invisibleOnly);
   if (hasEdge) parts.push(words.edge);
   return words.value(parts.join(words.joiner), formatVisibleText(value));

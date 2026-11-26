@@ -222,12 +222,12 @@
     ],
     "lookAlikes": [
       { "field": "商品编号", "edgeSpaceCount": 1, "groupCount": 1, "rowCount": 3, "groups": [{ "variants": [["SKU-001", 1], ["sku-001", 1]], "reasons": ["case"], "rowCount": 2 }] },
-      { "field": "区域", "edgeSpaceCount": 2, "groupCount": 3, "rowCount": 18, "groups": [
+      { "field": "区域", "edgeSpaceCount": 2, "groupCount": 3, "rowCount": 6, "groups": [
         { "variants": [["华东", 10], ["华东\u200B", 1]], "reasons": ["invisible"], "rowCount": 11 },
         { "variants": [["HD", 2], ["\uFF28\uFF24", 1], ["hd", 1]], "reasons": ["compat", "case"], "rowCount": 4 },
         { "variants": [["上海 浦东", 2], ["上海  浦东", 1]], "reasons": ["innerSpace"], "rowCount": 3 }
       ] },
-      { "field": "客户", "edgeSpaceCount": 0, "groupCount": 1, "rowCount": 10, "groups": [{ "variants": [["ABC公司", 8], ["\uFF21\uFF22\uFF23公司", 1], ["abc公司", 1]], "reasons": ["compat", "case"], "rowCount": 10 }] }
+      { "field": "客户", "edgeSpaceCount": 0, "groupCount": 1, "rowCount": 2, "groups": [{ "variants": [["ABC公司", 8], ["\uFF21\uFF22\uFF23公司", 1], ["abc公司", 1]], "reasons": ["compat", "case"], "rowCount": 10 }] }
     ]
   },
   "en-issues.csv": {
@@ -263,7 +263,7 @@
       { "field": "Status", "value": "Active", "count": 19, "missingCount": 1 }
     ],
     "lookAlikes": [
-      { "field": "Team", "edgeSpaceCount": 0, "invisibleOnlyCount": 0, "groupCount": 1, "rowCount": 8, "groups": [{ "variants": [["Sales", 6], ["sales", 1], ["Sales\u200B", 1]], "reasons": ["case", "invisible"], "rowCount": 8 }] },
+      { "field": "Team", "edgeSpaceCount": 0, "invisibleOnlyCount": 0, "groupCount": 1, "rowCount": 2, "groups": [{ "variants": [["Sales", 6], ["sales", 1], ["Sales\u200B", 1]], "reasons": ["case", "invisible"], "rowCount": 8 }] },
       { "field": "Note", "edgeSpaceCount": 0, "invisibleOnlyCount": 1, "groupCount": 0, "rowCount": 1, "groups": [] }
     ]
   },

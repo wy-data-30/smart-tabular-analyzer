@@ -5737,7 +5737,11 @@ test("v2.9.0 look-alike values: the fixture and the sample button's file (v2.11.
   // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
   assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
   assert.equal(summary[0].edgeSpaceCount, 1);
-  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 18 行：首尾空格 2 格（如「华东␣」）；3 组写法不一样：「华东」10 个 / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个 / 「上海␣␣浦东」1 个（中间空格多少）。");
+  // v3.4.0: the main writing of each group (null when tied) is not counted, and the line marks it.
+  assert.deepEqual(JSON.parse(writing.evaluate("JSON.stringify(state.lookAlikes.map((item) => item.groups.map(lookAlikeMainText)))")), [[null], ["华东", "HD", "上海 浦东"], ["ABC公司"]]);
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 6 行：首尾空格 2 格（如「华东␣」）；3 组写法不一样：「华东」10 个（主写法） / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个（主写法） / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个（主写法） / 「上海␣␣浦东」1 个（中间空格多少）。");
+  // A tied group has no main writing and no mark.
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「商品编号」共 3 行：首尾空格 1 格（如「SKU-002␣」）；1 组写法不一样：「SKU-001」1 个 / 「sku-001」1 个（大小写）。");
 });
 
 test("v2.9.0 look-alike values skip placeholders, numbers and dates", async () => {
@@ -5868,16 +5872,23 @@ test("v2.9.0 problem rows: the rows of the date styles", async () => {
 test("v2.9.0 problem rows: look-alike rows go group by group, then the others", async () => {
   const writing = await importStage3Fixture("写法不一致.csv");
   assert.deepEqual(problemLinesOf(writing, "lookAlike", "商品编号"), [2, 3, 5]);
-  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 20, 21, 22, 23, 24]);
-  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [2, 4, 6, 8, 9, 15, 17, 19, 21, 23]);
-  assert.deepEqual(problemNotes(writing, "lookAlike", "区域").filter(([line]) => [5, 6, 7, 18, 24].includes(line)), [
-    [5, "第 1 组（不可见字符），首尾空格：「华东␣」"],
-    [6, "第 1 组（不可见字符），首尾空格：「[全角空格]华东」"],
-    [7, "第 1 组（不可见字符）：「华东[零宽字符]」"],
-    [18, "第 2 组（全角半角或兼容写法、大小写）：「HD」"],
-    [24, "第 3 组（中间空格多少）：「上海␣␣浦东」"]
+  // v3.4.0: only the counted cells; the main writing's rows (区域 line 2 「华东」, 18 「HD」,
+  // 22 「上海 浦东」; 客户 line 2 「ABC公司」) are not listed, unless the cell has edge spaces.
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [5, 6, 7, 20, 21, 24]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [8, 9]);
+  assert.ok(![2, 18, 22].some((line) => problemLinesOf(writing, "lookAlike", "区域").includes(line)));
+  assert.ok(!problemLinesOf(writing, "lookAlike", "客户").includes(2));
+  assert.deepEqual(problemNotes(writing, "lookAlike", "区域"), [
+    // Lines 5 and 6 are the main writing 「华东」 once trimmed: only the edge spaces, still in group 1's place.
+    [5, "首尾空格：「华东␣」"],
+    [6, "首尾空格：「[全角空格]华东」"],
+    [7, "第 1 组（不可见字符，主写法是「华东」）：「华东[零宽字符]」"],
+    [20, "第 2 组（全角半角或兼容写法、大小写，主写法是「HD」）：「\uFF28\uFF24」"],
+    [21, "第 2 组（全角半角或兼容写法、大小写，主写法是「HD」）：「hd」"],
+    [24, "第 3 组（中间空格多少，主写法是「上海 浦东」）：「上海␣␣浦东」"]
   ]);
-  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号")[2], [5, "首尾空格：「SKU-002␣」"]);
+  // A tied group names no main writing.
+  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号"), [[2, "第 1 组（大小写）：「SKU-001」"], [3, "第 1 组（大小写）：「sku-001」"], [5, "首尾空格：「SKU-002␣」"]]);
   // Cells of nothing but invisible characters, alone or with edge whitespace.
   const invisible = await importCsvFile("备注,序\r\n甲,1\r\nAB,2\r\n\u200B,3\r\nab,4\r\n\u00AD ,5\r\n乙 ,6\r\n丙,7\r\n", "z.csv");
   assert.deepEqual(problemNotes(invisible, "lookAlike", "备注"), [
@@ -5894,6 +5905,50 @@ test("v2.9.0 problem rows: look-alike rows go group by group, then the others", 
   assert.deepEqual(JSON.parse(alone.evaluate('JSON.stringify(state.problemCategories.filter((item) => item.kind === "lookAlike"))')), [{ kind: "lookAlike", field: "备注", count: 1, unit: "row" }]);
 });
 
+// v3.4.0 (A): a look-alike group's main writing is its most frequent trimmed writing and is not
+// counted; a tie leaves the group without one and every writing counts. Edge spaces and cells of
+// nothing but invisible characters count as before, the main writing's cells with edge spaces too.
+const MAIN_WRITING_CSV = "部门,序\r\nSales,1\r\nsales,2\r\nSales,3\r\nHR,4\r\nhr,5\r\nSales ,6\r\nSales,7\r\n\u200B,8\r\n财务,9\r\n";
+
+test("v3.4.0 look-alike: the main writing is not counted, a tie counts the whole group, and the list is the count", async () => {
+  const scope = await importCsvFile(MAIN_WRITING_CSV, "main.csv");
+  const [item] = lookAlikesOf(scope);
+  assert.deepEqual([item.field, item.edgeSpaceCount, item.invisibleOnlyCount, item.groupCount, item.rowCount], ["部门", 1, 1, 2, 5]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.lookAlikes[0].groups.map(lookAlikeMainText))")), ["Sales", null]);
+  // The groups keep every writing's count (group rowCount 5 and 2); only the field's rowCount is new.
+  assert.deepEqual(item.groups.map((group) => group.rowCount), [5, 2]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「部门」共 5 行：首尾空格 1 格（如「Sales␣」）；只有不可见字符 1 格；2 组写法不一样：「Sales」4 个（主写法） / 「sales」1 个（大小写）；「HR」1 个 / 「hr」1 个（大小写）。");
+  assert.deepEqual(problemNotes(scope, "lookAlike", "部门"), [
+    [3, "第 1 组（大小写，主写法是「Sales」）：「sales」"],
+    [7, "首尾空格：「Sales␣」"],
+    [5, "第 2 组（大小写）：「HR」"],
+    [6, "第 2 组（大小写）：「hr」"],
+    [9, "只有不可见字符：「[零宽字符]」"]
+  ]);
+  // The rows of the main writing (lines 2, 4, 8) are not listed; the list is the count.
+  assert.equal(scope.evaluate('listProblemRows({ kind: "lookAlike", field: "部门" }).count'), 5);
+  assert.equal(scope.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike"))'), "写法不一样 · 部门（5 行）");
+  const en = await importCsvInLanguage(MAIN_WRITING_CSV, "main.csv", "en");
+  assert.equal(en.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "“部门”, 5 rows: leading or trailing spaces in 1 cell (e.g. “Sales␣”); only invisible characters in 1 cell; 2 values are written differently: “Sales” 4 (most common) / “sales” 1 (upper and lower case); “HR” 1 / “hr” 1 (upper and lower case).");
+  assert.deepEqual(problemNotes(en, "lookAlike", "部门"), [
+    [3, "group 1 (upper and lower case, most often written “Sales”): “sales”"],
+    [7, "leading or trailing spaces: “Sales␣”"],
+    [5, "group 2 (upper and lower case): “HR”"],
+    [6, "group 2 (upper and lower case): “hr”"],
+    [9, "only invisible characters: “[zero-width character]”"]
+  ]);
+});
+
+test("v3.4.0 look-alike: the main writing is the most frequent trimmed text, clean or not", async () => {
+  // Three full-width writings and one half-width: the full-width one is the main writing, so one cell counts.
+  const scope = await importCsvFile("客户,序\r\n\uFF21\uFF22\uFF23公司,1\r\nABC公司,2\r\n\uFF21\uFF22\uFF23公司,3\r\n\uFF21\uFF22\uFF23公司,4\r\n甲公司,5\r\n", "full.csv");
+  const [item] = lookAlikesOf(scope);
+  assert.equal(item.rowCount, 1);
+  assert.equal(scope.evaluate("lookAlikeMainText(state.lookAlikes[0].groups[0])"), "\uFF21\uFF22\uFF23公司");
+  assert.deepEqual(problemNotes(scope, "lookAlike", "客户"), [[3, "第 1 组（全角半角或兼容写法，主写法是「\uFF21\uFF22\uFF23公司」）：「ABC公司」"]]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「客户」共 1 行：1 组写法不一样：「\uFF21\uFF22\uFF23公司」3 个（主写法） / 「ABC公司」1 个（全角半角或兼容写法）。");
+});
+
 test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted cells and file names", async () => {
   const writing = await importStage3Fixture("写法不一致.csv");
   const kinds = JSON.parse(writing.evaluate("JSON.stringify(state.problemCategories.map((item) => item.kind))"));
@@ -5904,14 +5959,14 @@ test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted
   clickProblemButton(writing, buttons[2].index);
   assert.deepEqual(sameCategory(openCategory(writing)), sameCategory(categoryAt(writing, buttons[2].index)));
   assert.equal(openCategory(writing).field, "区域");
-  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 18 行，第 1 / 1 页");
-  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 18);
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 行，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
   assert.match(writing.elements.get("problemRowsTable").innerHTML, /<td class="cell-problem">华东<\/td>/);
   clickProblemButton(writing, buttons[0].index);
   assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 个值，第 1 / 1 页");
   assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
   assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "dateStyle"))'), "日期写法 · 下单日期（6 个值）");
-  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不一样 · 区域（18 行）");
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不一样 · 区域（6 行）");
   assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "dateStyle", field: "下单日期" }, new Date(2026, 10, 5))'), "写法不一致_问题行_日期写法_下单日期_20261105.csv");
   assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "lookAlike", field: "区域" }, new Date(2026, 10, 5))'), "写法不一致_问题行_写法不一样_区域_20261105.csv");
   // Exported cells keep the original value, whitespace included.
@@ -10620,7 +10675,7 @@ test("v3.2.0 quality.js: problem-row notes in English, picked once per list (no 
   en.evaluate("L = globalThis.__realL");
   // Some lists format a bound or a number (formatFieldNumber may call L once a list); never once a row.
   const rows = enNotes.flat().length;
-  assert.ok(rows > 20, `${rows} rows`);
+  assert.equal(rows, 20, `${rows} rows`);
   assert.ok(lCalls < categories.length, `${lCalls} L() calls for ${rows} rows`);
   // Many rows of one kind: a list of 12 blanks, 4 values not recognized and 7 rows of one repeat group
   // makes no L() call at all.
@@ -11315,7 +11370,7 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
   assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
     "“Order date”: the main format is text YYYY-MM-DD: 36 (e.g. 2025-01-03); 5 other rows use other formats: text MM/DD/YYYY: 3 (e.g. 02/18/2025), text with English month names: 2 (e.g. Apr 16, 2025). View");
   assert.equal(sampleOrdersText(scope, "lookAlikeDetails"),
-    "“Region”, 11 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
+    "“Region”, 3 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 (most common) / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
   assert.deepEqual(placeholderEntries(scope.evaluate), [["Amount", "N/A", "common", 1, [29]], ["Sales rep", "\u2014", "common", 1, [16]]]);
   assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["Order ID", [["SO-1018", 2, [20, 21]]]]]);
   const { names, mismatches } = problemRowCheck(scope);
@@ -11323,12 +11378,12 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
   assert.deepEqual(names, [
     "missing / Order date = 1", "missing / Region = 1", "missing / Category = 1", "missing / Product = 1", "missing / Customer type = 1", "missing / Sales rep = 1",
     "conversion / Amount = 1", "dateStyle / Order date = 5", "outlier / Quantity = 1", "outlier / Amount = 1", "duplicateRows = 2", "suspectedTotal = 1",
-    "idDuplicate / Order ID = 2", "lookAlike / Region = 11", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
+    "idDuplicate / Order ID = 2", "lookAlike / Region = 3", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
   ]);
   // The same rows as the Chinese sample, except the case variant "east" (row 37), which the Chinese
   // sample has not: its 地区 group is two trailing spaces only.
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")), [
-    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [3, 7, 11, 16, 22, 27, 31, 32, 37, 42, 10], [42], [29], [16]
+    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [32, 37, 10], [42], [29], [16]
   ]);
 });
 
@@ -11357,8 +11412,11 @@ test("v3.2.0 commit 12: en-issues.csv: types, reading issues, the kg column, the
   // The fixture's whole point: every one of these is a problem-row category with the rows above.
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
     ["missing", "Status", [13]], ["missing", "Note", [2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21]],
-    ["lookAlike", "Team", expected.issues.find((issue) => issue.id === "N4").fileLines], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
+    ["lookAlike", "Team", [4, 7]], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
   ]);
+  // v3.4.0: N4 has eight rows; the six of the main writing "Sales" are not counted or listed.
+  assert.deepEqual(expected.issues.find((issue) => issue.id === "N4").fileLines.filter((line) => ![4, 7].includes(line)), [2, 6, 10, 13, 16, 19]);
+  assert.equal(scope.evaluate("lookAlikeMainText(state.lookAlikes[0].groups[0])"), "Sales");
 });
 
 test("v3.2.0 commit 12: en-formula-errors.xlsx: the Margin errors and the English subtotal match known-issues.json", async () => {

@@ -579,7 +579,8 @@ const LOOK_ALIKE_VARIANT_LIMIT = 10;
 // placeholder spellings, missing values and everything heavier run once per text. edgeTexts
 // holds the raw texts with removable whitespace, invisibleOnlyTexts the trimmed texts of nothing
 // but invisible characters, groupOf maps a trimmed writing to its group, and groups run from
-// most to fewest rows, ties by first appearance. rowCount counts each row once.
+// most to fewest rows, ties by first appearance. rowCount counts each row once, and only the
+// rows isCountedWriting() counts (v3.4.0): a group's main writing is not counted.
 function collectFieldWritings(rows, field) {
   const rawCounts = new Map();
   for (let index = 0; index < rows.length; index += 1) {
@@ -629,9 +630,26 @@ function collectFieldWritings(rows, field) {
       edgeSpaceCount += count;
     }
     if (invisibleOnly) invisibleOnlyCount += count;
-    if (hasEdge || invisibleOnly || groupOf.has(trimmed)) rowCount += count;
+    if (isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly)) rowCount += count;
   });
   return { edgeTexts, invisibleOnlyTexts, groupOf, groups, edgeSpaceCount, invisibleOnlyCount, rowCount };
+}
+
+// v3.4.0: the main writing of a look-alike group is its most frequent trimmed writing, clean or
+// not; a tie for the most frequent leaves the group without one (null), and then every writing
+// counts. variants run from most to fewest, so only the first two are compared.
+function lookAlikeMainText(group) {
+  const [first, second] = group.variants;
+  return second && second.count === first.count ? null : first.text;
+}
+
+// v3.4.0: whether a cell counts for 写法不一样: edge whitespace, nothing but invisible characters,
+// or a writing of a group other than its main writing. The summary's rowCount and
+// listLookAlikeRows() both ask this, so the list and the count agree (contract 19).
+function isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly) {
+  if (hasEdge || invisibleOnly) return true;
+  const position = groupOf.get(trimmed);
+  return position !== undefined && lookAlikeMainText(groups[position]) !== trimmed;
 }
 
 function readFieldWritings(rows, field, scans) {
@@ -863,9 +881,9 @@ function listDateStyleRows(field) {
   return { items, count: summary.otherCount };
 }
 
-// Rows with edge whitespace, of nothing but invisible characters or in a look-alike group:
-// group by group (every writing, to compare them), then the others, each in file order. The
-// same collection as the summary (readFieldWritings()).
+// The rows the summary counts (isCountedWriting(), v3.4.0: a group's main writing is not
+// listed, the 说明 names it): group by group, then the others, each in file order. The same
+// collection as the summary (readFieldWritings()).
 function listLookAlikeRows(field) {
   const summary = state.lookAlikes.find((item) => item.field === field);
   if (!summary) return null;
@@ -880,8 +898,11 @@ function listLookAlikeRows(field) {
     const position = groupOf.get(trimmed);
     const hasEdge = edgeTexts.has(value);
     const invisibleOnly = invisibleOnlyTexts.has(trimmed);
-    if (position === undefined && !hasEdge && !invisibleOnly) return;
-    const note = formatLookAlikeRowNote(value, position === undefined ? null : { position, reasons: groups[position].reasons }, hasEdge, invisibleOnly);
+    if (!isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly)) return;
+    // A cell that is the main writing once trimmed counts for its edge spaces only: its 说明 names
+    // no group, but it stays with its group in the list.
+    const main = position === undefined ? null : lookAlikeMainText(groups[position]);
+    const note = formatLookAlikeRowNote(value, position === undefined || trimmed === main ? null : { position, reasons: groups[position].reasons, main }, hasEdge, invisibleOnly);
     (position === undefined ? others : byGroup[position]).push(problemRowItem(index, note, { group: position === undefined ? 0 : position + 1 }));
   });
   return { items: [...byGroup.flat(), ...others], count: summary.rowCount };
