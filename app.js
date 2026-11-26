@@ -163,6 +163,12 @@ const dom = {
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
   overviewCards: document.getElementById("overviewCards"),
+  checkupPanel: document.getElementById("checkupPanel"),
+  checkupTotal: document.getElementById("checkupTotal"),
+  checkupExportReport: document.getElementById("checkupExportReport"),
+  checkupBar: document.getElementById("checkupBar"),
+  checkupLegend: document.getElementById("checkupLegend"),
+  previewSize: document.getElementById("previewSize"),
   categoryChartInsight: document.getElementById("categoryChartInsight"),
   dateChartInsight: document.getElementById("dateChartInsight"),
   previewTable: document.getElementById("previewTable"),
@@ -976,10 +982,41 @@ function renderOverview() {
     [L("空值概览", "Blanks"), activeMissing]
   ];
 
-  // v3.0.0: one line of text, same labels and numbers as the old cards.
+  // v3.0.0: one line of text, same labels and numbers as the old cards. v3.4.0: hidden under the
+  // checkup (index.html), still written; the next version removes it.
   dom.overviewCards.innerHTML = `<p class="metric-line">${cards.map(([label, value]) => (
     `<span class="metric-item"><span class="metric-label">${escapeHtml(label)}</span> <strong class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</strong></span>`
   )).join("")}</p>`;
+  dom.previewSize.textContent = formatPreviewSize(state.rows.length, state.fields.length);
+  renderCheckup();
+}
+
+// v3.4.0: the checkup's big number, its bar and the legend, drawn from state.checkupSummary (made on
+// commit, rebuild and rows left out; a filter only draws it again). The bar has one segment per kind
+// of the rows of that kind alone, one for the rows of two or more kinds, then the rows with no
+// problem; each at least 6 px wide (style.css), so widths follow the rows only roughly.
+function renderCheckup() {
+  const summary = state.checkupSummary;
+  dom.checkupPanel.classList.toggle("hidden", !summary);
+  if (!summary) {
+    dom.checkupTotal.innerHTML = "";
+    dom.checkupBar.innerHTML = "";
+    dom.checkupLegend.innerHTML = "";
+    return;
+  }
+  dom.checkupTotal.innerHTML = summary.rowCount
+    ? `<span class="checkup-total-number">${formatInteger(summary.rowCount)}</span> <span class="checkup-total-label">${escapeHtml(formatCheckupTotalLabel(summary.rowCount))}</span>`
+    : `<span class="checkup-total-label">${escapeHtml(formatCheckupTotalLabel(0))}</span>`;
+  dom.checkupBar.classList.toggle("hidden", !summary.rowCount);
+  dom.checkupBar.innerHTML = summary.rowCount
+    ? summary.segments.filter((segment) => segment.rows > 0).map((segment) => {
+      const label = escapeHtml(formatCheckupSegment(segment.kind, segment.rows));
+      return `<span class="checkup-segment" data-kind="${segment.kind}" role="img" title="${label}" aria-label="${label}" style="flex-grow: ${segment.rows}"></span>`;
+    }).join("")
+    : "";
+  dom.checkupLegend.innerHTML = formatCheckupLegend(summary).map(([label, rows, multi]) => (
+    `<span class="checkup-legend-item${multi ? " is-multi" : ""}">${escapeHtml(label)} <b>${escapeHtml(formatCheckupRows(rows))}</b></span>`
+  )).join("");
 }
 
 // v3.0.0: a quality subsection's note shows its first line; 展开 / 收起 shows the rest. The text
@@ -1949,6 +1986,8 @@ function updateGlobalFilterStatus() {
   const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
   dom.globalFilterSummary.textContent = formatAnalysisScope(activeCount, getAnalysisRows().length, getIncludedRows().length, countExcludedRows());
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
+  // v3.4.0: on the checkup only while a filter applies or rows are left out.
+  dom.globalFilterStatus.classList.toggle("hidden", activeCount === 0 && countExcludedRows() === 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
   // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
   // elements carry no id) and in the sidebar.
@@ -3263,6 +3302,8 @@ function resetAnalysisState() {
   writeLanguageText(dom.returnToAnalysis, "");
   writeLanguageText(dom.reportTitle, () => L("数据分析工作区", "Analysis workspace"));
   dom.overviewCards.innerHTML = "";
+  dom.previewSize.textContent = "";
+  renderCheckup();
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
   dom.previewTable.innerHTML = "";
@@ -3397,7 +3438,8 @@ function buildImportStatus({ sourceDisplayName, warningCount, affectedRows, head
     message,
     tone: warningCount ? "warning" : "success",
     hasNote: notes.length > 0,
-    summary: notes.length ? formatStatusNoteSummary(sourceDisplayName, notes.length) : ""
+    // v3.4.0: a reading warning is one note more, so N is what “看说明” opens.
+    summary: notes.length || warningCount ? formatStatusNoteSummary(sourceDisplayName, notes.length + (warningCount ? 1 : 0)) : ""
   };
 }
 
@@ -3405,6 +3447,9 @@ function showImportStatus(status) {
   const { tone, hasNote, summary } = buildImportStatus(status);
   setStatus(() => buildImportStatus(status).message, tone, hasNote, () => buildImportStatus(status).summary);
   dom.statusNoteSummary.textContent = summary;
+  // v3.4.0: the import message starts folded to its summary, a warning too; #statusPanel keeps its
+  // text, classes and role (a screen reader still reads it).
+  if (summary) foldStatusNote();
 }
 
 // v3.2.0 commit 11: the status bar's message (and the folded summary of an import) as functions,
@@ -3433,7 +3478,8 @@ function setStatus(message, tone = "", hasNote = false, summary = null) {
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));
   setImportBusy(!tone);
-  // Only a success with notes can fold (v3.0.0); every new message starts unfolded. The kind
+  // Only a success with notes can fold (v3.0.0); every new message starts unfolded, and
+  // showImportStatus() folds the import message (v3.4.0, a warning too). The kind
   // of message is marked on #statusNote: style.css keeps successes to the first module, while
   // warnings and errors (the report export's among them) show on every module.
   resetStatusNote();
@@ -3448,6 +3494,12 @@ function resetStatusNote() {
   dom.statusNote.classList.remove("can-collapse", "is-collapsed");
   dom.statusNoteToggle.setAttribute("aria-expanded", "true");
   dom.statusNoteToggle.textContent = L("收起", "Collapse");
+}
+
+function foldStatusNote() {
+  dom.statusNote.classList.add("can-collapse", "is-collapsed");
+  dom.statusNoteToggle.setAttribute("aria-expanded", "false");
+  dom.statusNoteToggle.textContent = L("看说明", "Show notes");
 }
 
 function toggleStatusNote() {

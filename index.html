@@ -40,7 +40,7 @@
       <p id="topbarFileName" class="topbar-file-name"></p>
 
       <nav id="moduleNav" class="module-nav" aria-label="分析模块目录" data-i18n-attr="aria-label=nav.label">
-        <a class="active" href="#overviewSection" aria-current="page" data-i18n="nav.overview">数据概览</a>
+        <a class="active" href="#overviewSection" aria-current="page" data-i18n="nav.overview">体检结果</a>
         <a href="#schemaSection" data-i18n="nav.schema">字段配置</a>
         <a href="#qualitySection" data-i18n="nav.quality">数据质量</a>
         <a href="#filterSection" data-i18n="nav.filter">筛选</a>
@@ -198,14 +198,22 @@
       <section id="overviewSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="overviewSectionTitle" tabindex="-1" data-i18n="overview.title">数据规模与预览</h2>
+            <h2 id="overviewSectionTitle" tabindex="-1" data-i18n="overview.title">体检结果</h2>
           </div>
           <p id="globalFilterStatus" class="filter-scope" aria-live="polite" data-i18n="scope.label">当前分析范围：<span id="globalFilterSummary" data-i18n="scope.none">尚未加载数据</span> <button id="globalClearFilters" class="text-button hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
-        <div id="overviewCards" class="metric-grid"></div>
+        <div id="checkupPanel" class="checkup-panel hidden">
+          <div class="checkup-headline">
+            <p id="checkupTotal" class="checkup-total"></p>
+            <button id="checkupExportReport" class="secondary-button checkup-export" type="button" data-i18n="checkup.export">导出体检报告</button>
+          </div>
+          <div id="checkupBar" class="checkup-bar" role="group" aria-label="需要处理的行按类别" data-i18n-attr="aria-label=checkup.bar"></div>
+          <p id="checkupLegend" class="checkup-legend"></p>
+        </div>
+        <div id="overviewCards" class="metric-grid hidden"></div>
         <div class="module-subsection">
-          <details class="preview-details" open>
-            <summary data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details.open data-i18n-closed=details.closed"><h3 class="subsection-title" data-i18n="preview.title">数据预览</h3></summary>
+          <details class="preview-details">
+            <summary data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details.open data-i18n-closed=details.closed"><h3 class="subsection-title" data-i18n="preview.title">数据预览</h3><span id="previewSize" class="preview-size"></span></summary>
             <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动" data-i18n-attr="aria-label=preview.tableWrap">
               <table id="previewTable" aria-label="数据预览" data-i18n-attr="aria-label=preview.title"></table>
             </div>

@@ -218,7 +218,9 @@ body.has-results .header-actions .nav-new-analysis {
   font-weight: 600;
 }
 
-.visually-hidden {
+/* v3.4.0: the checkup's module title is for screen readers only (the boards show none). */
+.visually-hidden,
+#overviewSectionTitle {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -842,13 +844,49 @@ body.has-results #statusPanel.success:not(.has-note) {
   border-radius: 12px;
 }
 
+/* v3.4.0: folded (as every import message starts), the note is board new-01's grey line: an
+   (i) icon, grey text, a regular 看说明, no border. Its margins put it 22 px under the top bar
+   and 18 px above the first card (the page's own padding is 30 px, the results' margin 22 px). */
+.status-note.can-collapse.is-collapsed .status-note-bar {
+  justify-content: flex-start;
+  gap: 10px;
+  margin: -8px 0 -4px;
+  padding: 9px 14px;
+  border: 0;
+  background: rgba(28, 28, 30, 0.045);
+  color: var(--text-secondary);
+  line-height: 19px;
+}
+
+.status-note.can-collapse.is-collapsed .status-note-bar::before {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  content: "";
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='black' stroke-width='1.3'/%3E%3Cpath d='M8 7.2v3.8M8 4.9v.2' stroke='black' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6.5' fill='none' stroke='black' stroke-width='1.3'/%3E%3Cpath d='M8 7.2v3.8M8 4.9v.2' stroke='black' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+
+.status-note.can-collapse.is-collapsed .status-note-summary {
+  flex: 1 1 auto;
+}
+
+.status-note.can-collapse.is-collapsed .status-note-toggle {
+  min-height: 0;
+  padding: 0;
+  color: var(--primary);
+  font-weight: 400;
+  line-height: 19px;
+}
+
 .status-note-summary {
   overflow: hidden;
   min-width: 0;
   margin: 0;
-  color: var(--text);
+  color: var(--text-secondary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1405,14 +1443,136 @@ body.has-results .app-sidebar {
   font-weight: 700;
 }
 
-/* The data preview in an open <details>: its summary is the old heading. */
+/* v3.4.0: the checkup's first card: the rows that need attention (52 px, the one size outside the
+   v3.0.0 list), the bar and its legend. Kind colours as the boards (the date styles #A86400, not
+   the boards' inline #007AFF, which their own CSS overrides). */
+.checkup-panel {
+  margin-bottom: 30px;
+  padding: 24px 28px 22px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+}
+
+.checkup-headline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.checkup-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 12px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+}
+
+.checkup-total-number {
+  font-size: 52px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 56px;
+}
+
+.checkup-total-label {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 30px;
+}
+
+.checkup-export {
+  flex: none;
+  margin-left: auto;
+}
+
+.checkup-bar {
+  display: flex;
+  gap: 2px;
+  height: 12px;
+  margin: 18px 0 12px;
+}
+
+.checkup-segment {
+  flex: 1 0 6px;
+  border-radius: 2px;
+}
+
+.checkup-segment:first-child {
+  border-radius: 6px 2px 2px 6px;
+}
+
+.checkup-segment:last-child {
+  border-radius: 2px 6px 6px 2px;
+}
+
+.checkup-segment:only-child {
+  border-radius: 6px;
+}
+
+.checkup-segment[data-kind="suspectedTotal"] { background: #5856d6; }
+.checkup-segment[data-kind="duplicateRows"] { background: #af52de; }
+.checkup-segment[data-kind="formulaError"] { background: #c93400; }
+.checkup-segment[data-kind="conversion"] { background: #ff2d55; }
+.checkup-segment[data-kind="placeholder"] { background: #148a9e; }
+.checkup-segment[data-kind="dateStyle"] { background: #a86400; }
+.checkup-segment[data-kind="lookAlike"] { background: #22973f; }
+.checkup-segment[data-kind="parseWarnings"] { background: #a2845e; }
+.checkup-segment[data-kind="multi"] { background: #48484a; }
+
+.checkup-segment[data-kind="clean"] {
+  margin-left: 3px;
+  background: #e4e4ea;
+  box-shadow: inset 0 1px 1px rgba(28, 28, 30, 0.05);
+}
+
+.checkup-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.checkup-legend b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.checkup-legend-item.is-multi::before {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 2px;
+  background: #48484a;
+  content: "";
+}
+
+/* The data preview in a <details>, folded by default (v3.4.0): its summary is the old heading and
+   the size of the table, on a white card row. */
 .preview-details > summary {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
   cursor: pointer;
   list-style: none;
+}
+
+.preview-size {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .preview-details > summary::-webkit-details-marker {
@@ -1420,7 +1580,7 @@ body.has-results .app-sidebar {
 }
 
 .preview-details > summary::after {
-  color: var(--text-secondary);
+  color: var(--primary);
   /* v3.2.0: the words are in index.html (data-i18n-open / data-i18n-closed), in either language. */
   content: attr(data-i18n-open);
   font-size: 13px;
@@ -1429,6 +1589,23 @@ body.has-results .app-sidebar {
 
 .preview-details:not([open]) > summary::after {
   content: attr(data-i18n-closed);
+}
+
+/* v3.4.0: the chevron after the word (order puts the ::before last in the flex row). */
+.preview-details > summary::before {
+  order: 1;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 3px 2px 0 2px;
+  border-right: 1.8px solid var(--primary);
+  border-bottom: 1.8px solid var(--primary);
+  content: "";
+  transform: translateY(-2px) rotate(-135deg);
+}
+
+.preview-details:not([open]) > summary::before {
+  transform: translateY(-2px) rotate(45deg);
 }
 
 .preview-details > summary .subsection-title {
@@ -1458,6 +1635,18 @@ body.has-results .app-sidebar {
 }
 
 .module-subsection.first {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* v3.4.0: the checkup's heading holds only the range line; hidden, it takes no room. */
+#overviewSection .section-heading:has(> #globalFilterStatus.hidden) {
+  margin-bottom: 0;
+}
+
+/* v3.4.0: on the checkup the folded preview is a card of its own, without the subsection rule. */
+#overviewSection .module-subsection {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
@@ -3447,6 +3636,20 @@ select:focus-visible,
   .section-block,
   .chart-card {
     break-inside: avoid;
+  }
+
+  /* v3.4.0: the preview is folded on screen; the printout has the table, as before. */
+  details.preview-details::details-content {
+    content-visibility: visible;
+  }
+
+  details.preview-details > :not(summary) {
+    display: block;
+  }
+
+  .checkup-segment {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
 

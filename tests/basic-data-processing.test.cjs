@@ -7587,7 +7587,7 @@ test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by
   assert.match(workspace, /resetStatusNote\(\);/);
 });
 
-test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入，有 N 条说明; #statusPanel never changes", async () => {
+test("v3.0.0 status note: a success with notes folds to 〈file〉已载入，有 N 条说明 (v3.4.0: folded on import); #statusPanel never changes", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const panel = orders.elements.get("statusPanel");
   const note = orders.elements.get("statusNote");
@@ -7598,18 +7598,21 @@ test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入�
   assert.equal(before.className, "status-panel success has-note");
   assert.match(before.text, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行/);
   assert.equal(note.classList.contains("can-collapse"), true);
-  assert.equal(note.classList.contains("is-collapsed"), false);
+  // v3.4.0: the import message starts folded; one click opens what it says.
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(toggle.textContent, "看说明");
   assert.equal(orders.elements.get("statusNoteSummary").textContent, "sample-orders.csv 已载入，有 2 条说明");
 
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+  assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
   orders.evaluate("toggleStatusNote()");
   assert.equal(note.classList.contains("is-collapsed"), true);
   assert.equal(attributes["aria-expanded"], "false");
   assert.equal(toggle.textContent, "看说明");
   assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
-  orders.evaluate("toggleStatusNote()");
-  assert.equal(note.classList.contains("is-collapsed"), false);
-  assert.equal(attributes["aria-expanded"], "true");
-  assert.equal(toggle.textContent, "收起");
 
   // A later message replaces the import's: nothing left to fold.
   orders.evaluate('toggleStatusNote(); setStatus("HTML 报告已生成：x.html", "success")');
@@ -7624,13 +7627,15 @@ test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入�
   assert.equal(note.classList.contains("can-collapse"), false);
 });
 
-test("v3.0.0 status note: N counts the notes that are there; a warning never folds", async () => {
+test("v3.0.0 status note: N counts the notes that are there; a warning is one more and folds too (v3.4.0)", async () => {
   const errors = await importStage3Fixture("公式错误.xlsx");
   assert.equal(errors.elements.get("statusNote").classList.contains("can-collapse"), true);
   assert.equal(errors.elements.get("statusNoteSummary").textContent, "公式错误.xlsx · 公式错误 已载入，有 1 条说明");
   const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
   assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
-  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), false);
+  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(warned.elements.get("statusNote").classList.contains("is-collapsed"), true);
+  assert.equal(warned.elements.get("statusNoteSummary").textContent, "warned.csv 已载入，有 1 条说明");
   // A plain success has no note: no summary, nothing to fold.
   const plain = createChartContext();
   commitGuardRows(plain, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "plain.csv");
@@ -8122,12 +8127,13 @@ test("v3.0.0 overview: the five numbers are one line of text with their old labe
   assert.deepEqual(metricItems(orders)[0], ["总记录 → 当前分析", "42 → 10"]);
 });
 
-test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
+test("v3.0.0 overview: the preview sits in a closed <details> (v3.4.0) whose summary is the old 数据预览 heading", () => {
   const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assert.doesNotMatch(overview, /preview-details" open/);
   assertInOrder(overview, [
-    '<details class="preview-details" open>',
-    '<summary><h3 class="subsection-title">数据预览</h3></summary>',
+    '<details class="preview-details">',
+    '<summary><h3 class="subsection-title">数据预览</h3><span id="previewSize" class="preview-size"></span></summary>',
     '<table id="previewTable" aria-label="数据预览"></table>',
     '<p id="previewPageInfo"',
     "</details>"
@@ -8244,7 +8250,7 @@ const cssRule = (css, selector) => {
   return match[1];
 };
 
-test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights", () => {
+test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights (v3.4.0: and 52 px for the checkup's number)", () => {
   const css = repoFile("style.css");
   const root = cssRule(css, ":root");
   [["--bg", "#f2f2f7"], ["--panel", "#ffffff"], ["--text", "#1c1c1e"], ["--text-secondary", "#636366"], ["--muted", "#636366"], ["--primary", "#0068e0"], ["--sidebar-bg", "#f9f9fb"], ["--card-border", "rgba(28, 28, 30, 0.07)"], ["--radius-card", "16px"]]
@@ -8255,7 +8261,10 @@ test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes an
   assert.doesNotMatch(family, /Inter/);
   assert.ok(family.indexOf('"Segoe UI"') >= 0 && family.indexOf('"Segoe UI"') < family.indexOf('"Microsoft YaHei"'), family);
   const sizes = new Set([...css.matchAll(/font-size: ([^;]+);/g)].map((match) => match[1]));
-  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)"].includes(size), size));
+  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)", "52px"].includes(size), size));
+  // v3.4.0: 52 px once, in the rule of the checkup's big number.
+  assert.equal((css.match(/font-size: 52px;/g) || []).length, 1);
+  assert.match(cssRule(css, ".checkup-total-number"), /font-size: 52px;/);
   const weights = new Set([...css.matchAll(/font-weight: ([^;]+);/g)].map((match) => match[1]));
   weights.forEach((weight) => assert.ok(["400", "600", "700"].includes(weight), weight));
   // The old purple is gone, the focus ring is the new blue.
@@ -9638,8 +9647,13 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed). v3.2.2 only
   // changed the repository URL in the footer to sheet-checkup; the value below is the old content
-  // (95ef087e…ca866) with just that one replacement, compared byte for byte.
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "8c1f88e7169f3b6aeb10a60afd154f3d8d16f68846e2ba6b855e778f20bdc80a");
+  // (95ef087e…ca866) with just that one replacement, compared byte for byte. v3.4.0 commit 3 changed
+  // the first module on purpose; the value below is the old content (8c1f88e7…dc80a) with only these
+  // five replacements, compared byte for byte: the navigation's 数据概览 and the title's 数据规模与预览
+  // became 体检结果; the checkup panel (#checkupPanel with #checkupTotal, #checkupExportReport,
+  // #checkupBar, #checkupLegend) went in before #overviewCards, which took the class hidden; the
+  // preview's <details> lost open; its summary got <span id="previewSize" class="preview-size"></span>.
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "36329f4c3b994d33851a5ef9937b88cb9c6936f7065f95cb1282fb900d9245d2");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -10042,9 +10056,10 @@ test("v3.2.0 language: every key of the page has English that keeps its numbers,
   assert.equal(english["export.check"], "Check which cells will change");
   assert.equal(english["custom.create"], "Create breakdown");
   assert.equal(english["schema.apply"], "Apply column settings");
-  // The eight module titles say what the Chinese title says, not the navigation's short names.
+  // The eight module titles say what the Chinese title says, not the navigation's short names;
+  // v3.4.0: the first title is 体检结果 / Checkup, as its navigation name (it is for screen readers only).
   assert.deepEqual(["overview", "schema", "quality", "filter", "statistics", "charts", "custom", "export"].map((name) => english[`${name}.title`]),
-    ["Size and preview", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
+    ["Checkup", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
   assert.equal(english["sample.row"], "#");
   assert.equal(english["note.expand"], scope.evaluate('(() => { const button = { getAttribute: () => "true", setAttribute() {}, previousElementSibling: { classList: { toggle() {} } } }; setInterfaceLanguage("en"); toggleSectionNote({ target: { closest: () => button } }); return button.textContent; })()'));
 });
@@ -10452,9 +10467,11 @@ test("v3.2.0 app.js: the import message is kept as figures and written in the la
   assert.equal(status.affectedRows, 1);
   const chinese = textOf(scope, "statusPanel");
   assert.equal(chinese, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 20 行「Total」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv 已载入，有 2 条说明");
   scope.evaluate('setInterfaceLanguage("en"); showImportStatus(state.importStatus)');
   assert.equal(textOf(scope, "statusPanel"), "The CSV is loaded, but there is 1 reading issue in 1 row. Check the data preview and the number of columns. Row 20 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
-  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 1 note");
+  // v3.4.0: the reading warning counts as a note too: 1 + the suspected total.
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 2 notes");
   // Back from 换一个文件: written again, now in Chinese, byte for byte as after the import.
   scope.evaluate('setInterfaceLanguage("zh"); showUploadPage(); returnToAnalysis()');
   assert.equal(textOf(scope, "statusPanel"), chinese);
@@ -13455,4 +13472,149 @@ test("v3.4.0 checkup: made on commit, rebuild and rows left out, never on a filt
   assert.equal(orders.evaluate("state.duplicateRowGroups.length"), 0);
   const next = await clickSampleButton(sampleOrdersFetchedText());
   assert.equal(next.evaluate("state.checkupSummary.rowCount"), 12);
+});
+
+// ---- v3.4.0 commit 3: the first screen is the checkup ----
+const checkupHtml = (scope, id) => scope.elements.get(id).innerHTML;
+const checkupSegments = (scope) => [...checkupHtml(scope, "checkupBar").matchAll(/<span class="checkup-segment" data-kind="([^"]+)" role="img" title="([^"]+)" aria-label="([^"]+)" style="flex-grow: (\d+)"><\/span>/g)]
+  .map(([, kind, title, label, grow]) => { assert.equal(title, label); return [kind, title, Number(grow)]; });
+const checkupLegend = (scope) => [...checkupHtml(scope, "checkupLegend").matchAll(/<span class="checkup-legend-item( is-multi)?">([^<]*) <b>([^<]*)<\/b><\/span>/g)]
+  .map(([, multi, label, rows]) => `${multi ? "■ " : ""}${label} ${rows}`);
+
+test("v3.4.0 status fold: the import message starts folded, a warning too; #statusPanel is read as before", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const note = orders.elements.get("statusNote");
+  const panel = orders.elements.get("statusPanel");
+  assert.deepEqual([note.classList.contains("can-collapse"), note.classList.contains("is-collapsed")], [true, true]);
+  assert.equal(textOf(orders, "statusNoteToggle"), "看说明");
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv 已载入，有 2 条说明");
+  // The live region keeps its role and its whole text: folding only moves it out of sight. (The fake
+  // setAttribute keeps nothing: record the role setStatus() gives it while writing it again.)
+  const roles = [];
+  panel.setAttribute = (name, value) => { if (name === "role") roles.push(value); };
+  orders.evaluate("showImportStatus(state.importStatus)");
+  assert.deepEqual(roles, ["status"]);
+  assert.equal(panel.className, "status-panel success has-note");
+  assert.match(panel.textContent, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行/);
+  assert.match(indexHtmlSource(), /<section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"><\/section>/);
+  // The toggle says it is folded (the fake setAttribute keeps nothing: record it while writing again).
+  const attributes = {};
+  orders.elements.get("statusNoteToggle").setAttribute = (name, value) => { attributes[name] = String(value); };
+  orders.evaluate("showImportStatus(state.importStatus)");
+  assert.equal(attributes["aria-expanded"], "false");
+  // The other language: folded the same way, in its words.
+  orders.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv loaded, 2 notes");
+  assert.equal(textOf(orders, "statusNoteToggle"), "Show notes");
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  // A warning without any other note is one note, folded.
+  const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
+  assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
+  assert.equal(warned.elements.get("statusNote").classList.contains("is-collapsed"), true);
+  assert.equal(textOf(warned, "statusNoteSummary"), "warned.csv 已载入，有 1 条说明");
+  // Other messages are not folded: the report export's warning shows whole.
+  warned.evaluate('setStatus("请先完成数据分析，再导出报告。", "warning")');
+  assert.deepEqual([warned.elements.get("statusNote").classList.contains("can-collapse"), warned.elements.get("statusNote").classList.contains("is-collapsed")], [false, false]);
+  // Back from 换一个文件, the import message is folded again.
+  orders.evaluate('setInterfaceLanguage("zh"); toggleStatusNote(); showUploadPage(); returnToAnalysis()');
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv 已载入，有 2 条说明");
+});
+
+test("v3.4.0 first screen: the number of rows that need attention, the bar and its legend", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.elements.get("checkupPanel").classList.contains("hidden"), false);
+  assert.equal(checkupHtml(orders, "checkupTotal"), '<span class="checkup-total-number">12</span> <span class="checkup-total-label">行需要处理</span>');
+  assert.deepEqual(checkupSegments(orders), [
+    ["suspectedTotal", "疑似合计 / 小计行 1 行", 1], ["duplicateRows", "整行重复 2 行", 2], ["placeholder", "像是空值的写法 2 行", 2],
+    ["dateStyle", "日期写法混用 5 行", 5], ["lookAlike", "同一个值，写法不一样 2 行", 2], ["clean", "没有发现问题 30 行", 30]
+  ]);
+  assert.deepEqual(checkupLegend(orders), ["需要处理 12 行", "没有发现问题 30 行"]);
+  // The bar is not in the tab order (no links, no buttons) and its group is named.
+  assert.doesNotMatch(checkupHtml(orders, "checkupBar"), /tabindex|<a |<button/);
+  assert.match(indexHtmlSource(), /<div id="checkupBar" class="checkup-bar" role="group" aria-label="需要处理的行按类别"><\/div>/);
+  // A filter draws it again, with the same figures (the checkup does not follow filters).
+  filterRegion(orders, "华东");
+  assert.match(checkupHtml(orders, "checkupTotal"), />12<\/span>/);
+  // Rows left out are not counted: 12 -> 11, the bar adds up to the 41 counted rows.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.match(checkupHtml(orders, "checkupTotal"), />11<\/span>/);
+  assert.equal(checkupSegments(orders).reduce((sum, [, , grow]) => sum + grow, 0), 41);
+  // In English, one row in the singular.
+  const en = await sampleOrdersEn();
+  assert.equal(checkupHtml(en, "checkupTotal"), '<span class="checkup-total-number">14</span> <span class="checkup-total-label">rows need attention</span>');
+  assert.deepEqual(checkupLegend(en), ["Need attention 14 rows", "No problems found 28 rows"]);
+  assert.equal(checkupSegments(en)[0][1], "Possible total or subtotal rows 1 row");
+  // Rows of several kinds: a dark segment and a legend item of their own.
+  const messyEn = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(checkupSegments(messyEn).map(([kind, , grow]) => [kind, grow]), [["duplicateRows", 22], ["conversion", 18], ["placeholder", 10], ["dateStyle", 10], ["lookAlike", 8], ["multi", 7], ["clean", 223]]);
+  assert.deepEqual(checkupLegend(messyEn), ["Need attention 75 rows", "■ Several kinds of problems 7 rows", "No problems found 223 rows"]);
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(checkupLegend(messy), ["需要处理 73 行", "■ 其中同时有几类问题 7 行", "没有发现问题 225 行"]);
+  // Nothing to fix: no number and no bar.
+  const clean = await importCsvFile("城市,数量\r\n北京,1\r\n上海,2\r\n广州,3\r\n", "clean.csv");
+  assert.equal(checkupHtml(clean, "checkupTotal"), '<span class="checkup-total-label">没有发现需要处理的行</span>');
+  assert.equal(clean.elements.get("checkupBar").classList.contains("hidden"), true);
+  assert.deepEqual(checkupLegend(clean), ["没有发现问题 3 行"]);
+  // A language switch writes it again; a reset hides and empties it.
+  orders.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.equal(checkupHtml(orders, "checkupTotal"), '<span class="checkup-total-number">11</span> <span class="checkup-total-label">rows need attention</span>');
+  orders.evaluate('setInterfaceLanguage("zh"); resetAnalysisState()');
+  assert.equal(orders.elements.get("checkupPanel").classList.contains("hidden"), true);
+  assert.equal(checkupHtml(orders, "checkupTotal") + checkupHtml(orders, "checkupBar") + checkupHtml(orders, "checkupLegend"), "");
+});
+
+test("v3.4.0 first screen: 体检结果 in the navigation and the title, the range line only when it narrows, the preview folded", async () => {
+  const html = indexHtmlSource();
+  assert.match(html, /<a class="active" href="#overviewSection" aria-current="page">体检结果<\/a>/);
+  assert.match(html, /<h2 id="overviewSectionTitle" tabindex="-1">体检结果<\/h2>/);
+  assert.doesNotMatch(html, /数据概览|数据规模与预览/);
+  // The title is for screen readers only: the same rule as .visually-hidden.
+  const css = repoFile("style.css");
+  assert.match(css, /\n\.visually-hidden,\r?\n#overviewSectionTitle \{\r?\n  position: absolute;/);
+  // The old line of figures is still written, out of sight.
+  assert.match(html, /<div id="overviewCards" class="metric-grid hidden"><\/div>/);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.match(checkupHtml(orders, "overviewCards"), /总记录数/);
+  assert.equal(textOf(orders, "previewSize"), "42 行 × 9 列");
+  // The range line: hidden with neither a filter nor rows left out.
+  const scope = () => orders.elements.get("globalFilterStatus").classList.contains("hidden");
+  assert.equal(scope(), true);
+  filterRegion(orders, "华东");
+  assert.equal(scope(), false);
+  orders.evaluate("clearAllFilters()");
+  assert.equal(scope(), true);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(scope(), false);
+  orders.evaluate('setRowExclusion("duplicateRows", false)');
+  assert.equal(scope(), true);
+  // English names.
+  const english = JSON.parse(orders.evaluate("JSON.stringify(I18N_EN)"));
+  assert.deepEqual([english["nav.overview"], english["overview.title"], english["checkup.export"], english["checkup.bar"]], ["Checkup", "Checkup", "Export checkup report", "Rows that need attention, by kind"]);
+  const en = await sampleOrdersEn();
+  assert.equal(textOf(en, "previewSize"), "42 rows × 9 columns");
+  // Folded, the note is the boards' grey line with an (i) icon and a regular 看说明; the preview's
+  // word has a chevron, down while folded. Opened, the note keeps the v3.0.0 rules.
+  const folded = css.slice(css.indexOf("/* v3.4.0: folded (as every import message starts)"));
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-bar \{[^}]*margin: -8px 0 -4px;[^}]*background: rgba\(28, 28, 30, 0\.045\);/);
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-bar::before \{[^}]*\n  mask: url\("data:image\/svg\+xml,[^"]*circle[^"]*"\)/);
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-toggle \{[^}]*font-weight: 400;/);
+  assert.match(cssRule(css, ".status-note.can-collapse .status-note-bar"), /margin-top: 18px;/);
+  assert.match(cssRule(css, ".preview-details > summary::before"), /order: 1;[\s\S]*rotate\(-135deg\)/);
+  assert.match(cssRule(css, ".preview-details:not([open]) > summary::before"), /rotate\(45deg\)/);
+  // Printing opens the folded preview and keeps the bar's colours, inside the one print block.
+  const print = css.slice(css.indexOf("@media print {"));
+  assert.match(print, /details\.preview-details::details-content \{\s*content-visibility: visible;\s*\}/);
+  assert.match(print, /details\.preview-details > :not\(summary\) \{\s*display: block;\s*\}/);
+  assert.match(print, /\.checkup-segment \{\s*-webkit-print-color-adjust: exact;\s*print-color-adjust: exact;\s*\}/);
+});
+
+test("v3.4.0 first screen: 导出体检报告 is the HTML report, with its gate", async () => {
+  assert.match(indexHtmlSource(), /<button id="checkupExportReport" class="secondary-button checkup-export" type="button">导出体检报告<\/button>/);
+  const script = repoFile("script.js");
+  assert.equal((script.match(/dom\.checkupExportReport\.addEventListener\("click", \(\) => exportHtmlReport\(\)\);/g) || []).length, 1);
+  // Before an analysis the export says so, as the export module's button does.
+  const scope = createScriptContext();
+  scope.evaluate("exportHtmlReport()");
+  assert.equal(textOf(scope, "statusPanel"), "请先完成数据分析，再导出报告。");
 });

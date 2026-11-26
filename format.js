@@ -80,7 +80,7 @@ const I18N_EN = Object.freeze({
   "brand.label": "Sheet Checkup home",
   "brand.name": "Sheet Checkup",
   "nav.label": "Analysis modules",
-  "nav.overview": "Overview",
+  "nav.overview": "Checkup",
   "nav.schema": "Columns",
   "nav.quality": "Quality",
   "nav.filter": "Filter",
@@ -142,7 +142,9 @@ const I18N_EN = Object.freeze({
   "scope.label": "In analysis: ",
   "scope.none": "No data loaded yet",
   "scope.clear": "Clear filters",
-  "overview.title": "Size and preview",
+  "overview.title": "Checkup",
+  "checkup.export": "Export checkup report",
+  "checkup.bar": "Rows that need attention, by kind",
   "preview.title": "Data preview",
   "preview.tableWrap": "Data preview table, scrolls sideways",
   "pager.first": "First",
@@ -804,6 +806,50 @@ function formatFormulaErrorStatus(items) {
 // error sentences the message carries.
 function formatStatusNoteSummary(sourceName, count) {
   return L(`${sourceName} 已载入，有 ${formatInteger(count)} 条说明`, `${sourceName} loaded, ${enCount(count, "note", "notes")}`);
+}
+
+// ---- v3.4.0: the checkup (体检结果) ----
+// The names of the eight kinds, as the quality page and the problem rows name them.
+const CHECKUP_KIND_NAMES = Object.freeze({
+  suspectedTotal: Lp("疑似合计 / 小计行", "Possible total or subtotal rows"),
+  duplicateRows: Lp("整行重复", "Duplicate rows"),
+  formulaError: Lp("公式错误", "Formula errors"),
+  conversion: Lp("认不出的数字或日期", "Numbers or dates not recognized"),
+  placeholder: Lp("像是空值的写法", "Values that may mean blank"),
+  dateStyle: Lp("日期写法混用", "Mixed date formats"),
+  lookAlike: Lp("同一个值，写法不一样", "Same value, written differently"),
+  parseWarnings: Lp("读取时有疑问", "Reading issues"),
+  multi: Lp("同时有几类问题", "Several kinds of problems"),
+  clean: Lp("没有发现问题", "No problems found")
+});
+
+function formatCheckupRows(count) {
+  return L(`${formatInteger(count)} 行`, enCount(count, "row", "rows"));
+}
+
+// The big number's words: 行需要处理 / rows need attention; none when nothing needs attention.
+function formatCheckupTotalLabel(count) {
+  if (!count) return L("没有发现需要处理的行", "No rows need attention");
+  return L("行需要处理", count === 1 ? "row needs attention" : "rows need attention");
+}
+
+// One segment of the bar: 疑似合计 / 小计行 1 行.
+function formatCheckupSegment(kind, count) {
+  return `${Lpick(CHECKUP_KIND_NAMES[kind])} ${formatCheckupRows(count)}`;
+}
+
+// The legend under the bar: [label, rows, multi] per item.
+function formatCheckupLegend(summary) {
+  return [
+    ...(summary.rowCount ? [[L("需要处理", "Need attention"), summary.rowCount, false]] : []),
+    ...(summary.multiRows ? [[L("其中同时有几类问题", "Several kinds of problems"), summary.multiRows, true]] : []),
+    [Lpick(CHECKUP_KIND_NAMES.clean), summary.total - summary.rowCount, false]
+  ];
+}
+
+// 数据预览 · 42 行 × 9 列, on the folded preview.
+function formatPreviewSize(rowCount, fieldCount) {
+  return L(`${formatInteger(rowCount)} 行 × ${formatInteger(fieldCount)} 列`, `${enCount(rowCount, "row", "rows")} × ${enCount(fieldCount, "column", "columns")}`);
 }
 
 // The field table's search box (v3.0.0 F2), shown for more than 20 fields.

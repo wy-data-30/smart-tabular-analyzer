@@ -150,6 +150,8 @@ dom.exportStandardizedCsv.addEventListener("click", () => exportStandardizedData
 dom.exportStandardizedChanges.addEventListener("click", () => exportStandardizedData("changes"));
 
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
+// v3.4.0: the checkup's 导出体检报告 is the same HTML report, with the same gate (exportHtmlReport()).
+dom.checkupExportReport.addEventListener("click", () => exportHtmlReport());
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
