@@ -26,6 +26,12 @@ const state = {
   qualityNumericStats: [],
   categoryStats: [],
   duplicateRows: 0,
+  // v3.4.0: the groups of exactly repeated rows countDuplicateRows() found on import (every row
+  // of each group, the kept one too); only imports replace it.
+  duplicateRowGroups: [],
+  // v3.4.0: buildCheckupSummary(), made on commit, rebuild (field configuration, placeholder
+  // confirmations) and after rows are left out or brought back; filters do not change it.
+  checkupSummary: null,
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
@@ -827,7 +833,9 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
-  state.duplicateRows = countDuplicateRows(rows, fields);
+  const duplicateRowGroups = [];
+  state.duplicateRows = countDuplicateRows(rows, fields, duplicateRowGroups);
+  state.duplicateRowGroups = duplicateRowGroups;
   state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
@@ -843,6 +851,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = state.qualityNumericStats;
   state.categoryStats = buildCategoryStats(state.filteredRows);
+  state.checkupSummary = buildCheckupSummary();
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
   // The sidebar's file name (v3.0.0). report.js names the report after state.sourceFileName and
@@ -2009,6 +2018,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置�
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = getIncludedRows() === state.rows ? state.qualityNumericStats : buildNumericStats(getIncludedRows());
   state.categoryStats = buildCategoryStats(getAnalysisRows());
+  state.checkupSummary = buildCheckupSummary();
   state.previewPage = 1;
   renderOverview();
   renderPreview();
@@ -2105,6 +2115,7 @@ function setRowExclusion(kind, on) {
 
 // The applied filters again from the new counted rows, the filter panel, then the analysis.
 function refreshAfterExclusion() {
+  state.checkupSummary = buildCheckupSummary();
   const included = getIncludedRows();
   state.filteredRows = hasActiveFilters() ? filterRowsByConfig(included, state.filters) : included.slice();
   state.filterSourceRows = included;
@@ -3182,6 +3193,8 @@ function resetAnalysisState() {
   state.qualityNumericStats = [];
   state.categoryStats = [];
   state.duplicateRows = 0;
+  state.duplicateRowGroups = [];
+  state.checkupSummary = null;
   state.idDuplicates = [];
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];

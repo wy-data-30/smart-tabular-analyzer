@@ -13189,3 +13189,270 @@ test("v3.3.0 fixture: en-subtotal.csv has Excel's subtotals and a grand total, a
     assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /也带这类字样|more rows? also ha/, language);
   }
 });
+
+// ---- v3.4.0 commit 2: the checkup counts (buildCheckupSummary()) ----
+// tests/fixtures/checkup/ (not stage3: no directory-wide guard reads it) holds the two messy
+// tables of the v3.4.0 boards, copied byte for byte; their generator is not in the repository.
+const CHECKUP_FIXTURES = path.join(__dirname, "fixtures", "checkup");
+const CHECKUP_FIXTURE_BYTES = {
+  "messy.csv": [13801, "8d281d08acbff72ecd96861db471f9976eab1b14a5eae25c51244e2cff2115d3"],
+  "messy-en.csv": [13408, "026123e068d98b7acef869418ee25e938ffba4035f7f7a76dfb8a15147eeca9a"]
+};
+
+async function importCheckupFixture(fileName, language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  const bytes = fs.readFileSync(path.join(CHECKUP_FIXTURES, fileName));
+  put(scope.context, "__checkupFile", { name: fileName, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  await scope.evaluate("parseDataFile(__checkupFile)");
+  return scope;
+}
+
+// The checkup of a scope: per kind [kind, rows, K, file lines], then N, the rows of two or more
+// kinds, the counted rows and the bar's segments.
+const checkupOf = (scope) => JSON.parse(scope.evaluate(`(() => {
+  const summary = buildCheckupSummary();
+  const line = (index) => getSourceRowNumber(state.rows[index]);
+  return JSON.stringify({
+    kinds: summary.kinds.map((item) => [item.kind, item.rows.length, item.otherKindRows, item.rows.map(line)]),
+    N: summary.rowCount, multi: summary.multiRows, total: summary.total,
+    segments: summary.segments.map((segment) => segment.kind + " " + segment.rows).join(", ")
+  });
+})()`));
+const checkupCounts = (scope) => checkupOf(scope).kinds.map(([kind, rows, other]) => [kind, rows, other]);
+
+const sampleOrdersEn = () => importCsvInLanguage(readExampleCsv("sample-orders-en.csv"), "sample-orders-en.csv", "en");
+
+test("v3.4.0 checkup fixtures: messy.csv and messy-en.csv keep their bytes", () => {
+  assert.deepEqual(fs.readdirSync(CHECKUP_FIXTURES).sort(), Object.keys(CHECKUP_FIXTURE_BYTES).sort());
+  for (const [fileName, [size, sha256]] of Object.entries(CHECKUP_FIXTURE_BYTES)) {
+    const bytes = fs.readFileSync(path.join(CHECKUP_FIXTURES, fileName));
+    assert.equal(bytes.length, size, fileName);
+    assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), sha256, fileName);
+  }
+});
+
+test("v3.4.0 checkup: N and rows per kind on four tables", async () => {
+  const zh = checkupOf(await clickSampleButton(sampleOrdersFetchedText()));
+  assert.deepEqual(zh.kinds, [
+    ["suspectedTotal", 1, 0, [44]], ["duplicateRows", 2, 0, [20, 21]], ["placeholder", 2, 0, [16, 29]],
+    ["dateStyle", 5, 0, [12, 19, 25, 36, 39]], ["lookAlike", 2, 0, [10, 32]]
+  ]);
+  assert.deepEqual([zh.N, zh.multi, zh.total], [12, 0, 42]);
+  const en = checkupOf(await sampleOrdersEn());
+  assert.deepEqual(en.kinds, [
+    ["suspectedTotal", 1, 0, [44]], ["duplicateRows", 2, 0, [20, 21]], ["placeholder", 2, 0, [16, 29]],
+    ["dateStyle", 5, 0, [12, 19, 25, 36, 39]], ["lookAlike", 4, 0, [10, 32, 37, 42]]
+  ]);
+  assert.deepEqual([en.N, en.multi, en.total], [14, 0, 42]);
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(checkupCounts(messy), [["duplicateRows", 24, 2], ["conversion", 22, 4], ["placeholder", 9, 0], ["dateStyle", 9, 0], ["lookAlike", 15, 7], ["parseWarnings", 1, 1]]);
+  assert.deepEqual([checkupOf(messy).N, checkupOf(messy).multi, checkupOf(messy).total], [73, 7, 298]);
+  const messyEn = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(checkupCounts(messyEn), [["duplicateRows", 24, 2], ["conversion", 24, 6], ["placeholder", 10, 0], ["dateStyle", 10, 0], ["lookAlike", 13, 5], ["parseWarnings", 1, 1]]);
+  assert.deepEqual([checkupOf(messyEn).N, checkupOf(messyEn).multi, checkupOf(messyEn).total], [75, 7, 298]);
+  // The import keeps it in state; a call gives the same figures.
+  assert.equal(messy.evaluate("state.checkupSummary.rowCount"), 73);
+});
+
+test("v3.4.0 checkup: a cell counts once (a pending N/A that fails conversion is a placeholder only)", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  // The quality page counts the N/A of 金额 as a value it cannot read ...
+  assert.equal(orders.evaluate('getFieldProfile("金额").conversionFailureCount'), 1);
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(listProblemRows({ kind: "conversion", field: "金额" }).items.map((item) => item.line))')), [29]);
+  // ... and the checkup counts that cell as a placeholder, not also as one it cannot read.
+  const summary = JSON.parse(orders.evaluate('JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.cells.map((cell) => [getSourceRowNumber(state.rows[cell.index]), cell.field])]))'));
+  assert.equal(summary.some(([kind]) => kind === "conversion"), false);
+  assert.deepEqual(summary.find(([kind]) => kind === "placeholder")[1], [[29, "金额"], [16, "销售代表"]]);
+  // A placeholder of the second tier is not counted, and neither is one already treated as blank.
+  const second = await importCsvFile("编号,状态,数量\r\n1,无,5\r\n2,好,6\r\n3,好,7\r\n4,中,8\r\n5,N/A,9\r\n", "tier.csv");
+  assert.deepEqual(JSON.parse(second.evaluate("JSON.stringify(state.placeholders.map((entry) => [entry.key, entry.tier === \"common\"]))")).sort(), [["N/A", true], ["无", false]]);
+  assert.deepEqual(checkupOf(second).kinds, [["placeholder", 1, 0, [6]]]);
+  second.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(checkupOf(second).kinds, []);
+});
+
+test("v3.4.0 checkup: duplicate rows count the kept row", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.evaluate("state.duplicateRows"), 1);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(state.duplicateRowGroups.map((group) => group.map((index) => getSourceRowNumber(state.rows[index]))))")), [[20, 21]]);
+  assert.deepEqual(checkupOf(orders).kinds[1], ["duplicateRows", 2, 0, [20, 21]]);
+  // countDuplicateRows() without the array still returns the count alone.
+  assert.equal(orders.evaluate("countDuplicateRows(state.rows, state.fields)"), 1);
+  // Groups by first appearance, every row of each, a group of three too.
+  const rows = [["a", "1"], ["b", "2"], ["a", "1"], ["c", "3"], ["b", "2"], ["a", "1"]].map(([x, y]) => ({ x, y }));
+  put(orders.context, "__rows", rows);
+  assert.deepEqual(JSON.parse(orders.evaluate('(() => { const groups = []; const count = countDuplicateRows(__rows, ["x", "y"], groups); return JSON.stringify([count, groups]); })()')), [3, [[0, 2, 5], [1, 4]]]);
+});
+
+test("v3.4.0 checkup: rows left out of the analysis are not counted", async () => {
+  const totals = await sampleWithExclusions({ duplicates: false });
+  assert.deepEqual([checkupOf(totals).N, checkupOf(totals).total], [11, 41]);
+  assert.equal(checkupOf(totals).kinds.some(([kind]) => kind === "suspectedTotal"), false);
+  // The repeated row left out, its group has one counted row: the kept row is no longer a duplicate.
+  const repeats = await sampleWithExclusions({ totals: false });
+  assert.deepEqual([checkupOf(repeats).N, checkupOf(repeats).total], [10, 41]);
+  assert.equal(checkupOf(repeats).kinds.some(([kind]) => kind === "duplicateRows"), false);
+  const both = await sampleWithExclusions();
+  assert.deepEqual([checkupOf(both).N, checkupOf(both).total], [9, 40]);
+  assert.equal(checkupOf(both).segments, "placeholder 2, dateStyle 5, lookAlike 2, clean 31");
+  // Brought back, counted again.
+  both.evaluate('setRowExclusion("suspectedTotal", false); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual([checkupOf(both).N, checkupOf(both).total], [12, 42]);
+});
+
+const CHECKUP_KIND_ORDER = ["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"];
+
+async function importEveryCheckupFile() {
+  const scopes = await importEveryQualityFile();
+  scopes.push(["sample-orders-en.csv (en)", await sampleOrdersEn()]);
+  scopes.push(["messy.csv", await importCheckupFixture("messy.csv")]);
+  scopes.push(["messy-en.csv", await importCheckupFixture("messy-en.csv", "en")]);
+  return scopes;
+}
+
+test("v3.4.0 checkup: the bar adds up, every row in one segment", async () => {
+  const scopes = await importEveryCheckupFile();
+  assert.equal(scopes.length, 22);
+  for (const [name, scope] of scopes) {
+    const check = JSON.parse(scope.evaluate(`(() => {
+      const s = buildCheckupSummary();
+      const only = new Map();
+      s.kindsOfRow.forEach((kinds) => { if (kinds.length === 1) only.set(kinds[0], (only.get(kinds[0]) || 0) + 1); });
+      return JSON.stringify({
+        sum: s.segments.reduce((total, segment) => total + segment.rows, 0), total: s.total, counted: getIncludedRows().length,
+        multi: s.segments.filter((segment) => segment.kind === "multi").map((segment) => segment.rows), multiRows: s.multiRows,
+        clean: s.segments[s.segments.length - 1], N: s.rowCount, rowsOfKinds: s.kindsOfRow.size,
+        kindsOk: s.kinds.every((item) => item.onlyRows + item.otherKindRows === item.rows.length && item.onlyRows === (only.get(item.kind) || 0)),
+        onlySegments: s.segments.filter((segment) => segment.kind !== "multi" && segment.kind !== "clean").map((segment) => [segment.kind, segment.rows]),
+        onlyKinds: s.kinds.filter((item) => item.onlyRows).map((item) => [item.kind, item.onlyRows])
+      });
+    })()`));
+    assert.equal(check.sum, check.total, name);
+    assert.equal(check.total, check.counted, name);
+    assert.deepEqual(check.multi, check.multiRows ? [check.multiRows] : [], name);
+    assert.deepEqual(check.clean, { kind: "clean", rows: check.total - check.N }, name);
+    assert.equal(check.N, check.rowsOfKinds, name);
+    assert.ok(check.kindsOk, name);
+    assert.deepEqual(check.onlySegments, check.onlyKinds, name);
+  }
+  // The messy tables: seven rows of two or more kinds get one segment of their own.
+  const messy = scopes.find(([name]) => name === "messy.csv")[1];
+  assert.equal(checkupOf(messy).segments, "duplicateRows 22, conversion 18, placeholder 9, dateStyle 9, lookAlike 8, multi 7, clean 225");
+  const messyEn = scopes.find(([name]) => name === "messy-en.csv")[1];
+  assert.equal(checkupOf(messyEn).segments, "duplicateRows 22, conversion 18, placeholder 10, dateStyle 10, lookAlike 8, multi 7, clean 223");
+});
+
+test("v3.4.0 checkup: card order and K, and every row is a row the quality page lists", async () => {
+  const scopes = await importEveryCheckupFile();
+  for (const [name, scope] of scopes) {
+    const kinds = checkupCounts(scope).map(([kind]) => kind);
+    assert.deepEqual(kinds, CHECKUP_KIND_ORDER.filter((kind) => kinds.includes(kind)), name);
+    // The same rows, made the slow way from the problem rows (contract 19) with the checkup's rules.
+    const expected = JSON.parse(scope.evaluate(`(() => {
+      const pending = new Map();
+      state.placeholders.forEach((entry) => {
+        if (entry.confirmed || entry.fieldIgnored || entry.tier !== "common") return;
+        if (!pending.has(entry.field)) pending.set(entry.field, new Set());
+        pending.get(entry.field).add(entry.key);
+      });
+      const rows = {};
+      listProblemCategories().forEach((category) => {
+        if (!${JSON.stringify(CHECKUP_KIND_ORDER)}.includes(category.kind)) return;
+        if (category.kind === "placeholder" && !pending.get(category.field)?.has(category.key)) return;
+        listProblemRows(category).items.forEach((item) => {
+          if (item.index === null) return;
+          if (category.kind === "conversion" && pending.get(category.field)?.has(placeholderKey(state.rows[item.index][category.field]))) return;
+          (rows[category.kind] = rows[category.kind] || new Set()).add(item.index);
+        });
+      });
+      return JSON.stringify(Object.entries(rows).map(([kind, set]) => [kind, [...set].sort((a, b) => a - b)]));
+    })()`));
+    const actual = JSON.parse(scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))"));
+    assert.deepEqual(actual, CHECKUP_KIND_ORDER.flatMap((kind) => expected.filter(([k]) => k === kind)), name);
+  }
+  const messy = scopes.find(([name]) => name === "messy.csv")[1];
+  assert.deepEqual(checkupCounts(messy).map(([kind, , other]) => [kind, other]), [["duplicateRows", 2], ["conversion", 4], ["placeholder", 0], ["dateStyle", 0], ["lookAlike", 7], ["parseWarnings", 1]]);
+  // Formula errors: one row per row, a field each cell.
+  const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
+  assert.deepEqual(checkupOf(errors).kinds, [["formulaError", 5, 0, [3, 4, 5, 6, 9]]]);
+  assert.deepEqual(JSON.parse(errors.evaluate('JSON.stringify(buildCheckupSummary().kinds[0].fields)')), ["数量", "金额", "利润率", "备注"]);
+  // Reading issues without an imported row are not counted (en-issues.csv: two with rows).
+  const issues = scopes.find(([name]) => name === "en-issues.csv")[1];
+  assert.deepEqual(checkupOf(issues).kinds, [["lookAlike", 3, 0, [4, 7, 10]], ["parseWarnings", 2, 0, [13, 16]]]);
+});
+
+// v3.4.0: the checkup reads what the import and the rebuilds keep; it builds no row key, classifies
+// no date style and reads no total label. The guards basic:5523 and basic:8899 (v3.1.0) still hold.
+test("v3.4.0 checkup reads caches only", async () => {
+  const scopes = [
+    ["sample-orders.csv", await clickSampleButton(sampleOrdersFetchedText())],
+    ["messy.csv", await importCheckupFixture("messy.csv")],
+    ["写法不一致.csv", await importStage3Fixture("写法不一致.csv")],
+    ["花名册.xlsx", await importStage3Fixture("花名册.xlsx")]
+  ];
+  for (const [name, scope] of scopes) {
+    scope.evaluate(`globalThis.__checkupCalls = { forEachDateStyle: 0, buildExactRowKey: 0, totalRowLabel: 0 };
+      for (const name of Object.keys(globalThis.__checkupCalls)) {
+        const original = globalThis[name];
+        globalThis[name] = (...args) => { globalThis.__checkupCalls[name] += 1; return original(...args); };
+      }`);
+    const first = scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))");
+    assert.equal(scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))"), first, name);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 0, totalRowLabel: 0 }, name);
+  }
+  // A rebuild (销售代表 to ID and back) scans no date style; the checkup it makes reads the scan of
+  // the import. (Its four row keys are the ID check's identical rows, buildIdDuplicateSummary().)
+  const orders = scopes[0][1];
+  rebuildKeepingTypes(orders);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 4, totalRowLabel: 0 });
+  orders.evaluate("buildCheckupSummary()");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 4, totalRowLabel: 0 });
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 12);
+});
+
+test("v3.4.0 checkup: made on commit, rebuild and rows left out, never on a filter", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("globalThis.__checkups = 0; const __build = buildCheckupSummary; buildCheckupSummary = (...args) => { globalThis.__checkups += 1; return __build(...args); }");
+  const calls = () => orders.evaluate("globalThis.__checkups");
+  const before = orders.evaluate("globalThis.__before = state.checkupSummary; state.checkupSummary.rowCount");
+  assert.equal(before, 12);
+  filterRegion(orders, "华东");
+  orders.evaluate("clearAllFilters()");
+  assert.equal(calls(), 0);
+  assert.equal(orders.evaluate("state.checkupSummary === __before"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.equal(calls(), 1);
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 11);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.deepEqual([calls(), orders.evaluate("state.checkupSummary.rowCount")], [2, 12]);
+  // Placeholder confirmations and the field configuration rebuild: N follows.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual([calls(), orders.evaluate("state.checkupSummary.rowCount")], [3, 10]);
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 11);
+  setFieldType(orders, "下单日期", "category");
+  assert.equal(orders.evaluate('state.checkupSummary.kinds.some((item) => item.kind === "dateStyle")'), false);
+  setFieldType(orders, "下单日期", "date");
+  assert.equal(orders.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "dateStyle").rows.length'), 5);
+  // A field type changed in place keeps the profile object: the rows failing it are made again.
+  const messy = await importCheckupFixture("messy.csv");
+  const conversionRows = () => messy.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "conversion").rows.length');
+  assert.equal(conversionRows(), 22);
+  setFieldType(messy, "日期", "category");
+  assert.equal(messy.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "conversion")?.fields.join()'), "金额");
+  // As a number, 日期 fails other rows than as a date: the cells the quality page lists now.
+  setFieldType(messy, "日期", "numeric");
+  const numericRows = JSON.parse(messy.evaluate('JSON.stringify(state.checkupSummary.kinds.find((item) => item.kind === "conversion").cells.filter((cell) => cell.field === "日期").map((cell) => cell.index))'));
+  assert.deepEqual(numericRows, JSON.parse(messy.evaluate('JSON.stringify(listProblemRows({ kind: "conversion", field: "日期" }).items.map((item) => item.index).filter((index) => !(state.placeholders.some((entry) => entry.field === "日期" && entry.tier === "common" && !entry.confirmed && entry.key === placeholderKey(state.rows[index]["日期"])))))')));
+  assert.ok(numericRows.length > 22);
+  setFieldType(messy, "日期", "date");
+  assert.equal(conversionRows(), 22);
+  // Cleared with the analysis, replaced by the next import.
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.evaluate("state.checkupSummary"), null);
+  assert.equal(orders.evaluate("state.duplicateRowGroups.length"), 0);
+  const next = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(next.evaluate("state.checkupSummary.rowCount"), 12);
+});
