@@ -1456,12 +1456,15 @@ body.has-results .app-sidebar {
 
 .checkup-headline {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
 }
 
+/* v3.4.0 commit 5: at least 220 px for the words; narrower, the buttons go to the next line. */
 .checkup-total {
   display: flex;
+  flex: 1 1 220px;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0 12px;
@@ -1486,6 +1489,135 @@ body.has-results .app-sidebar {
 .checkup-export {
   flex: none;
   margin-left: auto;
+}
+
+/* v3.4.0 commit 5: 查看统计 (the primary button), 去看图表 and 导出体检报告, together on the right. */
+.checkup-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* 查过的项目 (R21) and 其他发现: white cards of rows, as on board orig-04 and the new boards. */
+.checkup-checked,
+.checkup-findings {
+  margin-bottom: 22px;
+}
+
+.checkup-checked-list,
+.checkup-findings-list {
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+  list-style: none;
+}
+
+.checkup-checked-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 54px;
+  padding: 10px 18px;
+  border-top: 1px solid rgba(28, 28, 30, 0.07);
+}
+
+.checkup-checked-item:first-child,
+.checkup-findings-list .checkup-finding:first-child {
+  border-top: 0;
+}
+
+.checkup-checked-item b {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.checkup-checked-note,
+.checkup-finding-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* The green tick: a circle and two borders, no new size. */
+.checkup-check {
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  background: #e3f3e7;
+}
+
+.checkup-check::after {
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  width: 5px;
+  height: 10px;
+  border-right: 2px solid #22973f;
+  border-bottom: 2px solid #22973f;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.checkup-findings-list .checkup-finding {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 4px 14px;
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 18px;
+  border: 0;
+  border-top: 1px solid rgba(28, 28, 30, 0.07);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+  white-space: normal;
+}
+
+.checkup-findings-list .checkup-finding:hover {
+  background: #f5f9ff;
+  color: var(--text);
+}
+
+.checkup-finding-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.checkup-finding-tag {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.checkup-finding-tag::after {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 2px 1px 12px;
+  border-top: 1.8px solid #c7c7cc;
+  border-right: 1.8px solid #c7c7cc;
+  content: "";
+  transform: rotate(45deg);
+}
+
+/* R8 D: the quality page counts cells, the checkup rows. */
+.quality-count-note {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .checkup-bar {
@@ -3526,6 +3658,15 @@ select:focus-visible,
 @media (max-width: 640px) {
   .checkup-cards {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .checkup-findings-list .checkup-finding {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .checkup-finding-tag {
+    display: none;
   }
 
   html {

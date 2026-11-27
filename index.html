@@ -205,7 +205,11 @@
         <div id="checkupPanel" class="checkup-panel hidden">
           <div class="checkup-headline">
             <p id="checkupTotal" class="checkup-total"></p>
-            <button id="checkupExportReport" class="secondary-button checkup-export" type="button" data-i18n="checkup.export">导出体检报告</button>
+            <div class="checkup-actions">
+              <button id="checkupOpenStats" class="checkup-open hidden" type="button" data-i18n="checkup.openStats">查看统计</button>
+              <button id="checkupOpenCharts" class="secondary-button checkup-open hidden" type="button" data-i18n="checkup.openCharts">去看图表</button>
+              <button id="checkupExportReport" class="secondary-button checkup-export" type="button" data-i18n="checkup.export">导出体检报告</button>
+            </div>
           </div>
           <div id="checkupBar" class="checkup-bar" role="group" aria-label="需要处理的行按类别" data-i18n-attr="aria-label=checkup.bar"></div>
           <p id="checkupLegend" class="checkup-legend"></p>
@@ -217,6 +221,19 @@
             <span class="checkup-caption-aside" data-i18n="checkup.rowNumbers">行号是文件里的行号，一般和 Excel 里看到的一致</span>
           </div>
           <div id="checkupCards" class="checkup-cards"></div>
+        </section>
+        <section id="checkupChecked" class="checkup-checked hidden" aria-labelledby="checkupCheckedTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupCheckedTitle" data-i18n="checkup.checked">查过的项目</h3>
+          </div>
+          <ul id="checkupCheckedList" class="checkup-checked-list"></ul>
+        </section>
+        <section id="checkupOthers" class="checkup-findings hidden" aria-labelledby="checkupOthersTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupOthersTitle" data-i18n="checkup.others">其他发现</h3>
+            <span id="checkupOthersNote" class="checkup-caption-note"></span>
+          </div>
+          <div id="checkupOthersList" class="checkup-findings-list"></div>
         </section>
         <div id="overviewCards" class="metric-grid hidden"></div>
         <div class="module-subsection">
@@ -269,6 +286,7 @@
             <p class="section-aside" data-i18n="quality.aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
+        <p id="qualityCountNote" class="quality-count-note" data-i18n="quality.countNote">这里多数按格数算；体检结果的“需要处理”按行数算，同一行有几处问题只算一次。</p>
         <p id="qualityScopeNote" class="quality-scope-note hidden"></p>
         <div id="qualitySummary" class="quality-summary"></div>
         <div id="duplicateExclusion" class="duplicate-exclusion hidden">

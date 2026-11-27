@@ -155,6 +155,10 @@ dom.checkupExportReport.addEventListener("click", () => exportHtmlReport());
 // v3.4.0 commit 4: the bar's segments and the cards' actions.
 dom.checkupBar.addEventListener("click", handleCheckupClick);
 dom.checkupCards.addEventListener("click", handleCheckupClick);
+// v3.4.0 commit 5: 其他发现 go to the quality page; with nothing to fix, two ways to the analysis (R21).
+dom.checkupOthersList.addEventListener("click", handleCheckupFindingClick);
+dom.checkupOpenStats.addEventListener("click", () => showModule("statisticsSection"));
+dom.checkupOpenCharts.addEventListener("click", () => showModule("chartsSection"));
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 

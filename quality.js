@@ -112,7 +112,10 @@ const ID_DUPLICATE_ROW_NUMBER_LIMIT = 10;
 // frequent, ties by first appearance; the identical-row counts (buildExactRowKey
 // over all fields) cover listed values only. getRowNumber(row) gives a row's file
 // row or null.
-function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations = {}) {
+// v3.4.0: rowIndexes (a Map, optional) receives, per listed field (not mostly repeated, with a
+// duplicate value), every row of its duplicate values, ascending: the checkup reads them from
+// here instead of grouping the column again.
+function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations = {}, rowIndexes = null) {
   const rowKeys = new Array(rows.length);
   const rowKeyAt = (index) => (rowKeys[index] ??= buildExactRowKey(rows[index], fields));
   const idFields = fields.filter((field) => profiles.some((profile) => profile.field === field && profile.typeKey === "id"));
@@ -121,6 +124,7 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmat
     const duplicates = sortIdDuplicates(indexesByValue);
     const uniqueRatio = nonMissingCount ? indexesByValue.size / nonMissingCount : 0;
     const mostlyRepeated = nonMissingCount >= ID_MOSTLY_REPEATED_MIN_VALUES && uniqueRatio < ID_MOSTLY_REPEATED_UNIQUE_RATIO;
+    if (rowIndexes && !mostlyRepeated && duplicates.length) rowIndexes.set(field, duplicates.flatMap(([, indexes]) => indexes).sort((a, b) => a - b));
     const listed = mostlyRepeated ? [] : duplicates.slice(0, ID_DUPLICATE_VALUE_LIMIT);
     return {
       field,
@@ -453,16 +457,17 @@ function checkLabelledTotalRows(columns, rowCount, labelRows) {
 }
 
 // { totals, labelRowCount }: totals in row order as buildSuspectedTotalSummary() returns them;
-// labelRowCount counts the labelled rows of the last check (the "另有 N 行" sentence leaves the
+// labelIndexes (v3.4.0, R7) are those rows, indexes into rows in row order: 写着合计但对不上 is them
+// without the totals. labelRowCount counts the labelled rows of the last check (the "另有 N 行" sentence leaves the
 // dropped groups out). Numbers are read once for every round.
 function checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
-  if (!labelRows.length) return { totals: [], labelRowCount: 0 };
+  if (!labelRows.length) return { totals: [], labelRowCount: 0, labelIndexes: [] };
   const columns = profiles.filter((profile) => profile.typeKey === "numeric").map((profile) => {
     const parseNumber = getNumberParser(profile.numberStrategy);
     const field = profile.field;
     return { field, numbers: rows.map((row) => (isMissingOrConfirmed(row[field], profile.confirmedKeys) ? null : parseNumber(row[field]))) };
   });
-  if (!columns.length) return { totals: [], labelRowCount: labelRows.length };
+  if (!columns.length) return { totals: [], labelRowCount: labelRows.length, labelIndexes: labelRows.map((item) => item.index) };
   let active = labelRows;
   let hits = checkLabelledTotalRows(columns, rows.length, active);
   for (let round = 0; round < SUSPECTED_TOTAL_GROUP_ROUNDS; round += 1) {
@@ -489,7 +494,7 @@ function checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows = 
       }))
     }];
   });
-  return { totals, labelRowCount: active.length };
+  return { totals, labelRowCount: active.length, labelIndexes: active.map((item) => item.index) };
 }
 
 // Formula errors by field, in field order: { field, count, byError, lines }. They are
@@ -526,9 +531,11 @@ function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
 // dateStyleRows (per field, every row with a date style and its style, filled by the same scan as
 // dateStyles), lookAlikeRows (per field, the rows isCountedWriting() counts), placeholderCells (per
 // field, every cell with a placeholder spelling and its key) and conversionRows (per profile, the
-// rows failing its applied type, kept with the typeKey and confirmedKeys they were made for).
+// rows failing its applied type, kept with the typeKey and confirmedKeys they were made for) and
+// outlierRows (per profile, its rows beyond the quality statistics' bounds, kept with what they
+// were made for, so a rebuild scans only the columns whose profile or bounds changed).
 function createFormatScans() {
-  return { dateStyles: new Map(), writings: new Map(), dateStyleRows: new Map(), lookAlikeRows: new Map(), placeholderCells: new Map(), conversionRows: new WeakMap() };
+  return { dateStyles: new Map(), writings: new Map(), dateStyleRows: new Map(), lookAlikeRows: new Map(), placeholderCells: new Map(), conversionRows: new WeakMap(), outlierRows: new WeakMap() };
 }
 
 // Calls visit(index, style, value) for every row of a field with a date style, the Excel
@@ -997,6 +1004,33 @@ function checkupConversionRows(profile, scans) {
   }
   scans.conversionRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, indexes });
   return indexes;
+}
+
+// The rows of a numeric field beyond its quality statistics' bounds (listOutlierRows()'s check):
+// { indexes, high, low }, made once per profile, type, confirmed keys, number strategy and bounds.
+function checkupOutlierRows(profile, stat, scans) {
+  const cached = scans.outlierRows.get(profile);
+  if (cached && cached.typeKey === profile.typeKey && cached.confirmedKeys === profile.confirmedKeys && cached.numberStrategy === profile.numberStrategy
+    && Object.is(cached.lowerBound, stat.lowerBound) && Object.is(cached.upperBound, stat.upperBound)) return cached.result;
+  const result = scanCheckupOutlierRows(profile, stat);
+  scans.outlierRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, numberStrategy: profile.numberStrategy, lowerBound: stat.lowerBound, upperBound: stat.upperBound, result });
+  return result;
+}
+
+// One pass over a column for checkupOutlierRows(); strictly beyond a bound, as the statistics count.
+function scanCheckupOutlierRows(profile, stat) {
+  const field = profile.field;
+  const parseNumber = getNumberParser(profile.numberStrategy);
+  const indexes = [];
+  let high = 0;
+  let low = 0;
+  state.rows.forEach((row, index) => {
+    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
+    const number = parseNumber(row[field]);
+    if (number === null) return;
+    if (number > stat.upperBound) { high += 1; indexes.push(index); } else if (number < stat.lowerBound) { low += 1; indexes.push(index); }
+  });
+  return { indexes, high, low };
 }
 
 // Every cell of a field with a placeholder spelling (listPlaceholderRows()'s check), once per import.

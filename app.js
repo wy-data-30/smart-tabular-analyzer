@@ -35,9 +35,16 @@ const state = {
   // v3.4.0 commit 4: buildCheckupCardData() of checkupSummary, made with it (figures, rows and values;
   // the words are written when drawn, so filters and language switches read no row).
   checkupCards: null,
+  // v3.4.0 commit 5: buildCheckupOtherData() (其他发现) and buildCheckupCheckedData() (查过的项目), made
+  // with the checkup counts; figures only.
+  checkupOthers: null,
+  checkupChecked: null,
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
+  // v3.4.0: field -> every row of its duplicate values, ascending (buildIdDuplicateSummary()'s
+  // sixth argument), replaced with state.idDuplicates; the checkup's 编号重复 reads it.
+  idDuplicateRowIndexes: new Map(),
   // Field -> placeholder keys confirmed as missing. Every commit replaces it with
   // an empty object; filters never change it.
   placeholderConfirmations: Object.create(null),
@@ -55,6 +62,9 @@ const state = {
   // v3.3.0: the labelled rows the totals check ended with (checkSuspectedTotals()), without
   // the label groups that mostly do not add up; written with suspectedTotals, for "另有 N 行".
   suspectedTotalLabelCount: 0,
+  // v3.4.0 (R7): the indexes of those labelled rows (checkSuspectedTotals()); 写着合计但对不上 is them
+  // without the suspected totals. Written with suspectedTotals, cleared with them.
+  suspectedTotalLabelIndexes: [],
   // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
   // import; those cells read as "" and count as missing.
   sourceFormulaErrors: new WeakMap(),
@@ -174,6 +184,13 @@ const dom = {
   checkupNeeds: document.getElementById("checkupNeeds"),
   checkupOverlap: document.getElementById("checkupOverlap"),
   checkupCards: document.getElementById("checkupCards"),
+  checkupOpenStats: document.getElementById("checkupOpenStats"),
+  checkupOpenCharts: document.getElementById("checkupOpenCharts"),
+  checkupChecked: document.getElementById("checkupChecked"),
+  checkupCheckedList: document.getElementById("checkupCheckedList"),
+  checkupOthers: document.getElementById("checkupOthers"),
+  checkupOthersNote: document.getElementById("checkupOthersNote"),
+  checkupOthersList: document.getElementById("checkupOthersList"),
   previewSize: document.getElementById("previewSize"),
   categoryChartInsight: document.getElementById("categoryChartInsight"),
   dateChartInsight: document.getElementById("dateChartInsight"),
@@ -848,13 +865,15 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   const duplicateRowGroups = [];
   state.duplicateRows = countDuplicateRows(rows, fields, duplicateRowGroups);
   state.duplicateRowGroups = duplicateRowGroups;
-  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  state.idDuplicateRowIndexes = new Map();
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations, state.idDuplicateRowIndexes);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalLabelRows = findTotalLabelRows(rows, fields);
   const totalCheck = checkSuspectedTotals(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.suspectedTotals = totalCheck.totals;
   state.suspectedTotalLabelCount = totalCheck.labelRowCount;
+  state.suspectedTotalLabelIndexes = totalCheck.labelIndexes;
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   refreshFormatConsistency();
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
@@ -1009,6 +1028,8 @@ function renderCheckup() {
     dom.checkupBar.innerHTML = "";
     dom.checkupLegend.innerHTML = "";
     renderCheckupCards(null);
+    renderCheckupChecked(null);
+    renderCheckupOthers(null);
     return;
   }
   dom.checkupTotal.innerHTML = summary.rowCount
@@ -1030,6 +1051,8 @@ function renderCheckup() {
     `<span class="checkup-legend-item${multi ? " is-multi" : ""}">${escapeHtml(label)} <b>${escapeHtml(formatCheckupRows(rows))}</b></span>`
   )).join("");
   renderCheckupCards(summary);
+  renderCheckupChecked(summary);
+  renderCheckupOthers(summary);
 }
 
 // v3.4.0 commit 4: the icons of the cards (16 px strokes, as on the boards).
@@ -1217,6 +1240,8 @@ function buildCheckupCardData(summary) {
 function refreshCheckupSummary() {
   state.checkupSummary = buildCheckupSummary();
   state.checkupCards = buildCheckupCardData(state.checkupSummary);
+  state.checkupOthers = state.checkupSummary ? buildCheckupOtherData() : null;
+  state.checkupChecked = buildCheckupCheckedData(state.checkupSummary);
 }
 
 // The cards in the current language, from state.checkupCards: words only, no row is read.
@@ -1279,6 +1304,192 @@ function renderCheckupCards(summary) {
       + `<button class="checkup-action" type="button" data-checkup-action="${action.type}" data-checkup-kind="${card.kind}"${label}>${escapeHtml(action.label)}</button>`
       + "</article>";
   }).join("");
+}
+
+// ---- v3.4.0 commit 5: 其他发现 (F, C3) and 查过的项目 (R21) ----
+const CHECKUP_FINDING_LINE_LIMIT = 5;
+
+// C3: how a finding's rows meet the rows left out of the analysis: null (none), or { all, count,
+// lines, more } (all of them, or the ones left out).
+function checkupExcludedOf(indexes, excluded) {
+  if (!excluded.size || !indexes.length) return null;
+  const unique = [...new Set(indexes)];
+  const out = unique.filter((index) => excluded.has(index)).sort((a, b) => a - b);
+  if (!out.length) return null;
+  return { all: out.length === unique.length, count: out.length, ...checkupLines(out, CHECKUP_FINDING_LINE_LIMIT) };
+}
+
+// 其他发现: what the quality page found on every row that the checkup does not count, in the order
+// of F1; only figures, file rows and values (the words are written when drawn). Made with the
+// checkup counts (refreshCheckupSummary()), so a filter or a language switch reads no row. It scans
+// no column: the ID rows come with state.idDuplicates and the outlier rows are kept per profile
+// (checkupOutlierRows()), so leaving rows out or back in reads only those rows and the totals (C3).
+function buildCheckupOtherData() {
+  const rows = state.rows;
+  const excluded = getExcludedIndexSet();
+  const totalSet = new Set(state.suspectedTotals.map((item) => item.index));
+  const findings = [];
+  // 编号重复: per ID field, its duplicate values' rows; "就是整行重复的…" when they are all duplicate rows.
+  const duplicateRowSet = new Set((state.duplicateRowGroups || []).flat());
+  state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0).forEach((item) => {
+    const sorted = state.idDuplicateRowIndexes.get(item.field) || [];
+    findings.push({
+      kind: "idDuplicate",
+      field: item.field,
+      values: item.duplicateValueCount,
+      duplicateRows: sorted.length > 0 && sorted.every((index) => duplicateRowSet.has(index)),
+      ...checkupLines(sorted, CHECKUP_FINDING_LINE_LIMIT),
+      excluded: checkupExcludedOf(sorted, excluded)
+    });
+  });
+  // 整列为空 and 空值 (the blanks of the other columns), as the quality page counts them.
+  const emptyFields = state.profiles.filter((profile) => profile.typeKey !== "ignore" && rows.length > 0 && profile.missingCount === rows.length).map((profile) => profile.field);
+  const blankProfiles = state.profiles.filter((profile) => profile.missingCount > 0 && !emptyFields.includes(profile.field));
+  const blankCount = blankProfiles.reduce((sum, profile) => sum + profile.missingCount, 0);
+  if (emptyFields.length) findings.push({ kind: "emptyColumns", fields: emptyFields, rows: rows.length, blanksBelow: blankCount > 0 });
+  if (blankCount) {
+    // On suspected total rows only? Then they are named; otherwise the two columns with the most.
+    const blankRowsOf = (indexes) => {
+      let cells = 0;
+      const withBlanks = [];
+      indexes.forEach((index) => {
+        const count = blankProfiles.filter((profile) => isMissingOrConfirmed(rows[index][profile.field], profile.confirmedKeys)).length;
+        cells += count;
+        if (count) withBlanks.push(index);
+      });
+      return { cells, withBlanks };
+    };
+    const onTotals = blankRowsOf([...totalSet]);
+    const onExcluded = blankRowsOf([...excluded]);
+    const top = blankProfiles.map((profile) => ({ field: profile.field, count: profile.missingCount })).sort((a, b) => b.count - a.count).slice(0, 2);
+    findings.push({
+      kind: "blanks",
+      count: blankCount,
+      totalLines: onTotals.cells === blankCount ? onTotals.withBlanks.sort((a, b) => a - b).map(checkupLineOf).filter((line) => line !== null) : null,
+      top,
+      excluded: onExcluded.cells ? { all: onExcluded.cells === blankCount, count: onExcluded.withBlanks.length, ...checkupLines(onExcluded.withBlanks.sort((a, b) => a - b), CHECKUP_FINDING_LINE_LIMIT) } : null
+    });
+  }
+  // “无 / -” (the second tier of placeholder spellings, not treated as blank, columns not ignored).
+  const maybe = state.placeholders.filter((entry) => entry.tier !== "common" && !entry.confirmed && !entry.fieldIgnored);
+  if (maybe.length) {
+    const total = maybe.reduce((sum, entry) => sum + entry.count, 0);
+    const out = [];
+    let outCells = 0;
+    excluded.forEach((index) => {
+      const count = maybe.filter((entry) => placeholderKey(rows[index][entry.field]) === entry.key).length;
+      outCells += count;
+      if (count) out.push(index);
+    });
+    findings.push({
+      kind: "maybe",
+      entries: maybe.map((entry) => ({ field: entry.field, key: entry.key, count: entry.count })),
+      excluded: outCells ? { all: outCells === total, count: out.length, ...checkupLines(out.sort((a, b) => a - b), CHECKUP_FINDING_LINE_LIMIT) } : null
+    });
+  }
+  // 偏大或偏小: the quality page's statistics, read as listOutlierRows() reads them.
+  const outlierParts = [];
+  const outlierRows = [];
+  let high = 0;
+  let low = 0;
+  getQualityNumericStats().filter((stat) => stat.outlierCount > 0).forEach((stat) => {
+    const profile = getFieldProfile(stat.field);
+    if (!profile) return;
+    const found = checkupOutlierRows(profile, stat, state.formatScans);
+    high += found.high;
+    low += found.low;
+    found.indexes.forEach((index) => outlierRows.push(index));
+    outlierParts.push({ field: stat.field, count: stat.outlierCount });
+  });
+  if (outlierParts.length) {
+    const unique = [...new Set(outlierRows)];
+    findings.push({
+      kind: "outliers",
+      parts: outlierParts,
+      direction: low === 0 ? "high" : high === 0 ? "low" : "both",
+      totalRows: unique.every((index) => totalSet.has(index)) ? unique.length : 0,
+      excluded: checkupExcludedOf(unique, excluded)
+    });
+  }
+  // 写着合计但对不上 (R7): the labelled rows of the last check that are not suspected totals.
+  const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
+  const unmatched = checked ? (state.suspectedTotalLabelIndexes || []).filter((index) => !totalSet.has(index)).sort((a, b) => a - b) : [];
+  if (unmatched.length) {
+    findings.push({ kind: "labelMismatch", count: unmatched.length, ...checkupLines(unmatched, CHECKUP_FINDING_LINE_LIMIT), excluded: checkupExcludedOf(unmatched, excluded) });
+  }
+  if (state.constantFields.length) {
+    findings.push({ kind: "constant", fields: state.constantFields.map((item) => ({ field: item.field, value: item.value, missingCount: item.missingCount })) });
+  }
+  if (state.numericLooking.length) {
+    findings.push({ kind: "numericLooking", items: state.numericLooking.map((item) => ({ field: item.field, valueCount: item.valueCount, numericCount: item.numericCount })) });
+  }
+  const conflicts = buildNumberConversionSummary(state.profiles).filter((item) => item.conflictUnits.length);
+  if (conflicts.length) findings.push({ kind: "unitConflict", items: conflicts.map((item) => ({ field: item.field, units: item.conflictUnits.map((unit) => unit.unit) })) });
+  return findings;
+}
+
+// 查过的项目 (R21), only when nothing needs attention: the counted rows left out, the number
+// columns and the date columns with their one writing (the scans the date styles keep).
+function buildCheckupCheckedData(summary) {
+  if (!summary || summary.rowCount) return null;
+  const active = state.profiles.filter((profile) => profile.typeKey !== "ignore");
+  return {
+    excluded: countExcludedRows(),
+    numeric: active.filter((profile) => profile.typeKey === "numeric").length,
+    dates: active.filter((profile) => profile.typeKey === "date").map((profile) => ({
+      field: profile.field,
+      sample: state.formatScans.dateStyles.get(profile.field)?.[0]?.sample ?? displayValue(profile.sampleValues?.[0] ?? "")
+    }))
+  };
+}
+
+// Where each finding goes on the quality page: the element its subsection holds.
+const CHECKUP_FINDING_TARGETS = Object.freeze({
+  idDuplicate: "idDuplicateDetails", emptyColumns: "qualityTable", blanks: "qualityTable", maybe: "placeholderDetails",
+  outliers: "outlierTable", labelMismatch: "suspectedTotalDetails", constant: "constantFieldDetails",
+  numericLooking: "numericLookingDetails", unitConflict: "numberConversionDetails"
+});
+
+function renderCheckupOthers(summary) {
+  const findings = summary ? state.checkupOthers || [] : [];
+  dom.checkupOthers.classList.toggle("hidden", !findings.length);
+  // D6: with nothing to fix there are no rows above to compare with.
+  dom.checkupOthersNote.textContent = findings.length && summary.rowCount ? formatCheckupOthersNote(summary.rowCount) : "";
+  dom.checkupOthersList.innerHTML = findings.map((finding, position) => {
+    const { title, note } = CHECKUP_FINDING_WORDS[finding.kind](finding);
+    return `<button type="button" class="checkup-finding" data-checkup-finding="${position}"><b class="checkup-finding-title">${escapeHtml(title)}</b>`
+      + `<span class="checkup-finding-note">${escapeHtml(note)}</span>`
+      + `<span class="checkup-finding-tag">${escapeHtml(Lpick(CHECKUP_FINDING_TAGS[CHECKUP_FINDING_TAG_OF[finding.kind]]))}</span></button>`;
+  }).join("");
+}
+
+function renderCheckupChecked(summary) {
+  const data = summary && !summary.rowCount ? state.checkupChecked : null;
+  dom.checkupChecked.classList.toggle("hidden", !data);
+  dom.checkupOpenStats.classList.toggle("hidden", !data);
+  dom.checkupOpenCharts.classList.toggle("hidden", !data);
+  dom.checkupCheckedList.innerHTML = data ? formatCheckupCheckedItems(data).map(([title, note]) => (
+    `<li class="checkup-checked-item"><span class="checkup-check" aria-hidden="true"></span><b>${escapeHtml(title)}</b><span class="checkup-checked-note">${escapeHtml(note)}</span></li>`
+  )).join("") : "";
+}
+
+// A finding goes to its subsection of the quality page: scrolled to the top, its title focused.
+function handleCheckupFindingClick(event) {
+  const button = event.target.closest("button[data-checkup-finding]");
+  if (!button) return;
+  const finding = (state.checkupOthers || [])[Number(button.dataset.checkupFinding)];
+  if (!finding) return;
+  showModule("qualitySection");
+  let element = document.getElementById(CHECKUP_FINDING_TARGETS[finding.kind]);
+  let heading = null;
+  while (element && !heading) {
+    heading = element.querySelector?.(".subsection-title") || null;
+    if (!heading) element = element.parentElement;
+  }
+  if (!heading) return;
+  if (!heading.hasAttribute?.("tabindex")) heading.setAttribute("tabindex", "-1");
+  (element || heading).scrollIntoView?.({ block: "start" });
+  heading.focus({ preventScroll: true });
 }
 
 // Clicks on the checkup (script.js binds the bar and the cards): a coloured segment scrolls to its
@@ -2341,12 +2552,14 @@ function refreshFilteredAnalysis() {
 // applied before (v3.1.0).
 function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置已更新。", "Column settings updated."), setMessage = setFieldConfigMessage) {
   const hadFilters = hasActiveFilters();
-  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  state.idDuplicateRowIndexes = new Map();
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations, state.idDuplicateRowIndexes);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   const totalCheck = checkSuspectedTotals(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.suspectedTotals = totalCheck.totals;
   state.suspectedTotalLabelCount = totalCheck.labelRowCount;
+  state.suspectedTotalLabelIndexes = totalCheck.labelIndexes;
   const exclusionChanges = intersectExcludedTotals();
   refreshFormatConsistency();
   clearStandardizedExport();
@@ -2681,6 +2894,18 @@ function getSuspectedTotalExtras() {
 }
 
 function renderSuspectedTotalDetails() {
+  // v3.4.0 (R7): no row adds up, but labelled rows were checked against number columns: the section
+  // shows only the existing 另有 N 行 sentence (N = the labelled rows of the last check), no button.
+  if (!state.suspectedTotals.length) {
+    const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
+    const note = checked ? formatUnmatchedTotalLabels(state.suspectedTotalLabelIndexes.length, 0, true) : "";
+    dom.suspectedTotalSection.classList.remove("is-excluded");
+    dom.suspectedTotalExcludedNote.classList.add("hidden");
+    dom.suspectedTotalExcludedNote.textContent = "";
+    dom.suspectedTotalSection.classList.toggle("hidden", !note);
+    dom.suspectedTotalDetails.innerHTML = note ? `<p class="row-note-footer">${escapeHtml(note)}</p>` : "";
+    return;
+  }
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
   const button = problemViewButton({ kind: "suspectedTotal" }, Lpick(VIEW_LABEL));
   const excludedCount = state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0;
@@ -3538,13 +3763,17 @@ function resetAnalysisState() {
   state.duplicateRowGroups = [];
   state.checkupSummary = null;
   state.checkupCards = null;
+  state.checkupOthers = null;
+  state.checkupChecked = null;
   state.idDuplicates = [];
+  state.idDuplicateRowIndexes = new Map();
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
   state.suspectedTotalLabelCount = 0;
+  state.suspectedTotalLabelIndexes = [];
   state.formatScans = createFormatScans();
   state.dateStyles = [];
   state.constantFields = [];
