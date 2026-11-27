@@ -1098,11 +1098,78 @@ function checkupViewAction(kind, cells, rowCount) {
   const fields = checkupFieldsByCount(cells.filter((cell) => cell.field !== null));
   const category = fields.length ? { kind, field: fields[0].field } : { kind };
   if (fields.length > 1) return { type: "view", category, view: { mode: "fields", field: fields[0].field, count: fields.length } };
-  const list = listProblemRows(category);
-  const listed = list ? new Set(list.items.map((item) => item.index).filter((index) => index !== null && index !== undefined)).size : 0;
   const cardRows = fields.length ? new Set(fields[0].cells.map((cell) => cell.index)).size : rowCount;
+  const listed = checkupViewedRowCount(category, cardRows);
   if (listed === cardRows) return { type: "view", category, view: { mode: "rows", count: cardRows } };
   return { type: "view", category, view: fields.length ? { mode: "field", field: fields[0].field } : { mode: "generic" } };
+}
+
+// How many rows the viewer lists for a card's category (listProblemRows()'s distinct rows), without
+// listing them: the card's rows (cardRows, the rows counted in the analysis) and the rows left out
+// that the viewer lists too, or the lists the summary keeps. Only the kinds with a 查看 card.
+function checkupViewedRowCount(category, cardRows) {
+  const scans = state.formatScans;
+  const excluded = [...getExcludedIndexSet()];
+  switch (category.kind) {
+    case "suspectedTotal": return state.suspectedTotals.length;
+    case "conversion": return checkupConversionRows(getFieldProfile(category.field), scans).indexes.length;
+    case "lookAlike": return checkupLookAlikeRows(category.field, scans).length;
+    case "formulaError":
+      return cardRows + excluded.filter((index) => state.sourceFormulaErrors.get(state.rows[index])?.[category.field]).length;
+    case "parseWarnings": {
+      // File rows are unique, so the viewer's first row of a line is the row of that line.
+      const lines = new Set(state.parseWarnings.map((warning) => warning.row).filter((line) => line !== null));
+      return cardRows + excluded.filter((index) => lines.has(checkupLineOf(index))).length;
+    }
+    default: return 0;
+  }
+}
+
+// The cells of the placeholder kind in row order (a stable sort by row), from the summary's runs: one
+// field and key after another, each run in row order. Yields cells; nothing is read from the rows.
+function* checkupCellsInRowOrder(cells, runs) {
+  const heads = runs.map((run) => run.start);
+  for (;;) {
+    let best = -1;
+    runs.forEach((run, position) => {
+      if (heads[position] < run.end && (best < 0 || cells[heads[position]].index < cells[heads[best]].index)) best = position;
+    });
+    if (best < 0) return;
+    yield cells[heads[best]];
+    heads[best] += 1;
+  }
+}
+
+// The runs of the placeholder kind's cells: { field, key, start, end } per field and key. A field and
+// key never comes back after its run ends, so each end is found by doubling steps, then halving them,
+// reading a few cells per run instead of all of them.
+function checkupCellRuns(cells) {
+  const runs = [];
+  let start = 0;
+  while (start < cells.length) {
+    const { field, key } = cells[start];
+    const same = (position) => cells[position].field === field && cells[position].key === key;
+    let low = start;
+    let step = 1;
+    while (low + step < cells.length && same(low + step)) {
+      low += step;
+      step *= 2;
+    }
+    let high = Math.min(low + step, cells.length);
+    while (high - low > 1) {
+      const middle = (low + high) >> 1;
+      if (same(middle)) low = middle;
+      else high = middle;
+    }
+    runs.push({ field, key, start, end: low + 1 });
+    start = low + 1;
+  }
+  return runs;
+}
+
+// The distinct keys of some runs, in the order of their first row (ties: run order).
+function checkupKeysInRowOrder(cells, runs) {
+  return [...new Set(runs.slice().sort((a, b) => cells[a.start].index - cells[b.start].index).map((run) => run.key))];
 }
 
 // What each card shows, made with the checkup counts (refreshCheckupSummary(): commit, rebuild,
@@ -1114,11 +1181,13 @@ function buildCheckupCardData(summary) {
   if (!summary) return null;
   return summary.kinds.map((item) => {
     const card = { kind: item.kind, rows: item.rows.length, others: item.otherKindRows, affects: item.affectsStatistics, samples: [], detail: null, action: null };
-    const counted = new Set(item.rows);
+    // The rows of this kind, as a set, for the two kinds that need one (a large kind need not build it).
+    const counted = () => new Set(item.rows);
     const text = (index, field) => ({ line: checkupLineOf(index), value: displayValue(state.rows[index][field]), form: "text" });
     switch (item.kind) {
       case "suspectedTotal": {
-        const total = state.suspectedTotals.find((entry) => counted.has(entry.index));
+        const rows = counted();
+        const total = state.suspectedTotals.find((entry) => rows.has(entry.index));
         const row = state.rows[total.index];
         const values = (total.matches[0]?.fields || []).slice(0, 2).map((field) => ({ line: null, value: displayValue(row[field]), form: "text" }));
         card.samples = [{ line: total.line, value: total.label, form: "text" }, ...values];
@@ -1127,7 +1196,8 @@ function buildCheckupCardData(summary) {
         break;
       }
       case "duplicateRows": {
-        const groups = (state.duplicateRowGroups || []).map((group) => group.filter((index) => counted.has(index))).filter((group) => group.length > 1);
+        const rows = counted();
+        const groups = (state.duplicateRowGroups || []).map((group) => group.filter((index) => rows.has(index))).filter((group) => group.length > 1);
         const shown = groups.length === 1 ? groups[0].slice(0, 2) : groups.slice(0, 2).map((group) => group[0]);
         card.samples = shown.map((index) => text(index, state.fields[0]));
         card.detail = { groups: groups.length, size: groups[0].length, ...checkupLines(groups.map((group) => group[0]), CHECKUP_GROUP_LINE_LIMIT) };
@@ -1143,42 +1213,68 @@ function buildCheckupCardData(summary) {
       }
       case "conversion": {
         const fields = checkupFieldsByCount(item.cells);
-        // Samples and the example are values, not placeholder spellings of either tier, when there are some.
-        const values = (cells, field) => cells.filter((cell) => !placeholderKey(state.rows[cell.index][field]));
-        const firstCells = values(fields[0].cells, fields[0].field);
-        card.samples = (firstCells.length ? firstCells : fields[0].cells).slice(0, 2).map((cell) => text(cell.index, cell.field));
+        // Samples and the example are values, not placeholder spellings of either tier, when there are
+        // some: the first ones whose key (kept by the summary) is null.
+        const values = (cells, count) => {
+          const out = [];
+          for (const cell of cells) {
+            if (cell.key) continue;
+            out.push(cell);
+            if (out.length === count) break;
+          }
+          return out;
+        };
+        const firstCells = values(fields[0].cells, 2);
+        card.samples = (firstCells.length ? firstCells : fields[0].cells.slice(0, 2)).map((cell) => text(cell.index, cell.field));
         card.detail = {
           parts: fields.map((entry) => ({
             field: entry.field,
             count: entry.cells.length,
             date: getFieldProfile(entry.field)?.typeKey === "date",
-            example: displayValue(state.rows[(values(entry.cells, entry.field)[0] || entry.cells[0]).index][entry.field])
+            example: displayValue(state.rows[(values(entry.cells, 1)[0] || entry.cells[0]).index][entry.field])
           }))
         };
         card.action = checkupViewAction("conversion", item.cells, card.rows);
         break;
       }
       case "placeholder": {
-        const cells = item.cells.slice().sort((a, b) => a.index - b.index);
-        card.samples = cells.slice(0, 2).map((cell) => text(cell.index, cell.field));
-        const keyOf = (cell) => placeholderKey(state.rows[cell.index][cell.field]);
-        const checks = new Map();
-        const failing = cells.filter((cell) => {
-          if (!checks.has(cell.field)) {
-            const profile = getFieldProfile(cell.field);
-            checks.set(cell.field, profile ? getProfileConversionCheck(profile, profile.typeKey) : null);
+        // The summary's runs (one field and key each, in row order); no cell is read or sorted.
+        const cells = item.cells;
+        const runs = checkupCellRuns(cells);
+        const first = (list, count) => {
+          const out = [];
+          for (const cell of checkupCellsInRowOrder(cells, list)) {
+            out.push(cell);
+            if (out.length === count) break;
           }
-          const fails = checks.get(cell.field);
-          return Boolean(fails && fails(state.rows[cell.index][cell.field]));
-        });
-        card.detail = {
-          keys: [...new Set(cells.map(keyOf))],
-          failing: failing.length ? {
-            ...checkupLines(failing.map((cell) => cell.index), CHECKUP_GROUP_LINE_LIMIT),
-            keys: [...new Set(failing.map(keyOf))],
-            date: getFieldProfile(failing[0].field)?.typeKey === "date"
-          } : null
+          return out;
         };
+        card.samples = first(runs, 2).map((cell) => text(cell.index, cell.field));
+        // A pending common spelling never reads as a number or a date (contract 17), so in a numeric
+        // or a date column every one of its cells fails the column's type.
+        const failingRuns = runs.filter((run) => {
+          const profile = getFieldProfile(run.field);
+          return Boolean(profile && getProfileConversionCheck(profile, profile.typeKey));
+        });
+        let failing = null;
+        if (failingRuns.length) {
+          // checkupLines() on the failing rows: the first file rows, and whether there are more.
+          const lines = [];
+          let firstCell = null;
+          for (const cell of checkupCellsInRowOrder(cells, failingRuns)) {
+            firstCell = firstCell || cell;
+            const line = checkupLineOf(cell.index);
+            if (line !== null) lines.push(line);
+            if (lines.length > CHECKUP_GROUP_LINE_LIMIT) break;
+          }
+          failing = {
+            lines: lines.slice(0, CHECKUP_GROUP_LINE_LIMIT),
+            more: lines.length > CHECKUP_GROUP_LINE_LIMIT,
+            keys: checkupKeysInRowOrder(cells, failingRuns),
+            date: getFieldProfile(firstCell.field)?.typeKey === "date"
+          };
+        }
+        card.detail = { keys: checkupKeysInRowOrder(cells, runs), failing };
         card.action = { type: "treat", count: cells.length };
         break;
       }

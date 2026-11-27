@@ -14101,3 +14101,97 @@ test("v3.4.0 also noticed: a field type change scans only that column, and the k
   scope.evaluate("resetAnalysisState()");
   assert.equal(scope.evaluate("state.idDuplicateRowIndexes.size"), 0);
 });
+
+// ---- v3.4.0 perf: the cards' data from the checkup's own cells ----
+// What the cards' data must equal, made the direct way: the 查看 count from listProblemRows() and the
+// placeholder and conversion samples and details by reading and sorting every cell (as before).
+const CARD_REFERENCE = `(() => {
+  const s = state.checkupSummary;
+  if (!s) return "[]";
+  const out = [];
+  s.kinds.forEach((item) => {
+    const fields = checkupFieldsByCount(item.cells.filter((cell) => cell.field !== null));
+    if (fields.length <= 1 && ["suspectedTotal", "formulaError", "conversion", "lookAlike", "parseWarnings"].includes(item.kind)) {
+      const category = fields.length ? { kind: item.kind, field: fields[0].field } : { kind: item.kind };
+      const list = listProblemRows(category);
+      const listed = list ? new Set(list.items.map((entry) => entry.index).filter((index) => index !== null && index !== undefined)).size : 0;
+      const cardRows = fields.length ? new Set(fields[0].cells.map((cell) => cell.index)).size : item.rows.length;
+      out.push({ kind: item.kind, view: listed, viewed: checkupViewedRowCount(category, cardRows) });
+    }
+    const card = state.checkupCards.find((entry) => entry.kind === item.kind);
+    const text = (index, field) => ({ line: checkupLineOf(index), value: displayValue(state.rows[index][field]), form: "text" });
+    if (item.kind === "placeholder") {
+      const cells = item.cells.slice().sort((a, b) => a.index - b.index);
+      const keyOf = (cell) => placeholderKey(state.rows[cell.index][cell.field]);
+      const failing = cells.filter((cell) => { const profile = getFieldProfile(cell.field); const fails = profile && getProfileConversionCheck(profile, profile.typeKey); return Boolean(fails && fails(state.rows[cell.index][cell.field])); });
+      const expected = { samples: cells.slice(0, 2).map((cell) => text(cell.index, cell.field)), detail: { keys: [...new Set(cells.map(keyOf))], failing: failing.length ? { ...checkupLines(failing.map((cell) => cell.index), CHECKUP_GROUP_LINE_LIMIT), keys: [...new Set(failing.map(keyOf))], date: getFieldProfile(failing[0].field)?.typeKey === "date" } : null }, count: cells.length };
+      out.push({ kind: "placeholder", expected: JSON.stringify(expected), actual: JSON.stringify({ samples: card.samples, detail: card.detail, count: card.action.count }) });
+    }
+    if (item.kind === "conversion") {
+      const values = (cells, field) => cells.filter((cell) => !placeholderKey(state.rows[cell.index][field]));
+      const firstCells = values(fields[0].cells, fields[0].field);
+      const expected = { samples: (firstCells.length ? firstCells : fields[0].cells).slice(0, 2).map((cell) => text(cell.index, cell.field)), examples: fields.map((entry) => displayValue(state.rows[(values(entry.cells, entry.field)[0] || entry.cells[0]).index][entry.field])) };
+      out.push({ kind: "conversion", expected: JSON.stringify(expected), actual: JSON.stringify({ samples: card.samples, examples: card.detail.parts.map((part) => part.example) }) });
+    }
+  });
+  return JSON.stringify(out);
+})()`;
+const checkCardsAgainstReference = (scope, name) => {
+  const checks = JSON.parse(scope.evaluate(CARD_REFERENCE));
+  checks.forEach((check) => {
+    if ("view" in check) assert.equal(check.viewed, check.view, `${name} ${check.kind} 查看`);
+    else assert.equal(check.actual, check.expected, `${name} ${check.kind}`);
+  });
+  return checks.length;
+};
+// Placeholders in a number, a date and a text column (more than four failing rows, two in one row),
+// a second-tier "-" before a real bad value, and a total row and a duplicate row to leave out.
+const CARD_CASES_CSV = csvOfRows(["名称", "金额", "日期", "备注"], [
+  ["甲", "-", "2025-01-02", "N/A"], ["乙", "N/A", "NULL", "好"], ["丙", "12", "2025-01-04", "好"], ["丁", "N/A", "2025-01-05", "NULL"],
+  ["戊", "abc", "2025-01-06", "好"], ["己", "N/A", "NULL", "好"], ["庚", "15", "2025-01-08", "N/A"], ["辛", "NULL", "2025-01-09", "好"],
+  ["壬", "17", "2025-01-10", "好"], ["癸", "18", "2025-01-11", "好"], ["子", "19", "2025-01-12", "好"], ["子", "19", "2025-01-12", "好"],
+  ["丑", "21", "2025-01-14", "好"], ["寅", "22", "2025-01-15", "好"],
+  ...Array.from({ length: 20 }, (_, index) => [`卯${index + 1}`, String(30 + index), `2025-02-${String(index + 1).padStart(2, "0")}`, "好"]),
+  ["合计", "999", "", ""]
+]);
+
+test("v3.4.0 perf: the cards' data reads no row and lists nothing, and equals the direct way", async () => {
+  const scope = await importCsvFile(CARD_CASES_CSV, "cards.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.checkupSummary.kinds.map((item) => item.kind))")), ["duplicateRows", "conversion", "placeholder"]);
+  assert.ok(checkCardsAgainstReference(scope, "cards.csv") >= 3);
+  // The failing rows: more than four, the number column and the date column both on rows 3 and 7.
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(state.checkupCards.find((card) => card.kind === "placeholder").detail.failing)')), { lines: [3, 3, 5, 7], more: true, keys: ["N/A", "NULL"], date: false });
+  // Counted only while the cards are made (the findings' half sentences read the rows left out).
+  scope.evaluate(`globalThis.__reads = { key: 0, list: 0, check: 0, cards: 0 }; globalThis.__inCards = false;
+    { const cards = buildCheckupCardData; globalThis.buildCheckupCardData = (...a) => { __reads.cards += 1; __inCards = true; try { return cards(...a); } finally { __inCards = false; } }; }
+    { const key = placeholderKey; globalThis.placeholderKey = (...a) => { if (__inCards) __reads.key += 1; return key(...a); }; }
+    { const make = getProfileConversionCheck; globalThis.getProfileConversionCheck = (...a) => { const fails = make(...a); return fails && ((value) => { if (__inCards) __reads.check += 1; return fails(value); }); }; }
+    for (const name of ["listProblemRows", "listConversionFailureRows", "listPlaceholderRows", "listFormulaErrorRows", "listLookAlikeRows", "listParseWarningRows", "listSuspectedTotalRows"]) { const list = globalThis[name]; globalThis[name] = (...a) => { if (__inCards) __reads.list += 1; return list(...a); }; }`);
+  const before = scope.evaluate("JSON.stringify(state.checkupCards)");
+  assert.equal(scope.evaluate("JSON.stringify(buildCheckupCardData(state.checkupSummary))"), before);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__reads)")), { key: 0, list: 0, check: 0, cards: 1 });
+  // Leaving rows out and back in: the cards are made twice more and read nothing.
+  scope.evaluate('setRowExclusion("duplicateRows", true); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__reads)")), { key: 0, list: 0, check: 0, cards: 3 });
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupCards)"), before);
+});
+
+test("v3.4.0 perf: on every fixture and example, before and after rows are left out, the cards equal the direct way", async () => {
+  const scopes = [
+    ...await Promise.all(STAGE3_IMPORT_FILES.map(async (fileName) => [fileName, await importStage3Fixture(fileName)])),
+    ...await Promise.all(listExampleCsvFiles().map(async (fileName) => [fileName, await importCsvFile(readExampleCsv(fileName), fileName)])),
+    ["messy.csv", await importCheckupFixture("messy.csv")], ["messy-en.csv", await importCheckupFixture("messy-en.csv", "en")],
+    ["cards.csv", await importCsvFile(CARD_CASES_CSV, "cards.csv")],
+    // A formula error and a short row on a duplicate row: once it is left out, the viewer still lists it.
+    ["formula-dup.xlsx", await importWorkbookFile(buildErrorWorkbook([["名", "额", "说明"], ["A", 10, "好"], ["B", { e: 7 }, "好"], ["B", { e: 7 }, "好"], ["C", 30, "好"]]))],
+    ["short-dup.csv", await importCsvFile("名,额,说明\r\nA,1,好\r\nB,2\r\nB,2\r\nC,3,好\r\n", "short-dup.csv")]
+  ];
+  let checked = 0;
+  for (const [name, scope] of scopes) {
+    if (!scope.evaluate("Boolean(state.checkupSummary)")) continue;
+    checked += checkCardsAgainstReference(scope, name);
+    scope.evaluate('if (state.suspectedTotals.length) setRowExclusion("suspectedTotal", true); if (state.duplicateRows > 0) setRowExclusion("duplicateRows", true)');
+    checked += checkCardsAgainstReference(scope, `${name} (rows left out)`);
+  }
+  assert.ok(checked > 40, `checked ${checked}`);
+});

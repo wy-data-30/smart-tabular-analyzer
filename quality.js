@@ -989,21 +989,26 @@ const CHECKUP_KINDS = Object.freeze(["suspectedTotal", "duplicateRows", "formula
 const CHECKUP_AFFECTS_STATISTICS = new Set(["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder"]);
 
 // The rows of a field failing its applied type: listConversionFailureRows()'s check, made once per
-// profile, type and confirmed keys (a field type change keeps the profile object).
+// profile, type and confirmed keys (a field type change keeps the profile object). { indexes, keys }:
+// keys[i] is placeholderKey() of that row's value (null for most), read in the same pass, so the
+// summary and the cards never read these cells again.
 function checkupConversionRows(profile, scans) {
   const cached = scans.conversionRows.get(profile);
-  if (cached && cached.typeKey === profile.typeKey && cached.confirmedKeys === profile.confirmedKeys) return cached.indexes;
+  if (cached && cached.typeKey === profile.typeKey && cached.confirmedKeys === profile.confirmedKeys) return cached.result;
   const fails = getProfileConversionCheck(profile, profile.typeKey);
-  const indexes = [];
+  const result = { indexes: [], keys: [] };
   if (fails) {
     const field = profile.field;
     state.rows.forEach((row, index) => {
       const value = row[field];
-      if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) indexes.push(index);
+      if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) {
+        result.indexes.push(index);
+        result.keys.push(placeholderKey(value));
+      }
     });
   }
-  scans.conversionRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, indexes });
-  return indexes;
+  scans.conversionRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, result });
+  return result;
 }
 
 // The rows of a numeric field beyond its quality statistics' bounds (listOutlierRows()'s check):
@@ -1071,7 +1076,9 @@ function checkupLookAlikeRows(field, scans) {
 // from what the import and the rebuilds keep: the duplicate groups of countDuplicateRows(), the date
 // styles of scanDateStyles(), the writings of readFieldWritings(); no row key, date style or total
 // label is made here. Per kind (CHECKUP_KINDS order, only kinds with rows): rows (indexes into
-// state.rows, ascending), cells ({ index, field }, field null for the whole-row kinds), fields,
+// state.rows, ascending), cells ({ index, field }, field null for the whole-row kinds; conversion and
+// placeholder cells add key, and placeholder cells come one field and key after another, each in
+// row order), fields,
 // affectsStatistics, otherKindRows (K: rows in another kind too) and onlyRows. Then N (rowCount, the
 // rows of any kind), multiRows (rows of two or more kinds), kindsOfRow (index -> kinds) and the bar's
 // segments: each kind's onlyRows, one segment of the multiRows, then the rows with no problem; they
@@ -1085,8 +1092,9 @@ function buildCheckupSummary() {
   const scans = state.formatScans;
   const excluded = getExcludedIndexSet();
   const cells = Object.fromEntries(CHECKUP_KINDS.map((kind) => [kind, []]));
-  const add = (kind, index, field = null) => {
-    if (!excluded.has(index)) cells[kind].push({ index, field });
+  // Conversion and placeholder cells also carry their placeholder key (null for a value that is none).
+  const add = (kind, index, field = null, key) => {
+    if (!excluded.has(index)) cells[kind].push(key === undefined ? { index, field } : { index, field, key });
   };
   const pendingCommon = new Map();
   state.placeholders.forEach((entry) => {
@@ -1115,8 +1123,10 @@ function buildCheckupSummary() {
       case "conversion": {
         const profile = getFieldProfile(field);
         const skip = pendingCommon.get(field);
-        checkupConversionRows(profile, scans).forEach((index) => {
-          if (!skip || !skip.has(placeholderKey(state.rows[index][field]))) add("conversion", index, field);
+        const failing = checkupConversionRows(profile, scans);
+        failing.indexes.forEach((index, position) => {
+          const key = failing.keys[position];
+          if (!skip || !skip.has(key)) add("conversion", index, field, key);
         });
         break;
       }
@@ -1124,7 +1134,7 @@ function buildCheckupSummary() {
         if (!pendingCommon.get(field)?.has(category.key)) break;
         const placeholderCells = checkupPlaceholderCells(field, scans);
         placeholderCells.keys.forEach((key, position) => {
-          if (key === category.key) add("placeholder", placeholderCells.indexes[position], field);
+          if (key === category.key) add("placeholder", placeholderCells.indexes[position], field, key);
         });
         break;
       }
