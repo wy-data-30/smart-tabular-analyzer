@@ -1815,12 +1815,6 @@ body.has-results .app-sidebar {
   }
 }
 
-@media (max-width: 640px) {
-  .checkup-cards {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 /* The data preview in a <details>, folded by default (v3.4.0): its summary is the old heading and
    the size of the table, on a white card row. */
 .preview-details > summary {
@@ -3530,6 +3524,10 @@ select:focus-visible,
 }
 
 @media (max-width: 640px) {
+  .checkup-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   html {
     scroll-padding-top: calc(var(--header-height) + 60px);
   }
