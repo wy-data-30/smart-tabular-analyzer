@@ -32,6 +32,9 @@ const state = {
   // v3.4.0: buildCheckupSummary(), made on commit, rebuild (field configuration, placeholder
   // confirmations) and after rows are left out or brought back; filters do not change it.
   checkupSummary: null,
+  // v3.4.0 commit 4: buildCheckupCardData() of checkupSummary, made with it (figures, rows and values;
+  // the words are written when drawn, so filters and language switches read no row).
+  checkupCards: null,
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
@@ -168,6 +171,9 @@ const dom = {
   checkupExportReport: document.getElementById("checkupExportReport"),
   checkupBar: document.getElementById("checkupBar"),
   checkupLegend: document.getElementById("checkupLegend"),
+  checkupNeeds: document.getElementById("checkupNeeds"),
+  checkupOverlap: document.getElementById("checkupOverlap"),
+  checkupCards: document.getElementById("checkupCards"),
   previewSize: document.getElementById("previewSize"),
   categoryChartInsight: document.getElementById("categoryChartInsight"),
   dateChartInsight: document.getElementById("dateChartInsight"),
@@ -857,7 +863,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = state.qualityNumericStats;
   state.categoryStats = buildCategoryStats(state.filteredRows);
-  state.checkupSummary = buildCheckupSummary();
+  refreshCheckupSummary();
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
   // The sidebar's file name (v3.0.0). report.js names the report after state.sourceFileName and
@@ -1002,11 +1008,17 @@ function renderCheckup() {
     dom.checkupTotal.innerHTML = "";
     dom.checkupBar.innerHTML = "";
     dom.checkupLegend.innerHTML = "";
+    renderCheckupCards(null);
     return;
   }
   dom.checkupTotal.innerHTML = summary.rowCount
     ? `<span class="checkup-total-number">${formatInteger(summary.rowCount)}</span> <span class="checkup-total-label">${escapeHtml(formatCheckupTotalLabel(summary.rowCount))}</span>`
-    : `<span class="checkup-total-label">${escapeHtml(formatCheckupTotalLabel(0))}</span>`;
+    : (() => {
+      // Nothing needs attention: board orig-04's line, without the bar and the legend.
+      const clean = formatCheckupClean(summary.total);
+      return `<span class="checkup-clean-icon" aria-hidden="true"></span><span class="checkup-clean"><span class="checkup-total-label">${escapeHtml(clean.title)}</span><span class="checkup-clean-note">${escapeHtml(clean.note)}</span></span>`;
+    })();
+  dom.checkupLegend.classList.toggle("hidden", !summary.rowCount);
   dom.checkupBar.classList.toggle("hidden", !summary.rowCount);
   dom.checkupBar.innerHTML = summary.rowCount
     ? summary.segments.filter((segment) => segment.rows > 0).map((segment) => {
@@ -1017,6 +1029,297 @@ function renderCheckup() {
   dom.checkupLegend.innerHTML = formatCheckupLegend(summary).map(([label, rows, multi]) => (
     `<span class="checkup-legend-item${multi ? " is-multi" : ""}">${escapeHtml(label)} <b>${escapeHtml(formatCheckupRows(rows))}</b></span>`
   )).join("");
+  renderCheckupCards(summary);
+}
+
+// v3.4.0 commit 4: the icons of the cards (16 px strokes, as on the boards).
+const CHECKUP_ICON_PATHS = Object.freeze({
+  suspectedTotal: '<path d="M12 3H4l4.5 5L4 13h8"/>',
+  duplicateRows: '<path d="M3 6.5h7v7H3zM6 6.5V3h7v7h-3"/>',
+  formulaError: '<path d="M9.5 2.5c-1.6 0-2 1-2.3 2.6L6 12c-.3 1.4-.8 1.8-2 1.8M4.5 6.5h5M9.5 8.5l3.5 4M13 8.5l-3.5 4"/>',
+  conversion: '<path d="M5.6 5.6a2.4 2.4 0 1 1 3.3 2.2c-.6.3-.9.8-.9 1.4V10M8 12.6v.2"/>',
+  placeholder: '<path d="M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z" stroke-dasharray="2.4 2"/>',
+  dateStyle: '<path d="M2.5 4.5h11v9h-11zM2.5 7.5h11M5.5 2.5v3M10.5 2.5v3"/>',
+  lookAlike: '<path d="M2.5 6v4h11V6"/>',
+  parseWarnings: '<path d="M8 2.5l6 10.5H2zM8 6.5v3M8 11.4v.2"/>'
+});
+
+const CHECKUP_LINE_LIMIT = 5;
+const CHECKUP_GROUP_LINE_LIMIT = 4;
+
+function checkupLineOf(index) {
+  return getSourceRowNumber(state.rows[index]);
+}
+
+// File rows (numbers) of the first indexes, and whether there are more.
+function checkupLines(indexes, limit) {
+  const lines = indexes.map(checkupLineOf).filter((line) => line !== null);
+  return { lines: lines.slice(0, limit), more: lines.length > limit };
+}
+
+// The fields of a kind's cells by cell count (most first, then field order), with their cells.
+function checkupFieldsByCount(cells) {
+  const byField = new Map();
+  cells.forEach((cell) => {
+    if (!byField.has(cell.field)) byField.set(cell.field, []);
+    byField.get(cell.field).push(cell);
+  });
+  return [...byField.entries()].map(([field, list]) => ({ field, cells: list })).sort((a, b) => b.cells.length - a.cells.length);
+}
+
+// 查看 (R12, v3.4.0 commit 4): it opens the first field's category (the kind's, without fields).
+// The button names a number only when the viewer lists exactly the card's rows there:
+// 查看这一行 / 查看这 N 行; otherwise only the field (查看「金额」), or, over several fields,
+// 查看「利润率」等 4 列. Kinds without fields whose viewer lists other rows: 查看这些行.
+function checkupViewAction(kind, cells, rowCount) {
+  const fields = checkupFieldsByCount(cells.filter((cell) => cell.field !== null));
+  const category = fields.length ? { kind, field: fields[0].field } : { kind };
+  if (fields.length > 1) return { type: "view", category, view: { mode: "fields", field: fields[0].field, count: fields.length } };
+  const list = listProblemRows(category);
+  const listed = list ? new Set(list.items.map((item) => item.index).filter((index) => index !== null && index !== undefined)).size : 0;
+  const cardRows = fields.length ? new Set(fields[0].cells.map((cell) => cell.index)).size : rowCount;
+  if (listed === cardRows) return { type: "view", category, view: { mode: "rows", count: cardRows } };
+  return { type: "view", category, view: fields.length ? { mode: "field", field: fields[0].field } : { mode: "generic" } };
+}
+
+// What each card shows, made with the checkup counts (refreshCheckupSummary(): commit, rebuild,
+// rows left out or brought back, placeholders treated as blank or not) and kept in
+// state.checkupCards: only figures, file rows and cell values, no sentence, so a filter or a language
+// switch only writes the words again (buildCheckupCards()). samples: [{ line, value, form }], form
+// "text" (as is), "visible" (formatVisibleText() when written) or "columns" (value is a count).
+function buildCheckupCardData(summary) {
+  if (!summary) return null;
+  return summary.kinds.map((item) => {
+    const card = { kind: item.kind, rows: item.rows.length, others: item.otherKindRows, affects: item.affectsStatistics, samples: [], detail: null, action: null };
+    const counted = new Set(item.rows);
+    const text = (index, field) => ({ line: checkupLineOf(index), value: displayValue(state.rows[index][field]), form: "text" });
+    switch (item.kind) {
+      case "suspectedTotal": {
+        const total = state.suspectedTotals.find((entry) => counted.has(entry.index));
+        const row = state.rows[total.index];
+        const values = (total.matches[0]?.fields || []).slice(0, 2).map((field) => ({ line: null, value: displayValue(row[field]), form: "text" }));
+        card.samples = [{ line: total.line, value: total.label, form: "text" }, ...values];
+        card.detail = { count: card.rows };
+        card.action = checkupViewAction("suspectedTotal", item.cells, card.rows);
+        break;
+      }
+      case "duplicateRows": {
+        const groups = (state.duplicateRowGroups || []).map((group) => group.filter((index) => counted.has(index))).filter((group) => group.length > 1);
+        const shown = groups.length === 1 ? groups[0].slice(0, 2) : groups.slice(0, 2).map((group) => group[0]);
+        card.samples = shown.map((index) => text(index, state.fields[0]));
+        card.detail = { groups: groups.length, size: groups[0].length, ...checkupLines(groups.map((group) => group[0]), CHECKUP_GROUP_LINE_LIMIT) };
+        card.action = { type: "exclude", count: groups.reduce((sum, group) => sum + group.length - 1, 0) };
+        break;
+      }
+      case "formulaError": {
+        const byRow = item.cells.slice().sort((x, y) => x.index - y.index || state.fields.indexOf(x.field) - state.fields.indexOf(y.field));
+        card.samples = byRow.slice(0, 3).map((cell) => ({ line: checkupLineOf(cell.index), value: state.sourceFormulaErrors.get(state.rows[cell.index])?.[cell.field] || "", form: "text" }));
+        card.detail = { fields: item.fields, cells: item.cells.length };
+        card.action = checkupViewAction("formulaError", item.cells, card.rows);
+        break;
+      }
+      case "conversion": {
+        const fields = checkupFieldsByCount(item.cells);
+        // Samples and the example are values, not placeholder spellings of either tier, when there are some.
+        const values = (cells, field) => cells.filter((cell) => !placeholderKey(state.rows[cell.index][field]));
+        const firstCells = values(fields[0].cells, fields[0].field);
+        card.samples = (firstCells.length ? firstCells : fields[0].cells).slice(0, 2).map((cell) => text(cell.index, cell.field));
+        card.detail = {
+          parts: fields.map((entry) => ({
+            field: entry.field,
+            count: entry.cells.length,
+            date: getFieldProfile(entry.field)?.typeKey === "date",
+            example: displayValue(state.rows[(values(entry.cells, entry.field)[0] || entry.cells[0]).index][entry.field])
+          }))
+        };
+        card.action = checkupViewAction("conversion", item.cells, card.rows);
+        break;
+      }
+      case "placeholder": {
+        const cells = item.cells.slice().sort((a, b) => a.index - b.index);
+        card.samples = cells.slice(0, 2).map((cell) => text(cell.index, cell.field));
+        const keyOf = (cell) => placeholderKey(state.rows[cell.index][cell.field]);
+        const checks = new Map();
+        const failing = cells.filter((cell) => {
+          if (!checks.has(cell.field)) {
+            const profile = getFieldProfile(cell.field);
+            checks.set(cell.field, profile ? getProfileConversionCheck(profile, profile.typeKey) : null);
+          }
+          const fails = checks.get(cell.field);
+          return Boolean(fails && fails(state.rows[cell.index][cell.field]));
+        });
+        card.detail = {
+          keys: [...new Set(cells.map(keyOf))],
+          failing: failing.length ? {
+            ...checkupLines(failing.map((cell) => cell.index), CHECKUP_GROUP_LINE_LIMIT),
+            keys: [...new Set(failing.map(keyOf))],
+            date: getFieldProfile(failing[0].field)?.typeKey === "date"
+          } : null
+        };
+        card.action = { type: "treat", count: cells.length };
+        break;
+      }
+      case "dateStyle": {
+        const [first, ...rest] = item.fields.map((field) => state.dateStyles.find((entry) => entry.field === field));
+        card.samples = first.styles.slice(1, 3).map((style) => ({ line: null, value: style.sample, form: "text" }));
+        card.detail = {
+          ...checkupLines(item.cells.filter((cell) => cell.field === first.field).map((cell) => cell.index), CHECKUP_LINE_LIMIT),
+          mainCount: first.styles[0].count,
+          mainSample: first.styles[0].sample,
+          others: rest.map((entry) => ({ field: entry.field, count: item.cells.filter((cell) => cell.field === entry.field).length }))
+        };
+        card.action = { type: "standardize" };
+        break;
+      }
+      case "lookAlike": {
+        card.samples = item.cells.slice(0, 2).map((cell) => ({ line: checkupLineOf(cell.index), value: state.rows[cell.index][cell.field], form: "visible" }));
+        const parts = item.fields.map((field) => {
+          const summaryOfField = state.lookAlikes.find((entry) => entry.field === field);
+          const group = summaryOfField.groups[0];
+          if (group) {
+            const main = lookAlikeMainText(group);
+            // A writing that differs from the main one; a tied group shows its second writing.
+            const example = (main === null ? group.variants[1] : group.variants.find((variant) => variant.text !== main)).text;
+            return { field, issue: group.reasons[0], example };
+          }
+          if (summaryOfField.edgeSpaceCount) {
+            const edges = item.cells.filter((cell) => cell.field === field).map((cell) => state.rows[cell.index][field]).filter((value) => typeof value === "string" && hasEdgeWhitespace(value));
+            const start = edges.some((value) => value !== value.trimStart());
+            const end = edges.some((value) => value !== value.trimEnd());
+            return { field, issue: start && end ? "edgeBoth" : start ? "edgeStart" : "edgeEnd", example: "" };
+          }
+          return { field, issue: "invisibleOnly", example: "" };
+        });
+        card.detail = { parts: parts.slice(0, 2), more: Math.max(0, parts.length - 2) };
+        // Edge spaces alone are what the standardized table fixes; other writings need a look.
+        card.action = parts.every((part) => part.issue.startsWith("edge")) ? { type: "standardize" } : checkupViewAction("lookAlike", item.cells, card.rows);
+        break;
+      }
+      case "parseWarnings": {
+        const lines = new Set(item.rows.map(checkupLineOf));
+        const warnings = state.parseWarnings.filter((warning) => warning.row !== null && lines.has(warning.row)).sort((x, y) => x.row - y.row);
+        const first = warnings[0];
+        // A row with too few columns shows how many it has; other issues have no short form.
+        card.samples = first.code === "TooFewFields" && Number.isInteger(first.params?.cellCount) ? [{ line: first.row, value: first.params.cellCount, form: "columns" }] : [];
+        const tooFew = warnings.every((warning) => warning.code === "TooFewFields" && Number.isInteger(warning.params?.headerCount) && warning.params.headerCount === first.params?.headerCount);
+        card.detail = { rows: card.rows, headerCount: tooFew ? first.params.headerCount : null };
+        card.action = checkupViewAction("parseWarnings", item.cells, card.rows);
+        break;
+      }
+      default:
+        break;
+    }
+    return card;
+  });
+}
+
+// The checkup counts and the cards' figures, together (v3.4.0 commit 4).
+function refreshCheckupSummary() {
+  state.checkupSummary = buildCheckupSummary();
+  state.checkupCards = buildCheckupCardData(state.checkupSummary);
+}
+
+// The cards in the current language, from state.checkupCards: words only, no row is read.
+function buildCheckupCards() {
+  return (state.checkupCards || []).map((card) => {
+    const detail = card.detail;
+    const lines = (list) => list.map(formatInteger);
+    let sentence = "";
+    switch (card.kind) {
+      case "suspectedTotal": sentence = formatCheckupTotalDetail(detail.count); break;
+      case "duplicateRows": sentence = formatCheckupDuplicateDetail(detail.groups, detail.size, lines(detail.lines), detail.more); break;
+      case "formulaError": sentence = formatCheckupFormulaDetail(detail.fields, detail.cells); break;
+      case "conversion": sentence = formatCheckupConversionDetail(detail.parts); break;
+      case "placeholder": sentence = formatCheckupPlaceholderDetail(detail.keys, detail.failing ? { lines: lines(detail.failing.lines), more: detail.failing.more, key: detail.failing.keys.join(Lpick(LIST_SEPARATOR)), date: detail.failing.date } : null); break;
+      case "dateStyle": sentence = formatCheckupDateDetail(lines(detail.lines), detail.more, detail.mainCount, detail.mainSample, detail.others); break;
+      case "lookAlike": sentence = formatCheckupLookAlikeDetail(detail.parts.map((part) => ({ ...part, example: formatVisibleText(part.example) })), detail.more); break;
+      case "parseWarnings": sentence = formatCheckupReadingDetail(detail.rows, detail.headerCount); break;
+      default: break;
+    }
+    const action = card.action;
+    let label = "";
+    if (action.type === "exclude") label = formatCheckupExclude(action.count);
+    else if (action.type === "treat") label = formatCheckupTreat(action.count);
+    else if (action.type === "standardize") label = Lpick(CHECKUP_STANDARDIZE_ACTION);
+    else label = formatCheckupView(action.view);
+    const samples = card.samples.map((sample) => ({
+      line: sample.line,
+      text: sample.form === "columns" ? formatCheckupColumns(sample.value) : sample.form === "visible" ? formatVisibleText(sample.value) : sample.value
+    }));
+    return { kind: card.kind, rows: card.rows, others: card.others, affects: card.affects, samples, detail: sentence, action: { type: action.type, category: action.category, label } };
+  });
+}
+
+// A sample's text: escaped, each shown space (␣) as a light element of its own, as on the boards.
+function checkupSampleHtml(text) {
+  return escapeHtml(text).split("␣").join('<span class="checkup-sample-space">␣</span>');
+}
+
+function renderCheckupCards(summary) {
+  const cards = summary && summary.rowCount ? buildCheckupCards() : [];
+  dom.checkupNeeds.classList.toggle("hidden", !cards.length);
+  dom.checkupOverlap.textContent = cards.length && summary.multiRows ? formatCheckupOverlap(summary.rowCount) : "";
+  dom.checkupCards.innerHTML = cards.map((card) => {
+    const unit = formatCheckupUnit(card.rows);
+    const samples = card.samples.filter((sample) => sample.line !== null || sample.text !== "").map((sample) => (
+      `${sample.line !== null ? `<span class="checkup-sample-line">${escapeHtml(formatInteger(sample.line))}</span>` : ""}${sample.text !== "" ? `<span class="checkup-sample">${checkupSampleHtml(sample.text)}</span>` : ""}`
+    )).join("");
+    const action = card.action;
+    const label = action.type === "view" ? ` aria-label="${escapeHtml(formatProblemViewLabel(action.category))}"` : "";
+    return `<article id="checkupCard-${card.kind}" class="checkup-card" data-kind="${card.kind}">`
+      + '<div class="checkup-card-body">'
+      + `<div class="checkup-card-head"><span class="checkup-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${CHECKUP_ICON_PATHS[card.kind]}</svg></span>`
+      + `<h4 class="checkup-card-title">${escapeHtml(Lpick(CHECKUP_KIND_NAMES[card.kind]))}</h4>`
+      + `<p class="checkup-card-count"><b>${escapeHtml(formatInteger(card.rows))}</b><small>${escapeHtml(unit)}</small></p></div>`
+      + (samples ? `<div class="checkup-samples">${samples}</div>` : "")
+      + (card.affects ? `<span class="checkup-tag">${escapeHtml(Lpick(CHECKUP_AFFECTS_TAG))}</span>` : "")
+      + `<p class="checkup-detail">${escapeHtml(card.detail)}</p>`
+      + (card.others ? `<p class="checkup-others">${escapeHtml(formatCheckupOthers(card.others))}</p>` : "")
+      + "</div>"
+      + `<button class="checkup-action" type="button" data-checkup-action="${action.type}" data-checkup-kind="${card.kind}"${label}>${escapeHtml(action.label)}</button>`
+      + "</article>";
+  }).join("");
+}
+
+// Clicks on the checkup (script.js binds the bar and the cards): a coloured segment scrolls to its
+// card (the dark one to the first card with rows of several kinds); a card's action calls what the
+// quality page and the export module call. The toast, 已处理 and the refusals here are commit 6's.
+function handleCheckupClick(event) {
+  const segment = event.target.closest(".checkup-segment");
+  if (segment) {
+    const kind = segment.dataset.kind;
+    const summary = state.checkupSummary;
+    if (!summary || kind === "clean") return;
+    const target = kind === "multi" ? summary.kinds.find((item) => item.otherKindRows > 0)?.kind : kind;
+    const card = target && document.getElementById(`checkupCard-${target}`);
+    if (card) card.scrollIntoView({ block: "start" });
+    return;
+  }
+  const button = event.target.closest("button[data-checkup-action]");
+  if (!button || !state.checkupSummary) return;
+  const card = buildCheckupCards().find((item) => item.kind === button.dataset.checkupKind);
+  if (!card) return;
+  switch (card.action.type) {
+    case "view":
+      showModule("qualitySection");
+      if (!openProblemView(card.action.category)) return;
+      state.problemViewOpener = null;
+      dom.problemRowsSection.scrollIntoView({ block: "start" });
+      dom.problemRowsTitle.focus({ preventScroll: true });
+      break;
+    case "exclude":
+      setRowExclusion("duplicateRows", true);
+      break;
+    case "treat":
+      confirmAllCommonPlaceholders();
+      break;
+    case "standardize":
+      showModule("exportSection");
+      checkStandardizedExport();
+      break;
+    default:
+      break;
+  }
 }
 
 // v3.0.0: a quality subsection's note shows its first line; 展开 / 收起 shows the rest. The text
@@ -2057,7 +2360,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置�
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = getIncludedRows() === state.rows ? state.qualityNumericStats : buildNumericStats(getIncludedRows());
   state.categoryStats = buildCategoryStats(getAnalysisRows());
-  state.checkupSummary = buildCheckupSummary();
+  refreshCheckupSummary();
   state.previewPage = 1;
   renderOverview();
   renderPreview();
@@ -2154,7 +2457,7 @@ function setRowExclusion(kind, on) {
 
 // The applied filters again from the new counted rows, the filter panel, then the analysis.
 function refreshAfterExclusion() {
-  state.checkupSummary = buildCheckupSummary();
+  refreshCheckupSummary();
   const included = getIncludedRows();
   state.filteredRows = hasActiveFilters() ? filterRowsByConfig(included, state.filters) : included.slice();
   state.filterSourceRows = included;
@@ -3234,6 +3537,7 @@ function resetAnalysisState() {
   state.duplicateRows = 0;
   state.duplicateRowGroups = [];
   state.checkupSummary = null;
+  state.checkupCards = null;
   state.idDuplicates = [];
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];

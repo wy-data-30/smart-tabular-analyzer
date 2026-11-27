@@ -1512,15 +1512,28 @@ body.has-results .app-sidebar {
   border-radius: 6px;
 }
 
-.checkup-segment[data-kind="suspectedTotal"] { background: #5856d6; }
-.checkup-segment[data-kind="duplicateRows"] { background: #af52de; }
-.checkup-segment[data-kind="formulaError"] { background: #c93400; }
-.checkup-segment[data-kind="conversion"] { background: #ff2d55; }
-.checkup-segment[data-kind="placeholder"] { background: #148a9e; }
-.checkup-segment[data-kind="dateStyle"] { background: #a86400; }
-.checkup-segment[data-kind="lookAlike"] { background: #22973f; }
-.checkup-segment[data-kind="parseWarnings"] { background: #a2845e; }
+.checkup-segment[data-kind="suspectedTotal"],
+.checkup-card[data-kind="suspectedTotal"] .checkup-card-icon { background: #5856d6; }
+.checkup-segment[data-kind="duplicateRows"],
+.checkup-card[data-kind="duplicateRows"] .checkup-card-icon { background: #af52de; }
+.checkup-segment[data-kind="formulaError"],
+.checkup-card[data-kind="formulaError"] .checkup-card-icon { background: #c93400; }
+.checkup-segment[data-kind="conversion"],
+.checkup-card[data-kind="conversion"] .checkup-card-icon { background: #ff2d55; }
+.checkup-segment[data-kind="placeholder"],
+.checkup-card[data-kind="placeholder"] .checkup-card-icon { background: #148a9e; }
+.checkup-segment[data-kind="dateStyle"],
+.checkup-card[data-kind="dateStyle"] .checkup-card-icon { background: #a86400; }
+.checkup-segment[data-kind="lookAlike"],
+.checkup-card[data-kind="lookAlike"] .checkup-card-icon { background: #22973f; }
+.checkup-segment[data-kind="parseWarnings"],
+.checkup-card[data-kind="parseWarnings"] .checkup-card-icon { background: #a2845e; }
 .checkup-segment[data-kind="multi"] { background: #48484a; }
+
+/* Coloured segments take a click to their card (mouse only; the cards are next in the tab order). */
+.checkup-segment:not([data-kind="clean"]) {
+  cursor: pointer;
+}
 
 .checkup-segment[data-kind="clean"] {
   margin-left: 3px;
@@ -1552,6 +1565,260 @@ body.has-results .app-sidebar {
   border-radius: 2px;
   background: #48484a;
   content: "";
+}
+
+/* Nothing needs attention (board orig-04): a green check and the line, no bar or legend. */
+.checkup-clean-icon {
+  position: relative;
+  flex: none;
+  width: 52px;
+  height: 52px;
+  margin-right: 6px;
+  border-radius: 26px;
+  background: #e3f3e7;
+}
+
+.checkup-clean-icon::after {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  width: 11px;
+  height: 20px;
+  border-right: 4px solid #22973f;
+  border-bottom: 4px solid #22973f;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.checkup-total:has(.checkup-clean-icon) {
+  align-items: center;
+}
+
+.checkup-clean {
+  display: flex;
+  flex-direction: column;
+}
+
+.checkup-clean-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* v3.4.0 commit 4: 需要处理 and its cards: three columns, two under 1100 px, one on phones. */
+.checkup-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 0 4px 12px;
+}
+
+.checkup-caption h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.checkup-caption-note,
+.checkup-caption-aside {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.checkup-caption-aside {
+  margin-left: auto;
+}
+
+.checkup-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 30px;
+}
+
+.checkup-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 198px;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+  scroll-margin-top: 72px;
+}
+
+.checkup-card-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 16px 18px 14px;
+}
+
+.checkup-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkup-card-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  color: #fff;
+}
+
+.checkup-card-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.checkup-card-count {
+  margin: 0 0 0 auto;
+  white-space: nowrap;
+}
+
+.checkup-card-count b {
+  color: var(--text);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  line-height: 26px;
+}
+
+.checkup-card-count small {
+  margin-left: 3px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.checkup-samples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 10px;
+}
+
+.checkup-sample {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 28px;
+  overflow: hidden;
+  padding: 0 9px;
+  border: 1px solid rgba(28, 28, 30, 0.09);
+  border-radius: 7px;
+  background: #f6f6f9;
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Microsoft YaHei", monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A shown space (␣), light and in the text face, as on the boards (the monospace face has no glyph). */
+.checkup-sample-space {
+  color: #aeaeb2;
+  font-family: "Segoe UI Symbol", "Segoe UI", -apple-system, sans-serif;
+}
+
+.checkup-sample-line {
+  color: var(--text-secondary);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.checkup-tag {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  height: 20px;
+  margin: 0 0 6px;
+  padding: 0 8px;
+  border-radius: 10px;
+  background: #f0f0f3;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.checkup-detail,
+.checkup-others {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 19px;
+}
+
+.checkup-others {
+  margin-top: 6px;
+}
+
+/* A small dark square drawn in CSS (no new font size), as on the boards. */
+.checkup-others::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin: 0 6px 1px 0;
+  border-radius: 1px;
+  background: #48484a;
+  content: "";
+}
+
+.checkup-cards .checkup-action {
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px 0 18px;
+  border: 0;
+  border-top: 1px solid rgba(28, 28, 30, 0.07);
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+}
+
+.checkup-cards .checkup-action:hover {
+  background: #f5f9ff;
+  color: var(--primary);
+}
+
+.checkup-cards .checkup-action::after {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-top: 1.8px solid currentColor;
+  border-right: 1.8px solid currentColor;
+  content: "";
+  transform: rotate(45deg);
+}
+
+@media (max-width: 1099px) {
+  .checkup-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .checkup-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* The data preview in a <details>, folded by default (v3.4.0): its summary is the old heading and

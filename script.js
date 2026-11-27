@@ -152,6 +152,9 @@ dom.exportStandardizedChanges.addEventListener("click", () => exportStandardized
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
 // v3.4.0: the checkup's 导出体检报告 is the same HTML report, with the same gate (exportHtmlReport()).
 dom.checkupExportReport.addEventListener("click", () => exportHtmlReport());
+// v3.4.0 commit 4: the bar's segments and the cards' actions.
+dom.checkupBar.addEventListener("click", handleCheckupClick);
+dom.checkupCards.addEventListener("click", handleCheckupClick);
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
