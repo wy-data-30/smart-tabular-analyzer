@@ -601,12 +601,40 @@ function showResultsWorkspace() {
 // The sidebar (v3.0.0): the file, its fields and the current state, for display only.
 const SIDEBAR_TYPE_MARKS = Object.freeze({ id: Lp("#", "#"), date: Lp("日", "D"), category: Lp("Aa", "Aa"), numeric: Lp("12", "12"), ignore: Lp("—", "—") });
 
+// v3.4.0 commit 7 (H): field -> the checkup kinds with rows in it, in the cards' order: a kind's
+// fields are those of its cells; 整行重复 is drawn on the first field (board new-01); 疑似合计 and
+// 读取时有疑问 have no field and no dot. From state.checkupSummary, so no row is read.
+function getCheckupKindsByField() {
+  const byField = new Map();
+  const add = (field, kind) => {
+    if (!byField.has(field)) byField.set(field, []);
+    byField.get(field).push(kind);
+  };
+  (state.checkupSummary?.kinds || []).forEach((item) => {
+    if (item.kind === "duplicateRows") {
+      if (state.fields.length) add(state.fields[0], item.kind);
+      return;
+    }
+    item.fields.forEach((field) => add(field, item.kind));
+  });
+  return byField;
+}
+
 function renderSidebar() {
   dom.sidebarFileSize.textContent = L(`${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`, `${enCount(state.rows.length, "row", "rows")} × ${enCount(state.fields.length, "column", "columns")}`);
   dom.sidebarFieldCount.textContent = formatInteger(state.fields.length);
+  const kindsByField = getCheckupKindsByField();
   dom.sidebarFieldList.innerHTML = state.profiles.map((profile) => {
     const unit = profile.typeKey === "numeric" ? getFieldNumberUnit(profile.field) : "";
-    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] ? Lpick(SIDEBAR_TYPE_MARKS[profile.typeKey]) : ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
+    // One coloured dot per kind (H); its aria-label is the kind's name. A field without any has none.
+    const kinds = kindsByField.get(profile.field) || [];
+    const dots = kinds.length
+      ? `<span class="sidebar-dots">${kinds.map((kind) => {
+        const name = escapeHtml(Lpick(CHECKUP_KIND_NAMES[kind]));
+        return `<span class="sidebar-dot" data-kind="${kind}" role="img" title="${name}" aria-label="${name}"></span>`;
+      }).join("")}</span>`
+      : "";
+    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] ? Lpick(SIDEBAR_TYPE_MARKS[profile.typeKey]) : ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}${dots}</li>`;
   }).join("");
   const headerRowNumber = state.headerDetection?.headerRowNumber;
   const showsHeader = Boolean(headerRowNumber) && headerRowNumber !== 1;

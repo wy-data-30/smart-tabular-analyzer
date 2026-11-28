@@ -1201,6 +1201,31 @@ body.has-results .app-sidebar {
   opacity: 0.6;
 }
 
+/* v3.4.0 commit 7 (H): the checkup's dots at the end of a field, one per kind, in the cards'
+   colours. The name keeps the room left (it is cut with an ellipsis), the dots never shrink. */
+.sidebar-dots {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.sidebar-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.sidebar-dot[data-kind="suspectedTotal"] { background: #5856d6; }
+.sidebar-dot[data-kind="duplicateRows"] { background: #af52de; }
+.sidebar-dot[data-kind="formulaError"] { background: #c93400; }
+.sidebar-dot[data-kind="conversion"] { background: #ff2d55; }
+.sidebar-dot[data-kind="placeholder"] { background: #148a9e; }
+.sidebar-dot[data-kind="dateStyle"] { background: #a86400; }
+.sidebar-dot[data-kind="lookAlike"] { background: #22973f; }
+.sidebar-dot[data-kind="parseWarnings"] { background: #a2845e; }
+
 .sidebar-subtitle {
   margin: 0 0 6px;
   color: var(--text-secondary);

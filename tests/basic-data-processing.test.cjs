@@ -7453,8 +7453,9 @@ test("v3.0.0 shell: the range sentences, their 清除筛选 buttons and the side
   assert.equal(orders.elements.get("sidebarFilterSummary").textContent, "全部 42 行");
 });
 
-const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?<\/li>/g)]
-  .map((match) => [match[1], match[2], match[3], match[4], match[5] || ""]);
+// v3.4.0 commit 7: the last column is the aria-labels of the checkup dots (H), [] without any.
+const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?(?:<span class="sidebar-dots">((?:<span class="sidebar-dot" data-kind="[^"]+" role="img" title="[^"]*" aria-label="[^"]*"><\/span>)+)<\/span>)?<\/li>/g)]
+  .map((match) => [match[1], match[2], match[3], match[4], match[5] || "", [...(match[6] || "").matchAll(/aria-label="([^"]*)"/g)].map((dot) => dot[1])]);
 
 test("v3.0.0 shell: the sidebar lists the file, its size and every field with its applied type, and the state rows", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
@@ -7466,15 +7467,15 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(text("sidebarFileSize"), "42 行 × 9 列");
   assert.equal(text("sidebarFieldCount"), "9");
   assert.deepEqual(sidebarItems(orders), [
-    ["sidebar-field", "订单编号", "#", "订单编号", ""],
-    ["sidebar-field", "下单日期", "日", "下单日期", ""],
-    ["sidebar-field", "地区", "Aa", "地区", ""],
-    ["sidebar-field", "品类", "Aa", "品类", ""],
-    ["sidebar-field", "产品", "Aa", "产品", ""],
-    ["sidebar-field", "客户类型", "Aa", "客户类型", ""],
-    ["sidebar-field", "数量", "12", "数量", ""],
-    ["sidebar-field", "金额", "12", "金额", "元"],
-    ["sidebar-field", "销售代表", "Aa", "销售代表", ""]
+    ["sidebar-field", "订单编号", "#", "订单编号", "", ["整行重复"]],
+    ["sidebar-field", "下单日期", "日", "下单日期", "", ["日期写法混用"]],
+    ["sidebar-field", "地区", "Aa", "地区", "", ["同一个值，写法不一样"]],
+    ["sidebar-field", "品类", "Aa", "品类", "", []],
+    ["sidebar-field", "产品", "Aa", "产品", "", []],
+    ["sidebar-field", "客户类型", "Aa", "客户类型", "", []],
+    ["sidebar-field", "数量", "12", "数量", "", []],
+    ["sidebar-field", "金额", "12", "金额", "元", ["像是空值的写法"]],
+    ["sidebar-field", "销售代表", "Aa", "销售代表", "", ["像是空值的写法"]]
   ]);
   assert.equal(hidden("sidebarHeaderRow"), false);
   assert.equal(text("sidebarHeaderValue"), "第 2 行");
@@ -7486,7 +7487,7 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(hidden("sidebarPlaceholderRow"), false);
   assert.equal(text("sidebarPlaceholderValue"), "2 处");
   orders.evaluate('stageFieldTypeChange("销售代表", "ignore"); applyFieldConfiguration()');
-  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", ""]);
+  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", "", []]);
   assert.equal(text("sidebarPlaceholderValue"), "2 处");
 
   orders.evaluate("resetAnalysisState()");
@@ -7494,6 +7495,51 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(orders.elements.get("sidebarFieldList").innerHTML, "");
   assert.equal(hidden("sidebarHeaderRow"), true);
   assert.equal(hidden("sidebarPlaceholderRow"), true);
+});
+
+// ---- v3.4.0 commit 7: the sidebar's dots (H) ----
+const sidebarDots = (scope) => Object.fromEntries(sidebarItems(scope).filter((row) => row[5].length).map((row) => [row[1], row[5]]));
+
+test("v3.4.0 sidebar dots: one per kind in its fields, in the cards' order; duplicate rows on the first field only; labels in both languages", async () => {
+  // Several kinds in one field, in the cards' order (乱表 中文 / English).
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(sidebarDots(messy), {
+    订单号: ["整行重复"], 日期: ["认不出的数字或日期", "日期写法混用"], 门店: ["同一个值，写法不一样"], 金额: ["认不出的数字或日期", "像是空值的写法"]
+  });
+  assert.match(messy.elements.get("sidebarFieldList").innerHTML, /<span class="sidebar-field-name">日期<\/span><span class="sidebar-dots"><span class="sidebar-dot" data-kind="conversion" role="img" title="认不出的数字或日期" aria-label="认不出的数字或日期"><\/span><span class="sidebar-dot" data-kind="dateStyle" role="img" title="日期写法混用" aria-label="日期写法混用"><\/span><\/span><\/li>/);
+  const english = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(sidebarDots(english), {
+    "Order ID": ["Duplicate rows"], Date: ["Numbers or dates not recognized", "Mixed date formats"], Store: ["Same value, written differently"], Amount: ["Numbers or dates not recognized", "Values that may mean blank"]
+  });
+  // A language switch writes the labels again.
+  switchLanguage(messy, "en");
+  assert.deepEqual(sidebarDots(messy).金额, ["Numbers or dates not recognized", "Values that may mean blank"]);
+  // Three ID columns: duplicate rows only on the first field; no dot for kinds without a field.
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(JSON.parse(roster.evaluate("JSON.stringify(state.idDuplicates.map((item) => item.field))")), ["工号", "身份证号", "手机号"]);
+  assert.deepEqual(sidebarDots(roster), { 工号: ["整行重复"], 入职日期: ["日期写法混用"], 月薪: ["认不出的数字或日期"] });
+  const formula = await importStage3Fixture("公式错误.xlsx");
+  assert.deepEqual(sidebarDots(formula), { 数量: ["公式错误"], 金额: ["公式错误"], 利润率: ["公式错误"], 备注: ["公式错误"] });
+  // The sample's total row has no dot; leaving the duplicate row out takes its dot away, undoing brings it back.
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.deepEqual(Object.keys(sidebarDots(orders)), ["订单编号", "下单日期", "地区", "金额", "销售代表"]);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(sidebarDots(orders).订单编号, undefined);
+  orders.evaluate('setRowExclusion("duplicateRows", false)');
+  assert.deepEqual(sidebarDots(orders).订单编号, ["整行重复"]);
+  // Treated as blank: the placeholder dots go.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(Object.keys(sidebarDots(orders)), ["订单编号", "下单日期", "地区"]);
+  // Nothing to fix: the list is as before, no dots element at all.
+  const clean = await importCsvFile(CLEAN_TABLE_CSV, "clean.csv");
+  assert.doesNotMatch(clean.elements.get("sidebarFieldList").innerHTML, /sidebar-dot/);
+  // The colours are the cards'; the dots never shrink and sit at the end of the row.
+  const css = repoFile("style.css");
+  for (const kind of ["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"]) {
+    const card = css.match(new RegExp(`\\.checkup-card\\[data-kind="${kind}"\\] \\.checkup-card-icon \\{ background: (#[0-9a-f]{6}); \\}`))[1];
+    assert.match(css, new RegExp(`\\.sidebar-dot\\[data-kind="${kind}"\\] \\{ background: ${card}; \\}`), kind);
+  }
+  assert.match(cssRule(css, ".sidebar-dots"), /flex: none;[\s\S]*margin-left: auto;/);
 });
 
 test("v3.0.0 shell: an Excel sheet joins the file name; a header in row 1 shows no header row; field names are escaped", () => {
