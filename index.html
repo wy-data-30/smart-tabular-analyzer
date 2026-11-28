@@ -16,7 +16,7 @@
       if (language === "en") document.documentElement.setAttribute("data-lang-pending", "");
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=3.3.0">
+  <link rel="stylesheet" href="style.css?v=3.4.0">
   <script src="vendor/papaparse-5.4.1.min.js" integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"></script>
   <script src="vendor/chart-4.4.1.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"></script>
   <script src="vendor/xlsx-0.20.3.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT"></script>
@@ -40,7 +40,7 @@
       <p id="topbarFileName" class="topbar-file-name"></p>
 
       <nav id="moduleNav" class="module-nav" aria-label="分析模块目录" data-i18n-attr="aria-label=nav.label">
-        <a class="active" href="#overviewSection" aria-current="page" data-i18n="nav.overview">数据概览</a>
+        <a class="active" href="#overviewSection" aria-current="page" data-i18n="nav.overview">体检结果</a>
         <a href="#schemaSection" data-i18n="nav.schema">字段配置</a>
         <a href="#qualitySection" data-i18n="nav.quality">数据质量</a>
         <a href="#filterSection" data-i18n="nav.filter">筛选</a>
@@ -198,14 +198,57 @@
       <section id="overviewSection" class="section-block">
         <div class="section-heading">
           <div>
-            <h2 id="overviewSectionTitle" tabindex="-1" data-i18n="overview.title">数据规模与预览</h2>
+            <h2 id="overviewSectionTitle" tabindex="-1" data-i18n="overview.title">体检结果</h2>
           </div>
           <p id="globalFilterStatus" class="filter-scope" aria-live="polite" data-i18n="scope.label">当前分析范围：<span id="globalFilterSummary" data-i18n="scope.none">尚未加载数据</span> <button id="globalClearFilters" class="text-button hidden" type="button" data-i18n="scope.clear">清除筛选</button></p>
         </div>
-        <div id="overviewCards" class="metric-grid"></div>
+        <div id="checkupToast" class="checkup-toast is-empty">
+          <p id="checkupToastText" class="checkup-toast-text" role="status"></p>
+          <button id="checkupToastUndo" class="checkup-toast-undo hidden" type="button" data-i18n="checkup.undo">撤销</button>
+        </div>
+        <div id="checkupPanel" class="checkup-panel hidden">
+          <div class="checkup-headline">
+            <p id="checkupTotal" class="checkup-total"></p>
+            <div class="checkup-actions">
+              <button id="checkupOpenStats" class="checkup-open hidden" type="button" data-i18n="checkup.openStats">查看统计</button>
+              <button id="checkupOpenCharts" class="secondary-button checkup-open hidden" type="button" data-i18n="checkup.openCharts">去看图表</button>
+              <button id="checkupExportReport" class="secondary-button checkup-export" type="button" data-i18n="checkup.export">导出体检报告</button>
+            </div>
+          </div>
+          <div id="checkupBar" class="checkup-bar" role="group" aria-label="需要处理的行按类别" data-i18n-attr="aria-label=checkup.bar"></div>
+          <p id="checkupLegend" class="checkup-legend"></p>
+        </div>
+        <section id="checkupNeeds" class="checkup-needs hidden" aria-labelledby="checkupNeedsTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupNeedsTitle" data-i18n="checkup.needs">需要处理</h3>
+            <span id="checkupOverlap" class="checkup-caption-note"></span>
+            <span class="checkup-caption-aside" data-i18n="checkup.rowNumbers">行号是文件里的行号，一般和 Excel 里看到的一致</span>
+          </div>
+          <div id="checkupCards" class="checkup-cards"></div>
+        </section>
+        <section id="checkupHandledSection" class="checkup-handled hidden" aria-labelledby="checkupHandledTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupHandledTitle" data-i18n="checkup.handled">已处理</h3>
+          </div>
+          <ul id="checkupHandled" class="checkup-handled-list"></ul>
+        </section>
+        <section id="checkupChecked" class="checkup-checked hidden" aria-labelledby="checkupCheckedTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupCheckedTitle" data-i18n="checkup.checked">查过的项目</h3>
+          </div>
+          <ul id="checkupCheckedList" class="checkup-checked-list"></ul>
+        </section>
+        <section id="checkupOthers" class="checkup-findings hidden" aria-labelledby="checkupOthersTitle">
+          <div class="checkup-caption">
+            <h3 id="checkupOthersTitle" data-i18n="checkup.others">其他发现</h3>
+            <span id="checkupOthersNote" class="checkup-caption-note"></span>
+          </div>
+          <div id="checkupOthersList" class="checkup-findings-list"></div>
+        </section>
+        <div id="overviewCards" class="metric-grid hidden"></div>
         <div class="module-subsection">
-          <details class="preview-details" open>
-            <summary data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details.open data-i18n-closed=details.closed"><h3 class="subsection-title" data-i18n="preview.title">数据预览</h3></summary>
+          <details class="preview-details">
+            <summary data-i18n-open="收起" data-i18n-closed="展开" data-i18n-attr="data-i18n-open=details.open data-i18n-closed=details.closed"><h3 class="subsection-title" data-i18n="preview.title">数据预览</h3><span id="previewSize" class="preview-size"></span></summary>
             <div class="table-wrap" tabindex="0" aria-label="数据预览表，可横向滚动" data-i18n-attr="aria-label=preview.tableWrap">
               <table id="previewTable" aria-label="数据预览" data-i18n-attr="aria-label=preview.title"></table>
             </div>
@@ -253,6 +296,7 @@
             <p class="section-aside" data-i18n="quality.aside">始终按导入的原始数据算，不受筛选影响</p>
           </div>
         </div>
+        <p id="qualityCountNote" class="quality-count-note" data-i18n="quality.countNote">这里多数按格数算；体检结果的“需要处理”按行数算，同一行有几处问题只算一次。</p>
         <p id="qualityScopeNote" class="quality-scope-note hidden"></p>
         <div id="qualitySummary" class="quality-summary"></div>
         <div id="duplicateExclusion" class="duplicate-exclusion hidden">
@@ -644,14 +688,14 @@
     <p><a class="footer-github-link" href="https://github.com/wy-data-30/sheet-checkup"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.2 9.2 0 0 0-2.9 17.9c.5.1.6-.2.6-.5v-1.8c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1 1.6 1 .9 1.6 2.4 1.1 3 .9.1-.7.4-1.1.7-1.3-2.2-.3-4.6-1.1-4.6-5a3.9 3.9 0 0 1 1-2.7 3.6 3.6 0 0 1 .1-2.7s.8-.3 2.8 1a9.5 9.5 0 0 1 5 0c1.9-1.3 2.8-1 2.8-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.7c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.8v2.7c0 .4.2.7.7.5A9.2 9.2 0 0 0 12 2.8Z" fill="currentColor"/></svg><span data-i18n="footer.github">GitHub 仓库</span></a></p>
   </footer>
 
-  <script src="parsing.js?v=3.3.0"></script>
-  <script src="profiling.js?v=3.3.0"></script>
-  <script src="format.js?v=3.3.0"></script>
-  <script src="stats.js?v=3.3.0"></script>
-  <script src="quality.js?v=3.3.0"></script>
-  <script src="app.js?v=3.3.0"></script>
-  <script src="importer.js?v=3.3.0"></script>
-  <script src="report.js?v=3.3.0"></script>
-  <script src="script.js?v=3.3.0"></script>
+  <script src="parsing.js?v=3.4.0"></script>
+  <script src="profiling.js?v=3.4.0"></script>
+  <script src="format.js?v=3.4.0"></script>
+  <script src="stats.js?v=3.4.0"></script>
+  <script src="quality.js?v=3.4.0"></script>
+  <script src="app.js?v=3.4.0"></script>
+  <script src="importer.js?v=3.4.0"></script>
+  <script src="report.js?v=3.4.0"></script>
+  <script src="script.js?v=3.4.0"></script>
 </body>
 </html>

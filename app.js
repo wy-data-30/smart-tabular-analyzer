@@ -26,9 +26,29 @@ const state = {
   qualityNumericStats: [],
   categoryStats: [],
   duplicateRows: 0,
+  // v3.4.0: the groups of exactly repeated rows countDuplicateRows() found on import (every row
+  // of each group, the kept one too); only imports replace it.
+  duplicateRowGroups: [],
+  // v3.4.0: buildCheckupSummary(), made on commit, rebuild (field configuration, placeholder
+  // confirmations) and after rows are left out or brought back; filters do not change it.
+  checkupSummary: null,
+  // v3.4.0 commit 4: buildCheckupCardData() of checkupSummary, made with it (figures, rows and values;
+  // the words are written when drawn, so filters and language switches read no row).
+  checkupCards: null,
+  // v3.4.0 commit 5: buildCheckupOtherData() (其他发现) and buildCheckupCheckedData() (查过的项目), made
+  // with the checkup counts; figures only.
+  checkupOthers: null,
+  checkupChecked: null,
+  // v3.4.0 commit 6: 已处理 (buildCheckupHandledData(), made with the checkup counts) and the
+  // toast's undo ({ undo } while a toast of a first-screen operation shows, otherwise null).
+  checkupHandled: null,
+  checkupToast: null,
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
+  // v3.4.0: field -> every row of its duplicate values, ascending (buildIdDuplicateSummary()'s
+  // sixth argument), replaced with state.idDuplicates; the checkup's 编号重复 reads it.
+  idDuplicateRowIndexes: new Map(),
   // Field -> placeholder keys confirmed as missing. Every commit replaces it with
   // an empty object; filters never change it.
   placeholderConfirmations: Object.create(null),
@@ -46,6 +66,9 @@ const state = {
   // v3.3.0: the labelled rows the totals check ended with (checkSuspectedTotals()), without
   // the label groups that mostly do not add up; written with suspectedTotals, for "另有 N 行".
   suspectedTotalLabelCount: 0,
+  // v3.4.0 (R7): the indexes of those labelled rows (checkSuspectedTotals()); 写着合计但对不上 is them
+  // without the suspected totals. Written with suspectedTotals, cleared with them.
+  suspectedTotalLabelIndexes: [],
   // Row object -> { field: "#DIV/0!" }, set only by commitTabularData() from an Excel
   // import; those cells read as "" and count as missing.
   sourceFormulaErrors: new WeakMap(),
@@ -157,6 +180,27 @@ const dom = {
   globalFilterSummary: document.getElementById("globalFilterSummary"),
   globalClearFilters: document.getElementById("globalClearFilters"),
   overviewCards: document.getElementById("overviewCards"),
+  checkupPanel: document.getElementById("checkupPanel"),
+  checkupTotal: document.getElementById("checkupTotal"),
+  checkupExportReport: document.getElementById("checkupExportReport"),
+  checkupBar: document.getElementById("checkupBar"),
+  checkupLegend: document.getElementById("checkupLegend"),
+  checkupNeeds: document.getElementById("checkupNeeds"),
+  checkupOverlap: document.getElementById("checkupOverlap"),
+  checkupCards: document.getElementById("checkupCards"),
+  checkupOpenStats: document.getElementById("checkupOpenStats"),
+  checkupOpenCharts: document.getElementById("checkupOpenCharts"),
+  checkupChecked: document.getElementById("checkupChecked"),
+  checkupCheckedList: document.getElementById("checkupCheckedList"),
+  checkupOthers: document.getElementById("checkupOthers"),
+  checkupOthersNote: document.getElementById("checkupOthersNote"),
+  checkupOthersList: document.getElementById("checkupOthersList"),
+  checkupToast: document.getElementById("checkupToast"),
+  checkupToastText: document.getElementById("checkupToastText"),
+  checkupToastUndo: document.getElementById("checkupToastUndo"),
+  checkupHandledSection: document.getElementById("checkupHandledSection"),
+  checkupHandled: document.getElementById("checkupHandled"),
+  previewSize: document.getElementById("previewSize"),
   categoryChartInsight: document.getElementById("categoryChartInsight"),
   dateChartInsight: document.getElementById("dateChartInsight"),
   previewTable: document.getElementById("previewTable"),
@@ -557,12 +601,40 @@ function showResultsWorkspace() {
 // The sidebar (v3.0.0): the file, its fields and the current state, for display only.
 const SIDEBAR_TYPE_MARKS = Object.freeze({ id: Lp("#", "#"), date: Lp("日", "D"), category: Lp("Aa", "Aa"), numeric: Lp("12", "12"), ignore: Lp("—", "—") });
 
+// v3.4.0 commit 7 (H): field -> the checkup kinds with rows in it, in the cards' order: a kind's
+// fields are those of its cells; 整行重复 is drawn on the first field (board new-01); 疑似合计 and
+// 读取时有疑问 have no field and no dot. From state.checkupSummary, so no row is read.
+function getCheckupKindsByField() {
+  const byField = new Map();
+  const add = (field, kind) => {
+    if (!byField.has(field)) byField.set(field, []);
+    byField.get(field).push(kind);
+  };
+  (state.checkupSummary?.kinds || []).forEach((item) => {
+    if (item.kind === "duplicateRows") {
+      if (state.fields.length) add(state.fields[0], item.kind);
+      return;
+    }
+    item.fields.forEach((field) => add(field, item.kind));
+  });
+  return byField;
+}
+
 function renderSidebar() {
   dom.sidebarFileSize.textContent = L(`${formatInteger(state.rows.length)} 行 × ${formatInteger(state.fields.length)} 列`, `${enCount(state.rows.length, "row", "rows")} × ${enCount(state.fields.length, "column", "columns")}`);
   dom.sidebarFieldCount.textContent = formatInteger(state.fields.length);
+  const kindsByField = getCheckupKindsByField();
   dom.sidebarFieldList.innerHTML = state.profiles.map((profile) => {
     const unit = profile.typeKey === "numeric" ? getFieldNumberUnit(profile.field) : "";
-    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] ? Lpick(SIDEBAR_TYPE_MARKS[profile.typeKey]) : ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}</li>`;
+    // One coloured dot per kind (H); its aria-label is the kind's name. A field without any has none.
+    const kinds = kindsByField.get(profile.field) || [];
+    const dots = kinds.length
+      ? `<span class="sidebar-dots">${kinds.map((kind) => {
+        const name = escapeHtml(Lpick(CHECKUP_KIND_NAMES[kind]));
+        return `<span class="sidebar-dot" data-kind="${kind}" role="img" title="${name}" aria-label="${name}"></span>`;
+      }).join("")}</span>`
+      : "";
+    return `<li class="sidebar-field${profile.typeKey === "ignore" ? " is-ignored" : ""}" title="${escapeHtml(profile.field)}"><span class="sidebar-type">${SIDEBAR_TYPE_MARKS[profile.typeKey] ? Lpick(SIDEBAR_TYPE_MARKS[profile.typeKey]) : ""}</span><span class="sidebar-field-name">${escapeHtml(profile.field)}</span>${unit ? `<span class="sidebar-unit">${escapeHtml(unit)}</span>` : ""}${dots}</li>`;
   }).join("");
   const headerRowNumber = state.headerDetection?.headerRowNumber;
   const showsHeader = Boolean(headerRowNumber) && headerRowNumber !== 1;
@@ -827,14 +899,18 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.fieldTypeDrafts = Object.fromEntries(
     state.profiles.map((profile) => [profile.field, profile.inferredTypeKey])
   );
-  state.duplicateRows = countDuplicateRows(rows, fields);
-  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  const duplicateRowGroups = [];
+  state.duplicateRows = countDuplicateRows(rows, fields, duplicateRowGroups);
+  state.duplicateRowGroups = duplicateRowGroups;
+  state.idDuplicateRowIndexes = new Map();
+  state.idDuplicates = buildIdDuplicateSummary(rows, fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations, state.idDuplicateRowIndexes);
   state.placeholders = buildPlaceholderSummary(rows, fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   state.totalLabelRows = findTotalLabelRows(rows, fields);
   const totalCheck = checkSuspectedTotals(rows, fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.suspectedTotals = totalCheck.totals;
   state.suspectedTotalLabelCount = totalCheck.labelRowCount;
+  state.suspectedTotalLabelIndexes = totalCheck.labelIndexes;
   state.formulaErrors = hasFormulaErrors ? buildFormulaErrorSummary(rows, fields, (row) => state.sourceFormulaErrors.get(row), getSourceRowNumber) : [];
   refreshFormatConsistency();
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
@@ -843,6 +919,7 @@ function commitTabularData(fields, rows, sourceName, importId, parseWarnings = [
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = state.qualityNumericStats;
   state.categoryStats = buildCategoryStats(state.filteredRows);
+  refreshCheckupSummary();
 
   const sourceDisplayName = sheetName ? `${sourceName} · ${sheetName}` : sourceName;
   // The sidebar's file name (v3.0.0). report.js names the report after state.sourceFileName and
@@ -967,10 +1044,786 @@ function renderOverview() {
     [L("空值概览", "Blanks"), activeMissing]
   ];
 
-  // v3.0.0: one line of text, same labels and numbers as the old cards.
+  // v3.0.0: one line of text, same labels and numbers as the old cards. v3.4.0: hidden under the
+  // checkup (index.html), still written; the next version removes it.
   dom.overviewCards.innerHTML = `<p class="metric-line">${cards.map(([label, value]) => (
     `<span class="metric-item"><span class="metric-label">${escapeHtml(label)}</span> <strong class="metric-value">${typeof value === "number" ? formatInteger(value) : escapeHtml(value)}</strong></span>`
   )).join("")}</p>`;
+  dom.previewSize.textContent = formatPreviewSize(state.rows.length, state.fields.length);
+  renderCheckup();
+}
+
+// v3.4.0: the checkup's big number, its bar and the legend, drawn from state.checkupSummary (made on
+// commit, rebuild and rows left out; a filter only draws it again). The bar has one segment per kind
+// of the rows of that kind alone, one for the rows of two or more kinds, then the rows with no
+// problem; each at least 6 px wide (style.css), so widths follow the rows only roughly.
+function renderCheckup() {
+  const summary = state.checkupSummary;
+  dom.checkupPanel.classList.toggle("hidden", !summary);
+  if (!summary) {
+    dom.checkupTotal.innerHTML = "";
+    dom.checkupBar.innerHTML = "";
+    dom.checkupLegend.innerHTML = "";
+    renderCheckupCards(null);
+    renderCheckupChecked(null);
+    renderCheckupHandled(null);
+    renderCheckupOthers(null);
+    return;
+  }
+  dom.checkupTotal.innerHTML = summary.rowCount
+    ? `<span class="checkup-total-number">${formatInteger(summary.rowCount)}</span> <span class="checkup-total-label">${escapeHtml(formatCheckupTotalLabel(summary.rowCount))}</span>`
+    : (() => {
+      // Nothing needs attention: board orig-04's line, without the bar and the legend.
+      const clean = formatCheckupClean(summary.total);
+      return `<span class="checkup-clean-icon" aria-hidden="true"></span><span class="checkup-clean"><span class="checkup-total-label">${escapeHtml(clean.title)}</span><span class="checkup-clean-note">${escapeHtml(clean.note)}</span></span>`;
+    })();
+  dom.checkupLegend.classList.toggle("hidden", !summary.rowCount);
+  dom.checkupBar.classList.toggle("hidden", !summary.rowCount);
+  dom.checkupBar.innerHTML = summary.rowCount
+    ? summary.segments.filter((segment) => segment.rows > 0).map((segment) => {
+      const label = escapeHtml(formatCheckupSegment(segment.kind, segment.rows));
+      return `<span class="checkup-segment" data-kind="${segment.kind}" role="img" title="${label}" aria-label="${label}" style="flex-grow: ${segment.rows}"></span>`;
+    }).join("")
+    : "";
+  dom.checkupLegend.innerHTML = formatCheckupLegend(summary).map(([label, rows, multi]) => (
+    `<span class="checkup-legend-item${multi ? " is-multi" : ""}">${escapeHtml(label)} <b>${escapeHtml(formatCheckupRows(rows))}</b></span>`
+  )).join("");
+  renderCheckupCards(summary);
+  renderCheckupChecked(summary);
+  renderCheckupHandled(summary);
+  renderCheckupOthers(summary);
+}
+
+// v3.4.0 commit 4: the icons of the cards (16 px strokes, as on the boards).
+const CHECKUP_ICON_PATHS = Object.freeze({
+  suspectedTotal: '<path d="M12 3H4l4.5 5L4 13h8"/>',
+  duplicateRows: '<path d="M3 6.5h7v7H3zM6 6.5V3h7v7h-3"/>',
+  formulaError: '<path d="M9.5 2.5c-1.6 0-2 1-2.3 2.6L6 12c-.3 1.4-.8 1.8-2 1.8M4.5 6.5h5M9.5 8.5l3.5 4M13 8.5l-3.5 4"/>',
+  conversion: '<path d="M5.6 5.6a2.4 2.4 0 1 1 3.3 2.2c-.6.3-.9.8-.9 1.4V10M8 12.6v.2"/>',
+  placeholder: '<path d="M8 2.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z" stroke-dasharray="2.4 2"/>',
+  dateStyle: '<path d="M2.5 4.5h11v9h-11zM2.5 7.5h11M5.5 2.5v3M10.5 2.5v3"/>',
+  lookAlike: '<path d="M2.5 6v4h11V6"/>',
+  parseWarnings: '<path d="M8 2.5l6 10.5H2zM8 6.5v3M8 11.4v.2"/>'
+});
+
+const CHECKUP_LINE_LIMIT = 5;
+const CHECKUP_GROUP_LINE_LIMIT = 4;
+
+function checkupLineOf(index) {
+  return getSourceRowNumber(state.rows[index]);
+}
+
+// File rows (numbers) of the first indexes, and whether there are more.
+function checkupLines(indexes, limit) {
+  const lines = indexes.map(checkupLineOf).filter((line) => line !== null);
+  return { lines: lines.slice(0, limit), more: lines.length > limit };
+}
+
+// The fields of a kind's cells by cell count (most first, then field order), with their cells.
+function checkupFieldsByCount(cells) {
+  const byField = new Map();
+  cells.forEach((cell) => {
+    if (!byField.has(cell.field)) byField.set(cell.field, []);
+    byField.get(cell.field).push(cell);
+  });
+  return [...byField.entries()].map(([field, list]) => ({ field, cells: list })).sort((a, b) => b.cells.length - a.cells.length);
+}
+
+// 查看 (R12, v3.4.0 commit 4): it opens the first field's category (the kind's, without fields).
+// The button names a number only when the viewer lists exactly the card's rows there:
+// 查看这一行 / 查看这 N 行; otherwise only the field (查看「金额」), or, over several fields,
+// 查看「利润率」等 4 列. Kinds without fields whose viewer lists other rows: 查看这些行.
+function checkupViewAction(kind, cells, rowCount) {
+  const fields = checkupFieldsByCount(cells.filter((cell) => cell.field !== null));
+  const category = fields.length ? { kind, field: fields[0].field } : { kind };
+  if (fields.length > 1) return { type: "view", category, view: { mode: "fields", field: fields[0].field, count: fields.length } };
+  const cardRows = fields.length ? new Set(fields[0].cells.map((cell) => cell.index)).size : rowCount;
+  const listed = checkupViewedRowCount(category, cardRows);
+  if (listed === cardRows) return { type: "view", category, view: { mode: "rows", count: cardRows } };
+  return { type: "view", category, view: fields.length ? { mode: "field", field: fields[0].field } : { mode: "generic" } };
+}
+
+// How many rows the viewer lists for a card's category (listProblemRows()'s distinct rows), without
+// listing them: the card's rows (cardRows, the rows counted in the analysis) and the rows left out
+// that the viewer lists too, or the lists the summary keeps. Only the kinds with a 查看 card.
+function checkupViewedRowCount(category, cardRows) {
+  const scans = state.formatScans;
+  const excluded = [...getExcludedIndexSet()];
+  switch (category.kind) {
+    case "suspectedTotal": return state.suspectedTotals.length;
+    case "conversion": return checkupConversionRows(getFieldProfile(category.field), scans).indexes.length;
+    case "lookAlike": return checkupLookAlikeRows(category.field, scans).length;
+    case "formulaError":
+      return cardRows + excluded.filter((index) => state.sourceFormulaErrors.get(state.rows[index])?.[category.field]).length;
+    case "parseWarnings": {
+      // File rows are unique, so the viewer's first row of a line is the row of that line.
+      const lines = new Set(state.parseWarnings.map((warning) => warning.row).filter((line) => line !== null));
+      return cardRows + excluded.filter((index) => lines.has(checkupLineOf(index))).length;
+    }
+    default: return 0;
+  }
+}
+
+// The cells of the placeholder kind in row order (a stable sort by row), from the summary's runs: one
+// field and key after another, each run in row order. Yields cells; nothing is read from the rows.
+function* checkupCellsInRowOrder(cells, runs) {
+  const heads = runs.map((run) => run.start);
+  for (;;) {
+    let best = -1;
+    runs.forEach((run, position) => {
+      if (heads[position] < run.end && (best < 0 || cells[heads[position]].index < cells[heads[best]].index)) best = position;
+    });
+    if (best < 0) return;
+    yield cells[heads[best]];
+    heads[best] += 1;
+  }
+}
+
+// The runs of the placeholder kind's cells: { field, key, start, end } per field and key. A field and
+// key never comes back after its run ends, so each end is found by doubling steps, then halving them,
+// reading a few cells per run instead of all of them.
+function checkupCellRuns(cells) {
+  const runs = [];
+  let start = 0;
+  while (start < cells.length) {
+    const { field, key } = cells[start];
+    const same = (position) => cells[position].field === field && cells[position].key === key;
+    let low = start;
+    let step = 1;
+    while (low + step < cells.length && same(low + step)) {
+      low += step;
+      step *= 2;
+    }
+    let high = Math.min(low + step, cells.length);
+    while (high - low > 1) {
+      const middle = (low + high) >> 1;
+      if (same(middle)) low = middle;
+      else high = middle;
+    }
+    runs.push({ field, key, start, end: low + 1 });
+    start = low + 1;
+  }
+  return runs;
+}
+
+// The distinct keys of some runs, in the order of their first row (ties: run order).
+function checkupKeysInRowOrder(cells, runs) {
+  return [...new Set(runs.slice().sort((a, b) => cells[a.start].index - cells[b.start].index).map((run) => run.key))];
+}
+
+// What each card shows, made with the checkup counts (refreshCheckupSummary(): commit, rebuild,
+// rows left out or brought back, placeholders treated as blank or not) and kept in
+// state.checkupCards: only figures, file rows and cell values, no sentence, so a filter or a language
+// switch only writes the words again (buildCheckupCards()). samples: [{ line, value, form }], form
+// "text" (as is), "visible" (formatVisibleText() when written) or "columns" (value is a count).
+function buildCheckupCardData(summary) {
+  if (!summary) return null;
+  return summary.kinds.map((item) => {
+    const card = { kind: item.kind, rows: item.rows.length, others: item.otherKindRows, affects: item.affectsStatistics, samples: [], detail: null, action: null };
+    // The rows of this kind, as a set, for the two kinds that need one (a large kind need not build it).
+    const counted = () => new Set(item.rows);
+    const text = (index, field) => ({ line: checkupLineOf(index), value: displayValue(state.rows[index][field]), form: "text" });
+    switch (item.kind) {
+      case "suspectedTotal": {
+        const rows = counted();
+        const total = state.suspectedTotals.find((entry) => rows.has(entry.index));
+        const row = state.rows[total.index];
+        const values = (total.matches[0]?.fields || []).slice(0, 2).map((field) => ({ line: null, value: displayValue(row[field]), form: "text" }));
+        card.samples = [{ line: total.line, value: total.label, form: "text" }, ...values];
+        card.detail = { count: card.rows };
+        card.action = checkupViewAction("suspectedTotal", item.cells, card.rows);
+        break;
+      }
+      case "duplicateRows": {
+        const rows = counted();
+        const groups = (state.duplicateRowGroups || []).map((group) => group.filter((index) => rows.has(index))).filter((group) => group.length > 1);
+        const shown = groups.length === 1 ? groups[0].slice(0, 2) : groups.slice(0, 2).map((group) => group[0]);
+        card.samples = shown.map((index) => text(index, state.fields[0]));
+        card.detail = { groups: groups.length, size: groups[0].length, ...checkupLines(groups.map((group) => group[0]), CHECKUP_GROUP_LINE_LIMIT) };
+        card.action = { type: "exclude", count: groups.reduce((sum, group) => sum + group.length - 1, 0) };
+        break;
+      }
+      case "formulaError": {
+        const byRow = item.cells.slice().sort((x, y) => x.index - y.index || state.fields.indexOf(x.field) - state.fields.indexOf(y.field));
+        card.samples = byRow.slice(0, 3).map((cell) => ({ line: checkupLineOf(cell.index), value: state.sourceFormulaErrors.get(state.rows[cell.index])?.[cell.field] || "", form: "text" }));
+        card.detail = { fields: item.fields, cells: item.cells.length };
+        card.action = checkupViewAction("formulaError", item.cells, card.rows);
+        break;
+      }
+      case "conversion": {
+        const fields = checkupFieldsByCount(item.cells);
+        // Samples and the example are values, not placeholder spellings of either tier, when there are
+        // some: the first ones whose key (kept by the summary) is null.
+        const values = (cells, count) => {
+          const out = [];
+          for (const cell of cells) {
+            if (cell.key) continue;
+            out.push(cell);
+            if (out.length === count) break;
+          }
+          return out;
+        };
+        const firstCells = values(fields[0].cells, 2);
+        card.samples = (firstCells.length ? firstCells : fields[0].cells.slice(0, 2)).map((cell) => text(cell.index, cell.field));
+        card.detail = {
+          parts: fields.map((entry) => ({
+            field: entry.field,
+            count: entry.cells.length,
+            date: getFieldProfile(entry.field)?.typeKey === "date",
+            example: displayValue(state.rows[(values(entry.cells, 1)[0] || entry.cells[0]).index][entry.field])
+          }))
+        };
+        card.action = checkupViewAction("conversion", item.cells, card.rows);
+        break;
+      }
+      case "placeholder": {
+        // The summary's runs (one field and key each, in row order); no cell is read or sorted.
+        const cells = item.cells;
+        const runs = checkupCellRuns(cells);
+        const first = (list, count) => {
+          const out = [];
+          for (const cell of checkupCellsInRowOrder(cells, list)) {
+            out.push(cell);
+            if (out.length === count) break;
+          }
+          return out;
+        };
+        card.samples = first(runs, 2).map((cell) => text(cell.index, cell.field));
+        // A pending common spelling never reads as a number or a date (contract 17), so in a numeric
+        // or a date column every one of its cells fails the column's type.
+        const failingRuns = runs.filter((run) => {
+          const profile = getFieldProfile(run.field);
+          return Boolean(profile && getProfileConversionCheck(profile, profile.typeKey));
+        });
+        let failing = null;
+        if (failingRuns.length) {
+          // checkupLines() on the failing rows: the first file rows, and whether there are more.
+          const lines = [];
+          let firstCell = null;
+          for (const cell of checkupCellsInRowOrder(cells, failingRuns)) {
+            firstCell = firstCell || cell;
+            const line = checkupLineOf(cell.index);
+            if (line !== null) lines.push(line);
+            if (lines.length > CHECKUP_GROUP_LINE_LIMIT) break;
+          }
+          failing = {
+            lines: lines.slice(0, CHECKUP_GROUP_LINE_LIMIT),
+            more: lines.length > CHECKUP_GROUP_LINE_LIMIT,
+            keys: checkupKeysInRowOrder(cells, failingRuns),
+            date: getFieldProfile(firstCell.field)?.typeKey === "date"
+          };
+        }
+        card.detail = { keys: checkupKeysInRowOrder(cells, runs), failing };
+        card.action = { type: "treat", count: cells.length };
+        break;
+      }
+      case "dateStyle": {
+        const [first, ...rest] = item.fields.map((field) => state.dateStyles.find((entry) => entry.field === field));
+        card.samples = first.styles.slice(1, 3).map((style) => ({ line: null, value: style.sample, form: "text" }));
+        card.detail = {
+          ...checkupLines(item.cells.filter((cell) => cell.field === first.field).map((cell) => cell.index), CHECKUP_LINE_LIMIT),
+          mainCount: first.styles[0].count,
+          mainSample: first.styles[0].sample,
+          others: rest.map((entry) => ({ field: entry.field, count: item.cells.filter((cell) => cell.field === entry.field).length }))
+        };
+        card.action = { type: "standardize" };
+        break;
+      }
+      case "lookAlike": {
+        card.samples = item.cells.slice(0, 2).map((cell) => ({ line: checkupLineOf(cell.index), value: state.rows[cell.index][cell.field], form: "visible" }));
+        const parts = item.fields.map((field) => {
+          const summaryOfField = state.lookAlikes.find((entry) => entry.field === field);
+          const group = summaryOfField.groups[0];
+          if (group) {
+            const main = lookAlikeMainText(group);
+            // A writing that differs from the main one; a tied group shows its second writing.
+            const example = (main === null ? group.variants[1] : group.variants.find((variant) => variant.text !== main)).text;
+            return { field, issue: group.reasons[0], example };
+          }
+          if (summaryOfField.edgeSpaceCount) {
+            const edges = item.cells.filter((cell) => cell.field === field).map((cell) => state.rows[cell.index][field]).filter((value) => typeof value === "string" && hasEdgeWhitespace(value));
+            const start = edges.some((value) => value !== value.trimStart());
+            const end = edges.some((value) => value !== value.trimEnd());
+            return { field, issue: start && end ? "edgeBoth" : start ? "edgeStart" : "edgeEnd", example: "" };
+          }
+          return { field, issue: "invisibleOnly", example: "" };
+        });
+        card.detail = { parts: parts.slice(0, 2), more: Math.max(0, parts.length - 2) };
+        // Edge spaces alone are what the standardized table fixes; other writings need a look.
+        card.action = parts.every((part) => part.issue.startsWith("edge")) ? { type: "standardize" } : checkupViewAction("lookAlike", item.cells, card.rows);
+        break;
+      }
+      case "parseWarnings": {
+        const lines = new Set(item.rows.map(checkupLineOf));
+        const warnings = state.parseWarnings.filter((warning) => warning.row !== null && lines.has(warning.row)).sort((x, y) => x.row - y.row);
+        const first = warnings[0];
+        // A row with too few columns shows how many it has; other issues have no short form.
+        card.samples = first.code === "TooFewFields" && Number.isInteger(first.params?.cellCount) ? [{ line: first.row, value: first.params.cellCount, form: "columns" }] : [];
+        const tooFew = warnings.every((warning) => warning.code === "TooFewFields" && Number.isInteger(warning.params?.headerCount) && warning.params.headerCount === first.params?.headerCount);
+        card.detail = { rows: card.rows, headerCount: tooFew ? first.params.headerCount : null };
+        card.action = checkupViewAction("parseWarnings", item.cells, card.rows);
+        break;
+      }
+      default:
+        break;
+    }
+    return card;
+  });
+}
+
+// The checkup counts and the cards' figures, together (v3.4.0 commit 4).
+function refreshCheckupSummary() {
+  state.checkupSummary = buildCheckupSummary();
+  state.checkupCards = buildCheckupCardData(state.checkupSummary);
+  state.checkupOthers = state.checkupSummary ? buildCheckupOtherData() : null;
+  state.checkupChecked = buildCheckupCheckedData(state.checkupSummary);
+  state.checkupHandled = state.checkupSummary ? buildCheckupHandledData() : null;
+}
+
+// The cards in the current language, from state.checkupCards: words only, no row is read.
+function buildCheckupCards() {
+  return (state.checkupCards || []).map((card) => {
+    const detail = card.detail;
+    const lines = (list) => list.map(formatInteger);
+    let sentence = "";
+    switch (card.kind) {
+      case "suspectedTotal": sentence = formatCheckupTotalDetail(detail.count); break;
+      case "duplicateRows": sentence = formatCheckupDuplicateDetail(detail.groups, detail.size, lines(detail.lines), detail.more); break;
+      case "formulaError": sentence = formatCheckupFormulaDetail(detail.fields, detail.cells); break;
+      case "conversion": sentence = formatCheckupConversionDetail(detail.parts); break;
+      case "placeholder": sentence = formatCheckupPlaceholderDetail(detail.keys, detail.failing ? { lines: lines(detail.failing.lines), more: detail.failing.more, key: detail.failing.keys.join(Lpick(LIST_SEPARATOR)), date: detail.failing.date } : null); break;
+      case "dateStyle": sentence = formatCheckupDateDetail(lines(detail.lines), detail.more, detail.mainCount, detail.mainSample, detail.others); break;
+      case "lookAlike": sentence = formatCheckupLookAlikeDetail(detail.parts.map((part) => ({ ...part, example: formatVisibleText(part.example) })), detail.more); break;
+      case "parseWarnings": sentence = formatCheckupReadingDetail(detail.rows, detail.headerCount); break;
+      default: break;
+    }
+    const action = card.action;
+    let label = "";
+    if (action.type === "exclude") label = formatCheckupExclude(action.count);
+    else if (action.type === "treat") label = formatCheckupTreat(action.count);
+    else if (action.type === "standardize") label = Lpick(CHECKUP_STANDARDIZE_ACTION);
+    else label = formatCheckupView(action.view);
+    const samples = card.samples.map((sample) => ({
+      line: sample.line,
+      text: sample.form === "columns" ? formatCheckupColumns(sample.value) : sample.form === "visible" ? formatVisibleText(sample.value) : sample.value
+    }));
+    return { kind: card.kind, rows: card.rows, others: card.others, affects: card.affects, samples, detail: sentence, action: { type: action.type, category: action.category, label } };
+  });
+}
+
+// A sample's text: escaped, each shown space (␣) as a light element of its own, as on the boards.
+function checkupSampleHtml(text) {
+  return escapeHtml(text).split("␣").join('<span class="checkup-sample-space">␣</span>');
+}
+
+function renderCheckupCards(summary) {
+  const cards = summary && summary.rowCount ? buildCheckupCards() : [];
+  dom.checkupNeeds.classList.toggle("hidden", !cards.length);
+  dom.checkupOverlap.textContent = cards.length && summary.multiRows ? formatCheckupOverlap(summary.rowCount) : "";
+  dom.checkupCards.innerHTML = cards.map((card) => {
+    const unit = formatCheckupUnit(card.rows);
+    const samples = card.samples.filter((sample) => sample.line !== null || sample.text !== "").map((sample) => (
+      `${sample.line !== null ? `<span class="checkup-sample-line">${escapeHtml(formatInteger(sample.line))}</span>` : ""}${sample.text !== "" ? `<span class="checkup-sample">${checkupSampleHtml(sample.text)}</span>` : ""}`
+    )).join("");
+    const action = card.action;
+    const label = action.type === "view" ? ` aria-label="${escapeHtml(formatProblemViewLabel(action.category))}"` : "";
+    return `<article id="checkupCard-${card.kind}" class="checkup-card" data-kind="${card.kind}">`
+      + '<div class="checkup-card-body">'
+      + `<div class="checkup-card-head"><span class="checkup-card-icon" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${CHECKUP_ICON_PATHS[card.kind]}</svg></span>`
+      + `<h4 class="checkup-card-title">${escapeHtml(Lpick(CHECKUP_KIND_NAMES[card.kind]))}</h4>`
+      + `<p class="checkup-card-count"><b>${escapeHtml(formatInteger(card.rows))}</b><small>${escapeHtml(unit)}</small></p></div>`
+      + (samples ? `<div class="checkup-samples">${samples}</div>` : "")
+      + (card.affects ? `<span class="checkup-tag">${escapeHtml(Lpick(CHECKUP_AFFECTS_TAG))}</span>` : "")
+      + `<p class="checkup-detail">${escapeHtml(card.detail)}</p>`
+      + (card.others ? `<p class="checkup-others">${escapeHtml(formatCheckupOthers(card.others))}</p>` : "")
+      + "</div>"
+      + `<button class="checkup-action" type="button" data-checkup-action="${action.type}" data-checkup-kind="${card.kind}"${label}>${escapeHtml(action.label)}</button>`
+      + "</article>";
+  }).join("");
+}
+
+// ---- v3.4.0 commit 5: 其他发现 (F, C3) and 查过的项目 (R21) ----
+const CHECKUP_FINDING_LINE_LIMIT = 5;
+
+// C3: how a finding's rows meet the rows left out of the analysis: null (none), or { all, count,
+// lines, more } (all of them, or the ones left out).
+function checkupExcludedOf(indexes, excluded) {
+  if (!excluded.size || !indexes.length) return null;
+  const unique = [...new Set(indexes)];
+  const out = unique.filter((index) => excluded.has(index)).sort((a, b) => a - b);
+  if (!out.length) return null;
+  return { all: out.length === unique.length, count: out.length, ...checkupLines(out, CHECKUP_FINDING_LINE_LIMIT) };
+}
+
+// 其他发现: what the quality page found on every row that the checkup does not count, in the order
+// of F1; only figures, file rows and values (the words are written when drawn). Made with the
+// checkup counts (refreshCheckupSummary()), so a filter or a language switch reads no row. It scans
+// no column: the ID rows come with state.idDuplicates and the outlier rows are kept per profile
+// (checkupOutlierRows()), so leaving rows out or back in reads only those rows and the totals (C3).
+function buildCheckupOtherData() {
+  const rows = state.rows;
+  const excluded = getExcludedIndexSet();
+  const totalSet = new Set(state.suspectedTotals.map((item) => item.index));
+  const findings = [];
+  // 编号重复: per ID field, its duplicate values' rows; "就是整行重复的…" when they are all duplicate rows.
+  const duplicateRowSet = new Set((state.duplicateRowGroups || []).flat());
+  state.idDuplicates.filter((item) => !item.mostlyRepeated && item.duplicateValueCount > 0).forEach((item) => {
+    const sorted = state.idDuplicateRowIndexes.get(item.field) || [];
+    findings.push({
+      kind: "idDuplicate",
+      field: item.field,
+      values: item.duplicateValueCount,
+      duplicateRows: sorted.length > 0 && sorted.every((index) => duplicateRowSet.has(index)),
+      ...checkupLines(sorted, CHECKUP_FINDING_LINE_LIMIT),
+      excluded: checkupExcludedOf(sorted, excluded)
+    });
+  });
+  // 整列为空 and 空值 (the blanks of the other columns), as the quality page counts them.
+  const emptyFields = state.profiles.filter((profile) => profile.typeKey !== "ignore" && rows.length > 0 && profile.missingCount === rows.length).map((profile) => profile.field);
+  const blankProfiles = state.profiles.filter((profile) => profile.missingCount > 0 && !emptyFields.includes(profile.field));
+  const blankCount = blankProfiles.reduce((sum, profile) => sum + profile.missingCount, 0);
+  if (emptyFields.length) findings.push({ kind: "emptyColumns", fields: emptyFields, rows: rows.length, blanksBelow: blankCount > 0 });
+  if (blankCount) {
+    // On suspected total rows only? Then they are named; otherwise the two columns with the most.
+    const blankRowsOf = (indexes) => {
+      let cells = 0;
+      const withBlanks = [];
+      indexes.forEach((index) => {
+        const count = blankProfiles.filter((profile) => isMissingOrConfirmed(rows[index][profile.field], profile.confirmedKeys)).length;
+        cells += count;
+        if (count) withBlanks.push(index);
+      });
+      return { cells, withBlanks };
+    };
+    const onTotals = blankRowsOf([...totalSet]);
+    const onExcluded = blankRowsOf([...excluded]);
+    const top = blankProfiles.map((profile) => ({ field: profile.field, count: profile.missingCount })).sort((a, b) => b.count - a.count).slice(0, 2);
+    findings.push({
+      kind: "blanks",
+      count: blankCount,
+      totalLines: onTotals.cells === blankCount ? onTotals.withBlanks.sort((a, b) => a - b).map(checkupLineOf).filter((line) => line !== null) : null,
+      top,
+      excluded: onExcluded.cells ? { all: onExcluded.cells === blankCount, count: onExcluded.withBlanks.length, ...checkupLines(onExcluded.withBlanks.sort((a, b) => a - b), CHECKUP_FINDING_LINE_LIMIT) } : null
+    });
+  }
+  // “无 / -” (the second tier of placeholder spellings, not treated as blank, columns not ignored).
+  const maybe = state.placeholders.filter((entry) => entry.tier !== "common" && !entry.confirmed && !entry.fieldIgnored);
+  if (maybe.length) {
+    const total = maybe.reduce((sum, entry) => sum + entry.count, 0);
+    const out = [];
+    let outCells = 0;
+    excluded.forEach((index) => {
+      const count = maybe.filter((entry) => placeholderKey(rows[index][entry.field]) === entry.key).length;
+      outCells += count;
+      if (count) out.push(index);
+    });
+    findings.push({
+      kind: "maybe",
+      entries: maybe.map((entry) => ({ field: entry.field, key: entry.key, count: entry.count })),
+      excluded: outCells ? { all: outCells === total, count: out.length, ...checkupLines(out.sort((a, b) => a - b), CHECKUP_FINDING_LINE_LIMIT) } : null
+    });
+  }
+  // 偏大或偏小: the quality page's statistics, read as listOutlierRows() reads them.
+  const outlierParts = [];
+  const outlierRows = [];
+  let high = 0;
+  let low = 0;
+  getQualityNumericStats().filter((stat) => stat.outlierCount > 0).forEach((stat) => {
+    const profile = getFieldProfile(stat.field);
+    if (!profile) return;
+    const found = checkupOutlierRows(profile, stat, state.formatScans);
+    high += found.high;
+    low += found.low;
+    found.indexes.forEach((index) => outlierRows.push(index));
+    outlierParts.push({ field: stat.field, count: stat.outlierCount });
+  });
+  if (outlierParts.length) {
+    const unique = [...new Set(outlierRows)];
+    findings.push({
+      kind: "outliers",
+      parts: outlierParts,
+      direction: low === 0 ? "high" : high === 0 ? "low" : "both",
+      totalRows: unique.every((index) => totalSet.has(index)) ? unique.length : 0,
+      excluded: checkupExcludedOf(unique, excluded)
+    });
+  }
+  // 写着合计但对不上 (R7): the labelled rows of the last check that are not suspected totals.
+  const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
+  const unmatched = checked ? (state.suspectedTotalLabelIndexes || []).filter((index) => !totalSet.has(index)).sort((a, b) => a - b) : [];
+  if (unmatched.length) {
+    findings.push({ kind: "labelMismatch", count: unmatched.length, ...checkupLines(unmatched, CHECKUP_FINDING_LINE_LIMIT), excluded: checkupExcludedOf(unmatched, excluded) });
+  }
+  if (state.constantFields.length) {
+    findings.push({ kind: "constant", fields: state.constantFields.map((item) => ({ field: item.field, value: item.value, missingCount: item.missingCount })) });
+  }
+  if (state.numericLooking.length) {
+    findings.push({ kind: "numericLooking", items: state.numericLooking.map((item) => ({ field: item.field, valueCount: item.valueCount, numericCount: item.numericCount })) });
+  }
+  const conflicts = buildNumberConversionSummary(state.profiles).filter((item) => item.conflictUnits.length);
+  if (conflicts.length) findings.push({ kind: "unitConflict", items: conflicts.map((item) => ({ field: item.field, units: item.conflictUnits.map((unit) => unit.unit) })) });
+  return findings;
+}
+
+// 查过的项目 (R21), only when nothing needs attention: the counted rows left out, the number
+// columns and the date columns with their one writing (the scans the date styles keep).
+function buildCheckupCheckedData(summary) {
+  if (!summary || summary.rowCount) return null;
+  const active = state.profiles.filter((profile) => profile.typeKey !== "ignore");
+  return {
+    excluded: countExcludedRows(),
+    numeric: active.filter((profile) => profile.typeKey === "numeric").length,
+    dates: active.filter((profile) => profile.typeKey === "date").map((profile) => ({
+      field: profile.field,
+      sample: state.formatScans.dateStyles.get(profile.field)?.[0]?.sample ?? displayValue(profile.sampleValues?.[0] ?? "")
+    }))
+  };
+}
+
+// Where each finding goes on the quality page: the element its subsection holds.
+const CHECKUP_FINDING_TARGETS = Object.freeze({
+  idDuplicate: "idDuplicateDetails", emptyColumns: "qualityTable", blanks: "qualityTable", maybe: "placeholderDetails",
+  outliers: "outlierTable", labelMismatch: "suspectedTotalDetails", constant: "constantFieldDetails",
+  numericLooking: "numericLookingDetails", unitConflict: "numberConversionDetails"
+});
+
+function renderCheckupOthers(summary) {
+  const findings = summary ? state.checkupOthers || [] : [];
+  dom.checkupOthers.classList.toggle("hidden", !findings.length);
+  // D6: with nothing to fix there are no rows above to compare with.
+  dom.checkupOthersNote.textContent = findings.length && summary.rowCount ? formatCheckupOthersNote(summary.rowCount) : "";
+  dom.checkupOthersList.innerHTML = findings.map((finding, position) => {
+    const { title, note } = CHECKUP_FINDING_WORDS[finding.kind](finding);
+    return `<button type="button" class="checkup-finding" data-checkup-finding="${position}"><b class="checkup-finding-title">${escapeHtml(title)}</b>`
+      + `<span class="checkup-finding-note">${escapeHtml(note)}</span>`
+      + `<span class="checkup-finding-tag">${escapeHtml(Lpick(CHECKUP_FINDING_TAGS[CHECKUP_FINDING_TAG_OF[finding.kind]]))}</span></button>`;
+  }).join("");
+}
+
+function renderCheckupChecked(summary) {
+  const data = summary && !summary.rowCount ? state.checkupChecked : null;
+  dom.checkupChecked.classList.toggle("hidden", !data);
+  dom.checkupOpenStats.classList.toggle("hidden", !data);
+  dom.checkupOpenCharts.classList.toggle("hidden", !data);
+  dom.checkupCheckedList.innerHTML = data ? formatCheckupCheckedItems(data).map(([title, note]) => (
+    `<li class="checkup-checked-item"><span class="checkup-check" aria-hidden="true"></span><b>${escapeHtml(title)}</b><span class="checkup-checked-note">${escapeHtml(note)}</span></li>`
+  )).join("") : "";
+}
+
+// A finding goes to its subsection of the quality page: scrolled to the top, its title focused.
+function handleCheckupFindingClick(event) {
+  const button = event.target.closest("button[data-checkup-finding]");
+  if (!button) return;
+  const finding = (state.checkupOthers || [])[Number(button.dataset.checkupFinding)];
+  if (!finding) return;
+  showModule("qualitySection");
+  let element = document.getElementById(CHECKUP_FINDING_TARGETS[finding.kind]);
+  let heading = null;
+  while (element && !heading) {
+    heading = element.querySelector?.(".subsection-title") || null;
+    if (!heading) element = element.parentElement;
+  }
+  if (!heading) return;
+  if (!heading.hasAttribute?.("tabindex")) heading.setAttribute("tabindex", "-1");
+  (element || heading).scrollIntoView?.({ block: "start" });
+  heading.focus({ preventScroll: true });
+}
+
+// ---- v3.4.0 commit 6: card actions, the toast and 已处理 (G) ----
+// Facts of rows left out of one kind, for the toast and 已处理: { count, lines, more } (the first
+// five file rows), and for duplicate rows the groups they come from and, with one group, its kept row.
+function checkupExclusionFacts(kind, indexes) {
+  const sorted = [...indexes].sort((a, b) => a - b);
+  const facts = { count: sorted.length, ...checkupLines(sorted, CHECKUP_FINDING_LINE_LIMIT), groups: 0, kept: null };
+  if (kind === "duplicateRows") {
+    const out = new Set(sorted);
+    const groups = (state.duplicateRowGroups || []).filter((group) => group.some((index) => out.has(index)));
+    facts.groups = groups.length;
+    if (groups.length === 1) facts.kept = checkupLineOf(groups[0][0]);
+  }
+  return facts;
+}
+
+// The rows of a kind left out now (as setRowExclusion() reads them).
+function getExcludedRowsOf(kind) {
+  return state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
+}
+
+// 已处理: the rows left out (per kind) and the cells treated as blank (every confirmed spelling: their
+// cells come from the kept placeholder scans, one field and key after another), or null when nothing
+// is. Made with the checkup counts, so a filter or a language switch reads no row.
+function buildCheckupHandledData() {
+  const data = { suspectedTotal: null, duplicateRows: null, placeholder: null };
+  ["suspectedTotal", "duplicateRows"].forEach((kind) => {
+    const indexes = getExcludedRowsOf(kind);
+    if (indexes.length) data[kind] = checkupExclusionFacts(kind, indexes);
+  });
+  const confirmed = state.placeholders.filter((entry) => entry.confirmed);
+  if (confirmed.length) {
+    // Each spelling once, by its first row (ties: the order of the quality page's list).
+    const firsts = new Map();
+    confirmed.forEach((entry) => {
+      const cells = checkupPlaceholderCells(entry.field, state.formatScans);
+      const indexes = cells.indexes.filter((index, position) => cells.keys[position] === entry.key);
+      const known = firsts.get(entry.key);
+      if (known) known.indexes.push(...indexes);
+      else firsts.set(entry.key, { key: entry.key, indexes });
+    });
+    const keys = [...firsts.values()].map((item) => ({ key: item.key, indexes: item.indexes.sort((a, b) => a - b) }))
+      .sort((a, b) => (a.indexes[0] ?? Infinity) - (b.indexes[0] ?? Infinity));
+    data.placeholder = {
+      count: confirmed.reduce((sum, entry) => sum + entry.count, 0),
+      keys: keys.slice(0, 3).map((item) => ({ key: item.key, ...checkupLines(item.indexes, 3) })),
+      moreKeys: keys.length > 3
+    };
+  }
+  return data.suspectedTotal || data.duplicateRows || data.placeholder ? data : null;
+}
+
+function renderCheckupHandled(summary) {
+  const items = summary && state.checkupHandled ? formatCheckupHandledItems(state.checkupHandled) : [];
+  dom.checkupHandledSection.classList.toggle("hidden", !items.length);
+  dom.checkupHandled.innerHTML = items.map((item) => {
+    const label = item.kind === "placeholder" ? formatCheckupTreatUndoLabel(state.checkupHandled.placeholder.count) : exclusionUndoLabel(item.kind);
+    return `<li class="checkup-handled-item"><span class="checkup-check" aria-hidden="true"></span><span class="checkup-handled-text"><b>${escapeHtml(item.title)}</b><span class="checkup-handled-note">${escapeHtml(item.note)}</span></span>`
+      + `<button type="button" class="secondary-button checkup-handled-undo" data-checkup-undo="${item.kind}" aria-label="${escapeHtml(label)}">${escapeHtml(L("撤销", "Undo"))}</button></li>`;
+  }).join("");
+}
+
+// The toast (G3): only the last first-screen operation, with 撤销 when it changed something (undo is
+// the operation that takes it back). role="status" on its text; the focus stays where it was (R16).
+// A language switch writes it again (a one-off message). Empty: it folds away.
+function writeCheckupToast(message, tone = "", undo = null) {
+  writeOneOffMessage(dom.checkupToastText, "checkup-toast-text", message, tone);
+  const shown = Boolean(dom.checkupToastText.textContent);
+  state.checkupToast = shown && undo ? { undo } : null;
+  dom.checkupToast.classList.toggle("is-empty", !shown);
+  dom.checkupToast.dataset.tone = shown ? tone : "";
+  dom.checkupToastUndo.classList.toggle("hidden", !state.checkupToast);
+}
+
+// A new import, another worksheet or another module: the toast goes; 已处理 stays (it is state).
+function clearCheckupToast() {
+  writeCheckupToast("");
+}
+
+function undoCheckupToast() {
+  const toast = state.checkupToast;
+  if (toast) toast.undo();
+}
+
+// 不计入分析 / 撤销 from the first screen: setRowExclusion() with the toast for its refusal.
+function setCheckupExclusion(kind, on) {
+  const before = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  const leftOutBefore = getExcludedRowsOf(kind);
+  const refuse = (message, tone) => writeCheckupToast(message, tone);
+  if (!setRowExclusion(kind, on, refuse)) return false;
+  const facts = checkupExclusionFacts(kind, on ? getExcludedRowsOf(kind) : leftOutBefore);
+  const after = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  writeCheckupToast(() => `${formatCheckupExclusionToast(kind, facts, on)}${L("", " ")}${formatCheckupRowsChange(before, after)}`, "success", () => setCheckupExclusion(kind, !on));
+  return true;
+}
+
+// Confirmed placeholder keys per field, copied.
+function copyPlaceholderConfirmations() {
+  return Object.fromEntries(Object.entries(state.placeholderConfirmations).map(([field, keys]) => [field, [...keys]]));
+}
+
+// The cells treated as blank now (every confirmed spelling).
+function countTreatedCells() {
+  return state.placeholders.filter((entry) => entry.confirmed).reduce((sum, entry) => sum + entry.count, 0);
+}
+
+// The confirmations become target (field -> keys) from the first screen: updatePlaceholderConfirmations()
+// with the toast, no focus moved. on: cells were treated as blank (count of them), or no longer.
+// The toast's 撤销 sets the confirmations back. The quality page's message stays as it was.
+function setCheckupConfirmations(target, count, on, confirm = null) {
+  const before = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  const previous = copyPlaceholderConfirmations();
+  const message = () => `${formatCheckupTreatToast(count, on)}${L("", " ")}${formatCheckupRowsChange(before, state.checkupSummary ? state.checkupSummary.rowCount : 0)}`;
+  const setMessage = (text, tone) => writeCheckupToast(text, tone, tone === "success" ? () => setCheckupConfirmations(previous, count, !on) : null);
+  if (confirm) return confirm({ message, setMessage, focus: false });
+  const keysByField = Object.create(null);
+  new Set([...Object.keys(previous), ...Object.keys(target)]).forEach((field) => {
+    keysByField[field] = target[field] ? [...target[field]] : [];
+  });
+  return updatePlaceholderConfirmations(keysByField, message, { setMessage, focus: false });
+}
+
+// 按空值处理（N 处） on the card: the quality page's confirm-all, with the toast.
+function treatFromCheckup() {
+  const count = getPendingCommonPlaceholders().reduce((sum, entry) => sum + entry.count, 0);
+  return setCheckupConfirmations(null, count, true, (options) => confirmAllCommonPlaceholders(options));
+}
+
+// 导出体检报告: refused while drafts wait, with the refusal on the first screen (report.js stays as
+// it is, so the check is made here before calling it).
+function exportCheckupReport() {
+  if (state.rows.length && hasFieldConfigDraftChanges()) {
+    writeCheckupToast(() => Lpick(CHECKUP_REPORT_DRAFT_REFUSAL), "warning");
+    return;
+  }
+  exportHtmlReport();
+}
+
+// 已处理's 撤销 (bound in script.js).
+function handleCheckupHandledClick(event) {
+  const button = event.target.closest("button[data-checkup-undo]");
+  if (!button) return;
+  const kind = button.dataset.checkupUndo;
+  if (kind === "placeholder") setCheckupConfirmations({}, countTreatedCells(), false);
+  else setCheckupExclusion(kind, false);
+}
+
+// 导出写法统一的表 (G6): the export module, then its check; when the gate refuses, the gate's own
+// sentence (#standardizedExportGate, written by updateExportButtons()) takes the focus, as the check
+// button is disabled then.
+function openStandardizedExportFromCheckup() {
+  showModule("exportSection");
+  checkStandardizedExport();
+  if (!canCheckStandardizedExport()) {
+    dom.standardizedExportGate.setAttribute("tabindex", "-1");
+    dom.standardizedExportGate.focus();
+  }
+}
+
+// Clicks on the checkup (script.js binds the bar and the cards): a coloured segment scrolls to its
+// card (the dark one to the first card with rows of several kinds); a card's action calls what the
+// quality page and the export module call, with the toast and the refusals on the first screen.
+function handleCheckupClick(event) {
+  const segment = event.target.closest(".checkup-segment");
+  if (segment) {
+    const kind = segment.dataset.kind;
+    const summary = state.checkupSummary;
+    if (!summary || kind === "clean") return;
+    const target = kind === "multi" ? summary.kinds.find((item) => item.otherKindRows > 0)?.kind : kind;
+    const card = target && document.getElementById(`checkupCard-${target}`);
+    if (card) card.scrollIntoView({ block: "start" });
+    return;
+  }
+  const button = event.target.closest("button[data-checkup-action]");
+  if (!button || !state.checkupSummary) return;
+  const card = buildCheckupCards().find((item) => item.kind === button.dataset.checkupKind);
+  if (!card) return;
+  switch (card.action.type) {
+    case "view":
+      showModule("qualitySection");
+      if (!openProblemView(card.action.category)) return;
+      state.problemViewOpener = null;
+      dom.problemRowsSection.scrollIntoView({ block: "start" });
+      dom.problemRowsTitle.focus({ preventScroll: true });
+      break;
+    case "exclude":
+      setCheckupExclusion("duplicateRows", true);
+      break;
+    case "treat":
+      treatFromCheckup();
+      break;
+    case "standardize":
+      openStandardizedExportFromCheckup();
+      break;
+    default:
+      break;
+  }
 }
 
 // v3.0.0: a quality subsection's note shows its first line; 展开 / 收起 shows the rest. The text
@@ -1488,7 +2341,9 @@ function undoPlaceholderConfirmation(field, key) {
   }));
 }
 
-function confirmAllCommonPlaceholders() {
+// options (v3.4.0, the first screen): message replaces the quality page's, and setMessage and focus
+// go to updatePlaceholderConfirmations().
+function confirmAllCommonPlaceholders(options = {}) {
   const entries = getPendingCommonPlaceholders();
   const keysByField = Object.create(null);
   entries.forEach((entry) => {
@@ -1496,6 +2351,7 @@ function confirmAllCommonPlaceholders() {
     keysByField[entry.field].push(entry.key);
   });
   const typesBefore = Object.fromEntries(entries.map((entry) => [entry.field, getFieldProfile(entry.field).typeKey]));
+  if (options.message) return updatePlaceholderConfirmations(keysByField, options.message, options);
   return updatePlaceholderConfirmations(keysByField, () => {
     // Fields whose type changed first, as the confirm-all note names them first.
     const changed = (entry) => getFieldProfile(entry.field).typeKey !== typesBefore[entry.field];
@@ -1509,10 +2365,13 @@ function confirmAllCommonPlaceholders() {
 // The fourth refresh path. keysByField replaces the confirmed keys of each listed
 // field; refused while the field configuration has unapplied drafts. message is a text, or
 // a function that writes it once the analysis is rebuilt (v3.1.0: it compares the counts).
-function updatePlaceholderConfirmations(keysByField, message) {
+// v3.4.0 R9: setMessage writes the refusal and the outcome (#placeholderMessage by default, the
+// first screen's toast when the checkup calls), and focus says whether #placeholderMessage takes the
+// focus (not from the first screen: it is in a hidden module).
+function updatePlaceholderConfirmations(keysByField, message, { setMessage = setPlaceholderMessage, focus = true } = {}) {
   if (!state.rows.length) return false;
   if (!ensureFieldConfigurationApplied(DRAFT_ACTION_PLACEHOLDERS)) {
-    setPlaceholderMessage(() => L(
+    setMessage(() => L(
       "字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。",
       "Column settings have changes that are not applied. Click “Apply column settings” first, then handle values that may mean blank."
     ), "warning");
@@ -1528,8 +2387,8 @@ function updatePlaceholderConfirmations(keysByField, message) {
   state.placeholderConfirmations = confirmations;
   fields.forEach(rebuildConfirmedFieldProfile);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
-  rebuildAnalysisFromProfiles(message, setPlaceholderMessage);
-  dom.placeholderMessage.focus();
+  rebuildAnalysisFromProfiles(message, setMessage);
+  if (focus) dom.placeholderMessage.focus();
   return true;
 }
 
@@ -1940,6 +2799,8 @@ function updateGlobalFilterStatus() {
   const activeCount = [state.filters.category, state.filters.numeric, state.filters.date].filter(Boolean).length;
   dom.globalFilterSummary.textContent = formatAnalysisScope(activeCount, getAnalysisRows().length, getIncludedRows().length, countExcludedRows());
   dom.globalFilterStatus.classList.toggle("active", activeCount > 0);
+  // v3.4.0: on the checkup only while a filter applies or rows are left out.
+  dom.globalFilterStatus.classList.toggle("hidden", activeCount === 0 && countExcludedRows() === 0);
   dom.globalClearFilters.classList.toggle("hidden", activeCount === 0);
   // v3.0.0: the same sentence by the statistics, chart and custom-analysis titles (their
   // elements carry no id) and in the sidebar.
@@ -1990,12 +2851,14 @@ function refreshFilteredAnalysis() {
 // applied before (v3.1.0).
 function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置已更新。", "Column settings updated."), setMessage = setFieldConfigMessage) {
   const hadFilters = hasActiveFilters();
-  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations);
+  state.idDuplicateRowIndexes = new Map();
+  state.idDuplicates = buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations, state.idDuplicateRowIndexes);
   state.placeholders = buildPlaceholderSummary(state.rows, state.fields, state.profiles, state.placeholderConfirmations, getSourceRowNumber);
   state.numericLooking = buildNumericLookingSummary(state.profiles);
   const totalCheck = checkSuspectedTotals(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows);
   state.suspectedTotals = totalCheck.totals;
   state.suspectedTotalLabelCount = totalCheck.labelRowCount;
+  state.suspectedTotalLabelIndexes = totalCheck.labelIndexes;
   const exclusionChanges = intersectExcludedTotals();
   refreshFormatConsistency();
   clearStandardizedExport();
@@ -2009,6 +2872,7 @@ function rebuildAnalysisFromProfiles(fieldConfigMessage = () => L("字段配置�
   state.qualityNumericStats = buildNumericStats(state.rows);
   state.numericStats = getIncludedRows() === state.rows ? state.qualityNumericStats : buildNumericStats(getIncludedRows());
   state.categoryStats = buildCategoryStats(getAnalysisRows());
+  refreshCheckupSummary();
   state.previewPage = 1;
   renderOverview();
   renderPreview();
@@ -2073,11 +2937,13 @@ function listExclusionCandidates(kind) {
 
 // The fifth trigger ("不计入分析" / "撤销"): the filter path, never the rebuild. Records the rows
 // marked now; the filters and the custom analysis stay. Refused while drafts wait. Returns
-// whether anything changed; state.lastExclusion says what for the messages.
-function setRowExclusion(kind, on) {
+// whether anything changed; state.lastExclusion says what for the messages. v3.4.0 R9: setMessage
+// (message, tone) writes the refusal; the quality page's section by default, the first screen's
+// toast when the checkup calls (as rebuildAnalysisFromProfiles() takes its setMessage).
+function setRowExclusion(kind, on, setMessage = (message, tone) => setExclusionMessage(kind, message, tone)) {
   if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
   if (hasFieldConfigDraftChanges()) {
-    setExclusionMessage(kind, () => Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
+    setMessage(() => Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
     return false;
   }
   const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
@@ -2105,6 +2971,7 @@ function setRowExclusion(kind, on) {
 
 // The applied filters again from the new counted rows, the filter panel, then the analysis.
 function refreshAfterExclusion() {
+  refreshCheckupSummary();
   const included = getIncludedRows();
   state.filteredRows = hasActiveFilters() ? filterRowsByConfig(included, state.filters) : included.slice();
   state.filterSourceRows = included;
@@ -2328,6 +3195,18 @@ function getSuspectedTotalExtras() {
 }
 
 function renderSuspectedTotalDetails() {
+  // v3.4.0 (R7): no row adds up, but labelled rows were checked against number columns: the section
+  // shows only the existing 另有 N 行 sentence (N = the labelled rows of the last check), no button.
+  if (!state.suspectedTotals.length) {
+    const checked = state.profiles.some((profile) => profile.typeKey === "numeric");
+    const note = checked ? formatUnmatchedTotalLabels(state.suspectedTotalLabelIndexes.length, 0, true) : "";
+    dom.suspectedTotalSection.classList.remove("is-excluded");
+    dom.suspectedTotalExcludedNote.classList.add("hidden");
+    dom.suspectedTotalExcludedNote.textContent = "";
+    dom.suspectedTotalSection.classList.toggle("hidden", !note);
+    dom.suspectedTotalDetails.innerHTML = note ? `<p class="row-note-footer">${escapeHtml(note)}</p>` : "";
+    return;
+  }
   const overflow = formatSuspectedTotalOverflow(state.suspectedTotals.length);
   const button = problemViewButton({ kind: "suspectedTotal" }, Lpick(VIEW_LABEL));
   const excludedCount = state.exclusionSourceRows === state.rows ? state.excludedRows.suspectedTotal.length : 0;
@@ -2348,7 +3227,7 @@ function renderSuspectedTotalDetails() {
 function exclusionToggleButton(kind, excluded) {
   const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
   const ariaLabel = excluded
-    ? L(`撤销：让${label}重新计入分析`, `Undo: count the ${label} in the analysis again`)
+    ? exclusionUndoLabel(kind)
     : L(`把${label}设为不计入分析`, `Exclude the ${label} from analysis`);
   return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? L("撤销", "Undo") : L("不计入分析", "Exclude from analysis")}</button>`;
 }
@@ -3182,13 +4061,23 @@ function resetAnalysisState() {
   state.qualityNumericStats = [];
   state.categoryStats = [];
   state.duplicateRows = 0;
+  state.duplicateRowGroups = [];
+  state.checkupSummary = null;
+  state.checkupCards = null;
+  state.checkupOthers = null;
+  state.checkupChecked = null;
+  state.checkupHandled = null;
+  // A new import or another worksheet: the toast goes (it also clears state.checkupToast).
+  clearCheckupToast();
   state.idDuplicates = [];
+  state.idDuplicateRowIndexes = new Map();
   state.placeholderConfirmations = Object.create(null);
   state.placeholders = [];
   state.numericLooking = [];
   state.totalLabelRows = [];
   state.suspectedTotals = [];
   state.suspectedTotalLabelCount = 0;
+  state.suspectedTotalLabelIndexes = [];
   state.formatScans = createFormatScans();
   state.dateStyles = [];
   state.constantFields = [];
@@ -3250,6 +4139,8 @@ function resetAnalysisState() {
   writeLanguageText(dom.returnToAnalysis, "");
   writeLanguageText(dom.reportTitle, () => L("数据分析工作区", "Analysis workspace"));
   dom.overviewCards.innerHTML = "";
+  dom.previewSize.textContent = "";
+  renderCheckup();
   setChartInsight(dom.categoryChartInsight, "");
   setChartInsight(dom.dateChartInsight, "");
   dom.previewTable.innerHTML = "";
@@ -3384,7 +4275,8 @@ function buildImportStatus({ sourceDisplayName, warningCount, affectedRows, head
     message,
     tone: warningCount ? "warning" : "success",
     hasNote: notes.length > 0,
-    summary: notes.length ? formatStatusNoteSummary(sourceDisplayName, notes.length) : ""
+    // v3.4.0: a reading warning is one note more, so N is what “看说明” opens.
+    summary: notes.length || warningCount ? formatStatusNoteSummary(sourceDisplayName, notes.length + (warningCount ? 1 : 0)) : ""
   };
 }
 
@@ -3392,6 +4284,9 @@ function showImportStatus(status) {
   const { tone, hasNote, summary } = buildImportStatus(status);
   setStatus(() => buildImportStatus(status).message, tone, hasNote, () => buildImportStatus(status).summary);
   dom.statusNoteSummary.textContent = summary;
+  // v3.4.0: the import message starts folded to its summary, a warning too; #statusPanel keeps its
+  // text, classes and role (a screen reader still reads it).
+  if (summary) foldStatusNote();
 }
 
 // v3.2.0 commit 11: the status bar's message (and the folded summary of an import) as functions,
@@ -3420,7 +4315,8 @@ function setStatus(message, tone = "", hasNote = false, summary = null) {
   dom.statusPanel.setAttribute("role", tone === "error" ? "alert" : "status");
   dom.statusPanel.setAttribute("aria-busy", String(!tone));
   setImportBusy(!tone);
-  // Only a success with notes can fold (v3.0.0); every new message starts unfolded. The kind
+  // Only a success with notes can fold (v3.0.0); every new message starts unfolded, and
+  // showImportStatus() folds the import message (v3.4.0, a warning too). The kind
   // of message is marked on #statusNote: style.css keeps successes to the first module, while
   // warnings and errors (the report export's among them) show on every module.
   resetStatusNote();
@@ -3435,6 +4331,12 @@ function resetStatusNote() {
   dom.statusNote.classList.remove("can-collapse", "is-collapsed");
   dom.statusNoteToggle.setAttribute("aria-expanded", "true");
   dom.statusNoteToggle.textContent = L("收起", "Collapse");
+}
+
+function foldStatusNote() {
+  dom.statusNote.classList.add("can-collapse", "is-collapsed");
+  dom.statusNoteToggle.setAttribute("aria-expanded", "false");
+  dom.statusNoteToggle.textContent = L("看说明", "Show notes");
 }
 
 function toggleStatusNote() {

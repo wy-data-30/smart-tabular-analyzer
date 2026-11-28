@@ -1,2 +1,3 @@
 vendor/** -text
 tests/fixtures/stage3/** -text
+tests/fixtures/checkup/** -text

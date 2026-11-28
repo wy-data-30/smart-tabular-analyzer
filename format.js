@@ -80,7 +80,7 @@ const I18N_EN = Object.freeze({
   "brand.label": "Sheet Checkup home",
   "brand.name": "Sheet Checkup",
   "nav.label": "Analysis modules",
-  "nav.overview": "Overview",
+  "nav.overview": "Checkup",
   "nav.schema": "Columns",
   "nav.quality": "Quality",
   "nav.filter": "Filter",
@@ -142,7 +142,18 @@ const I18N_EN = Object.freeze({
   "scope.label": "In analysis: ",
   "scope.none": "No data loaded yet",
   "scope.clear": "Clear filters",
-  "overview.title": "Size and preview",
+  "overview.title": "Checkup",
+  "checkup.export": "Export checkup report",
+  "checkup.bar": "Rows that need attention, by kind",
+  "checkup.needs": "Need attention",
+  "checkup.rowNumbers": "Row numbers match the file, usually Excel too",
+  "checkup.openStats": "Open Stats",
+  "checkup.openCharts": "Open Charts",
+  "checkup.checked": "What was checked",
+  "checkup.others": "Also noticed",
+  "checkup.handled": "Handled",
+  "checkup.undo": "Undo",
+  "quality.countNote": "Most counts here are cells; “Need attention” in Checkup counts rows, each row once.",
   "preview.title": "Data preview",
   "preview.tableWrap": "Data preview table, scrolls sideways",
   "pager.first": "First",
@@ -806,6 +817,547 @@ function formatStatusNoteSummary(sourceName, count) {
   return L(`${sourceName} 已载入，有 ${formatInteger(count)} 条说明`, `${sourceName} loaded, ${enCount(count, "note", "notes")}`);
 }
 
+// ---- v3.4.0: the checkup (体检结果) ----
+// The names of the eight kinds, as the quality page and the problem rows name them.
+const CHECKUP_KIND_NAMES = Object.freeze({
+  suspectedTotal: Lp("疑似合计 / 小计行", "Possible total or subtotal rows"),
+  duplicateRows: Lp("整行重复", "Duplicate rows"),
+  formulaError: Lp("公式错误", "Formula errors"),
+  conversion: Lp("认不出的数字或日期", "Numbers or dates not recognized"),
+  placeholder: Lp("像是空值的写法", "Values that may mean blank"),
+  dateStyle: Lp("日期写法混用", "Mixed date formats"),
+  lookAlike: Lp("同一个值，写法不一样", "Same value, written differently"),
+  parseWarnings: Lp("读取时有疑问", "Reading issues"),
+  multi: Lp("同时有几类问题", "Several kinds of problems"),
+  clean: Lp("没有发现问题", "No problems found")
+});
+
+function formatCheckupRows(count) {
+  return L(`${formatInteger(count)} 行`, enCount(count, "row", "rows"));
+}
+
+// The big number's words: 行需要处理 / rows need attention (formatCheckupClean() when there are none).
+function formatCheckupTotalLabel(count) {
+  return L("行需要处理", count === 1 ? "row needs attention" : "rows need attention");
+}
+
+// One segment of the bar: 疑似合计 / 小计行 1 行.
+function formatCheckupSegment(kind, count) {
+  return `${Lpick(CHECKUP_KIND_NAMES[kind])} ${formatCheckupRows(count)}`;
+}
+
+// The legend under the bar: [label, rows, multi] per item.
+function formatCheckupLegend(summary) {
+  return [
+    ...(summary.rowCount ? [[L("需要处理", "Need attention"), summary.rowCount, false]] : []),
+    ...(summary.multiRows ? [[L("其中同时有几类问题", "Several kinds of problems"), summary.multiRows, true]] : []),
+    [Lpick(CHECKUP_KIND_NAMES.clean), summary.total - summary.rowCount, false]
+  ];
+}
+
+// v3.4.0 commit 4: the cards. Each card's words come from these functions; the figures and the
+// samples come from app.js (buildCheckupCards()).
+function formatCheckupOverlap(rowCount) {
+  return L(`同一行可能有几类问题，卡片上的行数相加会多于 ${formatInteger(rowCount)}`, `Some rows are in more than one card, so the cards add up to more than ${formatInteger(rowCount)}`);
+}
+
+function formatCheckupUnit(count) {
+  return L("行", count === 1 ? "row" : "rows");
+}
+
+const CHECKUP_AFFECTS_TAG = Lp("影响统计结果", "Changes the statistics");
+const CHECKUP_STANDARDIZE_ACTION = Lp("导出写法统一的表", "Export the standardized table");
+
+function formatCheckupOthers(count) {
+  return L(`其中 ${formatInteger(count)} 行还有别的问题`, count === 1 ? "1 of them also has other problems" : `${formatInteger(count)} of them also have other problems`);
+}
+
+// 第 12、19 行等 / rows 12, 19 and more; English without a capital (callers add one).
+function formatCheckupLines(lines, more) {
+  return L(
+    `第 ${lines.join("、")} 行${more ? "等" : ""}`,
+    `${lines.length === 1 && !more ? "row" : "rows"} ${lines.join(", ")}${more ? " and more" : ""}`
+  );
+}
+
+function capitalizeFirst(text) {
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+function formatCheckupTotalDetail(count) {
+  return count === 1
+    ? L("它被当成了一条普通数据，总和与平均值会偏大", "It counts as an ordinary row, so sums and averages come out too high")
+    : L(`这 ${formatInteger(count)} 行被当成了普通数据，总和与平均值会偏大`, `These ${formatInteger(count)} rows count as ordinary rows, so sums and averages come out too high`);
+}
+
+// One group: 这两行内容完全相同 / 这 3 行…; several: 12 组内容完全相同的行：第 2、22、42、46 行等.
+function formatCheckupDuplicateDetail(groupCount, groupSize, lines, more) {
+  if (groupCount === 1) {
+    return groupSize === 2
+      ? L("这两行内容完全相同", "These two rows are exactly the same")
+      : L(`这 ${formatInteger(groupSize)} 行内容完全相同`, `These ${formatInteger(groupSize)} rows are exactly the same`);
+  }
+  return L(`${formatInteger(groupCount)} 组内容完全相同的行：${formatCheckupLines(lines, more)}`, `${formatInteger(groupCount)} groups of identical rows: ${formatCheckupLines(lines, more)}`);
+}
+
+// “A”, “B” and “C”.
+function formatEnglishList(items) {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function formatCheckupFormulaDetail(fields, cellCount) {
+  return L(
+    `${fields.map((field) => `「${field}」`).join("")}里共 ${formatInteger(cellCount)} 格公式算出了错误，已按空值算，没有算进统计`,
+    `${enCount(cellCount, "cell", "cells")} in ${formatEnglishList(fields.map((field) => `“${field}”`))} ${cellCount === 1 ? "holds a formula error, so it counts as blank and is" : "hold formula errors, so they count as blank and are"} left out of the statistics`
+  );
+}
+
+// parts: [{ field, count, date, example }], the field with the most cells first.
+function formatCheckupConversionDetail(parts) {
+  const [first, ...rest] = parts;
+  const enRest = rest.length ? `; ${rest.map((part) => `${formatInteger(part.count)} more in “${part.field}”`).join(", ")}` : "";
+  return L(
+    `「${first.field}」有 ${formatInteger(first.count)} 格读不成${first.date ? "日期" : "数字"}，像“${first.example}”，没有算进统计${rest.length ? `；${rest.map((part) => `「${part.field}」还有 ${formatInteger(part.count)} 格`).join("、")}` : ""}`,
+    `${enCount(first.count, "cell", "cells")} in “${first.field}” cannot be read as ${first.count === 1 ? (first.date ? "a date" : "a number") : (first.date ? "dates" : "numbers")}, like “${first.example}”, so statistics leave ${first.count === 1 ? "it" : "them"} out${enRest}`
+  );
+}
+
+// keys: the pending common spellings, in row order; failing: null, or { lines, more, key, date } for
+// the cells that also fail their column's type.
+function formatCheckupPlaceholderDetail(keys, failing) {
+  const enKeys = keys.map((key) => (/[A-Za-z]/.test(key) ? key : `“${key}”`)).join(", ");
+  // A spelling of Latin letters needs a space before the Chinese that follows it (N/A 常用).
+  const zhSpace = /[A-Za-z0-9]$/.test(keys[keys.length - 1]) ? " " : "";
+  return L(
+    `${keys.map((key) => (/[A-Za-z]/.test(key) ? key : `「${key}」`)).join("、")}${zhSpace}常用来表示这一格是空的。${failing ? `${formatCheckupLines(failing.lines, failing.more)}的 ${failing.key} 现在认不出是${failing.date ? "日期" : "数字"}，确认后按空值算` : "确认后按空值算"}`,
+    `${enKeys} usually ${keys.length === 1 ? "means" : "mean"} the cell is blank. ${failing ? `${failing.key} in ${formatCheckupLines(failing.lines, failing.more)} cannot be read as a ${failing.date ? "date" : "number"} yet; once confirmed it counts as blank` : "Once confirmed, they count as blank"}`
+  );
+}
+
+// others: [{ field, count }] of further date columns.
+function formatCheckupDateDetail(lines, more, mainCount, mainSample, others) {
+  const enOthers = others.map((item) => `; “${item.field}” has ${formatInteger(item.count)} more`).join("");
+  return L(
+    `${formatCheckupLines(lines, more)}。其余 ${formatInteger(mainCount)} 行写成 ${mainSample} 这样${others.map((item) => `；「${item.field}」也有 ${formatInteger(item.count)} 行写法不一样`).join("")}`,
+    `${capitalizeFirst(formatCheckupLines(lines, more))}. The other ${enCount(mainCount, "row looks", "rows look")} like ${mainSample}${enOthers}`
+  );
+}
+
+// parts: [{ field, issue, example }]; issue one of case, compat, invisible, innerSpace,
+// edgeEnd, edgeStart, edgeBoth, invisibleOnly. moreFields: the look-alike columns not named.
+const CHECKUP_LOOK_ALIKE_ISSUES = Lp({
+  case: (field, example) => `「${field}」大小写不一（如「${example}」）`,
+  compat: (field, example) => `「${field}」全角半角混用（如「${example}」）`,
+  invisible: (field) => `「${field}」有看不见的字符`,
+  innerSpace: (field) => `「${field}」中间空格多少不一`,
+  edgeEnd: (field) => `「${field}」后面多了空格`,
+  edgeStart: (field) => `「${field}」前面多了空格`,
+  edgeBoth: (field) => `「${field}」前后多了空格`,
+  invisibleOnly: (field) => `「${field}」有只含看不见字符的格`,
+  join: "；",
+  more: (count) => `；还有 ${count} 列有类似情况`,
+  end: "，分组和 VLOOKUP 可能对不上"
+}, {
+  case: (field, example) => `“${field}” mixes upper and lower case, like “${example}”`,
+  compat: (field, example) => `“${field}” mixes full-width and half-width forms, like “${example}”`,
+  invisible: (field) => `“${field}” has invisible characters`,
+  innerSpace: (field) => `“${field}” has spaces inside that differ`,
+  edgeEnd: (field) => `“${field}” has extra spaces at the end`,
+  edgeStart: (field) => `“${field}” has extra spaces at the start`,
+  edgeBoth: (field) => `“${field}” has extra spaces`,
+  invisibleOnly: (field) => `“${field}” has cells of only invisible characters`,
+  join: "; ",
+  more: (count) => `; ${count === 1 ? "1 more column has similar issues" : `${count} more columns have similar issues`}`,
+  end: ", so groups and VLOOKUP may not match"
+});
+
+function formatCheckupLookAlikeDetail(parts, moreFields) {
+  const words = Lpick(CHECKUP_LOOK_ALIKE_ISSUES);
+  return `${parts.map((part) => words[part.issue](part.field, part.example)).join(words.join)}${moreFields ? words.more(moreFields) : ""}${words.end}`;
+}
+
+// headerCount: the header's columns when every issue is a row with too few columns, else null.
+function formatCheckupReadingDetail(rowCount, headerCount) {
+  if (headerCount === null) {
+    return L(`这 ${formatInteger(rowCount)} 行读取时有疑问，查看时每一行都有说明`, `${enCount(rowCount, "row has", "rows have")} reading issues; each has its note when you view it`);
+  }
+  return rowCount === 1
+    ? L(`这一行的列数少于表头（表头有 ${formatInteger(headerCount)} 列），缺少的格按空值处理`, `This row has fewer columns than the header (${formatInteger(headerCount)}); the missing cells count as blank`)
+    : L(`这 ${formatInteger(rowCount)} 行的列数少于表头（表头有 ${formatInteger(headerCount)} 列），缺少的格按空值处理`, `These ${formatInteger(rowCount)} rows have fewer columns than the header (${formatInteger(headerCount)}); the missing cells count as blank`);
+}
+
+function formatCheckupColumns(count) {
+  return L(`只有 ${formatInteger(count)} 列`, `${enCount(count, "column", "columns")} only`);
+}
+
+function formatCheckupViewRows(count) {
+  return count === 1 ? L("查看这一行", "View this row") : L(`查看这 ${formatInteger(count)} 行`, `View these ${formatInteger(count)} rows`);
+}
+
+// 查看 (R12): view = { mode: "rows", count } | { mode: "field", field } | { mode: "fields", field, count }
+// | { mode: "generic" }; see checkupViewAction() (app.js).
+function formatCheckupView(view) {
+  switch (view.mode) {
+    case "rows": return formatCheckupViewRows(view.count);
+    case "field": return L(`查看「${view.field}」`, `View “${view.field}”`);
+    case "fields": return L(`查看「${view.field}」等 ${formatInteger(view.count)} 列`, `View ${formatInteger(view.count)} columns, starting with “${view.field}”`);
+    default: return L("查看这些行", "View these rows");
+  }
+}
+
+function formatCheckupExclude(count) {
+  return L(`多出来的 ${formatInteger(count)} 行不计入分析`, `Exclude the ${formatInteger(count)} extra ${count === 1 ? "row" : "rows"}`);
+}
+
+function formatCheckupTreat(count) {
+  return L(`按空值处理（${formatInteger(count)} 处）`, `Treat as blank (${formatInteger(count)})`);
+}
+
+// Nothing needs attention (board orig-04's words).
+function formatCheckupClean(rowCount) {
+  return {
+    title: L("没有发现需要处理的问题", "No problems need attention"),
+    note: L(`${formatInteger(rowCount)} 行都检查过`, `${enCount(rowCount, "row", "rows")} checked`)
+  };
+}
+
+// ---- v3.4.0 commit 5: 其他发现 and 查过的项目 ----
+// The tag on the right of a finding.
+const CHECKUP_FINDING_TAGS = Object.freeze({
+  ids: Lp("编号重复", "Duplicate IDs"),
+  blanks: Lp("空值", "Blanks"),
+  check: Lp("值得核对", "Worth checking")
+});
+
+function formatCheckupOthersNote(rowCount) {
+  return L(`不计入上面的 ${formatInteger(rowCount)} 行`, `Not counted in the ${enCount(rowCount, "row", "rows")} above`);
+}
+
+// Only used in the Chinese argument of L() (in English it is never shown).
+function formatChineseFields(fields) {
+  return L(fields.map((field) => `「${field}」`).join(""), "");
+}
+
+function formatEnglishFields(fields) {
+  return formatEnglishList(fields.map((field) => `“${field}”`));
+}
+
+// The half sentence of C3: a finding whose rows are all, or partly, left out of the analysis.
+// excluded: { all, count, lines, more }.
+function formatCheckupExcludedPart(excluded) {
+  if (excluded.all) {
+    return excluded.count === 1
+      ? L("这一行已不计入分析", "this row is left out of the analysis")
+      : L("这些行已不计入分析", "these rows are left out of the analysis");
+  }
+  const lines = excluded.lines.map(formatInteger);
+  return L(
+    `其中${formatCheckupLines(lines, excluded.more)}已不计入分析`,
+    `${formatCheckupLines(lines, excluded.more)} ${lines.length === 1 && !excluded.more ? "is" : "are"} left out of the analysis`
+  );
+}
+
+function withCheckupExcluded(note, excluded) {
+  return excluded ? L(`${note}；${formatCheckupExcludedPart(excluded)}`, `${note}; ${formatCheckupExcludedPart(excluded)}`) : note;
+}
+
+// 偏大 / 偏小 / 偏大或偏小 (R15: no 明显).
+const CHECKUP_OUTLIER_WORDS = Lp({ high: "偏大的值", low: "偏小的值", both: "偏大或偏小的值" }, { high: "high", low: "low", both: "high or low" });
+
+// Each finding: { title, note } in the current language from its figures (app.js).
+const CHECKUP_FINDING_WORDS = Object.freeze({
+  idDuplicate(item) {
+    const lines = formatCheckupLines(item.lines.map(formatInteger), item.more);
+    return {
+      title: L(`「${item.field}」有 ${formatInteger(item.values)} 个值重复出现`, item.values === 1 ? `1 value repeats in “${item.field}”` : `${formatInteger(item.values)} values repeat in “${item.field}”`),
+      note: withCheckupExcluded(item.duplicateRows ? L(`就是整行重复的${lines}`, `the duplicate ${lines}`) : L(`在${lines}`, `in ${lines}`), item.excluded)
+    };
+  },
+  emptyColumns(item) {
+    const one = item.fields.length === 1;
+    return {
+      title: L(`${formatChineseFields(item.fields)}整列为空`, `${formatEnglishFields(item.fields)} ${one ? "is" : "are"} blank in every row`),
+      note: L(
+        `${formatInteger(item.rows)} 行都没有填${item.blanksBelow ? `，下面的空值不算${one ? "它" : "这些列"}` : ""}`,
+        `${item.rows === 1 ? "the 1 row has no value" : `none of the ${formatInteger(item.rows)} rows has a value`}${item.blanksBelow ? "; not counted in the blanks below" : ""}`
+      )
+    };
+  },
+  blanks(item) {
+    let note;
+    if (item.totalLines) {
+      const lines = formatCheckupLines(item.totalLines.map(formatInteger), false);
+      note = L(`都在${lines}疑似合计行上`, `all on the possible total ${lines}`);
+    } else if (item.top.length === 1) {
+      note = L(`都在「${item.top[0].field}」里`, `all in “${item.top[0].field}”`);
+    } else {
+      const [first, second] = item.top;
+      note = L(
+        `最多的是「${first.field}」${formatInteger(first.count)} 个，其次「${second.field}」${formatInteger(second.count)} 个`,
+        `most in “${first.field}” (${formatInteger(first.count)}), then “${second.field}” (${formatInteger(second.count)})`
+      );
+    }
+    return { title: L(`空值 ${formatInteger(item.count)} 个`, enCount(item.count, "blank cell", "blank cells")), note: withCheckupExcluded(note, item.excluded) };
+  },
+  maybe(item) {
+    const note = L("可能就是正常内容，也可能表示没有填", "may be real content, or may mean blank");
+    if (item.entries.length === 1) {
+      const [{ field, key, count }] = item.entries;
+      return {
+        title: L(`「${field}」里有 ${formatInteger(count)} 个「${key}」`, count === 1 ? `1 cell in “${field}” says “${key}”` : `${formatInteger(count)} cells in “${field}” say “${key}”`),
+        note: withCheckupExcluded(note, item.excluded)
+      };
+    }
+    const keys = [...new Set(item.entries.map((entry) => entry.key))];
+    const columns = new Set(item.entries.map((entry) => entry.field)).size;
+    const total = item.entries.reduce((sum, entry) => sum + entry.count, 0);
+    return {
+      title: L(
+        `${formatInteger(columns)} 列里有 ${formatInteger(total)} 个${keys.map((key) => `「${key}」`).join("")}这类写法`,
+        `${enCount(total, "cell", "cells")} in ${enCount(columns, "column", "columns")} say ${formatEnglishList(keys.map((key) => `“${key}”`))} or similar`
+      ),
+      note: withCheckupExcluded(note, item.excluded)
+    };
+  },
+  outliers(item) {
+    // The word in the current language (the other argument of L() is not shown).
+    const word = Lpick(CHECKUP_OUTLIER_WORDS)[item.direction];
+    const zhWord = word;
+    const enNoun = (count) => `unusually ${word} ${count === 1 ? "value" : "values"}`;
+    const counts = item.parts.map((part) => part.count);
+    let title;
+    if (item.parts.length === 1) {
+      title = L(`「${item.parts[0].field}」有 ${formatInteger(counts[0])} 个${zhWord}`, `${formatInteger(counts[0])} ${enNoun(counts[0])} in “${item.parts[0].field}”`);
+    } else if (counts.every((count) => count === counts[0])) {
+      const fields = item.parts.map((part) => part.field);
+      title = L(`${formatChineseFields(fields)}各有 ${formatInteger(counts[0])} 个${zhWord}`, `${formatInteger(counts[0])} ${enNoun(counts[0])} each in ${formatEnglishFields(fields)}`);
+    } else {
+      title = L(
+        `${item.parts.map((part) => `「${part.field}」${formatInteger(part.count)} 个`).join("、")}${zhWord}`,
+        `${capitalizeFirst(enNoun(2))}: ${item.parts.map((part) => `${formatInteger(part.count)} in “${part.field}”`).join(", ")}`
+      );
+    }
+    const note = item.totalRows
+      ? L("都在疑似合计行上，不一定是错误", item.totalRows === 1 ? "all on the possible total row, not necessarily wrong" : "all on possible total rows, not necessarily wrong")
+      : L("按四分位距规则找出，不一定是错误", "found with the IQR rule, not necessarily wrong");
+    return { title, note: withCheckupExcluded(note, item.excluded) };
+  },
+  labelMismatch(item) {
+    const lines = formatCheckupLines(item.lines.map(formatInteger), item.more);
+    const one = item.count === 1;
+    return {
+      title: L(`${lines}写着合计或小计`, `${capitalizeFirst(lines)} ${one ? "is labelled as a total" : "are labelled as totals"}`),
+      note: withCheckupExcluded(L("数字和上面的行对不上，按普通数据算", one ? "its numbers do not add up to the rows above, so it counts as data" : "their numbers do not add up to the rows above, so they count as data"), item.excluded)
+    };
+  },
+  constant(item) {
+    if (item.fields.length === 1) {
+      const [{ field, value, missingCount }] = item.fields;
+      return {
+        title: L(`「${field}」整列只有一个值「${formatVisibleText(value)}」`, `“${field}” has one value only, “${formatVisibleText(value)}”`),
+        note: missingCount
+          ? L(`另有 ${formatInteger(missingCount)} 行是空值`, `${enCount(missingCount, "more row is", "more rows are")} blank`)
+          : L("每一行都一样", "every row is the same")
+      };
+    }
+    const names = item.fields.slice(0, 3).map((entry) => entry.field);
+    const more = item.fields.length > 3;
+    return {
+      title: L(`${formatInteger(item.fields.length)} 列整列只有一个值`, `${formatInteger(item.fields.length)} columns have one value only`),
+      note: L(`${formatChineseFields(names)}${more ? "等" : ""}`, `${formatEnglishFields(names)}${more ? " and more" : ""}`)
+    };
+  },
+  numericLooking(item) {
+    if (item.items.length === 1) {
+      const [{ field, valueCount, numericCount }] = item.items;
+      return {
+        title: L(`「${field}」大多是数字，但按文本算`, `“${field}” is mostly numbers but counts as text`),
+        note: L(`${formatInteger(valueCount)} 个值里有 ${formatInteger(numericCount)} 个能读成数字`, `${formatInteger(numericCount)} of ${enCount(valueCount, "value", "values")} can be read as numbers`)
+      };
+    }
+    const names = item.items.slice(0, 3).map((entry) => entry.field);
+    const more = item.items.length > 3;
+    return {
+      title: L(`${formatInteger(item.items.length)} 列大多是数字，但按文本算`, `${formatInteger(item.items.length)} columns are mostly numbers but count as text`),
+      note: L(`${formatChineseFields(names)}${more ? "等" : ""}`, `${formatEnglishFields(names)}${more ? " and more" : ""}`)
+    };
+  },
+  unitConflict(item) {
+    if (item.items.length === 1) {
+      const [{ field, units }] = item.items;
+      return {
+        title: L(`「${field}」里有几种单位`, `“${field}” mixes units`),
+        note: L(`${units.join("、")}，没有按单位读取`, `${units.join(", ")}, so no unit is applied`)
+      };
+    }
+    const names = item.items.slice(0, 3).map((entry) => entry.field);
+    const more = item.items.length > 3;
+    return {
+      title: L(`${formatInteger(item.items.length)} 列里有几种单位`, `${formatInteger(item.items.length)} columns mix units`),
+      note: L(`${formatChineseFields(names)}${more ? "等" : ""}`, `${formatEnglishFields(names)}${more ? " and more" : ""}`)
+    };
+  }
+});
+
+// The tag of each kind of finding.
+const CHECKUP_FINDING_TAG_OF = Object.freeze({
+  idDuplicate: "ids", emptyColumns: "blanks", blanks: "blanks", maybe: "check", outliers: "check",
+  labelMismatch: "check", constant: "check", numericLooking: "check", unitConflict: "check"
+});
+
+// 查过的项目 (R21): [[title, note]] from { excluded, numeric, dates: [{ field, sample }] }.
+function formatCheckupCheckedItems(data) {
+  const items = [[
+    L("没有疑似合计行和整行重复，也没有公式错误", "No possible totals, duplicate rows or formula errors"),
+    L(
+      `每一行都和其他行比较过${data.excluded ? `，另有 ${formatInteger(data.excluded)} 行不计入分析` : ""}`,
+      `every row compared with the others${data.excluded ? (data.excluded === 1 ? "; 1 more row is left out of the analysis" : `; ${formatInteger(data.excluded)} more rows are left out of the analysis`) : ""}`
+    )
+  ]];
+  const dates = data.dates;
+  const dateNote = dates.length === 1
+    ? L(`「${dates[0].field}」全部是 ${dates[0].sample} 这种写法`, `“${dates[0].field}” is always like ${dates[0].sample}`)
+    : L(`${formatInteger(dates.length)} 个日期列各自只有一种写法`, `each of the ${formatInteger(dates.length)} date columns uses one format`);
+  if (data.numeric && dates.length) items.push([L("数字和日期都读得出，日期写法一致", "Numbers and dates all read, one date format per column"), dateNote]);
+  else if (data.numeric) items.push([L("数字都读得出", "Numbers all read"), L(`${formatInteger(data.numeric)} 个数值列`, enCount(data.numeric, "number column", "number columns"))]);
+  else if (dates.length) items.push([L("日期都读得出，写法一致", "Dates all read, one format per column"), dateNote]);
+  items.push([
+    // R21 item 3, reworded by the user: the card name 像是空值的写法 instead of N/A, NULL (basic:2555).
+    L("没有要确认的像是空值的写法，也没有写法不一样的值", "No values that may mean blank to confirm, and no values written differently"),
+    L("包括多余的空格、大小写和全角半角的不同", "including extra spaces, upper and lower case, and full-width forms")
+  ]);
+  return items;
+}
+
+// ---- v3.4.0 commit 6: the toast and 已处理 (G) ----
+// Facts of rows left out (app.js checkupExclusionFacts()): { count, lines, more, groups, kept }; lines
+// are file rows (numbers, the first five), empty without row numbers; groups and kept (the kept
+// row's file row or null) for duplicate rows only. Rows are named when there are at most five.
+const checkupNamesRows = (facts) => facts.lines.length > 0 && !facts.more;
+
+function formatCheckupRowsChange(before, after) {
+  return L(`需要处理的行从 ${formatInteger(before)} 变成 ${formatInteger(after)}。`, `Rows that need attention went from ${formatInteger(before)} to ${formatInteger(after)}.`);
+}
+
+// The toast after rows were left out (on) or brought back.
+function formatCheckupExclusionToast(kind, facts, on) {
+  const lines = facts.lines.map(formatInteger);
+  const one = facts.count === 1;
+  if (kind === "suspectedTotal") {
+    if (!checkupNamesRows(facts)) {
+      const count = formatInteger(facts.count);
+      const rows = enCount(facts.count, "possible total row", "possible total rows");
+      return on
+        ? L(`${count} 行疑似合计行不再计入分析。`, `${rows} ${one ? "is" : "are"} now left out of the analysis.`)
+        : L(`${count} 行疑似合计行重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+    }
+    const rows = one ? `Row ${lines[0]} (a total)` : `Rows ${lines.join(", ")} (totals)`;
+    return on
+      ? L(`第 ${lines.join("、")} 行（合计）不再计入分析。`, `${rows} ${one ? "is" : "are"} now left out of the analysis.`)
+      : L(`第 ${lines.join("、")} 行（合计）重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+  }
+  if (facts.groups === 1 && checkupNamesRows(facts) && facts.kept !== null) {
+    const kept = formatInteger(facts.kept);
+    const enRows = one ? `Row ${lines[0]} (the repeated one)` : `Rows ${lines.join(", ")} (the repeated ones)`;
+    if (one) {
+      return on
+        ? L(`第 ${lines[0]} 行（重复的那一行）不再计入分析，第 ${kept} 行保留。`, `${enRows} is now left out of the analysis; row ${kept} stays.`)
+        : L(`第 ${lines[0]} 行（重复的那一行）重新计入分析。`, `${enRows} counts in the analysis again.`);
+    }
+    return on
+      ? L(`第 ${lines.join("、")} 行（重复的行）不再计入分析，第 ${kept} 行保留。`, `${enRows} are now left out of the analysis; row ${kept} stays.`)
+      : L(`第 ${lines.join("、")} 行（重复的行）重新计入分析。`, `${enRows} count in the analysis again.`);
+  }
+  const count = formatInteger(facts.count);
+  const rows = `The ${enCount(facts.count, "extra duplicate row", "extra duplicate rows")}`;
+  return on
+    ? L(`多出来的 ${count} 行重复行不再计入分析，每组保留第一行。`, `${rows} ${one ? "is" : "are"} now left out of the analysis; the first row of each group stays.`)
+    : L(`多出来的 ${count} 行重复行重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+}
+
+// The toast after cells were treated as blank (on) or no longer.
+function formatCheckupTreatToast(count, on) {
+  if (on) return L(`已把 ${formatInteger(count)} 处按空值处理。`, `${enCount(count, "cell is", "cells are")} now treated as blank.`);
+  return L(`这 ${formatInteger(count)} 处不再按空值处理。`, `The ${enCount(count, "cell is", "cells are")} no longer treated as blank.`);
+}
+
+// 导出体检报告 refused while drafts wait: the export module's sentence (report.js), on the first screen.
+const CHECKUP_REPORT_DRAFT_REFUSAL = Lp(
+  "字段配置有未应用的修改，请先应用配置后再导出。",
+  "Column settings have changes that are not applied; apply them before exporting."
+);
+
+// 已处理: [{ kind, title, note }] from app.js buildCheckupHandledData(): suspectedTotal and
+// duplicateRows are exclusion facts, placeholder is { count, keys: [{ key, lines, more }], moreKeys }.
+function formatCheckupHandledItems(data) {
+  const items = [];
+  const name = (kind) => Lpick(CHECKUP_KIND_NAMES[kind]);
+  const total = data.suspectedTotal;
+  if (total) {
+    const lines = total.lines.map(formatInteger);
+    const one = total.count === 1;
+    const enRows = checkupNamesRows(total) ? `${one ? "row" : "rows"} ${lines.join(", ")}` : enCount(total.count, "row", "rows");
+    items.push({
+      kind: "suspectedTotal",
+      title: checkupNamesRows(total)
+        ? L(`${name("suspectedTotal")}：第 ${lines.join("、")} 行不计入分析`, `${name("suspectedTotal")}: ${enRows} ${one ? "is" : "are"} left out of the analysis`)
+        : L(`${name("suspectedTotal")}：${formatInteger(total.count)} 行不计入分析`, `${name("suspectedTotal")}: ${enRows} ${one ? "is" : "are"} left out of the analysis`),
+      note: one
+        ? L("求和、平均值和图表都不再算它，原表不变", "sums, averages and charts no longer count it; the file is unchanged")
+        : L("求和、平均值和图表都不再算它们，原表不变", "sums, averages and charts no longer count them; the file is unchanged")
+    });
+  }
+  const duplicates = data.duplicateRows;
+  if (duplicates) {
+    const lines = duplicates.lines.map(formatInteger);
+    const one = duplicates.count === 1;
+    const named = duplicates.groups === 1 && checkupNamesRows(duplicates) && duplicates.kept !== null;
+    items.push({
+      kind: "duplicateRows",
+      title: named
+        ? L(`${name("duplicateRows")}：多出来的第 ${lines.join("、")} 行不计入分析`, `${name("duplicateRows")}: the extra ${one ? "row" : "rows"} ${lines.join(", ")} ${one ? "is" : "are"} left out of the analysis`)
+        : L(`${name("duplicateRows")}：多出来的 ${formatInteger(duplicates.count)} 行不计入分析`, `${name("duplicateRows")}: the ${enCount(duplicates.count, "extra row", "extra rows")} ${one ? "is" : "are"} left out of the analysis`),
+      note: named
+        ? L(`第 ${formatInteger(duplicates.kept)} 行保留`, `row ${formatInteger(duplicates.kept)} stays`)
+        : L("每组保留第一行", "the first row of each group stays")
+    });
+  }
+  const treated = data.placeholder;
+  if (treated) {
+    const parts = treated.keys.map((entry) => {
+      const lines = entry.lines.map(formatInteger);
+      if (!lines.length) return L(`「${entry.key}」`, `“${entry.key}”`);
+      return L(`${formatCheckupLines(lines, entry.more)}「${entry.key}」`, `“${entry.key}” in ${formatCheckupLines(lines, entry.more)}`);
+    });
+    const one = treated.count === 1;
+    items.push({
+      kind: "placeholder",
+      title: L(`${name("placeholder")}：${formatInteger(treated.count)} 处已按空值处理`, `${name("placeholder")}: ${enCount(treated.count, "cell", "cells")} treated as blank`),
+      note: L(
+        `${parts.join("、")}${treated.moreKeys ? "等" : ""}。不再参与统计，原表不变`,
+        `${parts.join(", ")}${treated.moreKeys ? " and more" : ""}; statistics leave ${one ? "it" : "them"} out; the file is unchanged`
+      )
+    });
+  }
+  return items;
+}
+
+// What an 已处理 撤销 undoes, for its aria-label (the exclusions reuse exclusionUndoLabel()).
+function formatCheckupTreatUndoLabel(count) {
+  return L(`撤销：让这 ${formatInteger(count)} 处不再按空值处理`, `Undo: stop treating the ${enCount(count, "cell", "cells")} as blank`);
+}
+
+// The aria-label of an exclusion's 撤销, on the quality page and in 已处理.
+function exclusionUndoLabel(kind) {
+  const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
+  return L(`撤销：让${label}重新计入分析`, `Undo: count the ${label} in the analysis again`);
+}
+
+// 数据预览 · 42 行 × 9 列, on the folded preview.
+function formatPreviewSize(rowCount, fieldCount) {
+  return L(`${formatInteger(rowCount)} 行 × ${formatInteger(fieldCount)} 列`, `${enCount(rowCount, "row", "rows")} × ${enCount(fieldCount, "column", "columns")}`);
+}
+
 // The field table's search box (v3.0.0 F2), shown for more than 20 fields.
 function formatSchemaSearchPlaceholder(fieldCount) {
   return L(`搜索 ${formatInteger(fieldCount)} 个字段`, `Search ${enCount(fieldCount, "column", "columns")}`);
@@ -1246,12 +1798,15 @@ function formatLookAlikeReasons(reasons) {
   return reasons.map((reason) => Lpick(LOOK_ALIKE_REASON_NAMES[reason])).join(Lpick(LIST_SEPARATOR));
 }
 
-// 「HD」2 个 / 「ＨＤ」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）
-function formatLookAlikeGroup({ variants, variantCount = variants.length, reasons }) {
+// 「HD」2 个（主写法） / 「ＨＤ」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）. v3.4.0: the main
+// writing (lookAlikeMainText()) is marked; a group tied for the most frequent has none.
+function formatLookAlikeGroup(group) {
+  const { variants, variantCount = variants.length, reasons } = group;
   const more = variantCount > variants.length;
+  const main = lookAlikeMainText(group);
   return L(
-    `${variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个`).join(" / ")}${more ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`,
-    `${variants.map(({ text, count }) => `“${formatVisibleText(text)}” ${formatInteger(count)}`).join(" / ")}${more ? ` and more, ${formatInteger(variantCount)} ways in all` : ""} (${formatLookAlikeReasons(reasons)})`
+    `${variants.map(({ text, count }) => `「${formatVisibleText(text)}」${formatInteger(count)} 个${text === main ? "（主写法）" : ""}`).join(" / ")}${more ? ` 等 ${formatInteger(variantCount)} 种` : ""}（${formatLookAlikeReasons(reasons)}）`,
+    `${variants.map(({ text, count }) => `“${formatVisibleText(text)}” ${formatInteger(count)}${text === main ? " (most common)" : ""}`).join(" / ")}${more ? ` and more, ${formatInteger(variantCount)} ways in all` : ""} (${formatLookAlikeReasons(reasons)})`
   );
 }
 
@@ -1290,13 +1845,13 @@ function formatDateStyleRowNote(key, mainKey) {
 
 // The words of a look-alike problem row's 说明 (one call per listed row).
 const LOOK_ALIKE_ROW_NOTE_WORDS = Lp({
-  group: (position, reasons) => `第 ${position} 组（${reasons}）`,
+  group: (position, reasons, main) => `第 ${position} 组（${reasons}${main === null ? "" : `，主写法是「${main}」`}）`,
   invisibleOnly: "只有不可见字符",
   edge: "首尾空格",
   joiner: "，",
   value: (parts, text) => `${parts}：「${text}」`
 }, {
-  group: (position, reasons) => `group ${position} (${reasons})`,
+  group: (position, reasons, main) => `group ${position} (${reasons}${main === null ? "" : `, most often written “${main}”`})`,
   invisibleOnly: "only invisible characters",
   edge: "leading or trailing spaces",
   joiner: ", ",
@@ -1308,7 +1863,7 @@ const LOOK_ALIKE_ROW_NOTE_WORDS = Lp({
 function formatLookAlikeRowNote(value, group, hasEdge, invisibleOnly) {
   const words = Lpick(LOOK_ALIKE_ROW_NOTE_WORDS);
   const parts = [];
-  if (group) parts.push(words.group(group.position + 1, formatLookAlikeReasons(group.reasons)));
+  if (group) parts.push(words.group(group.position + 1, formatLookAlikeReasons(group.reasons), group.main === undefined || group.main === null ? null : formatVisibleText(group.main)));
   if (invisibleOnly) parts.push(words.invisibleOnly);
   if (hasEdge) parts.push(words.edge);
   return words.value(parts.join(words.joiner), formatVisibleText(value));

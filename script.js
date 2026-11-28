@@ -150,6 +150,19 @@ dom.exportStandardizedCsv.addEventListener("click", () => exportStandardizedData
 dom.exportStandardizedChanges.addEventListener("click", () => exportStandardizedData("changes"));
 
 dom.exportHtmlReport.addEventListener("click", exportHtmlReport);
+// v3.4.0: the checkup's 导出体检报告 is the same HTML report, with the same gate (exportHtmlReport());
+// commit 6: a refusal for drafts is written on the first screen (exportCheckupReport()).
+dom.checkupExportReport.addEventListener("click", exportCheckupReport);
+// v3.4.0 commit 6: the toast's 撤销 and 已处理's.
+dom.checkupToastUndo.addEventListener("click", undoCheckupToast);
+dom.checkupHandled.addEventListener("click", handleCheckupHandledClick);
+// v3.4.0 commit 4: the bar's segments and the cards' actions.
+dom.checkupBar.addEventListener("click", handleCheckupClick);
+dom.checkupCards.addEventListener("click", handleCheckupClick);
+// v3.4.0 commit 5: 其他发现 go to the quality page; with nothing to fix, two ways to the analysis (R21).
+dom.checkupOthersList.addEventListener("click", handleCheckupFindingClick);
+dom.checkupOpenStats.addEventListener("click", () => showModule("statisticsSection"));
+dom.checkupOpenCharts.addEventListener("click", () => showModule("chartsSection"));
 
 dom.confirmSheetSelection.addEventListener("click", analyzeSelectedExcelSheet);
 
@@ -271,6 +284,8 @@ function showModule(sectionId, { quiet = false, hash = true } = {}) {
   if (!MODULE_IDS.includes(sectionId)) return;
   // style.css shows the import message only on the first module.
   document.body.dataset.module = sectionId;
+  // v3.4.0 commit 6: the checkup's toast is about the first screen; another module ends it.
+  if (sectionId !== "overviewSection") clearCheckupToast();
   MODULE_IDS.forEach((id) => {
     const section = document.getElementById(id);
     const isActive = id === sectionId;

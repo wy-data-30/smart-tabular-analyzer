@@ -45,14 +45,31 @@ function getQualityNumericStats() {
     : buildNumericStats(state.rows);
 }
 
-function countDuplicateRows(rows, fields) {
-  const seen = new Set();
+// v3.4.0: given an array, also fills it with every group of exactly repeated rows (two or more,
+// indexes into rows in row order, groups by first appearance), from the same one key per row, so
+// the checkup reads the groups an import found without building the keys again.
+function countDuplicateRows(rows, fields, groups = null) {
+  const seen = groups ? new Map() : new Set();
+  const groupByFirst = new Map();
   let duplicates = 0;
-  rows.forEach((row) => {
+  rows.forEach((row, index) => {
     const key = buildExactRowKey(row, fields);
-    if (seen.has(key)) duplicates += 1;
-    else seen.add(key);
+    if (!groups) {
+      if (seen.has(key)) duplicates += 1;
+      else seen.add(key);
+      return;
+    }
+    const first = seen.get(key);
+    if (first === undefined) {
+      seen.set(key, index);
+      return;
+    }
+    duplicates += 1;
+    const group = groupByFirst.get(first);
+    if (group) group.push(index);
+    else groupByFirst.set(first, [first, index]);
   });
+  if (groups) groups.push(...[...groupByFirst.values()].sort((a, b) => a[0] - b[0]));
   return duplicates;
 }
 
@@ -95,7 +112,10 @@ const ID_DUPLICATE_ROW_NUMBER_LIMIT = 10;
 // frequent, ties by first appearance; the identical-row counts (buildExactRowKey
 // over all fields) cover listed values only. getRowNumber(row) gives a row's file
 // row or null.
-function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations = {}) {
+// v3.4.0: rowIndexes (a Map, optional) receives, per listed field (not mostly repeated, with a
+// duplicate value), every row of its duplicate values, ascending: the checkup reads them from
+// here instead of grouping the column again.
+function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmations = {}, rowIndexes = null) {
   const rowKeys = new Array(rows.length);
   const rowKeyAt = (index) => (rowKeys[index] ??= buildExactRowKey(rows[index], fields));
   const idFields = fields.filter((field) => profiles.some((profile) => profile.field === field && profile.typeKey === "id"));
@@ -104,6 +124,7 @@ function buildIdDuplicateSummary(rows, fields, profiles, getRowNumber, confirmat
     const duplicates = sortIdDuplicates(indexesByValue);
     const uniqueRatio = nonMissingCount ? indexesByValue.size / nonMissingCount : 0;
     const mostlyRepeated = nonMissingCount >= ID_MOSTLY_REPEATED_MIN_VALUES && uniqueRatio < ID_MOSTLY_REPEATED_UNIQUE_RATIO;
+    if (rowIndexes && !mostlyRepeated && duplicates.length) rowIndexes.set(field, duplicates.flatMap(([, indexes]) => indexes).sort((a, b) => a - b));
     const listed = mostlyRepeated ? [] : duplicates.slice(0, ID_DUPLICATE_VALUE_LIMIT);
     return {
       field,
@@ -436,16 +457,17 @@ function checkLabelledTotalRows(columns, rowCount, labelRows) {
 }
 
 // { totals, labelRowCount }: totals in row order as buildSuspectedTotalSummary() returns them;
-// labelRowCount counts the labelled rows of the last check (the "另有 N 行" sentence leaves the
+// labelIndexes (v3.4.0, R7) are those rows, indexes into rows in row order: 写着合计但对不上 is them
+// without the totals. labelRowCount counts the labelled rows of the last check (the "另有 N 行" sentence leaves the
 // dropped groups out). Numbers are read once for every round.
 function checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows = findTotalLabelRows(rows, fields)) {
-  if (!labelRows.length) return { totals: [], labelRowCount: 0 };
+  if (!labelRows.length) return { totals: [], labelRowCount: 0, labelIndexes: [] };
   const columns = profiles.filter((profile) => profile.typeKey === "numeric").map((profile) => {
     const parseNumber = getNumberParser(profile.numberStrategy);
     const field = profile.field;
     return { field, numbers: rows.map((row) => (isMissingOrConfirmed(row[field], profile.confirmedKeys) ? null : parseNumber(row[field]))) };
   });
-  if (!columns.length) return { totals: [], labelRowCount: labelRows.length };
+  if (!columns.length) return { totals: [], labelRowCount: labelRows.length, labelIndexes: labelRows.map((item) => item.index) };
   let active = labelRows;
   let hits = checkLabelledTotalRows(columns, rows.length, active);
   for (let round = 0; round < SUSPECTED_TOTAL_GROUP_ROUNDS; round += 1) {
@@ -472,7 +494,7 @@ function checkSuspectedTotals(rows, fields, profiles, getRowNumber, labelRows = 
       }))
     }];
   });
-  return { totals, labelRowCount: active.length };
+  return { totals, labelRowCount: active.length, labelIndexes: active.map((item) => item.index) };
 }
 
 // Formula errors by field, in field order: { field, count, byError, lines }. They are
@@ -505,8 +527,15 @@ function buildFormulaErrorSummary(rows, fields, getErrors, getRowNumber) {
 // writings depend only on its cells (placeholder spellings are left out, confirmed or not), and
 // its date styles only on its cells, its date cells and its date strategy, which stays the same
 // for a field not read by year (placeholders give no order evidence, contract 17).
+// v3.4.0: the checkup's per-row results live here too, so it reads no row twice per import:
+// dateStyleRows (per field, every row with a date style and its style, filled by the same scan as
+// dateStyles), lookAlikeRows (per field, the rows isCountedWriting() counts), placeholderCells (per
+// field, every cell with a placeholder spelling and its key) and conversionRows (per profile, the
+// rows failing its applied type, kept with the typeKey and confirmedKeys they were made for) and
+// outlierRows (per profile, its rows beyond the quality statistics' bounds, kept with what they
+// were made for, so a rebuild scans only the columns whose profile or bounds changed).
 function createFormatScans() {
-  return { dateStyles: new Map(), writings: new Map() };
+  return { dateStyles: new Map(), writings: new Map(), dateStyleRows: new Map(), lookAlikeRows: new Map(), placeholderCells: new Map(), conversionRows: new WeakMap(), outlierRows: new WeakMap() };
 }
 
 // Calls visit(index, style, value) for every row of a field with a date style, the Excel
@@ -534,13 +563,17 @@ function scanDateStyles(rows, profile, getDateCells, getRowNumber, scans) {
   const cached = scans.dateStyles.get(profile.field);
   if (cached) return cached;
   const styles = new Map();
+  const rowStyles = { indexes: [], keys: [] };
   forEachDateStyle(rows, profile, getDateCells, (index, key, value) => {
+    rowStyles.indexes.push(index);
+    rowStyles.keys.push(key);
     const style = styles.get(key);
     if (style) style.count += 1;
     else styles.set(key, { key, count: 1, sample: displayValue(value), firstLine: getRowNumber(rows[index]) });
   });
   const sorted = [...styles.values()].sort((a, b) => b.count - a.count);
   scans.dateStyles.set(profile.field, sorted);
+  scans.dateStyleRows?.set(profile.field, rowStyles);
   return sorted;
 }
 
@@ -579,7 +612,8 @@ const LOOK_ALIKE_VARIANT_LIMIT = 10;
 // placeholder spellings, missing values and everything heavier run once per text. edgeTexts
 // holds the raw texts with removable whitespace, invisibleOnlyTexts the trimmed texts of nothing
 // but invisible characters, groupOf maps a trimmed writing to its group, and groups run from
-// most to fewest rows, ties by first appearance. rowCount counts each row once.
+// most to fewest rows, ties by first appearance. rowCount counts each row once, and only the
+// rows isCountedWriting() counts (v3.4.0): a group's main writing is not counted.
 function collectFieldWritings(rows, field) {
   const rawCounts = new Map();
   for (let index = 0; index < rows.length; index += 1) {
@@ -629,9 +663,26 @@ function collectFieldWritings(rows, field) {
       edgeSpaceCount += count;
     }
     if (invisibleOnly) invisibleOnlyCount += count;
-    if (hasEdge || invisibleOnly || groupOf.has(trimmed)) rowCount += count;
+    if (isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly)) rowCount += count;
   });
   return { edgeTexts, invisibleOnlyTexts, groupOf, groups, edgeSpaceCount, invisibleOnlyCount, rowCount };
+}
+
+// v3.4.0: the main writing of a look-alike group is its most frequent trimmed writing, clean or
+// not; a tie for the most frequent leaves the group without one (null), and then every writing
+// counts. variants run from most to fewest, so only the first two are compared.
+function lookAlikeMainText(group) {
+  const [first, second] = group.variants;
+  return second && second.count === first.count ? null : first.text;
+}
+
+// v3.4.0: whether a cell counts for 写法不一样: edge whitespace, nothing but invisible characters,
+// or a writing of a group other than its main writing. The summary's rowCount and
+// listLookAlikeRows() both ask this, so the list and the count agree (contract 19).
+function isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly) {
+  if (hasEdge || invisibleOnly) return true;
+  const position = groupOf.get(trimmed);
+  return position !== undefined && lookAlikeMainText(groups[position]) !== trimmed;
 }
 
 function readFieldWritings(rows, field, scans) {
@@ -863,9 +914,9 @@ function listDateStyleRows(field) {
   return { items, count: summary.otherCount };
 }
 
-// Rows with edge whitespace, of nothing but invisible characters or in a look-alike group:
-// group by group (every writing, to compare them), then the others, each in file order. The
-// same collection as the summary (readFieldWritings()).
+// The rows the summary counts (isCountedWriting(), v3.4.0: a group's main writing is not
+// listed, the 说明 names it): group by group, then the others, each in file order. The same
+// collection as the summary (readFieldWritings()).
 function listLookAlikeRows(field) {
   const summary = state.lookAlikes.find((item) => item.field === field);
   if (!summary) return null;
@@ -880,8 +931,11 @@ function listLookAlikeRows(field) {
     const position = groupOf.get(trimmed);
     const hasEdge = edgeTexts.has(value);
     const invisibleOnly = invisibleOnlyTexts.has(trimmed);
-    if (position === undefined && !hasEdge && !invisibleOnly) return;
-    const note = formatLookAlikeRowNote(value, position === undefined ? null : { position, reasons: groups[position].reasons }, hasEdge, invisibleOnly);
+    if (!isCountedWriting(groups, groupOf, trimmed, hasEdge, invisibleOnly)) return;
+    // A cell that is the main writing once trimmed counts for its edge spaces only: its 说明 names
+    // no group, but it stays with its group in the list.
+    const main = position === undefined ? null : lookAlikeMainText(groups[position]);
+    const note = formatLookAlikeRowNote(value, position === undefined || trimmed === main ? null : { position, reasons: groups[position].reasons, main }, hasEdge, invisibleOnly);
     (position === undefined ? others : byGroup[position]).push(problemRowItem(index, note, { group: position === undefined ? 0 : position + 1 }));
   });
   return { items: [...byGroup.flat(), ...others], count: summary.rowCount };
@@ -926,6 +980,223 @@ function listProblemRows(category) {
     case "lookAlike": return listLookAlikeRows(category.field);
     default: return null;
   }
+}
+
+// ---- v3.4.0: the checkup (体检结果) ----
+// The eight kinds of the first screen, in the order of its cards; the first five change the
+// statistics. The other problem-row kinds (missing, outliers, ID duplicates) are not counted.
+const CHECKUP_KINDS = Object.freeze(["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"]);
+const CHECKUP_AFFECTS_STATISTICS = new Set(["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder"]);
+
+// The rows of a field failing its applied type: listConversionFailureRows()'s check, made once per
+// profile, type and confirmed keys (a field type change keeps the profile object). { indexes, keys }:
+// keys[i] is placeholderKey() of that row's value (null for most), read in the same pass, so the
+// summary and the cards never read these cells again.
+function checkupConversionRows(profile, scans) {
+  const cached = scans.conversionRows.get(profile);
+  if (cached && cached.typeKey === profile.typeKey && cached.confirmedKeys === profile.confirmedKeys) return cached.result;
+  const fails = getProfileConversionCheck(profile, profile.typeKey);
+  const result = { indexes: [], keys: [] };
+  if (fails) {
+    const field = profile.field;
+    state.rows.forEach((row, index) => {
+      const value = row[field];
+      if (!isMissingOrConfirmed(value, profile.confirmedKeys) && fails(value)) {
+        result.indexes.push(index);
+        result.keys.push(placeholderKey(value));
+      }
+    });
+  }
+  scans.conversionRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, result });
+  return result;
+}
+
+// The rows of a numeric field beyond its quality statistics' bounds (listOutlierRows()'s check):
+// { indexes, high, low }, made once per profile, type, confirmed keys, number strategy and bounds.
+function checkupOutlierRows(profile, stat, scans) {
+  const cached = scans.outlierRows.get(profile);
+  if (cached && cached.typeKey === profile.typeKey && cached.confirmedKeys === profile.confirmedKeys && cached.numberStrategy === profile.numberStrategy
+    && Object.is(cached.lowerBound, stat.lowerBound) && Object.is(cached.upperBound, stat.upperBound)) return cached.result;
+  const result = scanCheckupOutlierRows(profile, stat);
+  scans.outlierRows.set(profile, { typeKey: profile.typeKey, confirmedKeys: profile.confirmedKeys, numberStrategy: profile.numberStrategy, lowerBound: stat.lowerBound, upperBound: stat.upperBound, result });
+  return result;
+}
+
+// One pass over a column for checkupOutlierRows(); strictly beyond a bound, as the statistics count.
+function scanCheckupOutlierRows(profile, stat) {
+  const field = profile.field;
+  const parseNumber = getNumberParser(profile.numberStrategy);
+  const indexes = [];
+  let high = 0;
+  let low = 0;
+  state.rows.forEach((row, index) => {
+    if (isMissingOrConfirmed(row[field], profile.confirmedKeys)) return;
+    const number = parseNumber(row[field]);
+    if (number === null) return;
+    if (number > stat.upperBound) { high += 1; indexes.push(index); } else if (number < stat.lowerBound) { low += 1; indexes.push(index); }
+  });
+  return { indexes, high, low };
+}
+
+// Every cell of a field with a placeholder spelling (listPlaceholderRows()'s check), once per import.
+function checkupPlaceholderCells(field, scans) {
+  let cells = scans.placeholderCells.get(field);
+  if (!cells) {
+    cells = { indexes: [], keys: [] };
+    state.rows.forEach((row, index) => {
+      const key = placeholderKey(row[field]);
+      if (key) {
+        cells.indexes.push(index);
+        cells.keys.push(key);
+      }
+    });
+    scans.placeholderCells.set(field, cells);
+  }
+  return cells;
+}
+
+// The rows a look-alike field counts (isCountedWriting(), as listLookAlikeRows()), in row order.
+function checkupLookAlikeRows(field, scans) {
+  let indexes = scans.lookAlikeRows.get(field);
+  if (!indexes) {
+    const { edgeTexts, invisibleOnlyTexts, groupOf, groups } = readFieldWritings(state.rows, field, scans);
+    indexes = [];
+    state.rows.forEach((row, index) => {
+      const value = row[field];
+      if (typeof value !== "string") return;
+      const trimmed = value.trim();
+      if (isCountedWriting(groups, groupOf, trimmed, edgeTexts.has(value), invisibleOnlyTexts.has(trimmed))) indexes.push(index);
+    });
+    scans.lookAlikeRows.set(field, indexes);
+  }
+  return indexes;
+}
+
+// What the checkup shows, from the same checks as the quality page's counts (contract 19), read
+// from what the import and the rebuilds keep: the duplicate groups of countDuplicateRows(), the date
+// styles of scanDateStyles(), the writings of readFieldWritings(); no row key, date style or total
+// label is made here. Per kind (CHECKUP_KINDS order, only kinds with rows): rows (indexes into
+// state.rows, ascending), cells ({ index, field }, field null for the whole-row kinds; conversion and
+// placeholder cells add key, and placeholder cells come one field and key after another, each in
+// row order), fields,
+// affectsStatistics, otherKindRows (K: rows in another kind too) and onlyRows. Then N (rowCount, the
+// rows of any kind), multiRows (rows of two or more kinds), kindsOfRow (index -> kinds) and the bar's
+// segments: each kind's onlyRows, one segment of the multiRows, then the rows with no problem; they
+// add up to total, the rows counted in the analysis.
+// Rules: a duplicate group counts every row, the kept one too, while two or more of its rows are
+// counted in the analysis; placeholders only the pending common
+// ones of fields not ignored; a value failing conversion that is such a placeholder of its field
+// counts as a placeholder only; reading issues only those with an imported row; rows left out of the
+// analysis are in no kind.
+function buildCheckupSummary() {
+  const scans = state.formatScans;
+  const excluded = getExcludedIndexSet();
+  const cells = Object.fromEntries(CHECKUP_KINDS.map((kind) => [kind, []]));
+  // Conversion and placeholder cells also carry their placeholder key (null for a value that is none).
+  const add = (kind, index, field = null, key) => {
+    if (!excluded.has(index)) cells[kind].push(key === undefined ? { index, field } : { index, field, key });
+  };
+  const pendingCommon = new Map();
+  state.placeholders.forEach((entry) => {
+    if (entry.confirmed || entry.fieldIgnored || entry.tier !== "common") return;
+    if (!pendingCommon.has(entry.field)) pendingCommon.set(entry.field, new Set());
+    pendingCommon.get(entry.field).add(entry.key);
+  });
+  const formulaFields = [];
+  listProblemCategories().forEach((category) => {
+    const field = category.field;
+    switch (category.kind) {
+      case "suspectedTotal":
+        state.suspectedTotals.forEach((item) => add("suspectedTotal", item.index));
+        break;
+      case "duplicateRows":
+        // A group counts while two or more of its rows are counted in the analysis: once its
+        // repeated rows are left out, the kept row is no longer a duplicate.
+        (state.duplicateRowGroups || []).forEach((group) => {
+          const counted = group.filter((index) => !excluded.has(index));
+          if (counted.length > 1) counted.forEach((index) => add("duplicateRows", index));
+        });
+        break;
+      case "formulaError":
+        formulaFields.push(field);
+        break;
+      case "conversion": {
+        const profile = getFieldProfile(field);
+        const skip = pendingCommon.get(field);
+        const failing = checkupConversionRows(profile, scans);
+        failing.indexes.forEach((index, position) => {
+          const key = failing.keys[position];
+          if (!skip || !skip.has(key)) add("conversion", index, field, key);
+        });
+        break;
+      }
+      case "placeholder": {
+        if (!pendingCommon.get(field)?.has(category.key)) break;
+        const placeholderCells = checkupPlaceholderCells(field, scans);
+        placeholderCells.keys.forEach((key, position) => {
+          if (key === category.key) add("placeholder", placeholderCells.indexes[position], field, key);
+        });
+        break;
+      }
+      case "dateStyle": {
+        const mainKey = state.dateStyles.find((item) => item.field === field).mainKey;
+        const rowStyles = scans.dateStyleRows.get(field);
+        rowStyles.keys.forEach((key, position) => {
+          if (key !== mainKey) add("dateStyle", rowStyles.indexes[position], field);
+        });
+        break;
+      }
+      case "lookAlike":
+        checkupLookAlikeRows(field, scans).forEach((index) => add("lookAlike", index, field));
+        break;
+      case "parseWarnings": {
+        const lines = new Set(state.parseWarnings.map((warning) => warning.row).filter((line) => line !== null));
+        const seen = new Set();
+        state.rows.forEach((row, index) => {
+          const line = getSourceRowNumber(row);
+          if (line === null || !lines.has(line) || seen.has(line)) return;
+          seen.add(line);
+          add("parseWarnings", index);
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  });
+  // Formula errors in one pass over the rows, field by field in the categories' order.
+  if (formulaFields.length) {
+    const byField = formulaFields.map(() => []);
+    state.rows.forEach((row, index) => {
+      const errors = state.sourceFormulaErrors.get(row);
+      if (errors) formulaFields.forEach((field, position) => { if (errors[field]) byField[position].push(index); });
+    });
+    byField.forEach((indexes, position) => indexes.forEach((index) => add("formulaError", index, formulaFields[position])));
+  }
+  const kindsOfRow = new Map();
+  const kinds = CHECKUP_KINDS.flatMap((kind) => {
+    if (!cells[kind].length) return [];
+    const rows = [...new Set(cells[kind].map((cell) => cell.index))].sort((a, b) => a - b);
+    rows.forEach((index) => {
+      const list = kindsOfRow.get(index);
+      if (list) list.push(kind);
+      else kindsOfRow.set(index, [kind]);
+    });
+    const fields = [...new Set(cells[kind].map((cell) => cell.field).filter((field) => field !== null))];
+    return [{ kind, rows, cells: cells[kind], fields, affectsStatistics: CHECKUP_AFFECTS_STATISTICS.has(kind) }];
+  });
+  kinds.forEach((item) => {
+    item.otherKindRows = item.rows.filter((index) => kindsOfRow.get(index).length > 1).length;
+    item.onlyRows = item.rows.length - item.otherKindRows;
+  });
+  const total = getIncludedRows().length;
+  const multiRows = [...kindsOfRow.values()].filter((list) => list.length > 1).length;
+  const segments = [
+    ...kinds.filter((item) => item.onlyRows).map((item) => ({ kind: item.kind, rows: item.onlyRows })),
+    ...(multiRows ? [{ kind: "multi", rows: multiRows }] : []),
+    { kind: "clean", rows: total - kindsOfRow.size }
+  ];
+  return { total, rowCount: kindsOfRow.size, multiRows, kinds, kindsOfRow, segments };
 }
 
 function missingRateLevel() {

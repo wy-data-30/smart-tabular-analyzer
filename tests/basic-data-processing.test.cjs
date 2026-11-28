@@ -2541,7 +2541,8 @@ test("after confirming every order placeholder, no analysis output shows N/A or 
       dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "备注"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
       renderCharts(); renderV2Analysis();
     `);
-    const skipped = new Set(["previewTable", "placeholderDetails", "placeholderMessage"]);
+    // v3.4.0 commit 6: 已处理 (#checkupHandled) names the spellings treated as blank; asserted below.
+    const skipped = new Set(["previewTable", "placeholderDetails", "placeholderMessage", "checkupHandled"]);
     // The only dash the app writes itself here: the conversion column of types without conversion.
     const html = [...orders.elements].filter(([id]) => !skipped.has(id))
       .map(([id, element]) => `${id}:${element.innerHTML}${element.textContent}`).join("\n")
@@ -2554,6 +2555,10 @@ test("after confirming every order placeholder, no analysis output shows N/A or 
   const after = renderEverything();
   assert.equal(after.includes("N/A"), false, after.split("\n").filter((line) => line.includes("N/A")).join("\n").slice(0, 600));
   assert.equal(after.includes("—"), false, after.split("\n").filter((line) => line.includes("—")).join("\n").slice(0, 600));
+  // 已处理 lists each spelling once, whatever the fields holding it.
+  const handled = orders.elements.get("checkupHandled").innerHTML;
+  assert.equal(handled.split("「N/A」").length - 1, 1, handled);
+  assert.equal(handled.split("「—」").length - 1, 1, handled);
 });
 
 test("applying the configuration for another field keeps a manual type set before a confirmation", () => {
@@ -5737,7 +5742,11 @@ test("v2.9.0 look-alike values: the fixture and the sample button's file (v2.11.
   // an edge space, SKU-001 and sku-001 are a look-alike and no duplicate.
   assert.deepEqual(idDuplicates(writing.evaluate)[0].values.map((value) => value.value), ["SKU-002"]);
   assert.equal(summary[0].edgeSpaceCount, 1);
-  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 18 行：首尾空格 2 格（如「华东␣」）；3 组写法不一样：「华东」10 个 / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个 / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个 / 「上海␣␣浦东」1 个（中间空格多少）。");
+  // v3.4.0: the main writing of each group (null when tied) is not counted, and the line marks it.
+  assert.deepEqual(JSON.parse(writing.evaluate("JSON.stringify(state.lookAlikes.map((item) => item.groups.map(lookAlikeMainText)))")), [[null], ["华东", "HD", "上海 浦东"], ["ABC公司"]]);
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[1])"), "「区域」共 6 行：首尾空格 2 格（如「华东␣」）；3 组写法不一样：「华东」10 个（主写法） / 「华东[零宽字符]」1 个（不可见字符）；「HD」2 个（主写法） / 「\uFF28\uFF24」1 个 / 「hd」1 个（全角半角或兼容写法、大小写）；「上海 浦东」2 个（主写法） / 「上海␣␣浦东」1 个（中间空格多少）。");
+  // A tied group has no main writing and no mark.
+  assert.equal(writing.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「商品编号」共 3 行：首尾空格 1 格（如「SKU-002␣」）；1 组写法不一样：「SKU-001」1 个 / 「sku-001」1 个（大小写）。");
 });
 
 test("v2.9.0 look-alike values skip placeholders, numbers and dates", async () => {
@@ -5868,16 +5877,23 @@ test("v2.9.0 problem rows: the rows of the date styles", async () => {
 test("v2.9.0 problem rows: look-alike rows go group by group, then the others", async () => {
   const writing = await importStage3Fixture("写法不一致.csv");
   assert.deepEqual(problemLinesOf(writing, "lookAlike", "商品编号"), [2, 3, 5]);
-  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 18, 19, 20, 21, 22, 23, 24]);
-  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [2, 4, 6, 8, 9, 15, 17, 19, 21, 23]);
-  assert.deepEqual(problemNotes(writing, "lookAlike", "区域").filter(([line]) => [5, 6, 7, 18, 24].includes(line)), [
-    [5, "第 1 组（不可见字符），首尾空格：「华东␣」"],
-    [6, "第 1 组（不可见字符），首尾空格：「[全角空格]华东」"],
-    [7, "第 1 组（不可见字符）：「华东[零宽字符]」"],
-    [18, "第 2 组（全角半角或兼容写法、大小写）：「HD」"],
-    [24, "第 3 组（中间空格多少）：「上海␣␣浦东」"]
+  // v3.4.0: only the counted cells; the main writing's rows (区域 line 2 「华东」, 18 「HD」,
+  // 22 「上海 浦东」; 客户 line 2 「ABC公司」) are not listed, unless the cell has edge spaces.
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "区域"), [5, 6, 7, 20, 21, 24]);
+  assert.deepEqual(problemLinesOf(writing, "lookAlike", "客户"), [8, 9]);
+  assert.ok(![2, 18, 22].some((line) => problemLinesOf(writing, "lookAlike", "区域").includes(line)));
+  assert.ok(!problemLinesOf(writing, "lookAlike", "客户").includes(2));
+  assert.deepEqual(problemNotes(writing, "lookAlike", "区域"), [
+    // Lines 5 and 6 are the main writing 「华东」 once trimmed: only the edge spaces, still in group 1's place.
+    [5, "首尾空格：「华东␣」"],
+    [6, "首尾空格：「[全角空格]华东」"],
+    [7, "第 1 组（不可见字符，主写法是「华东」）：「华东[零宽字符]」"],
+    [20, "第 2 组（全角半角或兼容写法、大小写，主写法是「HD」）：「\uFF28\uFF24」"],
+    [21, "第 2 组（全角半角或兼容写法、大小写，主写法是「HD」）：「hd」"],
+    [24, "第 3 组（中间空格多少，主写法是「上海 浦东」）：「上海␣␣浦东」"]
   ]);
-  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号")[2], [5, "首尾空格：「SKU-002␣」"]);
+  // A tied group names no main writing.
+  assert.deepEqual(problemNotes(writing, "lookAlike", "商品编号"), [[2, "第 1 组（大小写）：「SKU-001」"], [3, "第 1 组（大小写）：「sku-001」"], [5, "首尾空格：「SKU-002␣」"]]);
   // Cells of nothing but invisible characters, alone or with edge whitespace.
   const invisible = await importCsvFile("备注,序\r\n甲,1\r\nAB,2\r\n\u200B,3\r\nab,4\r\n\u00AD ,5\r\n乙 ,6\r\n丙,7\r\n", "z.csv");
   assert.deepEqual(problemNotes(invisible, "lookAlike", "备注"), [
@@ -5894,6 +5910,50 @@ test("v2.9.0 problem rows: look-alike rows go group by group, then the others", 
   assert.deepEqual(JSON.parse(alone.evaluate('JSON.stringify(state.problemCategories.filter((item) => item.kind === "lookAlike"))')), [{ kind: "lookAlike", field: "备注", count: 1, unit: "row" }]);
 });
 
+// v3.4.0 (A): a look-alike group's main writing is its most frequent trimmed writing and is not
+// counted; a tie leaves the group without one and every writing counts. Edge spaces and cells of
+// nothing but invisible characters count as before, the main writing's cells with edge spaces too.
+const MAIN_WRITING_CSV = "部门,序\r\nSales,1\r\nsales,2\r\nSales,3\r\nHR,4\r\nhr,5\r\nSales ,6\r\nSales,7\r\n\u200B,8\r\n财务,9\r\n";
+
+test("v3.4.0 look-alike: the main writing is not counted, a tie counts the whole group, and the list is the count", async () => {
+  const scope = await importCsvFile(MAIN_WRITING_CSV, "main.csv");
+  const [item] = lookAlikesOf(scope);
+  assert.deepEqual([item.field, item.edgeSpaceCount, item.invisibleOnlyCount, item.groupCount, item.rowCount], ["部门", 1, 1, 2, 5]);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.lookAlikes[0].groups.map(lookAlikeMainText))")), ["Sales", null]);
+  // The groups keep every writing's count (group rowCount 5 and 2); only the field's rowCount is new.
+  assert.deepEqual(item.groups.map((group) => group.rowCount), [5, 2]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「部门」共 5 行：首尾空格 1 格（如「Sales␣」）；只有不可见字符 1 格；2 组写法不一样：「Sales」4 个（主写法） / 「sales」1 个（大小写）；「HR」1 个 / 「hr」1 个（大小写）。");
+  assert.deepEqual(problemNotes(scope, "lookAlike", "部门"), [
+    [3, "第 1 组（大小写，主写法是「Sales」）：「sales」"],
+    [7, "首尾空格：「Sales␣」"],
+    [5, "第 2 组（大小写）：「HR」"],
+    [6, "第 2 组（大小写）：「hr」"],
+    [9, "只有不可见字符：「[零宽字符]」"]
+  ]);
+  // The rows of the main writing (lines 2, 4, 8) are not listed; the list is the count.
+  assert.equal(scope.evaluate('listProblemRows({ kind: "lookAlike", field: "部门" }).count'), 5);
+  assert.equal(scope.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike"))'), "写法不一样 · 部门（5 行）");
+  const en = await importCsvInLanguage(MAIN_WRITING_CSV, "main.csv", "en");
+  assert.equal(en.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "“部门”, 5 rows: leading or trailing spaces in 1 cell (e.g. “Sales␣”); only invisible characters in 1 cell; 2 values are written differently: “Sales” 4 (most common) / “sales” 1 (upper and lower case); “HR” 1 / “hr” 1 (upper and lower case).");
+  assert.deepEqual(problemNotes(en, "lookAlike", "部门"), [
+    [3, "group 1 (upper and lower case, most often written “Sales”): “sales”"],
+    [7, "leading or trailing spaces: “Sales␣”"],
+    [5, "group 2 (upper and lower case): “HR”"],
+    [6, "group 2 (upper and lower case): “hr”"],
+    [9, "only invisible characters: “[zero-width character]”"]
+  ]);
+});
+
+test("v3.4.0 look-alike: the main writing is the most frequent trimmed text, clean or not", async () => {
+  // Three full-width writings and one half-width: the full-width one is the main writing, so one cell counts.
+  const scope = await importCsvFile("客户,序\r\n\uFF21\uFF22\uFF23公司,1\r\nABC公司,2\r\n\uFF21\uFF22\uFF23公司,3\r\n\uFF21\uFF22\uFF23公司,4\r\n甲公司,5\r\n", "full.csv");
+  const [item] = lookAlikesOf(scope);
+  assert.equal(item.rowCount, 1);
+  assert.equal(scope.evaluate("lookAlikeMainText(state.lookAlikes[0].groups[0])"), "\uFF21\uFF22\uFF23公司");
+  assert.deepEqual(problemNotes(scope, "lookAlike", "客户"), [[3, "第 1 组（全角半角或兼容写法，主写法是「\uFF21\uFF22\uFF23公司」）：「ABC公司」"]]);
+  assert.equal(scope.evaluate("formatLookAlikeLine(state.lookAlikes[0])"), "「客户」共 1 行：1 组写法不一样：「\uFF21\uFF22\uFF23公司」3 个（主写法） / 「ABC公司」1 个（全角半角或兼容写法）。");
+});
+
 test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted cells and file names", async () => {
   const writing = await importStage3Fixture("写法不一致.csv");
   const kinds = JSON.parse(writing.evaluate("JSON.stringify(state.problemCategories.map((item) => item.kind))"));
@@ -5904,14 +5964,14 @@ test("v2.9.0 problem rows: order of the categories, labels, buttons, highlighted
   clickProblemButton(writing, buttons[2].index);
   assert.deepEqual(sameCategory(openCategory(writing)), sameCategory(categoryAt(writing, buttons[2].index)));
   assert.equal(openCategory(writing).field, "区域");
-  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 18 行，第 1 / 1 页");
-  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 18);
+  assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 行，第 1 / 1 页");
+  assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
   assert.match(writing.elements.get("problemRowsTable").innerHTML, /<td class="cell-problem">华东<\/td>/);
   clickProblemButton(writing, buttons[0].index);
   assert.equal(writing.elements.get("problemRowsSummary").textContent, "共 6 个值，第 1 / 1 页");
   assert.equal((writing.elements.get("problemRowsTable").innerHTML.match(/<td class="cell-problem">/g) || []).length, 6);
   assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "dateStyle"))'), "日期写法 · 下单日期（6 个值）");
-  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不一样 · 区域（18 行）");
+  assert.equal(writing.evaluate('formatProblemCategoryLabel(state.problemCategories.find((item) => item.kind === "lookAlike" && item.field === "区域"))'), "写法不一样 · 区域（6 行）");
   assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "dateStyle", field: "下单日期" }, new Date(2026, 10, 5))'), "写法不一致_问题行_日期写法_下单日期_20261105.csv");
   assert.equal(writing.evaluate('buildProblemRowsFileName({ kind: "lookAlike", field: "区域" }, new Date(2026, 10, 5))'), "写法不一致_问题行_写法不一样_区域_20261105.csv");
   // Exported cells keep the original value, whitespace included.
@@ -6869,8 +6929,9 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 // v2.12.0: the interface terms were unified. None of the replaced words may come back on the
 // page, in reports, in problem-row names, aria labels, file names and notes, or in the 处理
 // column of the change list (problem-row notes and change-list actions are exported as text).
+// v3.4.0 (R18): 数据概览, the first module's name before it became 体检结果.
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
-  "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
+  "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换", "数据概览"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
 // (v3.2.0: the constants are [中文, English] pairs; [0] is the Chinese.)
 const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE[0]", "FORMULA_ERROR_NOTE[0]", "DATE_STYLE_NOTE[0]", "CONSTANT_FIELD_NOTE[0]", "LOOK_ALIKE_NOTE[0]", "PLACEHOLDER_MAYBE_NOTE[0]", "PLACEHOLDER_DASH_NOTE[0]",
@@ -7393,8 +7454,9 @@ test("v3.0.0 shell: the range sentences, their 清除筛选 buttons and the side
   assert.equal(orders.elements.get("sidebarFilterSummary").textContent, "全部 42 行");
 });
 
-const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?<\/li>/g)]
-  .map((match) => [match[1], match[2], match[3], match[4], match[5] || ""]);
+// v3.4.0 commit 7: the last column is the aria-labels of the checkup dots (H), [] without any.
+const sidebarItems = (scope) => [...scope.elements.get("sidebarFieldList").innerHTML.matchAll(/<li class="([^"]*)" title="([^"]*)"><span class="sidebar-type">([^<]*)<\/span><span class="sidebar-field-name">([^<]*)<\/span>(?:<span class="sidebar-unit">([^<]*)<\/span>)?(?:<span class="sidebar-dots">((?:<span class="sidebar-dot" data-kind="[^"]+" role="img" title="[^"]*" aria-label="[^"]*"><\/span>)+)<\/span>)?<\/li>/g)]
+  .map((match) => [match[1], match[2], match[3], match[4], match[5] || "", [...(match[6] || "").matchAll(/aria-label="([^"]*)"/g)].map((dot) => dot[1])]);
 
 test("v3.0.0 shell: the sidebar lists the file, its size and every field with its applied type, and the state rows", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
@@ -7406,15 +7468,15 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(text("sidebarFileSize"), "42 行 × 9 列");
   assert.equal(text("sidebarFieldCount"), "9");
   assert.deepEqual(sidebarItems(orders), [
-    ["sidebar-field", "订单编号", "#", "订单编号", ""],
-    ["sidebar-field", "下单日期", "日", "下单日期", ""],
-    ["sidebar-field", "地区", "Aa", "地区", ""],
-    ["sidebar-field", "品类", "Aa", "品类", ""],
-    ["sidebar-field", "产品", "Aa", "产品", ""],
-    ["sidebar-field", "客户类型", "Aa", "客户类型", ""],
-    ["sidebar-field", "数量", "12", "数量", ""],
-    ["sidebar-field", "金额", "12", "金额", "元"],
-    ["sidebar-field", "销售代表", "Aa", "销售代表", ""]
+    ["sidebar-field", "订单编号", "#", "订单编号", "", ["整行重复"]],
+    ["sidebar-field", "下单日期", "日", "下单日期", "", ["日期写法混用"]],
+    ["sidebar-field", "地区", "Aa", "地区", "", ["同一个值，写法不一样"]],
+    ["sidebar-field", "品类", "Aa", "品类", "", []],
+    ["sidebar-field", "产品", "Aa", "产品", "", []],
+    ["sidebar-field", "客户类型", "Aa", "客户类型", "", []],
+    ["sidebar-field", "数量", "12", "数量", "", []],
+    ["sidebar-field", "金额", "12", "金额", "元", ["像是空值的写法"]],
+    ["sidebar-field", "销售代表", "Aa", "销售代表", "", ["像是空值的写法"]]
   ]);
   assert.equal(hidden("sidebarHeaderRow"), false);
   assert.equal(text("sidebarHeaderValue"), "第 2 行");
@@ -7426,7 +7488,7 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(hidden("sidebarPlaceholderRow"), false);
   assert.equal(text("sidebarPlaceholderValue"), "2 处");
   orders.evaluate('stageFieldTypeChange("销售代表", "ignore"); applyFieldConfiguration()');
-  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", ""]);
+  assert.deepEqual(sidebarItems(orders).at(-1), ["sidebar-field is-ignored", "销售代表", "—", "销售代表", "", []]);
   assert.equal(text("sidebarPlaceholderValue"), "2 处");
 
   orders.evaluate("resetAnalysisState()");
@@ -7434,6 +7496,51 @@ test("v3.0.0 shell: the sidebar lists the file, its size and every field with it
   assert.equal(orders.elements.get("sidebarFieldList").innerHTML, "");
   assert.equal(hidden("sidebarHeaderRow"), true);
   assert.equal(hidden("sidebarPlaceholderRow"), true);
+});
+
+// ---- v3.4.0 commit 7: the sidebar's dots (H) ----
+const sidebarDots = (scope) => Object.fromEntries(sidebarItems(scope).filter((row) => row[5].length).map((row) => [row[1], row[5]]));
+
+test("v3.4.0 sidebar dots: one per kind in its fields, in the cards' order; duplicate rows on the first field only; labels in both languages", async () => {
+  // Several kinds in one field, in the cards' order (乱表 中文 / English).
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(sidebarDots(messy), {
+    订单号: ["整行重复"], 日期: ["认不出的数字或日期", "日期写法混用"], 门店: ["同一个值，写法不一样"], 金额: ["认不出的数字或日期", "像是空值的写法"]
+  });
+  assert.match(messy.elements.get("sidebarFieldList").innerHTML, /<span class="sidebar-field-name">日期<\/span><span class="sidebar-dots"><span class="sidebar-dot" data-kind="conversion" role="img" title="认不出的数字或日期" aria-label="认不出的数字或日期"><\/span><span class="sidebar-dot" data-kind="dateStyle" role="img" title="日期写法混用" aria-label="日期写法混用"><\/span><\/span><\/li>/);
+  const english = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(sidebarDots(english), {
+    "Order ID": ["Duplicate rows"], Date: ["Numbers or dates not recognized", "Mixed date formats"], Store: ["Same value, written differently"], Amount: ["Numbers or dates not recognized", "Values that may mean blank"]
+  });
+  // A language switch writes the labels again.
+  switchLanguage(messy, "en");
+  assert.deepEqual(sidebarDots(messy).金额, ["Numbers or dates not recognized", "Values that may mean blank"]);
+  // Three ID columns: duplicate rows only on the first field; no dot for kinds without a field.
+  const roster = await importStage3Fixture("花名册.xlsx");
+  assert.deepEqual(JSON.parse(roster.evaluate("JSON.stringify(state.idDuplicates.map((item) => item.field))")), ["工号", "身份证号", "手机号"]);
+  assert.deepEqual(sidebarDots(roster), { 工号: ["整行重复"], 入职日期: ["日期写法混用"], 月薪: ["认不出的数字或日期"] });
+  const formula = await importStage3Fixture("公式错误.xlsx");
+  assert.deepEqual(sidebarDots(formula), { 数量: ["公式错误"], 金额: ["公式错误"], 利润率: ["公式错误"], 备注: ["公式错误"] });
+  // The sample's total row has no dot; leaving the duplicate row out takes its dot away, undoing brings it back.
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.deepEqual(Object.keys(sidebarDots(orders)), ["订单编号", "下单日期", "地区", "金额", "销售代表"]);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(sidebarDots(orders).订单编号, undefined);
+  orders.evaluate('setRowExclusion("duplicateRows", false)');
+  assert.deepEqual(sidebarDots(orders).订单编号, ["整行重复"]);
+  // Treated as blank: the placeholder dots go.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(Object.keys(sidebarDots(orders)), ["订单编号", "下单日期", "地区"]);
+  // Nothing to fix: the list is as before, no dots element at all.
+  const clean = await importCsvFile(CLEAN_TABLE_CSV, "clean.csv");
+  assert.doesNotMatch(clean.elements.get("sidebarFieldList").innerHTML, /sidebar-dot/);
+  // The colours are the cards'; the dots never shrink and sit at the end of the row.
+  const css = repoFile("style.css");
+  for (const kind of ["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"]) {
+    const card = css.match(new RegExp(`\\.checkup-card\\[data-kind="${kind}"\\] \\.checkup-card-icon \\{ background: (#[0-9a-f]{6}); \\}`))[1];
+    assert.match(css, new RegExp(`\\.sidebar-dot\\[data-kind="${kind}"\\] \\{ background: ${card}; \\}`), kind);
+  }
+  assert.match(cssRule(css, ".sidebar-dots"), /flex: none;[\s\S]*margin-left: auto;/);
 });
 
 test("v3.0.0 shell: an Excel sheet joins the file name; a header in row 1 shows no header row; field names are escaped", () => {
@@ -7532,7 +7639,7 @@ test("v3.0.0 status note: a wrapper around the unchanged #statusPanel, folded by
   assert.match(workspace, /resetStatusNote\(\);/);
 });
 
-test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入，有 N 条说明; #statusPanel never changes", async () => {
+test("v3.0.0 status note: a success with notes folds to 〈file〉已载入，有 N 条说明 (v3.4.0: folded on import); #statusPanel never changes", async () => {
   const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
   const panel = orders.elements.get("statusPanel");
   const note = orders.elements.get("statusNote");
@@ -7543,18 +7650,21 @@ test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入�
   assert.equal(before.className, "status-panel success has-note");
   assert.match(before.text, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行/);
   assert.equal(note.classList.contains("can-collapse"), true);
-  assert.equal(note.classList.contains("is-collapsed"), false);
+  // v3.4.0: the import message starts folded; one click opens what it says.
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(toggle.textContent, "看说明");
   assert.equal(orders.elements.get("statusNoteSummary").textContent, "sample-orders.csv 已载入，有 2 条说明");
 
+  orders.evaluate("toggleStatusNote()");
+  assert.equal(note.classList.contains("is-collapsed"), false);
+  assert.equal(attributes["aria-expanded"], "true");
+  assert.equal(toggle.textContent, "收起");
+  assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
   orders.evaluate("toggleStatusNote()");
   assert.equal(note.classList.contains("is-collapsed"), true);
   assert.equal(attributes["aria-expanded"], "false");
   assert.equal(toggle.textContent, "看说明");
   assert.deepEqual({ className: panel.className, text: panel.textContent, role: panel.role }, before);
-  orders.evaluate("toggleStatusNote()");
-  assert.equal(note.classList.contains("is-collapsed"), false);
-  assert.equal(attributes["aria-expanded"], "true");
-  assert.equal(toggle.textContent, "收起");
 
   // A later message replaces the import's: nothing left to fold.
   orders.evaluate('toggleStatusNote(); setStatus("HTML 报告已生成：x.html", "success")');
@@ -7569,13 +7679,15 @@ test("v3.0.0 status note: a success with notes can fold to 〈file〉已载入�
   assert.equal(note.classList.contains("can-collapse"), false);
 });
 
-test("v3.0.0 status note: N counts the notes that are there; a warning never folds", async () => {
+test("v3.0.0 status note: N counts the notes that are there; a warning is one more and folds too (v3.4.0)", async () => {
   const errors = await importStage3Fixture("公式错误.xlsx");
   assert.equal(errors.elements.get("statusNote").classList.contains("can-collapse"), true);
   assert.equal(errors.elements.get("statusNoteSummary").textContent, "公式错误.xlsx · 公式错误 已载入，有 1 条说明");
   const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
   assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
-  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), false);
+  assert.equal(warned.elements.get("statusNote").classList.contains("can-collapse"), true);
+  assert.equal(warned.elements.get("statusNote").classList.contains("is-collapsed"), true);
+  assert.equal(warned.elements.get("statusNoteSummary").textContent, "warned.csv 已载入，有 1 条说明");
   // A plain success has no note: no summary, nothing to fold.
   const plain = createChartContext();
   commitGuardRows(plain, ["城市"], Array.from({ length: 12 }, (_, index) => ({ 城市: index % 2 ? "上海" : "北京" })), "plain.csv");
@@ -8067,12 +8179,13 @@ test("v3.0.0 overview: the five numbers are one line of text with their old labe
   assert.deepEqual(metricItems(orders)[0], ["总记录 → 当前分析", "42 → 10"]);
 });
 
-test("v3.0.0 overview: the preview sits in an open <details> whose summary is the old 数据预览 heading", () => {
+test("v3.0.0 overview: the preview sits in a closed <details> (v3.4.0) whose summary is the old 数据预览 heading", () => {
   const html = indexHtmlSource();
   const overview = html.slice(html.indexOf('id="overviewSection"'), html.indexOf('id="schemaSection"'));
+  assert.doesNotMatch(overview, /preview-details" open/);
   assertInOrder(overview, [
-    '<details class="preview-details" open>',
-    '<summary><h3 class="subsection-title">数据预览</h3></summary>',
+    '<details class="preview-details">',
+    '<summary><h3 class="subsection-title">数据预览</h3><span id="previewSize" class="preview-size"></span></summary>',
     '<table id="previewTable" aria-label="数据预览"></table>',
     '<p id="previewPageInfo"',
     "</details>"
@@ -8189,7 +8302,7 @@ const cssRule = (css, selector) => {
   return match[1];
 };
 
-test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights", () => {
+test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights (v3.4.0: and 52 px for the checkup's number, 40 px for it on phones)", () => {
   const css = repoFile("style.css");
   const root = cssRule(css, ":root");
   [["--bg", "#f2f2f7"], ["--panel", "#ffffff"], ["--text", "#1c1c1e"], ["--text-secondary", "#636366"], ["--muted", "#636366"], ["--primary", "#0068e0"], ["--sidebar-bg", "#f9f9fb"], ["--card-border", "rgba(28, 28, 30, 0.07)"], ["--radius-card", "16px"]]
@@ -8200,7 +8313,14 @@ test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes an
   assert.doesNotMatch(family, /Inter/);
   assert.ok(family.indexOf('"Segoe UI"') >= 0 && family.indexOf('"Segoe UI"') < family.indexOf('"Microsoft YaHei"'), family);
   const sizes = new Set([...css.matchAll(/font-size: ([^;]+);/g)].map((match) => match[1]));
-  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)"].includes(size), size));
+  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)", "52px", "40px"].includes(size), size));
+  // v3.4.0: 52 px once, in the rule of the checkup's big number; 40 px once, the same number on
+  // phones (commit 8, the user's choice), inside the phone block.
+  assert.equal((css.match(/font-size: 52px;/g) || []).length, 1);
+  assert.match(cssRule(css, ".checkup-total-number"), /font-size: 52px;/);
+  assert.equal((css.match(/font-size: 40px;/g) || []).length, 1);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.checkup-total-number \{\s*font-size: 40px;\s*line-height: 44px;\s*\}/);
   const weights = new Set([...css.matchAll(/font-weight: ([^;]+);/g)].map((match) => match[1]));
   weights.forEach((weight) => assert.ok(["400", "600", "700"].includes(weight), weight));
   // The old purple is gone, the focus ring is the new blue.
@@ -8520,11 +8640,18 @@ test("v3.0.0 look2: the field table's 非空值、唯一值、认不出 columns 
   rows.forEach((row) => assert.deepEqual(row, [false, false, false, true, true, true, false]));
 });
 
-test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export headings no longer look like module titles)", () => {
+test("v3.0.0 look2: subheadings inside modules are 15 px, weight 600 (the export headings no longer look like module titles; v3.4.0: but the checkup's 17 px)", () => {
   const css = repoFile("style.css");
-  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  const found = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .map((match) => [match[1].trim().replace(/\s+/g, " "), match[2]])
     .filter(([selector, body]) => /(?:^|[ ,])(?:[^ ,]* )?h3$|\.subsection-title$/.test(selector) && /font-size:/.test(body));
+  // v3.4.0 (E3): the checkup's 需要处理 (and later 其他发现, 已处理) is the one exception, 17 px / 600;
+  // its cards' titles are h4 (15 px / 600).
+  const checkup = found.filter(([selector]) => selector === ".checkup-caption h3");
+  assert.equal(checkup.length, 1);
+  assert.match(checkup[0][1], /font-size: 17px;/);
+  assert.match(checkup[0][1], /font-weight: 600;/);
+  const rules = found.filter(([selector]) => selector !== ".checkup-caption h3");
   const selectors = rules.map(([selector]) => selector);
   assert.deepEqual(selectors, [".subsection-title", ".filter-condition-heading h3", ".frequency-card h3", ".chart-header h3", ".export-module-heading h3", ".data-export-option h3", ".report-export-copy h3"]);
   rules.forEach(([selector, body]) => {
@@ -9583,8 +9710,22 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // commit took the version out of the hash: the value below is 5e2ac9a's index.html through these
   // steps, and the 3.2.0 page gives the same value (nothing but the version changed). v3.2.2 only
   // changed the repository URL in the footer to sheet-checkup; the value below is the old content
-  // (95ef087e…ca866) with just that one replacement, compared byte for byte.
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "8c1f88e7169f3b6aeb10a60afd154f3d8d16f68846e2ba6b855e778f20bdc80a");
+  // (95ef087e…ca866) with just that one replacement, compared byte for byte. v3.4.0 commit 3 changed
+  // the first module on purpose; the value below is the old content (8c1f88e7…dc80a) with only these
+  // five replacements, compared byte for byte: the navigation's 数据概览 and the title's 数据规模与预览
+  // became 体检结果; the checkup panel (#checkupPanel with #checkupTotal, #checkupExportReport,
+  // #checkupBar, #checkupLegend) went in before #overviewCards, which took the class hidden; the
+  // preview's <details> lost open; its summary got <span id="previewSize" class="preview-size"></span>.
+  // That page was 36329f4c…45d2; commit 4 only inserted, after #checkupPanel, the section of the cards
+  // (#checkupNeeds: its caption with the h3 需要处理, #checkupOverlap and the row-number note, and
+  // #checkupCards). That page was b1e0aa82…18ee; commit 5 made three insertions: 查看统计 and 去看图表
+  // (#checkupOpenStats, #checkupOpenCharts) with 导出体检报告 in a <div class="checkup-actions">; the
+  // sections #checkupChecked (查过的项目) and #checkupOthers (其他发现) after #checkupNeeds; and the
+  // quality page's #qualityCountNote before #qualityScopeNote. That page was 1644e1db…c84c; commit 6
+  // made two insertions: the toast (#checkupToast with #checkupToastText and #checkupToastUndo) before
+  // #checkupPanel, and the section #checkupHandledSection (已处理, with the list #checkupHandled) after
+  // #checkupNeeds. The value below is that page with these two insertions, compared byte for byte.
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "422dff49cea494207e318b34e9a050ce8b759ab7b8cd51cc63dbecd2abda39b7");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -9987,9 +10128,10 @@ test("v3.2.0 language: every key of the page has English that keeps its numbers,
   assert.equal(english["export.check"], "Check which cells will change");
   assert.equal(english["custom.create"], "Create breakdown");
   assert.equal(english["schema.apply"], "Apply column settings");
-  // The eight module titles say what the Chinese title says, not the navigation's short names.
+  // The eight module titles say what the Chinese title says, not the navigation's short names;
+  // v3.4.0: the first title is 体检结果 / Checkup, as its navigation name (it is for screen readers only).
   assert.deepEqual(["overview", "schema", "quality", "filter", "statistics", "charts", "custom", "export"].map((name) => english[`${name}.title`]),
-    ["Size and preview", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
+    ["Checkup", "Check column types", "Blanks, duplicates and other issues", "Choose the rows to analyze", "Number and text stats", "Distributions and trends", "Combine columns as you need", "Save the data and the report"]);
   assert.equal(english["sample.row"], "#");
   assert.equal(english["note.expand"], scope.evaluate('(() => { const button = { getAttribute: () => "true", setAttribute() {}, previousElementSibling: { classList: { toggle() {} } } }; setInterfaceLanguage("en"); toggleSectionNote({ target: { closest: () => button } }); return button.textContent; })()'));
 });
@@ -10397,9 +10539,11 @@ test("v3.2.0 app.js: the import message is kept as figures and written in the la
   assert.equal(status.affectedRows, 1);
   const chinese = textOf(scope, "statusPanel");
   assert.equal(chinese, "CSV 已载入，但读取时有 1 处疑问，涉及 1 行。请核对数据预览和字段数量。第 20 行「Total」疑似合计行，可以在“数据质量”里设为不计入分析。");
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv 已载入，有 2 条说明");
   scope.evaluate('setInterfaceLanguage("en"); showImportStatus(state.importStatus)');
   assert.equal(textOf(scope, "statusPanel"), "The CSV is loaded, but there is 1 reading issue in 1 row. Check the data preview and the number of columns. Row 20 “Total” looks like a total row; you can exclude it from analysis in Data quality.");
-  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 1 note");
+  // v3.4.0: the reading warning counts as a note too: 1 + the suspected total.
+  assert.equal(textOf(scope, "statusNoteSummary"), "orders.csv loaded, 2 notes");
   // Back from 换一个文件: written again, now in Chinese, byte for byte as after the import.
   scope.evaluate('setInterfaceLanguage("zh"); showUploadPage(); returnToAnalysis()');
   assert.equal(textOf(scope, "statusPanel"), chinese);
@@ -10620,7 +10764,7 @@ test("v3.2.0 quality.js: problem-row notes in English, picked once per list (no 
   en.evaluate("L = globalThis.__realL");
   // Some lists format a bound or a number (formatFieldNumber may call L once a list); never once a row.
   const rows = enNotes.flat().length;
-  assert.ok(rows > 20, `${rows} rows`);
+  assert.equal(rows, 20, `${rows} rows`);
   assert.ok(lCalls < categories.length, `${lCalls} L() calls for ${rows} rows`);
   // Many rows of one kind: a list of 12 blanks, 4 values not recognized and 7 rows of one repeat group
   // makes no L() call at all.
@@ -11315,7 +11459,7 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
   assert.equal(sampleOrdersText(scope, "dateStyleDetails"),
     "“Order date”: the main format is text YYYY-MM-DD: 36 (e.g. 2025-01-03); 5 other rows use other formats: text MM/DD/YYYY: 3 (e.g. 02/18/2025), text with English month names: 2 (e.g. Apr 16, 2025). View");
   assert.equal(sampleOrdersText(scope, "lookAlikeDetails"),
-    "“Region”, 11 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
+    "“Region”, 3 rows: leading or trailing spaces in 2 cells (e.g. “South\u2423”); 1 value is written differently: “East” 9 (most common) / “east” 1 (upper and lower case). View “Sales rep”, 1 row: leading or trailing spaces in 1 cell (e.g. “\u2423Emma Chen”). View");
   assert.deepEqual(placeholderEntries(scope.evaluate), [["Amount", "N/A", "common", 1, [29]], ["Sales rep", "\u2014", "common", 1, [16]]]);
   assert.deepEqual(idDuplicates(scope.evaluate).map((item) => [item.field, item.values.map((value) => [value.value, value.count, value.rowNumbers])]), [["Order ID", [["SO-1018", 2, [20, 21]]]]]);
   const { names, mismatches } = problemRowCheck(scope);
@@ -11323,12 +11467,12 @@ test("v3.2.0 commit 12: the English sample in English: the status line, the six 
   assert.deepEqual(names, [
     "missing / Order date = 1", "missing / Region = 1", "missing / Category = 1", "missing / Product = 1", "missing / Customer type = 1", "missing / Sales rep = 1",
     "conversion / Amount = 1", "dateStyle / Order date = 5", "outlier / Quantity = 1", "outlier / Amount = 1", "duplicateRows = 2", "suspectedTotal = 1",
-    "idDuplicate / Order ID = 2", "lookAlike / Region = 11", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
+    "idDuplicate / Order ID = 2", "lookAlike / Region = 3", "lookAlike / Sales rep = 1", "placeholder / Amount / N/A = 1", "placeholder / Sales rep / \u2014 = 1"
   ]);
   // The same rows as the Chinese sample, except the case variant "east" (row 37), which the Chinese
   // sample has not: its 地区 group is two trailing spaces only.
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => listProblemRows(category).items.map((item) => item.line)))")), [
-    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [3, 7, 11, 16, 22, 27, 31, 32, 37, 42, 10], [42], [29], [16]
+    [44], [44], [44], [44], [44], [44], [29], [12, 19, 25, 36, 39], [44], [44], [20, 21], [44], [20, 21], [32, 37, 10], [42], [29], [16]
   ]);
 });
 
@@ -11357,8 +11501,11 @@ test("v3.2.0 commit 12: en-issues.csv: types, reading issues, the kg column, the
   // The fixture's whole point: every one of these is a problem-row category with the rows above.
   assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(listProblemCategories().map((category) => [category.kind, category.field || '', listProblemRows(category).items.map((item) => item.line)]))")), [
     ["missing", "Status", [13]], ["missing", "Note", [2, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21]],
-    ["lookAlike", "Team", expected.issues.find((issue) => issue.id === "N4").fileLines], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
+    ["lookAlike", "Team", [4, 7]], ["lookAlike", "Note", [10]], ["parseWarnings", "", [16, 13]]
   ]);
+  // v3.4.0: N4 has eight rows; the six of the main writing "Sales" are not counted or listed.
+  assert.deepEqual(expected.issues.find((issue) => issue.id === "N4").fileLines.filter((line) => ![4, 7].includes(line)), [2, 6, 10, 13, 16, 19]);
+  assert.equal(scope.evaluate("lookAlikeMainText(state.lookAlikes[0].groups[0])"), "Sales");
 });
 
 test("v3.2.0 commit 12: en-formula-errors.xlsx: the Margin errors and the English subtotal match known-issues.json", async () => {
@@ -13130,4 +13277,1203 @@ test("v3.3.0 fixture: en-subtotal.csv has Excel's subtotals and a grand total, a
     assert.equal(scope.evaluate("state.suspectedTotalLabelCount"), 5, language);
     assert.doesNotMatch(htmlText(scope, "suspectedTotalDetails"), /也带这类字样|more rows? also ha/, language);
   }
+});
+
+// ---- v3.4.0 commit 2: the checkup counts (buildCheckupSummary()) ----
+// tests/fixtures/checkup/ (not stage3: no directory-wide guard reads it) holds the two messy
+// tables of the v3.4.0 boards, copied byte for byte; their generator is not in the repository.
+const CHECKUP_FIXTURES = path.join(__dirname, "fixtures", "checkup");
+const CHECKUP_FIXTURE_BYTES = {
+  "messy.csv": [13801, "8d281d08acbff72ecd96861db471f9976eab1b14a5eae25c51244e2cff2115d3"],
+  "messy-en.csv": [13408, "026123e068d98b7acef869418ee25e938ffba4035f7f7a76dfb8a15147eeca9a"]
+};
+
+async function importCheckupFixture(fileName, language) {
+  const scope = createExcelContext(language === undefined ? {} : { language });
+  put(scope.context, "Papa", Papa);
+  scope.context.window.Papa = Papa;
+  const bytes = fs.readFileSync(path.join(CHECKUP_FIXTURES, fileName));
+  put(scope.context, "__checkupFile", { name: fileName, size: bytes.length, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length) });
+  await scope.evaluate("parseDataFile(__checkupFile)");
+  return scope;
+}
+
+// The checkup of a scope: per kind [kind, rows, K, file lines], then N, the rows of two or more
+// kinds, the counted rows and the bar's segments.
+const checkupOf = (scope) => JSON.parse(scope.evaluate(`(() => {
+  const summary = buildCheckupSummary();
+  const line = (index) => getSourceRowNumber(state.rows[index]);
+  return JSON.stringify({
+    kinds: summary.kinds.map((item) => [item.kind, item.rows.length, item.otherKindRows, item.rows.map(line)]),
+    N: summary.rowCount, multi: summary.multiRows, total: summary.total,
+    segments: summary.segments.map((segment) => segment.kind + " " + segment.rows).join(", ")
+  });
+})()`));
+const checkupCounts = (scope) => checkupOf(scope).kinds.map(([kind, rows, other]) => [kind, rows, other]);
+
+const sampleOrdersEn = () => importCsvInLanguage(readExampleCsv("sample-orders-en.csv"), "sample-orders-en.csv", "en");
+
+test("v3.4.0 checkup fixtures: messy.csv and messy-en.csv keep their bytes", () => {
+  assert.deepEqual(fs.readdirSync(CHECKUP_FIXTURES).sort(), Object.keys(CHECKUP_FIXTURE_BYTES).sort());
+  for (const [fileName, [size, sha256]] of Object.entries(CHECKUP_FIXTURE_BYTES)) {
+    const bytes = fs.readFileSync(path.join(CHECKUP_FIXTURES, fileName));
+    assert.equal(bytes.length, size, fileName);
+    assert.equal(crypto.createHash("sha256").update(bytes).digest("hex"), sha256, fileName);
+  }
+});
+
+test("v3.4.0 checkup: N and rows per kind on four tables", async () => {
+  const zh = checkupOf(await clickSampleButton(sampleOrdersFetchedText()));
+  assert.deepEqual(zh.kinds, [
+    ["suspectedTotal", 1, 0, [44]], ["duplicateRows", 2, 0, [20, 21]], ["placeholder", 2, 0, [16, 29]],
+    ["dateStyle", 5, 0, [12, 19, 25, 36, 39]], ["lookAlike", 2, 0, [10, 32]]
+  ]);
+  assert.deepEqual([zh.N, zh.multi, zh.total], [12, 0, 42]);
+  const en = checkupOf(await sampleOrdersEn());
+  assert.deepEqual(en.kinds, [
+    ["suspectedTotal", 1, 0, [44]], ["duplicateRows", 2, 0, [20, 21]], ["placeholder", 2, 0, [16, 29]],
+    ["dateStyle", 5, 0, [12, 19, 25, 36, 39]], ["lookAlike", 4, 0, [10, 32, 37, 42]]
+  ]);
+  assert.deepEqual([en.N, en.multi, en.total], [14, 0, 42]);
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(checkupCounts(messy), [["duplicateRows", 24, 2], ["conversion", 22, 4], ["placeholder", 9, 0], ["dateStyle", 9, 0], ["lookAlike", 15, 7], ["parseWarnings", 1, 1]]);
+  assert.deepEqual([checkupOf(messy).N, checkupOf(messy).multi, checkupOf(messy).total], [73, 7, 298]);
+  const messyEn = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(checkupCounts(messyEn), [["duplicateRows", 24, 2], ["conversion", 24, 6], ["placeholder", 10, 0], ["dateStyle", 10, 0], ["lookAlike", 13, 5], ["parseWarnings", 1, 1]]);
+  assert.deepEqual([checkupOf(messyEn).N, checkupOf(messyEn).multi, checkupOf(messyEn).total], [75, 7, 298]);
+  // The import keeps it in state; a call gives the same figures.
+  assert.equal(messy.evaluate("state.checkupSummary.rowCount"), 73);
+});
+
+test("v3.4.0 checkup: a cell counts once (a pending N/A that fails conversion is a placeholder only)", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  // The quality page counts the N/A of 金额 as a value it cannot read ...
+  assert.equal(orders.evaluate('getFieldProfile("金额").conversionFailureCount'), 1);
+  assert.deepEqual(JSON.parse(orders.evaluate('JSON.stringify(listProblemRows({ kind: "conversion", field: "金额" }).items.map((item) => item.line))')), [29]);
+  // ... and the checkup counts that cell as a placeholder, not also as one it cannot read.
+  const summary = JSON.parse(orders.evaluate('JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.cells.map((cell) => [getSourceRowNumber(state.rows[cell.index]), cell.field])]))'));
+  assert.equal(summary.some(([kind]) => kind === "conversion"), false);
+  assert.deepEqual(summary.find(([kind]) => kind === "placeholder")[1], [[29, "金额"], [16, "销售代表"]]);
+  // A placeholder of the second tier is not counted, and neither is one already treated as blank.
+  const second = await importCsvFile("编号,状态,数量\r\n1,无,5\r\n2,好,6\r\n3,好,7\r\n4,中,8\r\n5,N/A,9\r\n", "tier.csv");
+  assert.deepEqual(JSON.parse(second.evaluate("JSON.stringify(state.placeholders.map((entry) => [entry.key, entry.tier === \"common\"]))")).sort(), [["N/A", true], ["无", false]]);
+  assert.deepEqual(checkupOf(second).kinds, [["placeholder", 1, 0, [6]]]);
+  second.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual(checkupOf(second).kinds, []);
+});
+
+test("v3.4.0 checkup: duplicate rows count the kept row", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.evaluate("state.duplicateRows"), 1);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(state.duplicateRowGroups.map((group) => group.map((index) => getSourceRowNumber(state.rows[index]))))")), [[20, 21]]);
+  assert.deepEqual(checkupOf(orders).kinds[1], ["duplicateRows", 2, 0, [20, 21]]);
+  // countDuplicateRows() without the array still returns the count alone.
+  assert.equal(orders.evaluate("countDuplicateRows(state.rows, state.fields)"), 1);
+  // Groups by first appearance, every row of each, a group of three too.
+  const rows = [["a", "1"], ["b", "2"], ["a", "1"], ["c", "3"], ["b", "2"], ["a", "1"]].map(([x, y]) => ({ x, y }));
+  put(orders.context, "__rows", rows);
+  assert.deepEqual(JSON.parse(orders.evaluate('(() => { const groups = []; const count = countDuplicateRows(__rows, ["x", "y"], groups); return JSON.stringify([count, groups]); })()')), [3, [[0, 2, 5], [1, 4]]]);
+});
+
+test("v3.4.0 checkup: rows left out of the analysis are not counted", async () => {
+  const totals = await sampleWithExclusions({ duplicates: false });
+  assert.deepEqual([checkupOf(totals).N, checkupOf(totals).total], [11, 41]);
+  assert.equal(checkupOf(totals).kinds.some(([kind]) => kind === "suspectedTotal"), false);
+  // The repeated row left out, its group has one counted row: the kept row is no longer a duplicate.
+  const repeats = await sampleWithExclusions({ totals: false });
+  assert.deepEqual([checkupOf(repeats).N, checkupOf(repeats).total], [10, 41]);
+  assert.equal(checkupOf(repeats).kinds.some(([kind]) => kind === "duplicateRows"), false);
+  const both = await sampleWithExclusions();
+  assert.deepEqual([checkupOf(both).N, checkupOf(both).total], [9, 40]);
+  assert.equal(checkupOf(both).segments, "placeholder 2, dateStyle 5, lookAlike 2, clean 31");
+  // Brought back, counted again.
+  both.evaluate('setRowExclusion("suspectedTotal", false); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual([checkupOf(both).N, checkupOf(both).total], [12, 42]);
+});
+
+const CHECKUP_KIND_ORDER = ["suspectedTotal", "duplicateRows", "formulaError", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"];
+
+async function importEveryCheckupFile() {
+  const scopes = await importEveryQualityFile();
+  scopes.push(["sample-orders-en.csv (en)", await sampleOrdersEn()]);
+  scopes.push(["messy.csv", await importCheckupFixture("messy.csv")]);
+  scopes.push(["messy-en.csv", await importCheckupFixture("messy-en.csv", "en")]);
+  return scopes;
+}
+
+test("v3.4.0 checkup: the bar adds up, every row in one segment", async () => {
+  const scopes = await importEveryCheckupFile();
+  assert.equal(scopes.length, 22);
+  for (const [name, scope] of scopes) {
+    const check = JSON.parse(scope.evaluate(`(() => {
+      const s = buildCheckupSummary();
+      const only = new Map();
+      s.kindsOfRow.forEach((kinds) => { if (kinds.length === 1) only.set(kinds[0], (only.get(kinds[0]) || 0) + 1); });
+      return JSON.stringify({
+        sum: s.segments.reduce((total, segment) => total + segment.rows, 0), total: s.total, counted: getIncludedRows().length,
+        multi: s.segments.filter((segment) => segment.kind === "multi").map((segment) => segment.rows), multiRows: s.multiRows,
+        clean: s.segments[s.segments.length - 1], N: s.rowCount, rowsOfKinds: s.kindsOfRow.size,
+        kindsOk: s.kinds.every((item) => item.onlyRows + item.otherKindRows === item.rows.length && item.onlyRows === (only.get(item.kind) || 0)),
+        onlySegments: s.segments.filter((segment) => segment.kind !== "multi" && segment.kind !== "clean").map((segment) => [segment.kind, segment.rows]),
+        onlyKinds: s.kinds.filter((item) => item.onlyRows).map((item) => [item.kind, item.onlyRows])
+      });
+    })()`));
+    assert.equal(check.sum, check.total, name);
+    assert.equal(check.total, check.counted, name);
+    assert.deepEqual(check.multi, check.multiRows ? [check.multiRows] : [], name);
+    assert.deepEqual(check.clean, { kind: "clean", rows: check.total - check.N }, name);
+    assert.equal(check.N, check.rowsOfKinds, name);
+    assert.ok(check.kindsOk, name);
+    assert.deepEqual(check.onlySegments, check.onlyKinds, name);
+  }
+  // The messy tables: seven rows of two or more kinds get one segment of their own.
+  const messy = scopes.find(([name]) => name === "messy.csv")[1];
+  assert.equal(checkupOf(messy).segments, "duplicateRows 22, conversion 18, placeholder 9, dateStyle 9, lookAlike 8, multi 7, clean 225");
+  const messyEn = scopes.find(([name]) => name === "messy-en.csv")[1];
+  assert.equal(checkupOf(messyEn).segments, "duplicateRows 22, conversion 18, placeholder 10, dateStyle 10, lookAlike 8, multi 7, clean 223");
+});
+
+test("v3.4.0 checkup: card order and K, and every row is a row the quality page lists", async () => {
+  const scopes = await importEveryCheckupFile();
+  for (const [name, scope] of scopes) {
+    const kinds = checkupCounts(scope).map(([kind]) => kind);
+    assert.deepEqual(kinds, CHECKUP_KIND_ORDER.filter((kind) => kinds.includes(kind)), name);
+    // The same rows, made the slow way from the problem rows (contract 19) with the checkup's rules.
+    const expected = JSON.parse(scope.evaluate(`(() => {
+      const pending = new Map();
+      state.placeholders.forEach((entry) => {
+        if (entry.confirmed || entry.fieldIgnored || entry.tier !== "common") return;
+        if (!pending.has(entry.field)) pending.set(entry.field, new Set());
+        pending.get(entry.field).add(entry.key);
+      });
+      const rows = {};
+      listProblemCategories().forEach((category) => {
+        if (!${JSON.stringify(CHECKUP_KIND_ORDER)}.includes(category.kind)) return;
+        if (category.kind === "placeholder" && !pending.get(category.field)?.has(category.key)) return;
+        listProblemRows(category).items.forEach((item) => {
+          if (item.index === null) return;
+          if (category.kind === "conversion" && pending.get(category.field)?.has(placeholderKey(state.rows[item.index][category.field]))) return;
+          (rows[category.kind] = rows[category.kind] || new Set()).add(item.index);
+        });
+      });
+      return JSON.stringify(Object.entries(rows).map(([kind, set]) => [kind, [...set].sort((a, b) => a - b)]));
+    })()`));
+    const actual = JSON.parse(scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))"));
+    assert.deepEqual(actual, CHECKUP_KIND_ORDER.flatMap((kind) => expected.filter(([k]) => k === kind)), name);
+  }
+  const messy = scopes.find(([name]) => name === "messy.csv")[1];
+  assert.deepEqual(checkupCounts(messy).map(([kind, , other]) => [kind, other]), [["duplicateRows", 2], ["conversion", 4], ["placeholder", 0], ["dateStyle", 0], ["lookAlike", 7], ["parseWarnings", 1]]);
+  // Formula errors: one row per row, a field each cell.
+  const errors = scopes.find(([name]) => name === "公式错误.xlsx")[1];
+  assert.deepEqual(checkupOf(errors).kinds, [["formulaError", 5, 0, [3, 4, 5, 6, 9]]]);
+  assert.deepEqual(JSON.parse(errors.evaluate('JSON.stringify(buildCheckupSummary().kinds[0].fields)')), ["数量", "金额", "利润率", "备注"]);
+  // Reading issues without an imported row are not counted (en-issues.csv: two with rows).
+  const issues = scopes.find(([name]) => name === "en-issues.csv")[1];
+  assert.deepEqual(checkupOf(issues).kinds, [["lookAlike", 3, 0, [4, 7, 10]], ["parseWarnings", 2, 0, [13, 16]]]);
+});
+
+// v3.4.0: the checkup reads what the import and the rebuilds keep; it builds no row key, classifies
+// no date style and reads no total label. The guards basic:5523 and basic:8899 (v3.1.0) still hold.
+test("v3.4.0 checkup reads caches only", async () => {
+  const scopes = [
+    ["sample-orders.csv", await clickSampleButton(sampleOrdersFetchedText())],
+    ["messy.csv", await importCheckupFixture("messy.csv")],
+    ["写法不一致.csv", await importStage3Fixture("写法不一致.csv")],
+    ["花名册.xlsx", await importStage3Fixture("花名册.xlsx")]
+  ];
+  for (const [name, scope] of scopes) {
+    scope.evaluate(`globalThis.__checkupCalls = { forEachDateStyle: 0, buildExactRowKey: 0, totalRowLabel: 0 };
+      for (const name of Object.keys(globalThis.__checkupCalls)) {
+        const original = globalThis[name];
+        globalThis[name] = (...args) => { globalThis.__checkupCalls[name] += 1; return original(...args); };
+      }`);
+    const first = scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))");
+    assert.equal(scope.evaluate("JSON.stringify(buildCheckupSummary().kinds.map((item) => [item.kind, item.rows]))"), first, name);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 0, totalRowLabel: 0 }, name);
+  }
+  // A rebuild (销售代表 to ID and back) scans no date style; the checkup it makes reads the scan of
+  // the import. (Its four row keys are the ID check's identical rows, buildIdDuplicateSummary().)
+  const orders = scopes[0][1];
+  rebuildKeepingTypes(orders);
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 4, totalRowLabel: 0 });
+  orders.evaluate("buildCheckupSummary()");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__checkupCalls)")), { forEachDateStyle: 0, buildExactRowKey: 4, totalRowLabel: 0 });
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 12);
+});
+
+test("v3.4.0 checkup: made on commit, rebuild and rows left out, never on a filter", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate("globalThis.__checkups = 0; const __build = buildCheckupSummary; buildCheckupSummary = (...args) => { globalThis.__checkups += 1; return __build(...args); }");
+  const calls = () => orders.evaluate("globalThis.__checkups");
+  const before = orders.evaluate("globalThis.__before = state.checkupSummary; state.checkupSummary.rowCount");
+  assert.equal(before, 12);
+  filterRegion(orders, "华东");
+  orders.evaluate("clearAllFilters()");
+  assert.equal(calls(), 0);
+  assert.equal(orders.evaluate("state.checkupSummary === __before"), true);
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.equal(calls(), 1);
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 11);
+  orders.evaluate('setRowExclusion("suspectedTotal", false)');
+  assert.deepEqual([calls(), orders.evaluate("state.checkupSummary.rowCount")], [2, 12]);
+  // Placeholder confirmations and the field configuration rebuild: N follows.
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.deepEqual([calls(), orders.evaluate("state.checkupSummary.rowCount")], [3, 10]);
+  orders.evaluate('undoPlaceholderConfirmation("金额", "N/A")');
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 11);
+  setFieldType(orders, "下单日期", "category");
+  assert.equal(orders.evaluate('state.checkupSummary.kinds.some((item) => item.kind === "dateStyle")'), false);
+  setFieldType(orders, "下单日期", "date");
+  assert.equal(orders.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "dateStyle").rows.length'), 5);
+  // A field type changed in place keeps the profile object: the rows failing it are made again.
+  const messy = await importCheckupFixture("messy.csv");
+  const conversionRows = () => messy.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "conversion").rows.length');
+  assert.equal(conversionRows(), 22);
+  setFieldType(messy, "日期", "category");
+  assert.equal(messy.evaluate('state.checkupSummary.kinds.find((item) => item.kind === "conversion")?.fields.join()'), "金额");
+  // As a number, 日期 fails other rows than as a date: the cells the quality page lists now.
+  setFieldType(messy, "日期", "numeric");
+  const numericRows = JSON.parse(messy.evaluate('JSON.stringify(state.checkupSummary.kinds.find((item) => item.kind === "conversion").cells.filter((cell) => cell.field === "日期").map((cell) => cell.index))'));
+  assert.deepEqual(numericRows, JSON.parse(messy.evaluate('JSON.stringify(listProblemRows({ kind: "conversion", field: "日期" }).items.map((item) => item.index).filter((index) => !(state.placeholders.some((entry) => entry.field === "日期" && entry.tier === "common" && !entry.confirmed && entry.key === placeholderKey(state.rows[index]["日期"])))))')));
+  assert.ok(numericRows.length > 22);
+  setFieldType(messy, "日期", "date");
+  assert.equal(conversionRows(), 22);
+  // Cleared with the analysis, replaced by the next import.
+  orders.evaluate("resetAnalysisState()");
+  assert.equal(orders.evaluate("state.checkupSummary"), null);
+  assert.equal(orders.evaluate("state.duplicateRowGroups.length"), 0);
+  const next = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(next.evaluate("state.checkupSummary.rowCount"), 12);
+});
+
+// ---- v3.4.0 commit 3: the first screen is the checkup ----
+const checkupHtml = (scope, id) => scope.elements.get(id).innerHTML;
+const checkupSegments = (scope) => [...checkupHtml(scope, "checkupBar").matchAll(/<span class="checkup-segment" data-kind="([^"]+)" role="img" title="([^"]+)" aria-label="([^"]+)" style="flex-grow: (\d+)"><\/span>/g)]
+  .map(([, kind, title, label, grow]) => { assert.equal(title, label); return [kind, title, Number(grow)]; });
+const checkupLegend = (scope) => [...checkupHtml(scope, "checkupLegend").matchAll(/<span class="checkup-legend-item( is-multi)?">([^<]*) <b>([^<]*)<\/b><\/span>/g)]
+  .map(([, multi, label, rows]) => `${multi ? "■ " : ""}${label} ${rows}`);
+
+test("v3.4.0 status fold: the import message starts folded, a warning too; #statusPanel is read as before", async () => {
+  const orders = await importCsvFile(readExampleCsv("sample-orders.csv"), "sample-orders.csv");
+  const note = orders.elements.get("statusNote");
+  const panel = orders.elements.get("statusPanel");
+  assert.deepEqual([note.classList.contains("can-collapse"), note.classList.contains("is-collapsed")], [true, true]);
+  assert.equal(textOf(orders, "statusNoteToggle"), "看说明");
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv 已载入，有 2 条说明");
+  // The live region keeps its role and its whole text: folding only moves it out of sight. (The fake
+  // setAttribute keeps nothing: record the role setStatus() gives it while writing it again.)
+  const roles = [];
+  panel.setAttribute = (name, value) => { if (name === "role") roles.push(value); };
+  orders.evaluate("showImportStatus(state.importStatus)");
+  assert.deepEqual(roles, ["status"]);
+  assert.equal(panel.className, "status-panel success has-note");
+  assert.match(panel.textContent, /^sample-orders\.csv 已成功载入，分析结果已生成。表头在第 2 行，已跳过上方 1 行/);
+  assert.match(indexHtmlSource(), /<section id="statusPanel" class="status-panel hidden" role="status" aria-live="polite" aria-atomic="true"><\/section>/);
+  // The toggle says it is folded (the fake setAttribute keeps nothing: record it while writing again).
+  const attributes = {};
+  orders.elements.get("statusNoteToggle").setAttribute = (name, value) => { attributes[name] = String(value); };
+  orders.evaluate("showImportStatus(state.importStatus)");
+  assert.equal(attributes["aria-expanded"], "false");
+  // The other language: folded the same way, in its words.
+  orders.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv loaded, 2 notes");
+  assert.equal(textOf(orders, "statusNoteToggle"), "Show notes");
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  // A warning without any other note is one note, folded.
+  const warned = await importCsvFile("名,额,备注\r\nA,1,x\r\nB\r\nC,3,\r\nD,4,x\r\nE,5,y\r\n", "warned.csv");
+  assert.equal(warned.elements.get("statusPanel").className, "status-panel warning");
+  assert.equal(warned.elements.get("statusNote").classList.contains("is-collapsed"), true);
+  assert.equal(textOf(warned, "statusNoteSummary"), "warned.csv 已载入，有 1 条说明");
+  // Other messages are not folded: the report export's warning shows whole.
+  warned.evaluate('setStatus("请先完成数据分析，再导出报告。", "warning")');
+  assert.deepEqual([warned.elements.get("statusNote").classList.contains("can-collapse"), warned.elements.get("statusNote").classList.contains("is-collapsed")], [false, false]);
+  // Back from 换一个文件, the import message is folded again.
+  orders.evaluate('setInterfaceLanguage("zh"); toggleStatusNote(); showUploadPage(); returnToAnalysis()');
+  assert.equal(note.classList.contains("is-collapsed"), true);
+  assert.equal(textOf(orders, "statusNoteSummary"), "sample-orders.csv 已载入，有 2 条说明");
+});
+
+test("v3.4.0 first screen: the number of rows that need attention, the bar and its legend", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.elements.get("checkupPanel").classList.contains("hidden"), false);
+  assert.equal(checkupHtml(orders, "checkupTotal"), '<span class="checkup-total-number">12</span> <span class="checkup-total-label">行需要处理</span>');
+  assert.deepEqual(checkupSegments(orders), [
+    ["suspectedTotal", "疑似合计 / 小计行 1 行", 1], ["duplicateRows", "整行重复 2 行", 2], ["placeholder", "像是空值的写法 2 行", 2],
+    ["dateStyle", "日期写法混用 5 行", 5], ["lookAlike", "同一个值，写法不一样 2 行", 2], ["clean", "没有发现问题 30 行", 30]
+  ]);
+  assert.deepEqual(checkupLegend(orders), ["需要处理 12 行", "没有发现问题 30 行"]);
+  // The bar is not in the tab order (no links, no buttons) and its group is named.
+  assert.doesNotMatch(checkupHtml(orders, "checkupBar"), /tabindex|<a |<button/);
+  assert.match(indexHtmlSource(), /<div id="checkupBar" class="checkup-bar" role="group" aria-label="需要处理的行按类别"><\/div>/);
+  // A filter draws it again, with the same figures (the checkup does not follow filters).
+  filterRegion(orders, "华东");
+  assert.match(checkupHtml(orders, "checkupTotal"), />12<\/span>/);
+  // Rows left out are not counted: 12 -> 11, the bar adds up to the 41 counted rows.
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.match(checkupHtml(orders, "checkupTotal"), />11<\/span>/);
+  assert.equal(checkupSegments(orders).reduce((sum, [, , grow]) => sum + grow, 0), 41);
+  // In English, one row in the singular.
+  const en = await sampleOrdersEn();
+  assert.equal(checkupHtml(en, "checkupTotal"), '<span class="checkup-total-number">14</span> <span class="checkup-total-label">rows need attention</span>');
+  assert.deepEqual(checkupLegend(en), ["Need attention 14 rows", "No problems found 28 rows"]);
+  assert.equal(checkupSegments(en)[0][1], "Possible total or subtotal rows 1 row");
+  // Rows of several kinds: a dark segment and a legend item of their own.
+  const messyEn = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(checkupSegments(messyEn).map(([kind, , grow]) => [kind, grow]), [["duplicateRows", 22], ["conversion", 18], ["placeholder", 10], ["dateStyle", 10], ["lookAlike", 8], ["multi", 7], ["clean", 223]]);
+  assert.deepEqual(checkupLegend(messyEn), ["Need attention 75 rows", "■ Several kinds of problems 7 rows", "No problems found 223 rows"]);
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(checkupLegend(messy), ["需要处理 73 行", "■ 其中同时有几类问题 7 行", "没有发现问题 225 行"]);
+  // Nothing to fix (v3.4.0 commit 4, board orig-04): a check and its line, no number, bar or legend.
+  const clean = await importCsvFile("城市,数量\r\n北京,1\r\n上海,2\r\n广州,3\r\n", "clean.csv");
+  assert.equal(checkupHtml(clean, "checkupTotal"), '<span class="checkup-clean-icon" aria-hidden="true"></span><span class="checkup-clean"><span class="checkup-total-label">没有发现需要处理的问题</span><span class="checkup-clean-note">3 行都检查过</span></span>');
+  assert.equal(clean.elements.get("checkupBar").classList.contains("hidden"), true);
+  assert.equal(clean.elements.get("checkupLegend").classList.contains("hidden"), true);
+  // A language switch writes it again; a reset hides and empties it.
+  orders.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.equal(checkupHtml(orders, "checkupTotal"), '<span class="checkup-total-number">11</span> <span class="checkup-total-label">rows need attention</span>');
+  orders.evaluate('setInterfaceLanguage("zh"); resetAnalysisState()');
+  assert.equal(orders.elements.get("checkupPanel").classList.contains("hidden"), true);
+  assert.equal(checkupHtml(orders, "checkupTotal") + checkupHtml(orders, "checkupBar") + checkupHtml(orders, "checkupLegend"), "");
+});
+
+test("v3.4.0 first screen: 体检结果 in the navigation and the title, the range line only when it narrows, the preview folded", async () => {
+  const html = indexHtmlSource();
+  assert.match(html, /<a class="active" href="#overviewSection" aria-current="page">体检结果<\/a>/);
+  assert.match(html, /<h2 id="overviewSectionTitle" tabindex="-1">体检结果<\/h2>/);
+  assert.doesNotMatch(html, /数据概览|数据规模与预览/);
+  // The title is for screen readers only: the same rule as .visually-hidden.
+  const css = repoFile("style.css");
+  assert.match(css, /\n\.visually-hidden,\r?\n#overviewSectionTitle \{\r?\n  position: absolute;/);
+  // The old line of figures is still written, out of sight.
+  assert.match(html, /<div id="overviewCards" class="metric-grid hidden"><\/div>/);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.match(checkupHtml(orders, "overviewCards"), /总记录数/);
+  assert.equal(textOf(orders, "previewSize"), "42 行 × 9 列");
+  // The range line: hidden with neither a filter nor rows left out.
+  const scope = () => orders.elements.get("globalFilterStatus").classList.contains("hidden");
+  assert.equal(scope(), true);
+  filterRegion(orders, "华东");
+  assert.equal(scope(), false);
+  orders.evaluate("clearAllFilters()");
+  assert.equal(scope(), true);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(scope(), false);
+  orders.evaluate('setRowExclusion("duplicateRows", false)');
+  assert.equal(scope(), true);
+  // English names.
+  const english = JSON.parse(orders.evaluate("JSON.stringify(I18N_EN)"));
+  assert.deepEqual([english["nav.overview"], english["overview.title"], english["checkup.export"], english["checkup.bar"]], ["Checkup", "Checkup", "Export checkup report", "Rows that need attention, by kind"]);
+  const en = await sampleOrdersEn();
+  assert.equal(textOf(en, "previewSize"), "42 rows × 9 columns");
+  // Folded, the note is the boards' grey line with an (i) icon and a regular 看说明; the preview's
+  // word has a chevron, down while folded. Opened, the note keeps the v3.0.0 rules.
+  const folded = css.slice(css.indexOf("/* v3.4.0: folded (as every import message starts)"));
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-bar \{[^}]*margin: -8px 0 -4px;[^}]*background: rgba\(28, 28, 30, 0\.045\);/);
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-bar::before \{[^}]*\n  mask: url\("data:image\/svg\+xml,[^"]*circle[^"]*"\)/);
+  assert.match(folded, /\.status-note\.can-collapse\.is-collapsed \.status-note-toggle \{[^}]*font-weight: 400;/);
+  assert.match(cssRule(css, ".status-note.can-collapse .status-note-bar"), /margin-top: 18px;/);
+  assert.match(cssRule(css, ".preview-details > summary::before"), /order: 1;[\s\S]*rotate\(-135deg\)/);
+  assert.match(cssRule(css, ".preview-details:not([open]) > summary::before"), /rotate\(45deg\)/);
+  // Printing opens the folded preview and keeps the bar's colours, inside the one print block.
+  const print = css.slice(css.indexOf("@media print {"));
+  assert.match(print, /details\.preview-details::details-content \{\s*content-visibility: visible;\s*\}/);
+  assert.match(print, /details\.preview-details > :not\(summary\) \{\s*display: block;\s*\}/);
+  assert.match(print, /\.checkup-segment \{\s*-webkit-print-color-adjust: exact;\s*print-color-adjust: exact;\s*\}/);
+});
+
+test("v3.4.0 first screen: 导出体检报告 is the HTML report, with its gate", async () => {
+  assert.match(indexHtmlSource(), /<button id="checkupExportReport" class="secondary-button checkup-export" type="button">导出体检报告<\/button>/);
+  const script = repoFile("script.js");
+  // v3.4.0 commit 6: through exportCheckupReport(), which writes a refusal for drafts on the first
+  // screen and otherwise calls exportHtmlReport().
+  assert.equal((script.match(/dom\.checkupExportReport\.addEventListener\("click", exportCheckupReport\);/g) || []).length, 1);
+  assert.match(repoFile("app.js"), /\n  exportHtmlReport\(\);\r?\n\}/);
+  // Before an analysis the export says so, as the export module's button does.
+  const scope = createScriptContext();
+  scope.evaluate("exportHtmlReport()");
+  assert.equal(textOf(scope, "statusPanel"), "请先完成数据分析，再导出报告。");
+});
+
+// ---- v3.4.0 commit 4: the cards ----
+const checkupCards = (scope) => JSON.parse(scope.evaluate(`JSON.stringify(buildCheckupCards().map((card) => [card.kind, card.rows, card.others,
+  card.samples.map((sample) => (sample.line === null ? "" : sample.line + " ") + sample.text).join(" | "), card.detail, card.action.type, card.action.label]))`));
+const cardTitles = (scope) => [...checkupHtml(scope, "checkupCards").matchAll(/<article id="checkupCard-([^"]+)" class="checkup-card" data-kind="\1">[\s\S]*?<h4 class="checkup-card-title">([^<]*)<\/h4><p class="checkup-card-count"><b>([^<]*)<\/b><small>([^<]*)<\/small><\/p>/g)]
+  .map(([, kind, title, count, unit]) => [kind, title, `${count} ${unit}`]);
+const checkupClick = (scope, dataset, segment = false) => scope.evaluate(`handleCheckupClick({ target: { closest: (selector) => (selector === ".checkup-segment") === ${segment} ? { dataset: ${JSON.stringify(dataset)} } : null } })`);
+
+test("v3.4.0 cards: the kinds in their order, only those with rows, with counts, tags and the rows of other kinds", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(orders.elements.get("checkupNeeds").classList.contains("hidden"), false);
+  assert.deepEqual(cardTitles(orders), [
+    ["suspectedTotal", "疑似合计 / 小计行", "1 行"], ["duplicateRows", "整行重复", "2 行"], ["placeholder", "像是空值的写法", "2 行"],
+    ["dateStyle", "日期写法混用", "5 行"], ["lookAlike", "同一个值，写法不一样", "2 行"]
+  ]);
+  const html = checkupHtml(orders, "checkupCards");
+  // 影响统计结果 on the first five kinds only; no 其中 K 行 without rows of other kinds.
+  assert.equal((html.match(/<span class="checkup-tag">影响统计结果<\/span>/g) || []).length, 3);
+  assert.doesNotMatch(html, /checkup-others/);
+  assert.equal(textOf(orders, "checkupOverlap"), "");
+  assert.match(indexHtmlSource(), /<section id="checkupNeeds" class="checkup-needs hidden" aria-labelledby="checkupNeedsTitle">\s*<div class="checkup-caption">\s*<h3 id="checkupNeedsTitle">需要处理<\/h3>\s*<span id="checkupOverlap" class="checkup-caption-note"><\/span>\s*<span class="checkup-caption-aside">行号是文件里的行号，一般和 Excel 里看到的一致<\/span>/);
+  // The rows of several kinds: 其中 K 行 on each card that has some, and the note by the title.
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual([...checkupHtml(messy, "checkupCards").matchAll(/<p class="checkup-others">([^<]*)<\/p>/g)].map((match) => match[1]),
+    ["其中 2 行还有别的问题", "其中 4 行还有别的问题", "其中 7 行还有别的问题", "其中 1 行还有别的问题"]);
+  assert.equal(textOf(messy, "checkupOverlap"), "同一行可能有几类问题，卡片上的行数相加会多于 73");
+  const messyEn = await importCheckupFixture("messy-en.csv", "en");
+  assert.deepEqual(cardTitles(messyEn).map(([kind, title, count]) => `${title} ${count}`), ["Duplicate rows 24 rows", "Numbers or dates not recognized 24 rows", "Values that may mean blank 10 rows", "Mixed date formats 10 rows", "Same value, written differently 13 rows", "Reading issues 1 row"]);
+  assert.deepEqual([...checkupHtml(messyEn, "checkupCards").matchAll(/<p class="checkup-others">([^<]*)<\/p>/g)].map((match) => match[1]),
+    ["2 of them also have other problems", "6 of them also have other problems", "5 of them also have other problems", "1 of them also has other problems"]);
+  // Formula errors are a card of their own (8 kinds in all: the order is fixed).
+  const errors = await importStage3Fixture("公式错误.xlsx");
+  assert.deepEqual(cardTitles(errors), [["formulaError", "公式错误", "5 行"]]);
+  // Nothing to fix: no cards.
+  const clean = await importCsvFile("城市,数量\r\n北京,1\r\n上海,2\r\n广州,3\r\n", "clean.csv");
+  assert.equal(clean.elements.get("checkupNeeds").classList.contains("hidden"), true);
+  assert.equal(checkupHtml(clean, "checkupCards"), "");
+});
+
+test("v3.4.0 cards: every card's samples, sentence and action, in Chinese and in English", async () => {
+  assert.deepEqual(checkupCards(await clickSampleButton(sampleOrdersFetchedText())), [
+    ["suspectedTotal", 1, 0, "44 合计 | 800 | 123440", "它被当成了一条普通数据，总和与平均值会偏大", "view", "查看这一行"],
+    ["duplicateRows", 2, 0, "20 SO-1018 | 21 SO-1018", "这两行内容完全相同", "exclude", "多出来的 1 行不计入分析"],
+    ["placeholder", 2, 0, "16 — | 29 N/A", "「—」、N/A 常用来表示这一格是空的。第 29 行的 N/A 现在认不出是数字，确认后按空值算", "treat", "按空值处理（2 处）"],
+    ["dateStyle", 5, 0, "2025/2/18 | 2025年4月16日", "第 12、19、25、36、39 行。其余 36 行写成 2025-01-03 这样", "standardize", "导出写法统一的表"],
+    ["lookAlike", 2, 0, "10 华南␣ | 32 华东␣", "「地区」后面多了空格，分组和 VLOOKUP 可能对不上", "standardize", "导出写法统一的表"]
+  ]);
+  assert.deepEqual(checkupCards(await sampleOrdersEn()), [
+    ["suspectedTotal", 1, 0, "44 Total | 800 | 123440", "It counts as an ordinary row, so sums and averages come out too high", "view", "View this row"],
+    ["duplicateRows", 2, 0, "20 SO-1018 | 21 SO-1018", "These two rows are exactly the same", "exclude", "Exclude the 1 extra row"],
+    ["placeholder", 2, 0, "16 — | 29 N/A", "“—”, N/A usually mean the cell is blank. N/A in row 29 cannot be read as a number yet; once confirmed it counts as blank", "treat", "Treat as blank (2)"],
+    ["dateStyle", 5, 0, "02/18/2025 | Apr 16, 2025", "Rows 12, 19, 25, 36, 39. The other 36 rows look like 2025-01-03", "standardize", "Export the standardized table"],
+    ["lookAlike", 4, 0, "10 South␣ | 32 East␣", "“Region” mixes upper and lower case, like “east”; “Sales rep” has extra spaces at the start, so groups and VLOOKUP may not match", "view", "View 2 columns, starting with “Region”"]
+  ]);
+  assert.deepEqual(checkupCards(await importCheckupFixture("messy.csv")), [
+    ["duplicateRows", 24, 2, "2 A20269 | 22 A20206", "12 组内容完全相同的行：第 2、22、42、46 行等", "exclude", "多出来的 12 行不计入分析"],
+    ["conversion", 22, 4, "24 约300 | 26 约300", "「金额」有 14 格读不成数字，像“约300”，没有算进统计；「日期」还有 8 格", "view", "查看「金额」等 2 列"],
+    ["placeholder", 9, 0, "30 N/A | 61 N/A", "N/A 常用来表示这一格是空的。第 30、61、122、128 行等的 N/A 现在认不出是数字，确认后按空值算", "treat", "按空值处理（9 处）"],
+    ["dateStyle", 9, 0, "2025/08/22", "第 13、54、81、88、138 行等。其余 276 行写成 2025-07-04 这样", "standardize", "导出写法统一的表"],
+    ["lookAlike", 15, 7, "11 东城店␣ | 38 海淀店␣", "「门店」后面多了空格，分组和 VLOOKUP 可能对不上", "standardize", "导出写法统一的表"],
+    ["parseWarnings", 1, 1, "299 只有 3 列", "这一行的列数少于表头（表头有 7 列），缺少的格按空值处理", "view", "查看这一行"]
+  ]);
+  assert.deepEqual(checkupCards(await importCheckupFixture("messy-en.csv", "en")), [
+    ["duplicateRows", 24, 2, "6 A20197 | 34 A20032", "12 groups of identical rows: rows 6, 34, 46, 49 and more", "exclude", "Exclude the 12 extra rows"],
+    ["conversion", 24, 6, "17 approx 300 | 49 approx 300", "16 cells in “Amount” cannot be read as numbers, like “approx 300”, so statistics leave them out; 8 more in “Date”", "view", "View 2 columns, starting with “Amount”"],
+    ["placeholder", 10, 0, "2 N/A | 23 N/A", "N/A usually means the cell is blank. N/A in rows 2, 23, 59, 89 and more cannot be read as a number yet; once confirmed it counts as blank", "treat", "Treat as blank (10)"],
+    ["dateStyle", 10, 0, "11/19/2025", "Rows 5, 41, 82, 109, 118 and more. The other 275 rows look like 2025-06-05", "standardize", "Export the standardized table"],
+    ["lookAlike", 13, 5, "3 Riverside␣ | 39 mall", "“Store” mixes upper and lower case, like “airport”, so groups and VLOOKUP may not match", "view", "View these 13 rows"],
+    ["parseWarnings", 1, 1, "299 3 columns only", "This row has fewer columns than the header (7); the missing cells count as blank", "view", "View this row"]
+  ]);
+  assert.deepEqual(checkupCards(await importStage3Fixture("公式错误.xlsx")), [
+    ["formulaError", 5, 0, "3 #DIV/0! | 4 #N/A | 4 #VALUE!", "「数量」「金额」「利润率」「备注」里共 7 格公式算出了错误，已按空值算，没有算进统计", "view", "查看「利润率」等 4 列"]
+  ]);
+  // In English every column is named too, the last after “and”.
+  assert.deepEqual(checkupCards(await importStage3Fixture("公式错误.xlsx", "en")), [
+    ["formulaError", 5, 0, "3 #DIV/0! | 4 #N/A | 4 #VALUE!", "7 cells in “数量”, “金额”, “利润率” and “备注” hold formula errors, so they count as blank and are left out of the statistics", "view", "View 4 columns, starting with “利润率”"]
+  ]);
+  assert.deepEqual(checkupCards(await importStage3Fixture("写法不一致.csv")), [
+    ["conversion", 1, 0, "15 待定", "「下单日期」有 1 格读不成日期，像“待定”，没有算进统计", "view", "查看这一行"],
+    ["placeholder", 3, 2, "11 N/A | 12 N/A", "N/A、n/a 常用来表示这一格是空的。确认后按空值算", "treat", "按空值处理（3 处）"],
+    ["dateStyle", 6, 5, "2024/03/07 | 2024年3月9日", "第 4、8、9、11、13 行等。其余 16 行写成 2024-03-01 这样", "standardize", "导出写法统一的表"],
+    ["lookAlike", 10, 3, "2 SKU-001 | 3 sku-001", "「商品编号」大小写不一（如「sku-001」）；「区域」有看不见的字符；还有 1 列有类似情况，分组和 VLOOKUP 可能对不上", "view", "查看「区域」等 3 列"]
+  ]);
+  assert.deepEqual(checkupCards(await importStage3Fixture("en-issues.csv", "en")), [
+    ["lookAlike", 3, 0, "4 sales | 7 Sales[zero-width character]", "“Team” mixes upper and lower case, like “sales”; “Note” has cells of only invisible characters, so groups and VLOOKUP may not match", "view", "View 2 columns, starting with “Team”"],
+    ["parseWarnings", 2, 0, "13 5 columns only", "2 rows have reading issues; each has its note when you view it", "view", "View these 2 rows"]
+  ]);
+});
+
+test("v3.4.0 cards: 查看 opens the viewer on the card's rows, the first field's when there are several (R12 labels); the other actions call what the page calls", async () => {
+  const messy = await importCheckupFixture("messy.csv");
+  // The view buttons carry the viewer's own aria-label.
+  assert.match(checkupHtml(messy, "checkupCards"), /<button class="checkup-action" type="button" data-checkup-action="view" data-checkup-kind="conversion" aria-label="查看「金额」认不出的值">查看「金额」等 2 列<\/button>/);
+  assert.match(checkupHtml(messy, "checkupCards"), /<button class="checkup-action" type="button" data-checkup-action="exclude" data-checkup-kind="duplicateRows">多出来的 12 行不计入分析<\/button>/);
+  checkupClick(messy, { checkupAction: "view", checkupKind: "conversion" });
+  assert.equal(messy.context.document.body.dataset.module, "qualitySection");
+  assert.deepEqual(JSON.parse(messy.evaluate("JSON.stringify(state.problemView.category)")), { kind: "conversion", field: "金额" });
+  // The viewer lists 23 values there (the 9 pending N/A too), the card counts 14 cells of 金额, so the
+  // button names no number (R12); over two columns it says so.
+  assert.match(textOf(messy, "problemRowsSummary"), /^共 23 个值/);
+  // One column whose viewer lists the card's rows: the number; one whose viewer lists more: the name only.
+  const one = await importCsvFile("编号,金额\r\n1,10\r\n2,x\r\n3,30\r\n4,40\r\n5,50\r\n6,60\r\n", "one.csv");
+  assert.deepEqual(checkupCards(one).map((card) => [card[0], card[6]]), [["conversion", "查看这一行"]]);
+  const more = await importCsvFile("编号,金额\r\n1,10\r\n2,x\r\n3,N/A\r\n4,40\r\n5,50\r\n6,60\r\n7,70\r\n8,80\r\n9,90\r\n10,100\r\n", "more.csv");
+  assert.deepEqual(checkupCards(more).map((card) => [card[0], card[6]]), [["conversion", "查看「金额」"], ["placeholder", "按空值处理（1 处）"]]);
+  more.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.deepEqual(checkupCards(more).map((card) => card[6]), ["View “金额”", "Treat as blank (1)"]);
+  checkupClick(messy, { checkupAction: "view", checkupKind: "parseWarnings" });
+  assert.deepEqual(JSON.parse(messy.evaluate("JSON.stringify(state.problemView.category)")), { kind: "parseWarnings" });
+  // The duplicate rows: left out as the quality page's button does; N 73 -> 50 - … (the kept rows too).
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  checkupClick(orders, { checkupAction: "exclude", checkupKind: "duplicateRows" });
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(state.excludedRows.duplicateRows.map((index) => getSourceRowNumber(state.rows[index])))")), [21]);
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 10);
+  // The common placeholders treated as blank, as 常见写法全部按空值处理 does.
+  checkupClick(orders, { checkupAction: "treat", checkupKind: "placeholder" });
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(state.placeholders.filter((entry) => entry.confirmed).map((entry) => [entry.field, entry.key]))")), [["金额", "N/A"], ["销售代表", "—"]]);
+  assert.equal(orders.evaluate("state.checkupSummary.rowCount"), 8);
+  // The standardized table: the export module and its check.
+  checkupClick(orders, { checkupAction: "standardize", checkupKind: "dateStyle" });
+  assert.equal(orders.context.document.body.dataset.module, "exportSection");
+  assert.equal(orders.evaluate("state.standardizedExport !== null"), true);
+  // script.js binds the bar and the cards to the one handler.
+  const script = repoFile("script.js");
+  assert.match(script, /dom\.checkupBar\.addEventListener\("click", handleCheckupClick\);\r?\ndom\.checkupCards\.addEventListener\("click", handleCheckupClick\);/);
+});
+
+test("v3.4.0 bar: a coloured segment scrolls to its card, the dark one to the first card with rows of several kinds, the grey one nowhere", async () => {
+  const messy = await importCheckupFixture("messy.csv");
+  messy.evaluate(`globalThis.__scrolled = []; ["duplicateRows", "conversion", "placeholder", "dateStyle", "lookAlike", "parseWarnings"].forEach((kind) => {
+    document.getElementById("checkupCard-" + kind).scrollIntoView = () => __scrolled.push(kind);
+  })`);
+  checkupClick(messy, { kind: "dateStyle" }, true);
+  checkupClick(messy, { kind: "multi" }, true);
+  checkupClick(messy, { kind: "clean" }, true);
+  assert.deepEqual(JSON.parse(messy.evaluate("JSON.stringify(__scrolled)")), ["dateStyle", "duplicateRows"]);
+  // Where the first card has no rows of other kinds (认不出, K 0), the dark segment skips it.
+  const writing = await importStage3Fixture("写法不一致.csv");
+  writing.evaluate(`globalThis.__scrolled = []; ["conversion", "placeholder", "dateStyle", "lookAlike"].forEach((kind) => {
+    document.getElementById("checkupCard-" + kind).scrollIntoView = () => __scrolled.push(kind);
+  })`);
+  checkupClick(writing, { kind: "multi" }, true);
+  assert.deepEqual(JSON.parse(writing.evaluate("JSON.stringify(__scrolled)")), ["placeholder"]);
+  // Only the coloured and dark segments look clickable; none is a tab stop (R14).
+  const css = repoFile("style.css");
+  assert.match(cssRule(css, '.checkup-segment:not([data-kind="clean"])'), /cursor: pointer;/);
+  assert.doesNotMatch(checkupHtml(messy, "checkupBar"), /tabindex|<a |<button/);
+});
+
+test("v3.4.0 cards: three columns, two under 1100 px, one on phones; titles h4 at 15 / 600; actions 13 / 600; the dot is drawn", () => {
+  const css = repoFile("style.css");
+  assert.match(cssRule(css, ".checkup-cards"), /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(css, /@media \(max-width: 1099px\) \{\s*\.checkup-cards \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(css, /@media \(max-width: 640px\) \{\s*\.checkup-cards \{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  const title = cssRule(css, ".checkup-card-title");
+  assert.match(title, /font-size: 15px;/);
+  assert.match(title, /font-weight: 600;/);
+  const action = cssRule(css, ".checkup-cards .checkup-action");
+  assert.match(action, /font-size: 13px;/);
+  assert.match(action, /font-weight: 600;/);
+  // The square before 其中 K 行 is a 7 px box, not a character in a new size.
+  assert.match(cssRule(css, ".checkup-others::before"), /width: 7px;[\s\S]*background: #48484a;[\s\S]*content: "";/);
+  // The card icons share the bar's colours (dates #A86400).
+  assert.match(css, /\.checkup-segment\[data-kind="dateStyle"\],\r?\n\.checkup-card\[data-kind="dateStyle"\] \.checkup-card-icon \{ background: #a86400; \}/);
+});
+
+test("v3.4.0 cards: their figures are made with the checkup counts; filters and language switches only write the words", async () => {
+  const messy = await importCheckupFixture("messy.csv");
+  messy.evaluate("globalThis.__cardData = 0; globalThis.__lists = 0; const __data = buildCheckupCardData; buildCheckupCardData = (...args) => { __cardData += 1; return __data(...args); }; const __list = listProblemRows; listProblemRows = (...args) => { __lists += 1; return __list(...args); }");
+  const calls = () => JSON.parse(messy.evaluate("JSON.stringify([__cardData, __lists])"));
+  const zh = checkupHtml(messy, "checkupCards");
+  // A filter, clearing it and two language switches: the cards are drawn again, nothing is counted.
+  messy.evaluate('dom.categoryFilterField.value = "门店"; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set(["东城店"]); applyFilters()');
+  messy.evaluate("clearAllFilters()");
+  messy.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.match(checkupHtml(messy, "checkupCards"), /Exclude the 12 extra rows/);
+  messy.evaluate('setInterfaceLanguage("zh"); rerenderForLanguage()');
+  assert.deepEqual(calls(), [0, 0]);
+  assert.equal(checkupHtml(messy, "checkupCards"), zh);
+  // The figures are plain data: no sentence is kept in state.
+  assert.doesNotMatch(messy.evaluate("JSON.stringify(state.checkupCards)"), /查看|View|不计入|按空值|写法统一|standardized/);
+  // Left out or brought back, treated as blank or not: made again with the counts.
+  messy.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(calls()[0], 1);
+  messy.evaluate('setRowExclusion("duplicateRows", false)');
+  messy.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(calls()[0], 3);
+  messy.evaluate("resetAnalysisState()");
+  assert.equal(messy.evaluate("state.checkupCards"), null);
+});
+
+test("v3.4.0 cards: a shown space (␣) is a light element of its own in the sample", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.match(checkupHtml(orders, "checkupCards"), /<span class="checkup-sample-line">10<\/span><span class="checkup-sample">华南<span class="checkup-sample-space">␣<\/span><\/span>/);
+  const space = cssRule(repoFile("style.css"), ".checkup-sample-space");
+  assert.match(space, /color: #aeaeb2;/);
+  assert.doesNotMatch(space, /font-size/);
+});
+
+// ---- v3.4.0 commit 5: 其他发现 (F, C3, R7, R8 D) and 查过的项目 (R21) ----
+const findingsOf = (scope) => JSON.parse(scope.evaluate(`JSON.stringify((state.checkupOthers || []).map((finding) => {
+  const words = CHECKUP_FINDING_WORDS[finding.kind](finding);
+  return finding.kind + ": " + words.title + " · " + words.note;
+}))`));
+const checkedOf = (scope) => JSON.parse(scope.evaluate("JSON.stringify(state.checkupChecked ? formatCheckupCheckedItems(state.checkupChecked).map(([title, note]) => title + ' · ' + note) : null)"));
+
+test("v3.4.0 also noticed: the findings in their order (F1), with their words in Chinese and in English", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.deepEqual(findingsOf(orders), [
+    "idDuplicate: 「订单编号」有 1 个值重复出现 · 就是整行重复的第 20、21 行",
+    "blanks: 空值 6 个 · 都在第 44 行疑似合计行上",
+    "outliers: 「数量」「金额」各有 1 个偏大的值 · 都在疑似合计行上，不一定是错误"
+  ]);
+  assert.equal(textOf(orders, "checkupOthersNote"), "不计入上面的 12 行");
+  assert.equal(orders.elements.get("checkupOthers").classList.contains("hidden"), false);
+  // Each row is a button with its tag: 编号重复, 空值, 值得核对.
+  assert.deepEqual([...checkupHtml(orders, "checkupOthersList").matchAll(/<span class="checkup-finding-tag">([^<]*)<\/span>/g)].map((match) => match[1]), ["编号重复", "空值", "值得核对"]);
+  assert.match(checkupHtml(orders, "checkupOthersList"), /^<button type="button" class="checkup-finding" data-checkup-finding="0"><b class="checkup-finding-title">「订单编号」有 1 个值重复出现<\/b><span class="checkup-finding-note">就是整行重复的第 20、21 行<\/span>/);
+  assert.deepEqual(findingsOf(await sampleOrdersEn()), [
+    "idDuplicate: 1 value repeats in “Order ID” · the duplicate rows 20, 21",
+    "blanks: 6 blank cells · all on the possible total row 44",
+    "outliers: 1 unusually high value each in “Quantity” and “Amount” · all on the possible total row, not necessarily wrong"
+  ]);
+  assert.deepEqual(findingsOf(await importCheckupFixture("messy.csv")), [
+    "idDuplicate: 「订单号」有 12 个值重复出现 · 就是整行重复的第 2、22、42、46、73 行等",
+    "emptyColumns: 「备注」整列为空 · 298 行都没有填，下面的空值不算它",
+    "blanks: 空值 23 个 · 最多的是「品类」6 个，其次「数量」6 个",
+    "maybe: 「金额」里有 4 个「-」 · 可能就是正常内容，也可能表示没有填",
+    "outliers: 「金额」有 5 个偏大的值 · 按四分位距规则找出，不一定是错误",
+    "labelMismatch: 第 100、105、109、268、298 行写着合计或小计 · 数字和上面的行对不上，按普通数据算"
+  ]);
+  assert.deepEqual(findingsOf(await importCheckupFixture("messy-en.csv", "en")), [
+    "idDuplicate: 12 values repeat in “Order ID” · the duplicate rows 6, 34, 46, 49, 95 and more",
+    "emptyColumns: “Notes” is blank in every row · none of the 298 rows has a value; not counted in the blanks below",
+    "blanks: 23 blank cells · most in “Category” (6), then “Qty” (6)",
+    "maybe: 4 cells in “Amount” say “-” · may be real content, or may mean blank",
+    "outliers: 5 unusually high values in “Amount” · found with the IQR rule, not necessarily wrong",
+    "labelMismatch: Rows 128, 151, 267, 292, 298 are labelled as totals · their numbers do not add up to the rows above, so they count as data"
+  ]);
+  assert.deepEqual(findingsOf(await importStage3Fixture("公式错误.xlsx")), [
+    "blanks: 空值 8 个 · 最多的是「利润率」3 个，其次「备注」3 个",
+    "outliers: 「金额」有 1 个偏大的值 · 按四分位距规则找出，不一定是错误",
+    "constant: 「备注」整列只有一个值「正常」 · 另有 3 行是空值"
+  ]);
+  assert.deepEqual(findingsOf(await importStage3Fixture("en-issues.csv", "en")), [
+    "blanks: 18 blank cells · most in “Note” (17), then “Status” (1)",
+    "constant: “Status” has one value only, “Active” · 1 more row is blank",
+    "numericLooking: “Floor” is mostly numbers but counts as text · 12 of 20 values can be read as numbers"
+  ]);
+  assert.deepEqual(findingsOf(await importStage3Fixture("花名册.xlsx")), [
+    "idDuplicate: 「工号」有 1 个值重复出现 · 在第 13、14、25 行",
+    "idDuplicate: 「身份证号」有 1 个值重复出现 · 在第 13、14、25 行",
+    "idDuplicate: 「手机号」有 1 个值重复出现 · 在第 13、14、25 行",
+    "blanks: 空值 2 个 · 都在「身份证号」里",
+    "outliers: 「月薪」有 3 个偏大的值 · 按四分位距规则找出，不一定是错误"
+  ]);
+  // A unit conflict (kg and 斤 in one column).
+  const units = await importCsvFile("编号,重量\r\n1,5kg\r\n2,3斤\r\n3,4kg\r\n4,6斤\r\n5,2kg\r\n", "units.csv");
+  assert.deepEqual(findingsOf(units).filter((line) => line.startsWith("unitConflict")), ["unitConflict: 「重量」里有几种单位 · kg、斤，没有按单位读取"]);
+});
+
+test("v3.4.0 also noticed: labelled rows that do not add up (R7), and the quality page names them when no total matches", async () => {
+  const messy = await importCheckupFixture("messy.csv");
+  assert.deepEqual(JSON.parse(messy.evaluate("JSON.stringify(state.suspectedTotalLabelIndexes.map((index) => getSourceRowNumber(state.rows[index])))")), [100, 105, 109, 268, 298]);
+  assert.equal(messy.evaluate("state.suspectedTotals.length"), 0);
+  // R7.3: the section shows with the existing sentence alone, no 查看 and no 不计入分析.
+  assert.equal(isHidden(messy, "suspectedTotalSection"), false);
+  assert.equal(htmlText(messy, "suspectedTotalDetails"), "另有 5 行也带这类字样，但数字对不上，没有列出。");
+  assert.equal(messy.elements.get("suspectedTotalDetails").innerHTML, '<p class="row-note-footer">另有 5 行也带这类字样，但数字对不上，没有列出。</p>');
+  // The seven v3.3.0 tables whose labels are values: no labelled row is left, so nothing is said.
+  for (const [name, make] of Object.entries(NORMAL_TOTAL_TABLES)) {
+    const scope = await importCsvFile(make(), `${name}.csv`);
+    assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.suspectedTotalLabelIndexes)")), [], name);
+    assert.equal(findingsOf(scope).some((line) => line.startsWith("labelMismatch")), false, name);
+    assert.equal(isHidden(scope, "suspectedTotalSection"), true, name);
+  }
+  // More than five: the first five, then 等; a total that adds up is not among them.
+  const rows = [["甲", 10], ["乙", 20], ["合计", 30], ["A小计", 999], ["B小计", 998], ["C小计", 997], ["D小计", 996], ["E小计", 995], ["F小计", 994], ["丙", 5], ["丁", 6], ["戊", 7]];
+  const six = await importCsvFile(csvOfRows(["名称", "金额"], rows), "six.csv");
+  assert.deepEqual(findingsOf(six).filter((line) => line.startsWith("labelMismatch")), ["labelMismatch: 第 5、6、7、8、9 行等写着合计或小计 · 数字和上面的行对不上，按普通数据算"]);
+  // checkSuspectedTotals() names them: the one key it adds (R7).
+  assert.deepEqual(JSON.parse(six.evaluate("JSON.stringify(Object.keys(checkSuspectedTotals(state.rows, state.fields, state.profiles, getSourceRowNumber, state.totalLabelRows)))")), ["totals", "labelRowCount", "labelIndexes"]);
+  six.evaluate("resetAnalysisState()");
+  assert.deepEqual(JSON.parse(six.evaluate("JSON.stringify(state.suspectedTotalLabelIndexes)")), []);
+});
+
+test("v3.4.0 also noticed: rows left out of the analysis add a half sentence (C3)", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.deepEqual(findingsOf(orders), [
+    "idDuplicate: 「订单编号」有 1 个值重复出现 · 就是整行重复的第 20、21 行",
+    "blanks: 空值 6 个 · 都在第 44 行疑似合计行上；这一行已不计入分析",
+    "outliers: 「数量」「金额」各有 1 个偏大的值 · 都在疑似合计行上，不一定是错误；这一行已不计入分析"
+  ]);
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(findingsOf(orders)[0], "idDuplicate: 「订单编号」有 1 个值重复出现 · 就是整行重复的第 20、21 行；其中第 21 行已不计入分析");
+  assert.equal(textOf(orders, "checkupOthersNote"), "不计入上面的 9 行");
+  orders.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.deepEqual(findingsOf(orders), [
+    "idDuplicate: 1 value repeats in “订单编号” · the duplicate rows 20, 21; row 21 is left out of the analysis",
+    "blanks: 6 blank cells · all on the possible total row 44; this row is left out of the analysis",
+    "outliers: 1 unusually high value each in “数量” and “金额” · all on the possible total row, not necessarily wrong; this row is left out of the analysis"
+  ]);
+  // Brought back: no half sentence.
+  orders.evaluate('setInterfaceLanguage("zh"); setRowExclusion("suspectedTotal", false); setRowExclusion("duplicateRows", false)');
+  assert.equal(findingsOf(orders).some((line) => line.includes("不计入分析")), false);
+});
+
+test("v3.4.0 also noticed: each finding goes to its subsection of the quality page", async () => {
+  const html = indexHtmlSource();
+  const targets = JSON.parse(createScriptContext().evaluate("JSON.stringify(CHECKUP_FINDING_TARGETS)"));
+  assert.deepEqual(Object.keys(targets), ["idDuplicate", "emptyColumns", "blanks", "maybe", "outliers", "labelMismatch", "constant", "numericLooking", "unitConflict"]);
+  for (const [kind, id] of Object.entries(targets)) {
+    // The element sits in a quality subsection with its own title before it.
+    const at = html.indexOf(`id="${id}"`);
+    assert.ok(at > html.indexOf('<section id="qualitySection"') && at < html.indexOf('<section id="filterSection"'), kind);
+    const before = html.slice(0, at);
+    const start = Math.max(before.lastIndexOf('class="module-subsection'), before.lastIndexOf("<div>"));
+    assert.match(html.slice(start, at), /<h3[^>]*class="subsection-title"/, kind);
+  }
+  const messy = await importCheckupFixture("messy.csv");
+  messy.evaluate(`handleCheckupFindingClick({ target: { closest: () => ({ dataset: { checkupFinding: "5" } }) } })`);
+  assert.equal(messy.context.document.body.dataset.module, "qualitySection");
+  assert.match(repoFile("script.js"), /dom\.checkupOthersList\.addEventListener\("click", handleCheckupFindingClick\);/);
+  // Phones: two lines each, the tag left out (F7).
+  assert.match(repoFile("style.css"), /@media \(max-width: 640px\) \{[\s\S]*?\.checkup-findings-list \.checkup-finding \{\s*flex-direction: column;/);
+});
+
+test("v3.4.0 quality page: the note that it counts cells while the checkup counts rows is always there (R8 D)", async () => {
+  assert.match(indexHtmlSource(), /<p id="qualityCountNote" class="quality-count-note">这里多数按格数算；体检结果的“需要处理”按行数算，同一行有几处问题只算一次。<\/p>\s*<p id="qualityScopeNote"/);
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.equal(english["quality.countNote"], "Most counts here are cells; “Need attention” in Checkup counts rows, each row once.");
+  assert.doesNotMatch(cssRule(repoFile("style.css"), ".quality-count-note"), /display: none/);
+});
+
+const CLEAN_TABLE_CSV = "姓名,入职日期,月薪\r\n张一,2023-03-13,8000\r\n张二,2023-04-02,8100\r\n张三,2023-05-20,8200\r\n张四,2023-06-11,8300\r\n张五,2023-07-08,8400\r\n";
+
+test("v3.4.0 checked (R21): nothing to fix shows what was checked and two ways to the analysis, in Chinese and in English", async () => {
+  const clean = await importCsvFile(CLEAN_TABLE_CSV, "clean.csv");
+  assert.equal(clean.evaluate("state.checkupSummary.rowCount"), 0);
+  assert.deepEqual(checkedOf(clean), [
+    "没有疑似合计行和整行重复，也没有公式错误 · 每一行都和其他行比较过",
+    "数字和日期都读得出，日期写法一致 · 「入职日期」全部是 2023-03-13 这种写法",
+    "没有要确认的像是空值的写法，也没有写法不一样的值 · 包括多余的空格、大小写和全角半角的不同"
+  ]);
+  assert.equal(clean.elements.get("checkupChecked").classList.contains("hidden"), false);
+  ["checkupOpenStats", "checkupOpenCharts"].forEach((id) => assert.equal(clean.elements.get(id).classList.contains("hidden"), false, id));
+  assert.match(checkupHtml(clean, "checkupCheckedList"), /^<li class="checkup-checked-item"><span class="checkup-check" aria-hidden="true"><\/span><b>没有疑似合计行和整行重复，也没有公式错误<\/b><span class="checkup-checked-note">每一行都和其他行比较过<\/span><\/li>/);
+  // No 不计入上面的 0 行 (D6) when other findings show: a blank cell is one, and nothing needs attention.
+  const blank = await importCsvFile(CLEAN_TABLE_CSV.replace("张三,2023-05-20,8200", "张三,2023-05-20,"), "blank.csv");
+  assert.equal(blank.evaluate("state.checkupSummary.rowCount"), 0);
+  assert.deepEqual(findingsOf(blank), ["blanks: 空值 1 个 · 都在「月薪」里"]);
+  assert.equal(blank.elements.get("checkupOthers").classList.contains("hidden"), false);
+  assert.equal(textOf(blank, "checkupOthersNote"), "");
+  const en = await importCsvInLanguage(CLEAN_TABLE_CSV, "clean.csv", "en");
+  assert.deepEqual(checkedOf(en), [
+    "No possible totals, duplicate rows or formula errors · every row compared with the others",
+    "Numbers and dates all read, one date format per column · “入职日期” is always like 2023-03-13",
+    "No values that may mean blank to confirm, and no values written differently · including extra spaces, upper and lower case, and full-width forms"
+  ]);
+  // The buttons: 查看统计 (primary) and 去看图表 next to 导出体检报告, each to its module.
+  const html = indexHtmlSource();
+  assert.match(html, /<div class="checkup-actions">\s*<button id="checkupOpenStats" class="checkup-open hidden" type="button">查看统计<\/button>\s*<button id="checkupOpenCharts" class="secondary-button checkup-open hidden" type="button">去看图表<\/button>\s*<button id="checkupExportReport"/);
+  const english = JSON.parse(en.evaluate("JSON.stringify(I18N_EN)"));
+  assert.deepEqual([english["checkup.openStats"], english["checkup.openCharts"], english["checkup.checked"], english["checkup.others"]], ["Open Stats", "Open Charts", "What was checked", "Also noticed"]);
+  const script = repoFile("script.js");
+  assert.match(script, /dom\.checkupOpenStats\.addEventListener\("click", \(\) => showModule\("statisticsSection"\)\);/);
+  assert.match(script, /dom\.checkupOpenCharts\.addEventListener\("click", \(\) => showModule\("chartsSection"\)\);/);
+  clean.evaluate('showModule("statisticsSection")');
+  assert.equal(clean.context.document.body.dataset.module, "statisticsSection");
+  // Something to fix: neither the list nor the two buttons.
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  assert.equal(checkedOf(orders), null);
+  assert.equal(orders.elements.get("checkupChecked").classList.contains("hidden"), true);
+  ["checkupOpenStats", "checkupOpenCharts"].forEach((id) => assert.equal(orders.elements.get(id).classList.contains("hidden"), true, id));
+});
+
+test("v3.4.0 checked (R21): the second item by the columns there are, and the first with rows left out", async () => {
+  const second = async (csv) => checkedOf(await importCsvFile(csv, "t.csv"))?.[1] ?? null;
+  // Numbers and several date columns.
+  assert.equal(await second("姓名,入职日期,生日,月薪\r\n张一,2023-03-13,1990-01-02,8000\r\n张二,2023-04-02,1991-02-03,8100\r\n张三,2023-05-20,1992-03-04,8200\r\n张四,2023-06-11,1993-04-05,8300\r\n张五,2023-07-08,1994-05-06,8400\r\n"),
+    "数字和日期都读得出，日期写法一致 · 2 个日期列各自只有一种写法");
+  // Numbers only.
+  assert.equal(await second("姓名,月薪,奖金\r\n张一,8000,100\r\n张二,8100,110\r\n张三,8200,120\r\n张四,8300,130\r\n张五,8400,140\r\n"), "数字都读得出 · 2 个数值列");
+  // Dates only.
+  assert.equal(await second("姓名,入职日期\r\n张一,2023-03-13\r\n张二,2023-04-02\r\n张三,2023-05-20\r\n张四,2023-06-11\r\n张五,2023-07-08\r\n"), "日期都读得出，写法一致 · 「入职日期」全部是 2023-03-13 这种写法");
+  // Neither: three items become two (the third is now second).
+  const text = await importCsvFile("姓名,部门\r\n张一,甲\r\n张二,乙\r\n张三,甲\r\n张四,乙\r\n张五,甲\r\n", "t.csv");
+  assert.deepEqual(checkedOf(text).map((line) => line.split(" · ")[0]), ["没有疑似合计行和整行重复，也没有公式错误", "没有要确认的像是空值的写法，也没有写法不一样的值"]);
+  // A total row left out: nothing left to fix, and the first item says so.
+  const total = await importCsvFile("姓名,月薪\r\n张一,8000\r\n张二,8100\r\n张三,8200\r\n张四,8300\r\n张五,8400\r\n合计,41000\r\n", "total.csv");
+  assert.equal(total.evaluate("state.checkupSummary.rowCount"), 1);
+  total.evaluate('setRowExclusion("suspectedTotal", true)');
+  assert.equal(checkedOf(total)[0], "没有疑似合计行和整行重复，也没有公式错误 · 每一行都和其他行比较过，另有 1 行不计入分析");
+  total.evaluate('setInterfaceLanguage("en"); rerenderForLanguage()');
+  assert.equal(checkedOf(total)[0], "No possible totals, duplicate rows or formula errors · every row compared with the others; 1 more row is left out of the analysis");
+});
+
+test("v3.4.0 also noticed and checked: made with the checkup counts; filters and language switches only write the words", async () => {
+  for (const [scope, filter] of [[await importCheckupFixture("messy.csv"), "门店"], [await importCsvFile(CLEAN_TABLE_CSV, "clean.csv"), "姓名"]]) {
+    scope.evaluate("globalThis.__made = 0; for (const name of ['buildCheckupOtherData', 'buildCheckupCheckedData']) { const original = globalThis[name]; globalThis[name] = (...args) => { __made += 1; return original(...args); }; }");
+    const zh = checkupHtml(scope, "checkupOthersList") + checkupHtml(scope, "checkupCheckedList");
+    const value = scope.evaluate("state.rows[0][" + JSON.stringify(filter) + "]");
+    scope.evaluate(`dom.categoryFilterField.value = ${JSON.stringify(filter)}; updateCategoryFilterField(); state.categoryFilterDraftValues = new Set([${JSON.stringify(value)}]); applyFilters()`);
+    scope.evaluate("clearAllFilters()");
+    scope.evaluate('setInterfaceLanguage("en"); rerenderForLanguage(); setInterfaceLanguage("zh"); rerenderForLanguage()');
+    assert.equal(scope.evaluate("__made"), 0);
+    assert.equal(checkupHtml(scope, "checkupOthersList") + checkupHtml(scope, "checkupCheckedList"), zh);
+    assert.doesNotMatch(scope.evaluate("JSON.stringify([state.checkupOthers, state.checkupChecked])"), /其他发现|查过的|不计入|空值 |Also noticed|blank cells/);
+  }
+});
+
+// Counts the column scans of the findings: an outlier column read (scanCheckupOutlierRows(), with
+// its field) and an ID column grouped (groupIdValueIndexes(), listIdDuplicateRows()).
+const countCheckupScans = (scope) => scope.evaluate(`globalThis.__scans = { outlier: [], id: 0 };
+  { const scan = scanCheckupOutlierRows; globalThis.scanCheckupOutlierRows = (profile, stat) => { __scans.outlier.push(profile.field); return scan(profile, stat); }; }
+  for (const name of ['groupIdValueIndexes', 'listIdDuplicateRows']) { const original = globalThis[name]; globalThis[name] = (...args) => { __scans.id += 1; return original(...args); }; }`);
+const checkupScans = (scope) => JSON.parse(scope.evaluate("JSON.stringify(__scans)"));
+// The findings made again from nothing kept: what the cached ones must equal.
+// Its own scans are not counted.
+const freshFindings = (scope) => scope.evaluate("JSON.stringify((() => { const counted = globalThis.__scans; globalThis.__scans = { outlier: [], id: 0 }; const kept = state.formatScans.outlierRows; state.formatScans.outlierRows = new WeakMap(); const map = state.idDuplicateRowIndexes; state.idDuplicateRowIndexes = new Map(); buildIdDuplicateSummary(state.rows, state.fields, state.profiles, getSourceRowNumber, state.placeholderConfirmations, state.idDuplicateRowIndexes); const out = buildCheckupOtherData(); state.formatScans.outlierRows = kept; state.idDuplicateRowIndexes = map; globalThis.__scans = counted; return out; })())");
+
+test("v3.4.0 also noticed: leaving rows out or back in scans no column, and only the half sentences change", async () => {
+  const messy = await importCheckupFixture("messy.csv");
+  const before = messy.evaluate("JSON.stringify(state.checkupOthers)");
+  assert.ok(JSON.parse(before).some((finding) => finding.kind === "idDuplicate") && JSON.parse(before).some((finding) => finding.kind === "outliers"));
+  countCheckupScans(messy);
+  messy.evaluate('setRowExclusion("duplicateRows", true)');
+  const out = JSON.parse(messy.evaluate("JSON.stringify(state.checkupOthers)"));
+  assert.ok(out.some((finding) => finding.excluded), "a half sentence");
+  // Without the half sentences the findings are the ones before.
+  assert.equal(JSON.stringify(out.map(({ excluded, ...rest }) => rest)), JSON.stringify(JSON.parse(before).map(({ excluded, ...rest }) => rest)));
+  assert.equal(messy.evaluate("JSON.stringify(state.checkupOthers)"), freshFindings(messy));
+  messy.evaluate('setRowExclusion("duplicateRows", false)');
+  assert.equal(messy.evaluate("JSON.stringify(state.checkupOthers)"), before);
+  assert.deepEqual(checkupScans(messy), { outlier: [], id: 0 });
+  // The sample's total row too, and a direct call.
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  countCheckupScans(orders);
+  orders.evaluate('setRowExclusion("suspectedTotal", true); setRowExclusion("suspectedTotal", false); buildCheckupOtherData()');
+  assert.deepEqual(checkupScans(orders), { outlier: [], id: 0 });
+});
+
+test("v3.4.0 also noticed: a field type change scans only that column, and the kept rows give the same findings", async () => {
+  const rows = Array.from({ length: 12 }, (_, index) => [index < 11 ? index + 1 : 999, index === 3 ? "N/A" : index < 11 ? 10 + index : 900, index % 2 ? "甲" : "乙"]);
+  const scope = await importCsvFile(csvOfRows(["序号", "金额", "部门"], rows), "scan.csv");
+  assert.equal(scope.evaluate("getFieldProfile('序号').typeKey"), "id");
+  assert.deepEqual(findingsOf(scope).filter((line) => line.startsWith("outliers")), ["outliers: 「金额」有 1 个偏大的值 · 按四分位距规则找出，不一定是错误"]);
+  countCheckupScans(scope);
+  setFieldType(scope, "序号", "numeric");
+  assert.deepEqual(checkupScans(scope).outlier, ["序号"]);
+  assert.deepEqual(findingsOf(scope).filter((line) => line.startsWith("outliers")), ["outliers: 「序号」「金额」各有 1 个偏大的值 · 按四分位距规则找出，不一定是错误"]);
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupOthers)"), freshFindings(scope));
+  // Another column's type: no outlier column is read again.
+  setFieldType(scope, "部门", "ignore");
+  setFieldType(scope, "序号", "id");
+  assert.deepEqual(checkupScans(scope).outlier, ["序号"]);
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupOthers)"), freshFindings(scope));
+  // Back to numeric: the same type, keys and bounds as its kept rows, so they serve.
+  setFieldType(scope, "序号", "numeric");
+  assert.deepEqual(checkupScans(scope).outlier, ["序号"]);
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupOthers)"), freshFindings(scope));
+  // A placeholder confirmation gives that column a new profile: it alone is read again.
+  scope.evaluate('updatePlaceholderConfirmations({ 金额: ["N/A"] }, "x")');
+  assert.deepEqual(checkupScans(scope).outlier, ["序号", "金额"]);
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupOthers)"), freshFindings(scope));
+  scope.evaluate("resetAnalysisState()");
+  assert.equal(scope.evaluate("state.idDuplicateRowIndexes.size"), 0);
+});
+
+// ---- v3.4.0 perf: the cards' data from the checkup's own cells ----
+// What the cards' data must equal, made the direct way: the 查看 count from listProblemRows() and the
+// placeholder and conversion samples and details by reading and sorting every cell (as before).
+const CARD_REFERENCE = `(() => {
+  const s = state.checkupSummary;
+  if (!s) return "[]";
+  const out = [];
+  s.kinds.forEach((item) => {
+    const fields = checkupFieldsByCount(item.cells.filter((cell) => cell.field !== null));
+    if (fields.length <= 1 && ["suspectedTotal", "formulaError", "conversion", "lookAlike", "parseWarnings"].includes(item.kind)) {
+      const category = fields.length ? { kind: item.kind, field: fields[0].field } : { kind: item.kind };
+      const list = listProblemRows(category);
+      const listed = list ? new Set(list.items.map((entry) => entry.index).filter((index) => index !== null && index !== undefined)).size : 0;
+      const cardRows = fields.length ? new Set(fields[0].cells.map((cell) => cell.index)).size : item.rows.length;
+      out.push({ kind: item.kind, view: listed, viewed: checkupViewedRowCount(category, cardRows) });
+    }
+    const card = state.checkupCards.find((entry) => entry.kind === item.kind);
+    const text = (index, field) => ({ line: checkupLineOf(index), value: displayValue(state.rows[index][field]), form: "text" });
+    if (item.kind === "placeholder") {
+      const cells = item.cells.slice().sort((a, b) => a.index - b.index);
+      const keyOf = (cell) => placeholderKey(state.rows[cell.index][cell.field]);
+      const failing = cells.filter((cell) => { const profile = getFieldProfile(cell.field); const fails = profile && getProfileConversionCheck(profile, profile.typeKey); return Boolean(fails && fails(state.rows[cell.index][cell.field])); });
+      const expected = { samples: cells.slice(0, 2).map((cell) => text(cell.index, cell.field)), detail: { keys: [...new Set(cells.map(keyOf))], failing: failing.length ? { ...checkupLines(failing.map((cell) => cell.index), CHECKUP_GROUP_LINE_LIMIT), keys: [...new Set(failing.map(keyOf))], date: getFieldProfile(failing[0].field)?.typeKey === "date" } : null }, count: cells.length };
+      out.push({ kind: "placeholder", expected: JSON.stringify(expected), actual: JSON.stringify({ samples: card.samples, detail: card.detail, count: card.action.count }) });
+    }
+    if (item.kind === "conversion") {
+      const values = (cells, field) => cells.filter((cell) => !placeholderKey(state.rows[cell.index][field]));
+      const firstCells = values(fields[0].cells, fields[0].field);
+      const expected = { samples: (firstCells.length ? firstCells : fields[0].cells).slice(0, 2).map((cell) => text(cell.index, cell.field)), examples: fields.map((entry) => displayValue(state.rows[(values(entry.cells, entry.field)[0] || entry.cells[0]).index][entry.field])) };
+      out.push({ kind: "conversion", expected: JSON.stringify(expected), actual: JSON.stringify({ samples: card.samples, examples: card.detail.parts.map((part) => part.example) }) });
+    }
+  });
+  return JSON.stringify(out);
+})()`;
+const checkCardsAgainstReference = (scope, name) => {
+  const checks = JSON.parse(scope.evaluate(CARD_REFERENCE));
+  checks.forEach((check) => {
+    if ("view" in check) assert.equal(check.viewed, check.view, `${name} ${check.kind} 查看`);
+    else assert.equal(check.actual, check.expected, `${name} ${check.kind}`);
+  });
+  return checks.length;
+};
+// Placeholders in a number, a date and a text column (more than four failing rows, two in one row),
+// a second-tier "-" before a real bad value, and a total row and a duplicate row to leave out.
+const CARD_CASES_CSV = csvOfRows(["名称", "金额", "日期", "备注"], [
+  ["甲", "-", "2025-01-02", "N/A"], ["乙", "N/A", "NULL", "好"], ["丙", "12", "2025-01-04", "好"], ["丁", "N/A", "2025-01-05", "NULL"],
+  ["戊", "abc", "2025-01-06", "好"], ["己", "N/A", "NULL", "好"], ["庚", "15", "2025-01-08", "N/A"], ["辛", "NULL", "2025-01-09", "好"],
+  ["壬", "17", "2025-01-10", "好"], ["癸", "18", "2025-01-11", "好"], ["子", "19", "2025-01-12", "好"], ["子", "19", "2025-01-12", "好"],
+  ["丑", "21", "2025-01-14", "好"], ["寅", "22", "2025-01-15", "好"],
+  ...Array.from({ length: 20 }, (_, index) => [`卯${index + 1}`, String(30 + index), `2025-02-${String(index + 1).padStart(2, "0")}`, "好"]),
+  ["合计", "999", "", ""]
+]);
+
+test("v3.4.0 perf: the cards' data reads no row and lists nothing, and equals the direct way", async () => {
+  const scope = await importCsvFile(CARD_CASES_CSV, "cards.csv");
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(state.checkupSummary.kinds.map((item) => item.kind))")), ["duplicateRows", "conversion", "placeholder"]);
+  assert.ok(checkCardsAgainstReference(scope, "cards.csv") >= 3);
+  // The failing rows: more than four, the number column and the date column both on rows 3 and 7.
+  assert.deepEqual(JSON.parse(scope.evaluate('JSON.stringify(state.checkupCards.find((card) => card.kind === "placeholder").detail.failing)')), { lines: [3, 3, 5, 7], more: true, keys: ["N/A", "NULL"], date: false });
+  // Counted only while the cards are made (the findings' half sentences read the rows left out).
+  scope.evaluate(`globalThis.__reads = { key: 0, list: 0, check: 0, cards: 0 }; globalThis.__inCards = false;
+    { const cards = buildCheckupCardData; globalThis.buildCheckupCardData = (...a) => { __reads.cards += 1; __inCards = true; try { return cards(...a); } finally { __inCards = false; } }; }
+    { const key = placeholderKey; globalThis.placeholderKey = (...a) => { if (__inCards) __reads.key += 1; return key(...a); }; }
+    { const make = getProfileConversionCheck; globalThis.getProfileConversionCheck = (...a) => { const fails = make(...a); return fails && ((value) => { if (__inCards) __reads.check += 1; return fails(value); }); }; }
+    for (const name of ["listProblemRows", "listConversionFailureRows", "listPlaceholderRows", "listFormulaErrorRows", "listLookAlikeRows", "listParseWarningRows", "listSuspectedTotalRows"]) { const list = globalThis[name]; globalThis[name] = (...a) => { if (__inCards) __reads.list += 1; return list(...a); }; }`);
+  const before = scope.evaluate("JSON.stringify(state.checkupCards)");
+  assert.equal(scope.evaluate("JSON.stringify(buildCheckupCardData(state.checkupSummary))"), before);
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__reads)")), { key: 0, list: 0, check: 0, cards: 1 });
+  // Leaving rows out and back in: the cards are made twice more and read nothing.
+  scope.evaluate('setRowExclusion("duplicateRows", true); setRowExclusion("duplicateRows", false)');
+  assert.deepEqual(JSON.parse(scope.evaluate("JSON.stringify(__reads)")), { key: 0, list: 0, check: 0, cards: 3 });
+  assert.equal(scope.evaluate("JSON.stringify(state.checkupCards)"), before);
+});
+
+test("v3.4.0 perf: on every fixture and example, before and after rows are left out, the cards equal the direct way", async () => {
+  const scopes = [
+    ...await Promise.all(STAGE3_IMPORT_FILES.map(async (fileName) => [fileName, await importStage3Fixture(fileName)])),
+    ...await Promise.all(listExampleCsvFiles().map(async (fileName) => [fileName, await importCsvFile(readExampleCsv(fileName), fileName)])),
+    ["messy.csv", await importCheckupFixture("messy.csv")], ["messy-en.csv", await importCheckupFixture("messy-en.csv", "en")],
+    ["cards.csv", await importCsvFile(CARD_CASES_CSV, "cards.csv")],
+    // A formula error and a short row on a duplicate row: once it is left out, the viewer still lists it.
+    ["formula-dup.xlsx", await importWorkbookFile(buildErrorWorkbook([["名", "额", "说明"], ["A", 10, "好"], ["B", { e: 7 }, "好"], ["B", { e: 7 }, "好"], ["C", 30, "好"]]))],
+    ["short-dup.csv", await importCsvFile("名,额,说明\r\nA,1,好\r\nB,2\r\nB,2\r\nC,3,好\r\n", "short-dup.csv")]
+  ];
+  let checked = 0;
+  for (const [name, scope] of scopes) {
+    if (!scope.evaluate("Boolean(state.checkupSummary)")) continue;
+    checked += checkCardsAgainstReference(scope, name);
+    scope.evaluate('if (state.suspectedTotals.length) setRowExclusion("suspectedTotal", true); if (state.duplicateRows > 0) setRowExclusion("duplicateRows", true)');
+    checked += checkCardsAgainstReference(scope, `${name} (rows left out)`);
+  }
+  assert.ok(checked > 40, `checked ${checked}`);
+});
+
+// ---- v3.4.0 commit 6: card actions, the toast and 已处理 (G) ----
+const toastOf = (scope) => [textOf(scope, "checkupToastText"), scope.elements.get("checkupToast").dataset.tone, !isHidden(scope, "checkupToastUndo")];
+const handledOf = (scope) => htmlText(scope, "checkupHandled");
+const rowCountOf = (scope) => scope.evaluate("state.checkupSummary.rowCount");
+const cardClick = (scope, kind) => scope.evaluate(`handleCheckupClick({ target: { closest: (selector) => (selector === ".checkup-segment" ? null : { dataset: { checkupKind: ${JSON.stringify(kind)} } }) } })`);
+const handledClick = (scope, kind) => scope.evaluate(`handleCheckupHandledClick({ target: { closest: () => ({ dataset: { checkupUndo: ${JSON.stringify(kind)} } }) } })`);
+const switchLanguage = (scope, language) => scope.evaluate(`setInterfaceLanguage(${JSON.stringify(language)}); rerenderForLanguage()`);
+
+test("v3.4.0 handled: N 12 → 11 → 9 and back, 按空值处理 12 → 10 and back, with the toast in Chinese and in English", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const cardsBefore = checkupCards(orders);
+  assert.equal(rowCountOf(orders), 12);
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), true);
+  // The total row, then the card's duplicate row: only the last operation is said, with 撤销.
+  orders.evaluate('setCheckupExclusion("suspectedTotal", true)');
+  assert.deepEqual(toastOf(orders), ["第 44 行（合计）不再计入分析。需要处理的行从 12 变成 11。", "success", true]);
+  cardClick(orders, "duplicateRows");
+  assert.equal(rowCountOf(orders), 9);
+  assert.deepEqual(toastOf(orders), ["第 21 行（重复的那一行）不再计入分析，第 20 行保留。需要处理的行从 11 变成 9。", "success", true]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), false);
+  assert.equal(handledOf(orders), "疑似合计 / 小计行：第 44 行不计入分析 求和、平均值和图表都不再算它，原表不变 撤销 整行重复：多出来的第 21 行不计入分析 第 20 行保留 撤销");
+  assert.match(checkupHtml(orders, "checkupHandled"), /<button type="button" class="secondary-button checkup-handled-undo" data-checkup-undo="suspectedTotal" aria-label="撤销：让疑似合计行重新计入分析">撤销<\/button>/);
+  // A language switch writes both again; back in Chinese they are as they were.
+  const zh = checkupHtml(orders, "checkupHandled") + textOf(orders, "checkupToastText");
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["Row 21 (the repeated one) is now left out of the analysis; row 20 stays. Rows that need attention went from 11 to 9.", "success", true]);
+  assert.equal(handledOf(orders), "Possible total or subtotal rows: row 44 is left out of the analysis sums, averages and charts no longer count it; the file is unchanged Undo Duplicate rows: the extra row 21 is left out of the analysis row 20 stays Undo");
+  switchLanguage(orders, "zh");
+  assert.equal(checkupHtml(orders, "checkupHandled") + textOf(orders, "checkupToastText"), zh);
+  // The toast's 撤销 takes back its operation; 已处理's 撤销 its own row.
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(toastOf(orders), ["第 21 行（重复的那一行）重新计入分析。需要处理的行从 9 变成 11。", "success", true]);
+  assert.equal(handledOf(orders), "疑似合计 / 小计行：第 44 行不计入分析 求和、平均值和图表都不再算它，原表不变 撤销");
+  handledClick(orders, "suspectedTotal");
+  assert.deepEqual(toastOf(orders), ["第 44 行（合计）重新计入分析。需要处理的行从 11 变成 12。", "success", true]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), true);
+  assert.deepEqual(checkupCards(orders), cardsBefore);
+  // 按空值处理（2 处）, then the toast's 撤销.
+  cardClick(orders, "placeholder");
+  assert.equal(rowCountOf(orders), 10);
+  assert.deepEqual(toastOf(orders), ["已把 2 处按空值处理。需要处理的行从 12 变成 10。", "success", true]);
+  assert.equal(handledOf(orders), "像是空值的写法：2 处已按空值处理 第 16 行「—」、第 29 行「N/A」。不再参与统计，原表不变 撤销");
+  assert.match(checkupHtml(orders, "checkupHandled"), /aria-label="撤销：让这 2 处不再按空值处理"/);
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["2 cells are now treated as blank. Rows that need attention went from 12 to 10.", "success", true]);
+  assert.equal(handledOf(orders), "Values that may mean blank: 2 cells treated as blank “—” in row 16, “N/A” in row 29; statistics leave them out; the file is unchanged Undo");
+  switchLanguage(orders, "zh");
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(toastOf(orders), ["这 2 处不再按空值处理。需要处理的行从 10 变成 12。", "success", true]);
+  assert.equal(orders.evaluate("Object.keys(state.placeholderConfirmations).length"), 0);
+  assert.deepEqual(checkupCards(orders), cardsBefore);
+  // 已处理's 撤销 of the blanks: every confirmed spelling.
+  cardClick(orders, "placeholder");
+  handledClick(orders, "placeholder");
+  assert.deepEqual(toastOf(orders), ["这 2 处不再按空值处理。需要处理的行从 10 变成 12。", "success", true]);
+  // Several groups of duplicate rows (乱表): counted, not named.
+  const messy = await importCheckupFixture("messy.csv");
+  cardClick(messy, "duplicateRows");
+  assert.deepEqual(toastOf(messy), ["多出来的 12 行重复行不再计入分析，每组保留第一行。需要处理的行从 73 变成 50。", "success", true]);
+  assert.equal(handledOf(messy), "整行重复：多出来的 12 行不计入分析 每组保留第一行 撤销");
+  switchLanguage(messy, "en");
+  assert.deepEqual(toastOf(messy), ["The 12 extra duplicate rows are now left out of the analysis; the first row of each group stays. Rows that need attention went from 73 to 50.", "success", true]);
+  assert.equal(handledOf(messy), "Duplicate rows: the 12 extra rows are left out of the analysis the first row of each group stays Undo");
+});
+
+test("v3.4.0 toast: role=status, the focus stays, it goes with another module or file while 已处理 stays", async () => {
+  assert.match(indexHtmlSource(), /<div id="checkupToast" class="checkup-toast is-empty">\s*<p id="checkupToastText" class="checkup-toast-text" role="status"><\/p>\s*<button id="checkupToastUndo" class="checkup-toast-undo hidden" type="button">撤销<\/button>\s*<\/div>\s*<div id="checkupPanel"/);
+  assert.match(indexHtmlSource(), /<\/section>\s*<section id="checkupHandledSection" class="checkup-handled hidden" aria-labelledby="checkupHandledTitle">\s*<div class="checkup-caption">\s*<h3 id="checkupHandledTitle">已处理<\/h3>\s*<\/div>\s*<ul id="checkupHandled" class="checkup-handled-list"><\/ul>\s*<\/section>\s*<section id="checkupChecked"/);
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.deepEqual([english["checkup.handled"], english["checkup.undo"]], ["Handled", "Undo"]);
+  const script = repoFile("script.js");
+  assert.match(script, /dom\.checkupToastUndo\.addEventListener\("click", undoCheckupToast\);/);
+  assert.match(script, /dom\.checkupHandled\.addEventListener\("click", handleCheckupHandledClick\);/);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  // Nothing takes the focus: neither the quality page's messages (hidden module) nor the toast.
+  orders.evaluate("globalThis.__focused = []; for (const id of ['placeholderMessage', 'duplicateExclusionMessage', 'suspectedTotalMessage', 'checkupToastText', 'checkupToast']) { dom[id].focus = () => __focused.push(id); }");
+  cardClick(orders, "duplicateRows");
+  cardClick(orders, "placeholder");
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__focused)")), []);
+  // The quality page's messages are not written from the first screen.
+  assert.deepEqual([textOf(orders, "duplicateExclusionMessage"), textOf(orders, "placeholderMessage")], ["", ""]);
+  // Another module: the toast goes, 已处理 stays; coming back shows no toast.
+  assert.notEqual(textOf(orders, "checkupToastText"), "");
+  orders.evaluate('showModule("qualitySection")');
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(orders.elements.get("checkupToast").classList.contains("is-empty"), true);
+  assert.equal(orders.evaluate("state.checkupToast"), null);
+  assert.match(handledOf(orders), /^整行重复：多出来的第 21 行不计入分析/);
+  orders.evaluate('showModule("overviewSection")');
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  // A switch writes nothing into an empty toast.
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  switchLanguage(orders, "zh");
+  // The next operation replaces it; a new import or worksheet ends it.
+  orders.evaluate('setCheckupExclusion("suspectedTotal", true)');
+  assert.match(textOf(orders, "checkupToastText"), /^第 44 行（合计）不再计入分析。/);
+  orders.evaluate("resetAnalysisState()");
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(orders.evaluate("state.checkupHandled"), null);
+  assert.equal(orders.evaluate("state.checkupToast"), null);
+});
+
+test("v3.4.0 R9: with drafts waiting, the first screen's refusals are written on the first screen; the quality page's are as before", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('stageFieldTypeChange("产品", "ignore")');
+  assert.equal(orders.evaluate("hasFieldConfigDraftChanges()"), true);
+  cardClick(orders, "duplicateRows");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。", "warning", false]);
+  assert.equal(orders.elements.get("checkupToast").classList.contains("is-empty"), false);
+  cardClick(orders, "placeholder");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。", "warning", false]);
+  orders.evaluate("globalThis.__reports = 0; { const report = exportHtmlReport; globalThis.exportHtmlReport = (...a) => { __reports += 1; return report(...a); }; }");
+  orders.evaluate("exportCheckupReport()");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改，请先应用配置后再导出。", "warning", false]);
+  assert.equal(orders.evaluate("__reports"), 0);
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["Column settings have changes that are not applied; apply them before exporting.", "warning", false]);
+  switchLanguage(orders, "zh");
+  // Nothing changed and nothing was written on the quality page.
+  assert.equal(rowCountOf(orders), 12);
+  assert.deepEqual([textOf(orders, "duplicateExclusionMessage"), textOf(orders, "placeholderMessage"), textOf(orders, "reportExportStatus")], ["", "", ""]);
+  // The quality page's own calls write where they always did.
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(textOf(orders, "placeholderMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。");
+  assert.equal(textOf(orders, "checkupToastText"), "字段配置有未应用的修改，请先应用配置后再导出。");
+  // 导出写法统一的表 with the gate closed: the export module, its gate's sentence, the focus on it.
+  orders.evaluate("globalThis.__focused = []; dom.standardizedExportGate.focus = () => __focused.push('gate');");
+  cardClick(orders, "dateStyle");
+  assert.equal(orders.context.document.body.dataset.module, "exportSection");
+  assert.notEqual(textOf(orders, "standardizedExportGate"), "");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__focused)")), ["gate"]);
+  // Without drafts the report is exported as before, and the check runs.
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  orders.evaluate('showModule("overviewSection"); exportCheckupReport()');
+  assert.equal(orders.evaluate("__reports"), 1);
+  cardClick(orders, "dateStyle");
+  assert.notEqual(orders.evaluate("state.standardizedExport"), null);
+  assert.equal(textOf(orders, "standardizedExportGate"), "");
+});
+
+// ---- v3.4.0 commit 8: phone and English details ----
+// The sentences of the checkup as shown: every part of the first screen that the checkup writes, with
+// the cards' sample chips taken out (they are the user's cells), and the labels of the bar and the dots.
+const CHECKUP_SENTENCE_IDS = ["checkupTotal", "checkupLegend", "checkupOverlap", "checkupCards", "checkupHandled", "checkupCheckedList", "checkupOthersNote", "checkupOthersList", "checkupToastText"];
+const checkupSentences = (scope) => {
+  // Each text node on its own (an element's tags split it), so two items are never read as one.
+  const parts = CHECKUP_SENTENCE_IDS.flatMap((id) => {
+    const element = scope.elements.get(id);
+    const html = element.innerHTML || "";
+    if (!html) return [element.textContent || ""];
+    return html.replace(/<span class="checkup-sample(?:-line)?">[\s\S]*?<\/span>(?=<span|<\/div>)/g, "\n").replace(/<[^>]+>/g, "\n").split("\n");
+  });
+  const labels = [...(scope.elements.get("checkupBar").innerHTML + scope.elements.get("sidebarFieldList").innerHTML).matchAll(/aria-label="([^"]*)"/g)].map((match) => match[1]);
+  // Escaped as written by escapeHtml(): read back as text (an apostrophe is &#039; in the page).
+  const unescape = (text) => text.replace(/&#0*39;/g, "'").replace(/&quot;/g, "\"").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return [...parts, ...labels].map((text) => unescape(text).replace(/\s+/g, " ").trim()).filter(Boolean);
+};
+// The user's own text inside quotes (field names, values) is not ours to check.
+const withoutQuoted = (text) => text.replace(/「[^」]*」/g, "「」").replace(/“[^”]*”/g, "“”");
+
+test("v3.4.0 words: every checkup sentence in both languages: English without Chinese, category, empty or contractions; Chinese without a space between two characters and with one after Latin letters or digits", async () => {
+  const han = /[㐀-鿿]/;
+  const states = [
+    ["sample-orders.csv", async () => clickSampleButton(sampleOrdersFetchedText())],
+    ["messy.csv", async () => importCheckupFixture("messy.csv")],
+    ["clean.csv", async () => importCsvFile(CLEAN_TABLE_CSV, "clean.csv")],
+    ["blank cell", async () => importCsvFile(CLEAN_TABLE_CSV.replace("张三,2023-05-20,8200", "张三,2023-05-20,"), "blank.csv")],
+    ["公式错误.xlsx", async () => importStage3Fixture("公式错误.xlsx")],
+    ["en-issues.csv", async () => importStage3Fixture("en-issues.csv")],
+    ["写法不一致.csv", async () => importStage3Fixture("写法不一致.csv")],
+    ["excluded", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate('setCheckupExclusion("suspectedTotal", true); setCheckupExclusion("duplicateRows", true)'); return scope; }],
+    ["treated", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate("treatFromCheckup()"); return scope; }],
+    ["undone", async () => { const scope = await importCheckupFixture("messy.csv"); scope.evaluate('setCheckupExclusion("duplicateRows", true); undoCheckupToast()'); return scope; }],
+    ["refused", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate('stageFieldTypeChange("产品", "ignore"); exportCheckupReport()'); return scope; }]
+  ];
+  let checked = 0;
+  for (const [name, make] of states) {
+    const scope = await make();
+    const zh = checkupSentences(scope);
+    switchLanguage(scope, "en");
+    const en = checkupSentences(scope);
+    switchLanguage(scope, "zh");
+    assert.ok(zh.length > 2 && en.length === zh.length, `${name}: ${zh.length} / ${en.length}`);
+    for (const text of en) {
+      const own = withoutQuoted(text);
+      assert.doesNotMatch(own, han, `${name} en: ${text}`);
+      assert.doesNotMatch(own, /\bcategor(y|ies)\b|\bempty\b/i, `${name} en: ${text}`);
+      assert.doesNotMatch(own, /n['’]t\b/i, `${name} en: ${text}`);
+    }
+    for (const text of zh) {
+      const own = withoutQuoted(text);
+      assert.doesNotMatch(own, /[㐀-鿿] [㐀-鿿]/, `${name} zh: ${text}`);
+      assert.doesNotMatch(own, /[A-Za-z0-9][㐀-鿿]/, `${name} zh: ${text}`);
+    }
+    checked += zh.length + en.length;
+  }
+  assert.ok(checked > 200, `checked ${checked}`);
+});
+
+test("v3.4.0 phone: the number and its words on one line, 导出体检报告 across the foot of the card, 需要处理's note under its title; wide 其他发现 rows keep the tag on one line", () => {
+  const css = repoFile("style.css");
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.checkup-panel \{\s*display: flex;\s*flex-direction: column;/);
+  assert.match(phone, /\.checkup-headline \{\s*display: contents;\s*\}/);
+  // 40 px on phones (the user chose it over the existing clamp, 28 px at 390).
+  assert.match(phone, /\.checkup-total-number \{\s*font-size: 40px;\s*line-height: 44px;\s*\}/);
+  assert.match(phone, /\.checkup-total-number ~ \.checkup-total-label \{\s*white-space: nowrap;\s*\}/);
+  assert.match(phone, /\.checkup-bar \{\s*order: 1;\s*\}\s*\.checkup-legend \{\s*order: 2;\s*\}\s*\.checkup-actions \{\s*order: 3;\s*width: 100%;/);
+  assert.match(phone, /\.checkup-caption-aside \{\s*flex-basis: 100%;\s*margin-left: 0;\s*\}/);
+  // One block for wide screens (the one the field table already has), and the tag never wraps.
+  assert.equal((css.match(/@media \(min-width: 641px\) \{/g) || []).length, 1);
+  const wide = css.slice(css.indexOf("@media (min-width: 641px) {"));
+  assert.match(wide, /^@media \(min-width: 641px\) \{[\s\S]*?\.checkup-findings-list \.checkup-finding \{\s*flex-wrap: nowrap;\s*\}\s*\.checkup-finding-title \{\s*flex: 0 1 auto;\s*min-width: 0;\s*\}\s*\.checkup-finding-note \{\s*flex: 1 1 0;\s*min-width: 0;\s*\}\s*\}/);
+  assert.match(cssRule(css, ".checkup-finding-tag"), /flex: none;[\s\S]*white-space: nowrap;/);
 });
