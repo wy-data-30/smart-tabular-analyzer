@@ -4,7 +4,7 @@
 
 Formerly Smart Tabular Analyzer. Since v3.2.2 the repository is called sheet-checkup; old links redirect to the new ones.
 
-**Current release:** v3.3.0
+**Current release:** v3.4.0
 
 ## Language
 
