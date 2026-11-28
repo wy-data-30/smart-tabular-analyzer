@@ -130,6 +130,7 @@ flowchart LR
 | 格式一致性（v2.9.0） | `sourceDateCells`, `dateStyles`, `constantFields`, `lookAlikes`, `formatScans` | `WeakMap<行对象, { 字段: true }>`，记下哪些格是 Excel 日期单元格，只在导入时写入；三个汇总由 `refreshFormatConsistency()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里整体替换，筛选不碰；`formatScans`（`createFormatScans()`）缓存这次导入里每个字段的日期写法和写法收集，只在导入时替换。`resetAnalysisState()` 全部清空（见“格式一致性”） |
 | 派生分析 | `numericStats`, `qualityNumericStats`, `categoryStats`, `chartInsights`, `customAnalysis` | 当前统计、原始质量统计、图表下的两句结论（`{ category, trend }`，空字符串表示不显示，见“Statistics”）和自定义分析快照。没有筛选掉任何行、也没有不计入分析的行时，`numericStats` 与 `qualityNumericStats` 是**同一个数组**（见“Statistics”），禁止原地修改其中的数组或对象 |
 | 质量信息 | `duplicateRows`, `idDuplicates`, `totalMissing`, `parseWarnings` | 原始数据重复、ID 字段重复值（`buildIdDuplicateSummary()` 的结果，见“ID 字段重复值”）、缺失和 CSV 解析警告（全部保存，每条 `{ row, code, message }`，`row` 是精确的文件行号或 `null`，见“数据行的文件行号”） |
+| 体检结果（v3.4.0） | `checkupSummary`, `checkupCards`, `checkupOthers`, `checkupChecked`, `checkupHandled`, `checkupToast`, `duplicateRowGroups`, `idDuplicateRowIndexes`, `suspectedTotalLabelIndexes` | 体检计数、卡片 / 其他发现 / 查过的项目 / 已处理的数据（只有数字、行号和值，没有句子），`refreshCheckupSummary()` 在提交、重建、不计入分析 / 撤销后整体替换，筛选不改；提示条的撤销（`{ undo }` 或 `null`）；导入时和重复数一起算出的重复组；编号重复的全部行（和 `idDuplicates` 一起替换）；最后一次核对时还在的标签行（R7）。`resetAnalysisState()` 全部清空（`formatScans` 里另有 v3.4.0 的逐行缓存，见“体检结果（v3.4.0）”） |
 | 数据预览 | `previewPage` | 预览的页码（从 1 开始），`renderPreview()` 把它夹到有效范围；导入、筛选变化和字段配置（含疑似缺失值确认）回到 1，`resetAnalysisState()` 也设为 1（见“问题行”） |
 | 问题行 | `problemCategories`, `problemView`, `problemViewOpener` | `renderQuality()` 时的 `listProblemCategories()`（“查看”按钮带它的下标）；打开的查看区 `{ category: { kind, field, key }, page, list }` 或 `null`；打开查看区的那个“查看”按钮，关闭时把焦点还给它。导入时关闭，`resetAnalysisState()` 清空，筛选不改（见“问题行”） |
 | 文件行号 | `sourceRowNumbers` | `WeakMap<行对象, 文件行号>`。只由 `commitTabularData()` 写入（每次提交整体替换），`resetAnalysisState()` 换成空的 WeakMap；通过 `getSourceRowNumber(row)` 读取，查不到返回 `null`。行对象本身不加字段，筛选结果和计入分析的行与 `rows` 共享行对象，所以同样能查到 |
@@ -394,7 +395,7 @@ XLSX.utils.sheet_to_json(worksheet, {
 - **先读后换**：`switchExcelSheet(sheetName, place)` 在这几种情况下直接返回：不是留下的表名、就是当前那张、正在加载、正在等选表。否则写提示、让出一帧，回来先确认这期间没有开始别的导入（`activeImportId` 没变、`state.keptExcel` 还是同一份），再 `readExcelSheet()`。
   - 读失败：当前分析一点不动，报错写在点的那个列表下面，焦点回到点的那一项（`focusSheetSwitchItem()`）。在上传页失败就留在上传页，“回到「…」的分析”照样能用，回去还是原来那张表。
   - 读成功才 `beginImport()`（清掉旧分析和 `state.keptExcel`，字节还在局部变量里），`importExcelSheet(…, kept)` 在提交前把字节放回 state。提交里出现意外异常时走 `showError(errorMessageBuilder(error), importId)`：重置、解除加载中、显示报错（R11）；第一次导入选表的那条路径也一样。
-  - 结果和重新上传、选那张表完全相同：筛选、不计入分析、按空值处理、改过的字段类型、问题行查看区、写法统一检查和自定义分析都清空，打开“数据概览”，焦点在它的标题上；1100 px 以下盖在内容上的侧栏随之关上（1100 px 以上侧栏在内容旁边，保持展开）。
+  - 结果和重新上传、选那张表完全相同：筛选、不计入分析、按空值处理、改过的字段类型、问题行查看区、写法统一检查和自定义分析都清空，打开第一个模块（v3.4.0 起是“体检结果”，之前叫“数据概览”），焦点在它的标题上；1100 px 以下盖在内容上的侧栏随之关上（1100 px 以上侧栏在内容旁边，保持展开）。
 - **键盘（R13）**：Escape 收起列表、焦点回按钮，并且 `stopPropagation()`，所以盖在内容上的侧栏要再按一次 Escape 才关。不做方向键。
 - **样式**：640 px 以下（手机侧栏）列表不限高，让侧栏整体滚动，不出现滚动套滚动（R6）；641 px 以上限高 40vh。手机侧栏里“换一个工作表”和“换一个文件”并排，按钮上的展开箭头不会被挤没，文字放不下就折行（R12）。上传页的“回到「…」的分析”在长文件名、长表名时折行，可以在任意字符处断开，折行后左对齐；短名时外观和以前相同（R9）。
 - **生命周期**：`resetAnalysisState()` 清空 `state.keptExcel`，并经 `clearSheetSwitches()` 清掉工作表一行、两个按钮、两个列表和它们的提示。导入别的文件、使用示例数据、导入出错都经过它。
@@ -645,6 +646,7 @@ N/A、—、NULL 这类写法常被用来表示“没有数据”，但导入时
 - **触发点**：`commitTabularData()` 算标签和结果；`rebuildAnalysisFromProfiles()` 复用标签重算结果（字段配置、疑似缺失值确认 / 撤销会改变数值列和读数）；筛选不碰，基于原始数据；`resetAnalysisState()` 清空。状态栏的句子只在导入时写。v3.1.0 起重建时和已不计入分析的合计行取交集（`intersectExcludedTotals()`）。
 - **开销**：只影响带标签行的文件。**有标签行时，每次重建都会按字段解析全部数值列**，不做缓存。10 万 × 20 列、1 格“合计”（不命中），字段配置重建的中位数从 4,218 ms 到 5,085 ms，多约 0.9 s（+20.6%），`buildSuspectedTotalSummary()` 单独约 0.93 s（Node 24，假 DOM，交替各 5 次；这次重建把一列改成了分类，读 9 个数值列）。没有标签行的文件 0 ms。
 - **质量页**：静态小节 `#suspectedTotalSection` 在读取时有疑问一行的下方、两栏表格之上，没有命中时隐藏，不新增 pill（`pillTexts()` 的断言固定恰好 6 项）。最多列 `SUSPECTED_TOTAL_LIST_LIMIT`（20）条，超出时写“共 N 行，只列出前 20 行。全部行请点「查看」。”。整节只有一个“查看”，因为整类是一个问题行类别。说明句见“报告与数据导出”。
+- **还在的标签行（v3.4.0，R7）**：`checkSuspectedTotals()` 的返回值多一个 `labelIndexes`（最后一次核对时还在的标签行的 `state.rows` 下标，就是 `labelRowCount` 数的那些行），这是 v3.4.0 唯一一处给现有对象加的键。`commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 存进 `state.suspectedTotalLabelIndexes`，`resetAnalysisState()` 清成 `[]`。体检结果“其他发现”的“写着合计但对不上”= 这些行去掉疑似合计行（有数值列时才说），被“同一字样过半”去掉的组不算，所以 v3.3.0 那 7 张“字样是值”的表一条都没有。质量页的疑似合计小节在 0 行对上、但有标签行时也显示，只写现有那句“另有 N 行也带这类字样，但数字对不上，没有列出。”，没有“查看”和“不计入分析”（v3.3.0 起它在这种表上整节隐藏）。
 - **状态栏**：一行写“第 N 行「标签」疑似合计行，可以在“数据质量”里设为不计入分析。”（v3.1.0 起；之前结尾是“目前仍计入统计，详情见“数据质量”。”，这句不随排除变化）；多行写“发现 N 行疑似合计 / 小计（第 a、b… 行），……”，最多列 5 个行号。写在表头说明之后，警告分支也有。状态栏为什么看得见见“界面渲染”。
 
 ### 公式错误单元格（v2.8.0）
@@ -668,7 +670,8 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
   - 首尾空格：`trim()` 能去掉的字符（含 U+3000、U+00A0、U+FEFF）。开头是 U+200B 的不算首尾空格，算不可见字符（`trim()` 不去它）。`hasEdgeWhitespace()` 先看首尾两个字符码，和 `isMissing()` 的快路径同一个判断，有全码元测试。
   - 同一个值有多种写法：去首尾空格后不同，但 `lookAlikeKey()`（NFKC → 去不可见字符 → 连续空白合成一个空格 → 去首尾空白 → 转小写）相同。纯 ASCII 的文本不做 NFKC。不可见字符的清单是 `parsing.js` 的 `INVISIBLE_CHARACTER_CLASS`：U+00AD（软连字符）、U+200B–U+200F（零宽字符和方向符）、U+2060、U+FEFF；变体选择符不在内（它属于前一个字符）。原因由“跳过一步”判断：其他步骤都做、只跳过这一步，写法仍然不同，这一步就是原因（全角半角或兼容写法、大小写、不可见字符、中间空格多少）；开尔文符号和 K 这种两步都能单独合并的情况归“全角半角或兼容写法”。不认的：华东 / 华东区、简繁、“张 三 / 张三”（去掉中间全部空格）、拼写和同义。NFKC 会合并 ㎡ / m2、① / 1、Ⅱ / II、℃ / °C；区分大小写的 ID（base62 短链等）会被报（决定：接受）。
   - 只有不可见字符的格：`trim()` 去不掉，所以不是缺失，`lookAlikeKey()` 却为空。单独计数 `invisibleOnlyCount`（文案“只有不可见字符 N 格”，零个时不写），不进任何组。
-  - 计算：逐格只做一次 `Map` 计数（按原文），缺失、疑似缺失值、首尾空格、key 都在不同的原文上算一次。`rowCount` 是并集：带首尾空格、只有不可见字符或在组里的行，每行一次。组按行数降序、写法按个数降序，相同时按首次出现；最多列 `LOOK_ALIKE_GROUP_LIMIT`（10）组、每组 `LOOK_ALIKE_VARIANT_LIMIT`（10）种，超出写“只列出前 10 组”“等 N 种”，问题行不受限。`state.lookAlikes = [{ field, edgeSpaceCount, edgeSample, invisibleOnlyCount, groups: [{ variants: [{ text, count }], variantCount, reasons, rowCount }], groupCount, rowCount }]`。
+  - 主写法（v3.4.0，R3–R6）：一组里去首尾空格后出现最多的那种写法是主写法（`lookAlikeMainText(group)`），不要求它本身“干净”（一组里「ＡＢＣ公司」3 个、「ABC公司」1 个时，全角那种是主写法，只算 1 格）；最多的有并列时没有主写法，整组都算。计入的格 = 首尾有空格的格 ∪ 只有不可见字符的格 ∪ 组里不是主写法的格；`collectFieldWritings()` 的 `rowCount` 和 `listLookAlikeRows()` 用同一个 `isCountedWriting()` 判断，所以“列出 = 计数”照旧（契约 19）。问题行只列计入的格所在的行，仍按组排、组内按文件顺序；“说明”列写出主写法（“第 1 组（大小写，主写法是「Sales」）：「sales」”）。摘要句（质量页和报告共用）只在有主写法的组里给主写法那一项加“（主写法）”/ “(most common)”，并列的组不加。
+  - 计算：逐格只做一次 `Map` 计数（按原文），缺失、疑似缺失值、首尾空格、key 都在不同的原文上算一次。`rowCount` 是并集：带首尾空格、只有不可见字符或组里不是主写法的行，每行一次（v3.4.0 前是组里的全部行）。组按行数降序、写法按个数降序，相同时按首次出现；最多列 `LOOK_ALIKE_GROUP_LIMIT`（10）组、每组 `LOOK_ALIKE_VARIANT_LIMIT`（10）种，超出写“只列出前 10 组”“等 N 种”，问题行不受限。`state.lookAlikes = [{ field, edgeSpaceCount, edgeSample, invisibleOnlyCount, groups: [{ variants: [{ text, count }], variantCount, reasons, rowCount }], groupCount, rowCount }]`。
   - 和 ID 重复值互不影响：“E1012”和“E1012 ”去首尾空格后相同，算编号重复，同时报首尾空格；“E1012”和“e1012”不算编号重复，报写法不一样。
 - **显示写法**（`formatVisibleText()`）：半角空格在两端或连续时显示“␣”（中间单个空格不动），其他空白和不可见字符写名字：[全角空格]、[不换行空格]、[零宽字符]、[软连字符]、[方向符]、[制表符]、[换行]，其余 [空白]。页面、问题行说明和报告共用，写入前再 `escapeHtml()`。
 - **刷新路径**：`refreshFormatConsistency()` 在 `commitTabularData()` 里（公式错误汇总之后）和 `rebuildAnalysisFromProfiles()` 开头调用，所以导入、字段配置（应用 / 恢复）和疑似缺失值确认 / 撤销都会重算；`refreshFilteredAnalysis()` 不碰，基于原始数据。
@@ -697,6 +700,7 @@ Excel 公式算出错误的格，`sheet_to_json` 读成 `null` 或 `""`，导入
 - **报告**：快照 `dataScale.excludedRows`；顶层 `exclusions`（`{ suspectedTotal, duplicateRows, overlap }`，每项 `{ count, lines }`，行号最多 `REPORT_EXCLUSION_LINE_LIMIT`（20）个，有一行查不到行号时 `lines` 为 `null`；`overlap` 是两类都是的行，没有时为 `null`；没有不计入的行时 `exclusions` 为 `null`）；`quality.excludedScope`、`quality.suspectedTotalsExcluded`、`quality.suspectedTotalExtras`。`normalizeReportSnapshot()` 给旧快照补 0 / `null`。输出都只在 N > 0 时：数据规模“不计入分析行数”；筛选条件“不计入分析：疑似合计行 1 行（第 44 行）、重复的行 1 行（第 21 行）。”（有重叠时句末“，共 3 行（第 7 行两类都是）”，超过 20 个行号写“等”）；没有筛选时“未设置筛选，结果基于全部 40 行（不含不计入分析的 2 行）。”（没有不计入的行时仍是“结果基于完整数据”）；数据质量部分开头和页面同文的那句；疑似合计说明句跟状态换；R1 和“另有 N 行”两句。不排除时示例报告和 v3.0.1 逐字节相同（有 R1 / “另有 N 行”的表多出那两句）。“筛除行数”= 计入的行 − 筛选后的行。
 - **导出**：只剩一个数据导出“当前分析的行”，见“报告与数据导出”。
 - **已知限制**：R1 那种只等于上面一行的合计行可能不是合计行，按钮会把它们一起设为不计入分析（页面和报告都写了那句，请先查看）；质量页按全部行算，统计表的偏大或偏小上下界在有不计入的行时和质量页不同（有意）；干净编号列见上；按钮记下的是当时的行，新标出的合计行不自动不计入。
+- **v3.4.0**：首页“体检结果”的需要处理的行（N）和卡片不算已不计入分析的行（见“体检结果（v3.4.0）”）；**质量页、报告的质量部分、问题行和导出仍按全部行，和 v3.3.0 相同，v3.4.1 再改**。所以排除合计以后首屏的 N 少了，质量页的 pill 不变，这一版两处说法不一致（统计页和质量页在 v3.3.0 里本来就这样）。“其他发现”跟着质量页按全部行算，和已不计入分析的行有关的几条补半句（“这一行已不计入分析”“其中第 21 行已不计入分析”）。`setRowExclusion(kind, on, setMessage)` 多一个可选参数（R9，照 `rebuildAnalysisFromProfiles()` 的 `setMessage` 先例）：默认写质量页那一节、和以前逐字节相同，首屏调用时拒绝句写进首屏的提示条。
 
 ## 7. Statistics（统计分析）
 
@@ -983,6 +987,7 @@ v2.1.2 维护补丁将 `buildReportData()` 和 `normalizeReportSnapshot()` 中�
 | 字段配置表的搜索和类型切换（v3.0.0，F2） | `renderSchemaFilter()`, `renderSchemaKinds()`, `applySchemaFilter()`, `countSchemaKinds()`, `listSchemaFieldsShown()`, `handleSchemaSearch()`, `selectSchemaKind()`, `handleSchemaKindClick()` |
 | 小节说明和截断的单元格（v3.0.0） | `toggleSectionNote()`, `showTruncatedCellTitle()` |
 | 核心结果 | `renderOverview()`, `renderPreview()`, `renderSchema()`, `renderQuality()`, `renderIdDuplicateDetails()`, `renderPlaceholderDetails()`, `renderParseWarningSummary()`, `renderNumericStats()`, `renderCategoryStats()` |
+| 体检结果（v3.4.0） | `refreshCheckupSummary()`（算）；`renderCheckup()`、`renderCheckupCards()`、`renderCheckupHandled()`、`renderCheckupChecked()`、`renderCheckupOthers()`（画）；`handleCheckupClick()`、`handleCheckupHandledClick()`、`handleCheckupFindingClick()`、`writeCheckupToast()`、`undoCheckupToast()`、`exportCheckupReport()`；侧栏圆点 `getCheckupKindsByField()` |
 | 分页表格与问题行 | `buildRowTableHtml()`, `getRowPage()`, `movePage()`, `setPagerButtons()`, `goToPreviewPage()`, `handleProblemViewClick()`, `openProblemView()`, `renderProblemView()`, `selectProblemCategory()`, `goToProblemRowsPage()`, `refreshProblemView()`, `closeProblemView()` / `hideProblemView()` |
 | 图表结论 | `renderChartInsights()`, `renderCategoryInsight()`, `renderTrendInsight()`, `buildCategoryInsight()`, `setChartInsight()` |
 | 筛选 | `initializeFilterControls()`, `renderCategoryFilterValues()`, `renderFilterCounts()`, `updateGlobalFilterStatus()` |
@@ -1010,17 +1015,17 @@ rebuildAnalysisFromProfiles()   # 字段类型变化
 - 输出：`innerHTML`、`textContent`、class、disabled、ARIA 属性、滚动和焦点等浏览器副作用。
 - 表格和文本模板在写入 `innerHTML` 前使用 `escapeHtml()`；状态文字优先使用 `textContent`。
 - 状态栏（v2.8.0）：`body.has-results #statusPanel.success:not(.has-note)` 隐藏导入成功后的普通消息。消息带说明句（表头位置、疑似合计、公式错误）时，`commitTabularData()` 经 `setStatus(message, tone, true)` 加 `has-note` 类，状态栏留在页面上；之后任何一条 `setStatus()` 消息都整体替换 `className`，所以导出报告成功后这条说明和状态栏一起消失（已接受，留给阶段五）。状态栏也没有关闭按钮。表头说明从 v2.2.0 加入起到 v2.8.0 之前，导入成功时都被旧规则 `#statusPanel.success` 隐藏，只在 DOM 里。
-- 状态栏的外层（v3.0.0）：`#statusPanel` 的文字、类名、`role` 和上面的 `has-note` 规则都不变，外面包了一层 `#statusNote`。`setStatus()` 把消息类别写进 `#statusNote` 的 `data-tone`（没有类别时为 `loading`），`showError()` 写 `error`。成功且带说明时外层加 `can-collapse`，多出一行“〈文件名〉已载入，有 N 条说明”（`formatStatusNoteSummary()`，N 是表头位置、疑似合计、公式错误三句里出现了几句）和“收起 / 看说明”按钮，默认展开；收起（`is-collapsed`）时原文只是移出视线（`clip-path`），读屏仍能读到，不用 `display: none` 或 `visibility`。`warning` 一直展开，不给按钮。工作区里成功消息只在数据概览模块显示（`body[data-module]`，由 `showModule()` 写），警告和报错在每个模块都显示。导入成功时把状态文字和类别记在 `state.importStatus`，从上传页“回到〈文件名〉的分析”时原样设回；新导入一开始就清掉这份记录。
+- 状态栏的外层（v3.0.0）：`#statusPanel` 的文字、类名、`role` 和上面的 `has-note` 规则都不变，外面包了一层 `#statusNote`。`setStatus()` 把消息类别写进 `#statusNote` 的 `data-tone`（没有类别时为 `loading`），`showError()` 写 `error`。成功且带说明时外层加 `can-collapse`，多出一行“〈文件名〉已载入，有 N 条说明”（`formatStatusNoteSummary()`，N 是表头位置、疑似合计、公式错误三句里出现了几句）和“收起 / 看说明”按钮；收起（`is-collapsed`）时原文只是移出视线（`clip-path`），读屏仍能读到，不用 `display: none` 或 `visibility`。v3.4.0 起导入后**默认收起**，读取有疑问（`warning`）的消息也收起，警告算一条说明（R10，摘要仍是“〈文件〉已载入，有 N 条说明”）；`#statusPanel` 的 `role`、`aria-live` 和文字不变（v3.0.0–v3.3.0 是默认展开、`warning` 一直展开）。工作区里成功消息只在第一个模块（v3.4.0 起叫“体检结果”）显示（`body[data-module]`，由 `showModule()` 写），警告和报错在每个模块都显示。导入成功时把状态文字和类别记在 `state.importStatus`，从上传页“回到〈文件名〉的分析”时原样设回；新导入一开始就清掉这份记录。
 
 ### v3.0.0 外壳
 
-- **一次显示一个模块。** 8 个模块在 `#moduleStage` 里，`showModule(sectionId)`（`script.js`）给其余 7 个加 `module-off` 类和 `inert`，给当前导航链接加 `aria-current="page"`，用 `replaceState` 写 `#模块 id`（加载时不读它），把页面滚回顶部、焦点移到模块标题。切换只是显示和隐藏，不重算、不重画图表。导入成功后停在数据概览；应用字段配置、应用筛选、按空值处理之后停在当前模块。
+- **一次显示一个模块。** 8 个模块在 `#moduleStage` 里，`showModule(sectionId)`（`script.js`）给其余 7 个加 `module-off` 类和 `inert`，给当前导航链接加 `aria-current="page"`，用 `replaceState` 写 `#模块 id`（加载时不读它），把页面滚回顶部、焦点移到模块标题。切换只是显示和隐藏，不重算、不重画图表。导入成功后停在第一个模块“体检结果”（v3.4.0 前这个模块叫“数据概览”，id 仍是 `overviewSection`）；应用字段配置、应用筛选、按空值处理之后停在当前模块。
 - **看不见的模块不能用 `display: none`，也不能加 `.hidden`。** 在 `display: none` 的容器里 Chart.js 把图表建成 0×0，`captureCurrentChartImages()` 拿不到图；它还会跳过 `closest(".hidden")` 里的图表。两种写法都会让 HTML 报告少图。所以 `.module-off` 用 `visibility: hidden; position: absolute; top/right/left: 0`，外层 `.module-stage` 是 `position: relative; overflow: clip`（`clip` 而不是 `hidden`，模块里吸顶的表头才不失效）。这样隐藏的模块仍按舞台宽度排版，图表尺寸和显示时相同，无论停在哪个模块，导出的报告图片张数和标题都与 v2.12.0 相同（有护栏测试）。打印时 `.module-off` 改回 `position: static; visibility: visible`，8 个模块都打印。
 - **侧栏**（`#appSidebar`）：文件名（v3.2.1 起，工作表多于一张时这一行只写文件名，下一行写工作表，见“换工作表（v3.2.1）”）和“N 行 × K 列”、按文件顺序列出全部字段和已应用类型的小标、当前状态（筛选、表头所在行、已按空值处理的条数），由 `renderSidebar()` 在 `commitTabularData()` 和 `rebuildAnalysisFromProfiles()` 里刷新；“筛选”一行和 `#globalFilterSummary` 同文，由 `updateGlobalFilterStatus()` 写，所以筛选路径也会更新它。宽度不小于 1100 px 默认展开、在内容旁边；小于 1100 px 默认收起，打开时盖在内容上（遮罩、Esc 关闭、焦点关在面板里、关闭后回到按钮）。用户点过开合以后按用户的来（`body.sidebar-open` / `sidebar-closed`），刷新回到默认。
 - **上传页与回到分析**：“换一个文件”回到上传页（`showUploadPage()`），不清除当前分析；这时上传页给出“回到〈文件名〉的分析”（`#returnToAnalysis`，`formatReturnToAnalysis()`），点了回到原来的模块（`state.returnModule`）。新导入开始、导入失败或工作簿还在等选工作表时不给这个入口。
 - **字段配置表（F1、F2）**：列是字段名、自动类型、确认类型、非空值、唯一值、认不出、示例值。字段多于 20 个（`SCHEMA_FILTER_MIN_FIELDS`）时出现搜索框和按确认类型的切换（`SCHEMA_KINDS`），状态在 `state.schemaFilter = { query, kind }`；只给表格行加 `hidden`，不重画表格，应用、恢复和“有未应用的修改”都按全部字段算。新导入清空，应用后保留（所选类型没有字段了回到“全部”）。
 - **问题行“查看”（v3.0.0 修复）**：`handleProblemViewClick()` 打开查看区后，把 `#problemRowsSection` 用 `scrollIntoView({ block: "start" })` 滚到顶栏下面（靠 `html` 的 `scroll-padding-top`），标题 `focus({ preventScroll: true })`；换类别、翻页和 `refreshProblemView()` 都不滚动。`prefers-reduced-motion` 下 `scroll-behavior: auto`。
-- **外观**：颜色、字号（12 / 13 / 15 / 17 / 22 / 28 / 40）、字重（400 / 600 / 700）在 `style.css` 的 `:root` 和各规则里；模块本身不是卡片，模块里的表格框、频数卡、导出列表、筛选卡和图表卡是白卡，投影只给盖在内容上的侧栏。“一组一个蓝色主按钮”只用 id 选择器调整（`#exportFilteredCsv`、`#placeholderDetails` 下每条的“按空值处理”显示成次按钮），按钮的类名没有改。类别色只用在上传页示例小表、质量页 5 个小节标题前的圆点和字段配置表“认不出”前的粉点。图表配色在 `app.js` 的 `CHART_THEME`，字体在 `script.js` 的 `Chart.defaults`，报告自己的样式没有动。
+- **外观**：颜色、字号（12 / 13 / 15 / 17 / 22 / 28，上传页标题 `clamp(28px, 4vw, 40px)`；v3.4.0 只有两个例外：体检结果的大数字 52 px，640 px 以下 40 px（用户选的），各在一条规则里出现一次，测试 `v3.0.0 look:` 固定）、字重（400 / 600 / 700）在 `style.css` 的 `:root` 和各规则里；模块本身不是卡片，模块里的表格框、频数卡、导出列表、筛选卡和图表卡是白卡，投影只给盖在内容上的侧栏。“一组一个蓝色主按钮”只用 id 选择器调整（`#exportFilteredCsv`、`#placeholderDetails` 下每条的“按空值处理”显示成次按钮），按钮的类名没有改。类别色只用在上传页示例小表、质量页 5 个小节标题前的圆点和字段配置表“认不出”前的粉点。图表配色在 `app.js` 的 `CHART_THEME`，字体在 `script.js` 的 `Chart.defaults`，报告自己的样式没有动。
 - **外观（第二次样式提交）**：顶栏只有产品名，没有图标、副标题和隐私徽章，页脚只有 GitHub 链接；隐私句只在上传页标题下、侧栏底部和导出模块自己的说明里。模块标题 17 px / 600，模块里的小标题 15 px / 600；字段配置、数据质量、筛选的说明是标题旁一行短句（`.section-aside`）。质量页疑似合计、公式错误、问题行各是一张白卡，“按单位读取”到“编号重复”7 个小节包在 `.quality-notes` 一张卡里，细线只加在可见小节之间。空值检查、偏大或偏小、数值统计、字段配置四张表的数字列带 `num` 类右对齐（报告里没有）。趋势线用 `trendLineStyle()`：直线、显示数据点、不填色；y 轴最多 5 个刻度，x 轴 `autoSkipPadding: 16`。上传图标没有底色方块，两个上传按钮没有图标。
 - **假 DOM 测不到的**：元素是否看得见、隐藏模块里图表的尺寸、吸顶表头、焦点和 `inert` 的实际效果、侧栏在各宽度下的开合、横向滚动和打印，都要在浏览器里看（`docs/RELEASE_CHECKLIST.md` 第 7 节）。
 
@@ -1052,13 +1057,15 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 | 写法统一的表（导出区） | 写法统一；检查表列头“清空空值写法” | 标准化数据 | `state.standardizedExport` | `checkStandardizedExport()`、`buildStandardizedExport()`、`exportStandardizedData()` |
 | 不计入分析（v3.1.0） | — | （新说法；不用“排除”“剔除”“移除”） | `state.excludedRows`；`getIncludedRows()` | `setRowExclusion()`、`renderExclusionControls()` |
 | 当前分析的行（导出区，v3.1.0） | 文件名片段“当前分析” | 筛选后 CSV、当前筛选结果 | `exportProcessedCsv("filtered")` | `getProcessedExportRows()`、`buildDataExportFileName()` |
+| 体检结果（第一个模块，v3.4.0） | — | 数据概览（导航旧名）、数据规模与预览（标题旧名） | DOM id 仍是 `overviewSection`；`state.checkupSummary` | `buildCheckupSummary()`、`renderCheckup()` |
+| 需要处理 / 其他发现 / 已处理 / 查过的项目（v3.4.0） | — | （新说法） | `state.checkupCards`、`state.checkupOthers`、`state.checkupHandled`、`state.checkupChecked` | `renderCheckupCards()`、`renderCheckupOthers()`、`renderCheckupHandled()`、`renderCheckupChecked()` |
 
 - 当前范围里没有读得出的值时，空图和趋势结论写“认得出的”：“该字段没有认得出的数字”“该字段没有认得出的日期”“日期字段「X」里没有认得出的日期，因此未生成趋势结论。”，报告趋势节写“日期字段「X」里没有认得出的日期。”（之前是“可安全转换的有效……”）。
 - 像是空值的写法的影响一律写“按空值处理后”：每条详情（“……。按空值处理后，空值 0 → 1，类型仍为数值。”）、字段汇总（“全部按空值处理后：”）、类型变化提示（“按空值处理后类型会变：”）、`index.html` 的说明句、报告的“按空值处理后的影响”列和快照的 `effect`。按钮叫“按空值处理”；“待确认”“已撤销……”等其余用到“确认”的地方不变。
 - 写法统一的表的检查表列头用短称“清空空值写法”；`index.html` 的说明和改动清单的处理标签用全称“已按空值处理的写法，清空”。
 - 问题行 CSV 的“说明”列和改动清单的“处理”列就是这些文字本身，所以随说法变化；当前分析的行和写法统一的表两种数据 CSV（v3.1.0 前还有去重后的）只有原值或改写值，不受影响。
 - 没有改名的：疑似合计 / 小计行、整行重复 / 重复行、公式错误（单元格）、日期写法混用、按单位读取的数字；字段类型名“ID”和“未识别到 ID 字段。”；“下界 / 上界”；启动自检的“脚本文件缺失 / 页面元素缺失”；`importer.js` 的“格式异常”“CSV 行结构异常”。代码注释和本文的节标题仍用旧名字（如“疑似缺失值（v2.4.0）”）。
-- 旧说法不再出现由 `basic-data-processing.test.cjs` 末尾的 v2.12.0 护栏固定，见 `docs/TESTING.md` 第 12 节。
+- 旧说法不再出现由 `basic-data-processing.test.cjs` 末尾的 v2.12.0 护栏固定，见 `docs/TESTING.md` 第 12 节。v3.4.0 起“数据概览”也在旧词清单里（R18，导航旧名）；本文和 `docs/` 里讲历史的句子（“v3.4.0 前叫数据概览”）照旧写它。
 
 ## 界面语言（v3.2.0）
 
@@ -1088,7 +1095,11 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
 | 中文 | 英文 |
 | --- | --- |
 | 字段 | column |
-| 导航：数据概览 / 字段配置 / 数据质量 / 筛选 / 统计 / 图表 / 自定义分析 / 导出 | Overview / Columns / Quality / Filter / Stats / Charts / Breakdown / Export（模块标题照中文标题的意思写、不和导航重复：Size and preview / Check column types / Blanks, duplicates and other issues / Choose the rows to analyze / Number and text stats / Distributions and trends / Combine columns as you need / Save the data and the report） |
+| 导航：体检结果 / 字段配置 / 数据质量 / 筛选 / 统计 / 图表 / 自定义分析 / 导出 | Checkup / Columns / Quality / Filter / Stats / Charts / Breakdown / Export（模块标题照中文标题的意思写、不和导航重复：Check column types / Blanks, duplicates and other issues / Choose the rows to analyze / Number and text stats / Distributions and trends / Combine columns as you need / Save the data and the report；例外是第一个模块，v3.4.0 起标题和导航同名 “Checkup”，标题不显示、只给读屏。v3.4.0 前导航是“数据概览 / Overview”、标题 “Size and preview”） |
+| 体检结果：需要处理 / 其他发现 / 已处理 / 查过的项目 | Checkup：Need attention / Also noticed / Handled / What was checked |
+| N 行需要处理；导出体检报告 | N rows need attention；Export checkup report |
+| 多出来的 N 行不计入分析（卡片按钮）；按空值处理（N 处） | Exclude the N extra rows（R13：和质量页的 Exclude from analysis 同一个动词）；Treat as blank (N) |
+| 影响统计结果；其中 K 行还有别的问题 | Changes the statistics；K of them also have other problems（K = 1 时 has） |
 | 空值；筛选和分组里的“（空值）” | blank；“(Blank)” |
 | 像是空值的写法 | values that may mean blank（短称 blank-like，只用在文件名） |
 | 按空值处理 / 撤销；常见写法全部按空值处理（N 处） | Treat as blank / Undo；Treat all common ones as blank (N) |
@@ -1122,6 +1133,24 @@ v2.12.0 统一了界面上的说法，代码里的名字（state、函数、kind
   - AM/PM、序数日、两位年份 `fullYearOf()`、`EXCEL_SHORT_DATE_PATTERN`，三个日期正则常量：第 5 节函数表的 `toDate()`；写法 `twoDigitYear`：“格式一致性（v2.9.0）”。
 - **日期的已知限制（R9）**：两位年份只收斜杠（3/5/25、03/05/25）和 Excel 的 `d-mmm-yy`（5-Mar-25、05-Mar-25、5-March-25）；3.5.25、3-5-25（点号和横杠，防版本号）、Mar 5, 25、Jan 1, 25、5 Mar 25 不收。年在前的 25/03/05 读成 2005-03-25（按日/月/年）；1/1/30 读成 1930-01-01（Excel 的分界，未来日期会错）；斜杠写的版本号 1/13/22 读成 2022-01-13；`EXCEL_SHORT_DATE_PATTERN` 锚在原文开头，带星期的 Wed, 5-Mar-25 读不出；英文日期的星期照旧不核对（Wednesday, March 5th, 2025 读成 2025-03-05）；12 小时制只跟在空格后面，2025-03-05T2:30 PM 读不出（R5）；12:00 AM 读成当天，时间丢掉，写法统一的表保持原值（和 00:00 一样）。
 - **其他已知限制**：英文合计字样只收前缀写法，Total East、Total: East 不收；1.2K、3.4M、72°F、1,234.50 CR 不读；货币不换算（货币符号不是单位：一列里 `$900` 和 `€900` 混用时都走 `toPlainNumber()`、直接相加，不提示，以前的版本也是这样；`5,400 USD` 和 `$900` 同列按 USD 读）；一列混进第二种单位整列不读，值又互不相同时可能判成 ID（冲突句说明原因）；`USD -` 不读成 0（`$-` 读）；Total Number 仍判 ID；报告里第二档空值的说明句是全表一句、同一写法只列一次，仍说“这一列”。
+
+## 体检结果（v3.4.0）
+
+导入后第一个模块是“体检结果”：表里有几行需要处理、每类问题在哪几行、能怎么处理。它只读已有的检查结果、不另起一套判断：首屏的每一行都是质量页那一类计数背后的同一行（契约 19）。**质量页、报告的质量部分、问题行和导出仍按文件里的全部行，和 v3.3.0 相同；质量页跟随不计入分析（G）留到 v3.4.1。** 不加新的检测规则，等价比较（`docs/TESTING.md` 第 20 节）证明摘要、状态栏和报告只有 ① 的写法不一样那 8 张表不同。
+
+- **8 类**（`CHECKUP_KINDS`，卡片按这个顺序，只出现有行的类）：疑似合计 / 小计行、整行重复、公式错误、认不出的数字或日期、像是空值的写法、日期写法混用、同一个值，写法不一样、读取时有疑问。前 5 类“影响统计结果”（`CHECKUP_AFFECTS_STATISTICS`）。空值、偏大或偏小、编号重复不算需要处理，放进“其他发现”。
+- **计数**（`buildCheckupSummary()`，`quality.js`，只读状态、不碰 DOM）：对 `listProblemCategories()` 的 8 类逐类取行。附加规则都在这个函数里：整行重复每组全部行都算（含保留的那一行），一组里计入分析的只剩一行时这组不算；像是空值的写法只取没确认、字段没忽略的常见一档；认不出跳过同一格的待确认常见写法（同一格只算一次）；读取疑问只取有行号、导入了的行；**已不计入分析的行一律不算**。返回 `{ total, rowCount (N), multiRows, kinds: [{ kind, rows, cells, fields, affectsStatistics, otherKindRows (K), onlyRows }], kindsOfRow, segments }`；认不出和像是空值的写法的格多带 `key`（这格的空值写法，没有是 `null`），像是空值的写法的格按“一个字段、一种写法”一段一段排、段内按行。
+- **只读缓存**（`state.formatScans`，导入时换新、重建复用）：日期写法和写法不一样的扫描顺手记下每行的结果（`dateStyleRows`、`lookAlikeRows`）；`placeholderCells`（每列的空值写法格，导入后第一次需要时扫）；`conversionRows`（每个 profile 认不出的行和它们的空值写法，按类型和已确认写法缓存）；`outlierRows`（每个 profile 偏大或偏小的行，按类型、已确认写法、数字读法和上下界缓存）。整行重复的分组在导入时和重复数一遍算出（`state.duplicateRowGroups`）；编号重复的全部行由 `buildIdDuplicateSummary()` 第 6 个参数顺手给出（`state.idDuplicateRowIndexes`）。所以体检计数调 `forEachDateStyle()`、`buildExactRowKey()`、`totalRowLabel()` 都是 0 次，卡片数据读格 0 次、不调 `listProblemRows()`，不计入分析 / 撤销时其他发现一列都不扫（都有调用次数护栏）。
+- **什么时候算**：`refreshCheckupSummary()` 在提交、重建（字段配置、按空值处理 / 撤销）和不计入分析 / 撤销后重算，结果存在 `state.checkupSummary` / `checkupCards` / `checkupOthers` / `checkupChecked` / `checkupHandled`（只存数字、行号和单元格的值，不存句子）；筛选只重画不重算（体检不随筛选变），切换语言只重拼句子。
+- **大数字和比例条**：“N 行需要处理”（52 px / 700，行高 56 px；640 px 以下 40 px / 行高 44 px，和比例条、图例、按钮上下排，按钮占满卡片底部），“导出体检报告”就是现有的 HTML 报告。**比例条归类规则**：一行属于几类就记几类；只属于一类的行画那一类的颜色（`onlyRows`）；属于两类及以上的行全部画进一段深灰（#48484A，`multiRows`），不拆给任何一类；没有问题的行（计入分析的行 − N）最后一段浅灰；各段相加 = 计入分析的行（`total`）。每段 `flex-grow` 为行数、最小 6 px，所以段宽只大致和行数成比例。彩色段点了滚到它的卡片，深灰段滚到第一张有重叠的卡片，浅灰段不可点；段不进 Tab 顺序（只给鼠标），`role="group"` 有 aria-label，每段 `title` / `aria-label` 是“类别 N 行”；打印保留颜色。N = 0 时没有比例条，写“没有发现需要处理的问题 · N 行都检查过”，下面是“查过的项目”（R21）和两个按钮（查看统计、去看图表）。
+- **卡片**（`buildCheckupCardData()` 只取数字，`buildCheckupCards()` 拼句子）：类别名（h4）、行数、小样（行号 + 原值）、“影响统计结果”、一句说明、“其中 K 行还有别的问题”、底部一个操作。操作：整行重复“多出来的 N 行不计入分析”（`setRowExclusion()`）；像是空值的写法“按空值处理（N 处）”（`confirmAllCommonPlaceholders()`）；日期写法混用和只有首尾空格的写法不一样“导出写法统一的表”（跳到导出页做检查；门禁不通过时焦点放到门禁说明上，因为检查按钮是禁用的）；其余“查看”（R12：一类只涉及一个字段且查看区列的正是这些行时写“查看这一行 / 查看这 N 行”，几个字段时写“查看「金额」等 N 列”，打开第一个字段）。日期卡“其余 N 行写成 X 这样”的 N 是主写法的真实个数（R11）。
+- **其他发现**（`buildCheckupOtherData()`，跟着质量页按全部行算）：编号重复、整列为空、空值（不含整列为空的列）、“无 / -”一档、偏大或偏小、写着合计但对不上（R7，见“疑似合计 / 小计行”）、整列只有一个值、像是数字的文本列、单位冲突，顺序固定。每一行点了跳到质量页对应的小节并聚焦小节标题。N > 0 时标题旁写“不计入上面的 N 行”。和已不计入分析的行有关的几条补半句（v3.4.1 做 G 时去掉）。质量页顶上一直有一句“这里多数按格数算；体检结果的“需要处理”按行数算，同一行有几处问题只算一次。”（R8 D）。
+- **提示条和已处理（G）**：首屏的操作（卡片按钮、已处理的撤销、提示条的撤销）只说最后一次操作，带“撤销”（撤销就是做相反的操作），例如“第 21 行（重复的那一行）不再计入分析，第 20 行保留。需要处理的行从 11 变成 9。”；`role="status"`，焦点不动（R16）；切换语言时重写；新导入、换工作表、切到别的模块、做下一个操作时消失。提示条空的时候高度为 0 但留在页面里，`role="status"` 在写入前已经存在。“已处理”由状态画：不计入分析的两类各一行、已按空值处理的写法一行（每种写法只列一次），各有撤销按钮，aria-label 说撤销什么。有字段草稿时，首屏的不计入分析、按空值处理、导出体检报告都把拒绝句写在提示条里：`setRowExclusion()` 和 `updatePlaceholderConfirmations()` 有可选的 `setMessage`（后者还有 `focus`，首屏不把焦点移进隐藏的质量页），默认和以前逐字节相同；导出体检报告在 `app.js` 先查草稿（`report.js` 不改）。不加确认框（v3.1.0 起一键 + 可撤销）。
+- **侧栏圆点（H）**：有问题的字段后面每类一个色点，顺序和颜色同卡片；整行重复画在第一个字段，疑似合计和读取时有疑问没有字段、不画；aria-label 是类别名。点不收缩，长字段名截成省略号，200 列的表不撑破侧栏。
+- **默认收起**：载入说明（见“界面渲染”的状态栏）和数据预览（“数据预览 · 42 行 × 9 列”，`<details>` 不带 `open`）；打印时预览展开（`@media print` 里 `details.preview-details > :not(summary)` 显示）。
+- **字号**：只加了两个值，52 px（大数字）和 40 px（手机上的大数字）；“需要处理 / 其他发现 / 已处理 / 查过的项目”是 17 / 600 的 h3，卡片标题是 15 / 600 的 h4。类名都带 `checkup-` 前缀。日期写法混用的颜色是 #A86400。
+- **开销**（Edge，10 万行，和 9158a4b 交替 5 次取中位数，⑥ 时测）：导入 +1.4%、筛选 −1.2%、清除筛选 −2.9%、改字段类型 +0.5%、不计入分析和撤销 +2.7% 到 +6.6%。单独计时：其他发现提交时约 34 ms、之后 0.3–1 ms；卡片数据 0.1–1.6 ms。
+- **留到 v3.4.1**：质量页、报告的质量部分、问题行和导出跟随不计入分析（G）；质量页里“第 44 行已不计入分析 · 撤销”；查看区回第 1 页；“查看”回来后回到原来那张卡片。
 
 ## 当前脚本的技术债
 

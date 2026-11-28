@@ -8,7 +8,7 @@
 4. 新增状态时明确其创建、重置、连续上传和字段类型修正时的生命周期。
 5. 新增图表时使用唯一 canvas ID，把实例存入 `state.charts`，并在重绘前调用 `destroyChart(id)`。
 6. 新增用户内容到 `innerHTML` 或导出报告时必须经过对应转义函数。
-7. 为纯逻辑和主要边界增加测试，并运行 `npm run test:regression`。
+7. 为纯逻辑和主要边界增加测试，并运行 `npm run test:regression`。Windows 工作区是 CRLF（`core.autocrlf=true`），按 `"\n}"` 切 CSS 的测试在 CRLF 下可能取到别处而通过、在 CI（Linux，LF）上失败（v3.4.0 ④ 遇到过）：改了样式或测试时，再用 `git -c core.autocrlf=false archive <提交>` 做一份副本、换上转成 LF 的改动文件跑一次（普通的 `git archive` 在这里写 CRLF，复现不了），push 后看 GitHub Actions 的结果。见 `docs/TESTING.md` 第 20 节。
 8. 更新 README 或 `docs/` 中受影响的行为说明（两份 README 一起改）。
 9. 新增或修改显示给用户的文字时中英文一起写（v3.2.0）：脚本里写 `L(中文, 英文)`，常量写 `Lp(中文, 英文)`、用 `Lpick()` 读，带数量的英文用 `enCount()`；`index.html` 的中文加 `data-i18n` / `data-i18n-attr`，英文写进 `format.js` 的 `I18N_EN`。英文按 `docs/ARCHITECTURE.md`“界面语言（v3.2.0）”的术语表和句子规则写，保留中文里的每个数字。不要把会随语言变的文字存进 `state` 或拿来当键：存数据或生成函数，显示时现拼。检测规则里必须保留的中文（如合计标签、单位、空值写法清单）写进静态护栏白名单（`tests/i18n-guard.cjs` 的 `I18N_WHITELIST`，登记“文件 + 声明名 + 字面量个数”），改了个数要同步。改完在英文界面走一遍（`docs/RELEASE_CHECKLIST.md` 第 7 节），无汉字护栏会扫英文示例和英文夹具的全部输出。
 
@@ -49,6 +49,8 @@
 - 异常值使用 `Q1 - 1.5 * IQR` 和 `Q3 + 1.5 * IQR`。
 - 标准差当前按总体标准差计算。
 - 极端有限数值通过缩放求和和直方图计算避免 `Infinity`；不要退回直接 `max - min` 或无保护求和。
+- 体检结果（v3.4.0，见 `docs/ARCHITECTURE.md`“体检结果（v3.4.0）”）不另写判断：`buildCheckupSummary()` 对 `listProblemCategories()` 的 8 类逐类取行，所以首屏的每一行都是质量页那一类计数背后的同一行。改任何一类问题的规则时，体检计数和卡片跟着变，`v3.4.0 checkup:` 几条测试的数字（示例 12、乱表 73 等）要同步核对。它只读缓存：日期写法、写法不一样、空值写法、认不出和偏大或偏小的逐行结果都在 `state.formatScans`，整行重复的分组在 `state.duplicateRowGroups`，编号重复的行在 `state.idDuplicateRowIndexes`；新的一类要读行时也放进这类按导入或按 profile 缓存的扫描里，不要在 `refreshCheckupSummary()`、卡片或其他发现里逐格扫（有调用次数护栏：体检计数不调 `forEachDateStyle()` / `buildExactRowKey()` / `totalRowLabel()`，卡片数据不调 `placeholderKey()` / `listProblemRows()`，不计入分析时其他发现一列都不扫）。体检结果只存数字、行号和值，句子在显示时按语言现拼。
+- 这一版质量页、报告的质量部分、问题行和导出仍按全部行；只有首屏的计数不算已不计入分析的行（v3.4.1 再让质量页跟随）。
 
 ### 图表与导出安全
 

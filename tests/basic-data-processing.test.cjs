@@ -6929,8 +6929,9 @@ test("v2.11.0 sample: without its problems nothing is flagged, and each problem 
 // v2.12.0: the interface terms were unified. None of the replaced words may come back on the
 // page, in reports, in problem-row names, aria labels, file names and notes, or in the 处理
 // column of the change list (problem-row notes and change-list actions are exported as text).
+// v3.4.0 (R18): 数据概览, the first module's name before it became 体检结果.
 const OLD_INTERFACE_WORDS = ["缺失", "未填写", "疑似缺失值", "疑似值", "按缺失处理", "格式问题", "无法转换", "转换失败", "异常值", "数值异常",
-  "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换"];
+  "写法细节不同", "写法不同", "解析警告", "条警告", "ID 字段重复", "ID 重复", "ID重复", "常量列", "疑似数值列", "标准化", "可安全转换", "数据概览"];
 // The notes shared by the page and the reports: no space between two Chinese characters.
 // (v3.2.0: the constants are [中文, English] pairs; [0] is the Chinese.)
 const SHARED_NOTE_NAMES = ["SUSPECTED_TOTAL_NOTE[0]", "FORMULA_ERROR_NOTE[0]", "DATE_STYLE_NOTE[0]", "CONSTANT_FIELD_NOTE[0]", "LOOK_ALIKE_NOTE[0]", "PLACEHOLDER_MAYBE_NOTE[0]", "PLACEHOLDER_DASH_NOTE[0]",
