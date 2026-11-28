@@ -8301,7 +8301,7 @@ const cssRule = (css, selector) => {
   return match[1];
 };
 
-test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights (v3.4.0: and 52 px for the checkup's number)", () => {
+test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes and three weights (v3.4.0: and 52 px for the checkup's number, 40 px for it on phones)", () => {
   const css = repoFile("style.css");
   const root = cssRule(css, ":root");
   [["--bg", "#f2f2f7"], ["--panel", "#ffffff"], ["--text", "#1c1c1e"], ["--text-secondary", "#636366"], ["--muted", "#636366"], ["--primary", "#0068e0"], ["--sidebar-bg", "#f9f9fb"], ["--card-border", "rgba(28, 28, 30, 0.07)"], ["--radius-card", "16px"]]
@@ -8312,10 +8312,14 @@ test("v3.0.0 look: the colour tokens, the system font stack, seven font sizes an
   assert.doesNotMatch(family, /Inter/);
   assert.ok(family.indexOf('"Segoe UI"') >= 0 && family.indexOf('"Segoe UI"') < family.indexOf('"Microsoft YaHei"'), family);
   const sizes = new Set([...css.matchAll(/font-size: ([^;]+);/g)].map((match) => match[1]));
-  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)", "52px"].includes(size), size));
-  // v3.4.0: 52 px once, in the rule of the checkup's big number.
+  sizes.forEach((size) => assert.ok(["12px", "13px", "15px", "17px", "22px", "28px", "clamp(28px, 4vw, 40px)", "52px", "40px"].includes(size), size));
+  // v3.4.0: 52 px once, in the rule of the checkup's big number; 40 px once, the same number on
+  // phones (commit 8, the user's choice), inside the phone block.
   assert.equal((css.match(/font-size: 52px;/g) || []).length, 1);
   assert.match(cssRule(css, ".checkup-total-number"), /font-size: 52px;/);
+  assert.equal((css.match(/font-size: 40px;/g) || []).length, 1);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.checkup-total-number \{\s*font-size: 40px;\s*line-height: 44px;\s*\}/);
   const weights = new Set([...css.matchAll(/font-weight: ([^;]+);/g)].map((match) => match[1]));
   weights.forEach((weight) => assert.ok(["400", "600", "700"].includes(weight), weight));
   // The old purple is gone, the focus ring is the new blue.
@@ -14395,4 +14399,80 @@ test("v3.4.0 R9: with drafts waiting, the first screen's refusals are written on
   cardClick(orders, "dateStyle");
   assert.notEqual(orders.evaluate("state.standardizedExport"), null);
   assert.equal(textOf(orders, "standardizedExportGate"), "");
+});
+
+// ---- v3.4.0 commit 8: phone and English details ----
+// The sentences of the checkup as shown: every part of the first screen that the checkup writes, with
+// the cards' sample chips taken out (they are the user's cells), and the labels of the bar and the dots.
+const CHECKUP_SENTENCE_IDS = ["checkupTotal", "checkupLegend", "checkupOverlap", "checkupCards", "checkupHandled", "checkupCheckedList", "checkupOthersNote", "checkupOthersList", "checkupToastText"];
+const checkupSentences = (scope) => {
+  // Each text node on its own (an element's tags split it), so two items are never read as one.
+  const parts = CHECKUP_SENTENCE_IDS.flatMap((id) => {
+    const element = scope.elements.get(id);
+    const html = element.innerHTML || "";
+    if (!html) return [element.textContent || ""];
+    return html.replace(/<span class="checkup-sample(?:-line)?">[\s\S]*?<\/span>(?=<span|<\/div>)/g, "\n").replace(/<[^>]+>/g, "\n").split("\n");
+  });
+  const labels = [...(scope.elements.get("checkupBar").innerHTML + scope.elements.get("sidebarFieldList").innerHTML).matchAll(/aria-label="([^"]*)"/g)].map((match) => match[1]);
+  // Escaped as written by escapeHtml(): read back as text (an apostrophe is &#039; in the page).
+  const unescape = (text) => text.replace(/&#0*39;/g, "'").replace(/&quot;/g, "\"").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  return [...parts, ...labels].map((text) => unescape(text).replace(/\s+/g, " ").trim()).filter(Boolean);
+};
+// The user's own text inside quotes (field names, values) is not ours to check.
+const withoutQuoted = (text) => text.replace(/「[^」]*」/g, "「」").replace(/“[^”]*”/g, "“”");
+
+test("v3.4.0 words: every checkup sentence in both languages: English without Chinese, category, empty or contractions; Chinese without a space between two characters and with one after Latin letters or digits", async () => {
+  const han = /[㐀-鿿]/;
+  const states = [
+    ["sample-orders.csv", async () => clickSampleButton(sampleOrdersFetchedText())],
+    ["messy.csv", async () => importCheckupFixture("messy.csv")],
+    ["clean.csv", async () => importCsvFile(CLEAN_TABLE_CSV, "clean.csv")],
+    ["blank cell", async () => importCsvFile(CLEAN_TABLE_CSV.replace("张三,2023-05-20,8200", "张三,2023-05-20,"), "blank.csv")],
+    ["公式错误.xlsx", async () => importStage3Fixture("公式错误.xlsx")],
+    ["en-issues.csv", async () => importStage3Fixture("en-issues.csv")],
+    ["写法不一致.csv", async () => importStage3Fixture("写法不一致.csv")],
+    ["excluded", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate('setCheckupExclusion("suspectedTotal", true); setCheckupExclusion("duplicateRows", true)'); return scope; }],
+    ["treated", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate("treatFromCheckup()"); return scope; }],
+    ["undone", async () => { const scope = await importCheckupFixture("messy.csv"); scope.evaluate('setCheckupExclusion("duplicateRows", true); undoCheckupToast()'); return scope; }],
+    ["refused", async () => { const scope = await clickSampleButton(sampleOrdersFetchedText()); scope.evaluate('stageFieldTypeChange("产品", "ignore"); exportCheckupReport()'); return scope; }]
+  ];
+  let checked = 0;
+  for (const [name, make] of states) {
+    const scope = await make();
+    const zh = checkupSentences(scope);
+    switchLanguage(scope, "en");
+    const en = checkupSentences(scope);
+    switchLanguage(scope, "zh");
+    assert.ok(zh.length > 2 && en.length === zh.length, `${name}: ${zh.length} / ${en.length}`);
+    for (const text of en) {
+      const own = withoutQuoted(text);
+      assert.doesNotMatch(own, han, `${name} en: ${text}`);
+      assert.doesNotMatch(own, /\bcategor(y|ies)\b|\bempty\b/i, `${name} en: ${text}`);
+      assert.doesNotMatch(own, /n['’]t\b/i, `${name} en: ${text}`);
+    }
+    for (const text of zh) {
+      const own = withoutQuoted(text);
+      assert.doesNotMatch(own, /[㐀-鿿] [㐀-鿿]/, `${name} zh: ${text}`);
+      assert.doesNotMatch(own, /[A-Za-z0-9][㐀-鿿]/, `${name} zh: ${text}`);
+    }
+    checked += zh.length + en.length;
+  }
+  assert.ok(checked > 200, `checked ${checked}`);
+});
+
+test("v3.4.0 phone: the number and its words on one line, 导出体检报告 across the foot of the card, 需要处理's note under its title; wide 其他发现 rows keep the tag on one line", () => {
+  const css = repoFile("style.css");
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (max-width: 390px)"));
+  assert.match(phone, /\.checkup-panel \{\s*display: flex;\s*flex-direction: column;/);
+  assert.match(phone, /\.checkup-headline \{\s*display: contents;\s*\}/);
+  // 40 px on phones (the user chose it over the existing clamp, 28 px at 390).
+  assert.match(phone, /\.checkup-total-number \{\s*font-size: 40px;\s*line-height: 44px;\s*\}/);
+  assert.match(phone, /\.checkup-total-number ~ \.checkup-total-label \{\s*white-space: nowrap;\s*\}/);
+  assert.match(phone, /\.checkup-bar \{\s*order: 1;\s*\}\s*\.checkup-legend \{\s*order: 2;\s*\}\s*\.checkup-actions \{\s*order: 3;\s*width: 100%;/);
+  assert.match(phone, /\.checkup-caption-aside \{\s*flex-basis: 100%;\s*margin-left: 0;\s*\}/);
+  // One block for wide screens (the one the field table already has), and the tag never wraps.
+  assert.equal((css.match(/@media \(min-width: 641px\) \{/g) || []).length, 1);
+  const wide = css.slice(css.indexOf("@media (min-width: 641px) {"));
+  assert.match(wide, /^@media \(min-width: 641px\) \{[\s\S]*?\.checkup-findings-list \.checkup-finding \{\s*flex-wrap: nowrap;\s*\}\s*\.checkup-finding-title \{\s*flex: 0 1 auto;\s*min-width: 0;\s*\}\s*\.checkup-finding-note \{\s*flex: 1 1 0;\s*min-width: 0;\s*\}\s*\}/);
+  assert.match(cssRule(css, ".checkup-finding-tag"), /flex: none;[\s\S]*white-space: nowrap;/);
 });

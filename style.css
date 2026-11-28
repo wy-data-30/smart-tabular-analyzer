@@ -1730,9 +1730,11 @@ body.has-results .app-sidebar {
 }
 
 .checkup-finding-tag {
+  flex: none;
   margin-left: auto;
   color: var(--text-secondary);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .checkup-finding-tag::after {
@@ -3116,6 +3118,22 @@ td.cell-problem {
     z-index: 1;
     background: #fafafb;
   }
+
+  /* v3.4.0 commit 8: an 其他发现 row stays one line of three parts: the title and the note wrap
+     inside their own room, the tag keeps its line at the right (English notes are long). */
+  .checkup-findings-list .checkup-finding {
+    flex-wrap: nowrap;
+  }
+
+  .checkup-finding-title {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .checkup-finding-note {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 /* 认不出 above 0 in the quality and statistics tables: the field table's pink dot. */
@@ -3791,6 +3809,57 @@ select:focus-visible,
 @media (max-width: 640px) {
   .checkup-cards {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* v3.4.0 commit 8 (board orig-07): the number and its words on one line, then the bar and the
+     legend, and the buttons (导出体检报告) across the foot of the card. The headline's box gives
+     way (display: contents) so its two parts can sit apart; the number is 40 px on phones (the
+     user chose 40 over the existing clamp(28px, 4vw, 40px); 52 and 40 are the two v3.4.0 sizes). */
+  .checkup-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 20px 18px 18px;
+  }
+
+  .checkup-headline {
+    display: contents;
+  }
+
+  .checkup-total {
+    flex: none;
+  }
+
+  .checkup-total-number {
+    font-size: 40px;
+    line-height: 44px;
+  }
+
+  .checkup-total-number ~ .checkup-total-label {
+    white-space: nowrap;
+  }
+
+  .checkup-bar {
+    order: 1;
+  }
+
+  .checkup-legend {
+    order: 2;
+  }
+
+  .checkup-actions {
+    order: 3;
+    width: 100%;
+    margin: 16px 0 0;
+  }
+
+  .checkup-actions > button {
+    flex: 1 1 auto;
+  }
+
+  /* 需要处理's note goes under the title. */
+  .checkup-caption-aside {
+    flex-basis: 100%;
+    margin-left: 0;
   }
 
   .checkup-findings-list .checkup-finding {
