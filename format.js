@@ -151,6 +151,8 @@ const I18N_EN = Object.freeze({
   "checkup.openCharts": "Open Charts",
   "checkup.checked": "What was checked",
   "checkup.others": "Also noticed",
+  "checkup.handled": "Handled",
+  "checkup.undo": "Undo",
   "quality.countNote": "Most counts here are cells; “Need attention” in Checkup counts rows, each row once.",
   "preview.title": "Data preview",
   "preview.tableWrap": "Data preview table, scrolls sideways",
@@ -1225,6 +1227,130 @@ function formatCheckupCheckedItems(data) {
     L("包括多余的空格、大小写和全角半角的不同", "including extra spaces, upper and lower case, and full-width forms")
   ]);
   return items;
+}
+
+// ---- v3.4.0 commit 6: the toast and 已处理 (G) ----
+// Facts of rows left out (app.js checkupExclusionFacts()): { count, lines, more, groups, kept }; lines
+// are file rows (numbers, the first five), empty without row numbers; groups and kept (the kept
+// row's file row or null) for duplicate rows only. Rows are named when there are at most five.
+const checkupNamesRows = (facts) => facts.lines.length > 0 && !facts.more;
+
+function formatCheckupRowsChange(before, after) {
+  return L(`需要处理的行从 ${formatInteger(before)} 变成 ${formatInteger(after)}。`, `Rows that need attention went from ${formatInteger(before)} to ${formatInteger(after)}.`);
+}
+
+// The toast after rows were left out (on) or brought back.
+function formatCheckupExclusionToast(kind, facts, on) {
+  const lines = facts.lines.map(formatInteger);
+  const one = facts.count === 1;
+  if (kind === "suspectedTotal") {
+    if (!checkupNamesRows(facts)) {
+      const count = formatInteger(facts.count);
+      const rows = enCount(facts.count, "possible total row", "possible total rows");
+      return on
+        ? L(`${count} 行疑似合计行不再计入分析。`, `${rows} ${one ? "is" : "are"} now left out of the analysis.`)
+        : L(`${count} 行疑似合计行重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+    }
+    const rows = one ? `Row ${lines[0]} (a total)` : `Rows ${lines.join(", ")} (totals)`;
+    return on
+      ? L(`第 ${lines.join("、")} 行（合计）不再计入分析。`, `${rows} ${one ? "is" : "are"} now left out of the analysis.`)
+      : L(`第 ${lines.join("、")} 行（合计）重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+  }
+  if (facts.groups === 1 && checkupNamesRows(facts) && facts.kept !== null) {
+    const kept = formatInteger(facts.kept);
+    const enRows = one ? `Row ${lines[0]} (the repeated one)` : `Rows ${lines.join(", ")} (the repeated ones)`;
+    if (one) {
+      return on
+        ? L(`第 ${lines[0]} 行（重复的那一行）不再计入分析，第 ${kept} 行保留。`, `${enRows} is now left out of the analysis; row ${kept} stays.`)
+        : L(`第 ${lines[0]} 行（重复的那一行）重新计入分析。`, `${enRows} counts in the analysis again.`);
+    }
+    return on
+      ? L(`第 ${lines.join("、")} 行（重复的行）不再计入分析，第 ${kept} 行保留。`, `${enRows} are now left out of the analysis; row ${kept} stays.`)
+      : L(`第 ${lines.join("、")} 行（重复的行）重新计入分析。`, `${enRows} count in the analysis again.`);
+  }
+  const count = formatInteger(facts.count);
+  const rows = `The ${enCount(facts.count, "extra duplicate row", "extra duplicate rows")}`;
+  return on
+    ? L(`多出来的 ${count} 行重复行不再计入分析，每组保留第一行。`, `${rows} ${one ? "is" : "are"} now left out of the analysis; the first row of each group stays.`)
+    : L(`多出来的 ${count} 行重复行重新计入分析。`, `${rows} ${one ? "counts" : "count"} in the analysis again.`);
+}
+
+// The toast after cells were treated as blank (on) or no longer.
+function formatCheckupTreatToast(count, on) {
+  if (on) return L(`已把 ${formatInteger(count)} 处按空值处理。`, `${enCount(count, "cell is", "cells are")} now treated as blank.`);
+  return L(`这 ${formatInteger(count)} 处不再按空值处理。`, `The ${enCount(count, "cell is", "cells are")} no longer treated as blank.`);
+}
+
+// 导出体检报告 refused while drafts wait: the export module's sentence (report.js), on the first screen.
+const CHECKUP_REPORT_DRAFT_REFUSAL = Lp(
+  "字段配置有未应用的修改，请先应用配置后再导出。",
+  "Column settings have changes that are not applied; apply them before exporting."
+);
+
+// 已处理: [{ kind, title, note }] from app.js buildCheckupHandledData(): suspectedTotal and
+// duplicateRows are exclusion facts, placeholder is { count, keys: [{ key, lines, more }], moreKeys }.
+function formatCheckupHandledItems(data) {
+  const items = [];
+  const name = (kind) => Lpick(CHECKUP_KIND_NAMES[kind]);
+  const total = data.suspectedTotal;
+  if (total) {
+    const lines = total.lines.map(formatInteger);
+    const one = total.count === 1;
+    const enRows = checkupNamesRows(total) ? `${one ? "row" : "rows"} ${lines.join(", ")}` : enCount(total.count, "row", "rows");
+    items.push({
+      kind: "suspectedTotal",
+      title: checkupNamesRows(total)
+        ? L(`${name("suspectedTotal")}：第 ${lines.join("、")} 行不计入分析`, `${name("suspectedTotal")}: ${enRows} ${one ? "is" : "are"} left out of the analysis`)
+        : L(`${name("suspectedTotal")}：${formatInteger(total.count)} 行不计入分析`, `${name("suspectedTotal")}: ${enRows} ${one ? "is" : "are"} left out of the analysis`),
+      note: one
+        ? L("求和、平均值和图表都不再算它，原表不变", "sums, averages and charts no longer count it; the file is unchanged")
+        : L("求和、平均值和图表都不再算它们，原表不变", "sums, averages and charts no longer count them; the file is unchanged")
+    });
+  }
+  const duplicates = data.duplicateRows;
+  if (duplicates) {
+    const lines = duplicates.lines.map(formatInteger);
+    const one = duplicates.count === 1;
+    const named = duplicates.groups === 1 && checkupNamesRows(duplicates) && duplicates.kept !== null;
+    items.push({
+      kind: "duplicateRows",
+      title: named
+        ? L(`${name("duplicateRows")}：多出来的第 ${lines.join("、")} 行不计入分析`, `${name("duplicateRows")}: the extra ${one ? "row" : "rows"} ${lines.join(", ")} ${one ? "is" : "are"} left out of the analysis`)
+        : L(`${name("duplicateRows")}：多出来的 ${formatInteger(duplicates.count)} 行不计入分析`, `${name("duplicateRows")}: the ${enCount(duplicates.count, "extra row", "extra rows")} ${one ? "is" : "are"} left out of the analysis`),
+      note: named
+        ? L(`第 ${formatInteger(duplicates.kept)} 行保留`, `row ${formatInteger(duplicates.kept)} stays`)
+        : L("每组保留第一行", "the first row of each group stays")
+    });
+  }
+  const treated = data.placeholder;
+  if (treated) {
+    const parts = treated.keys.map((entry) => {
+      const lines = entry.lines.map(formatInteger);
+      if (!lines.length) return L(`「${entry.key}」`, `“${entry.key}”`);
+      return L(`${formatCheckupLines(lines, entry.more)}「${entry.key}」`, `“${entry.key}” in ${formatCheckupLines(lines, entry.more)}`);
+    });
+    const one = treated.count === 1;
+    items.push({
+      kind: "placeholder",
+      title: L(`${name("placeholder")}：${formatInteger(treated.count)} 处已按空值处理`, `${name("placeholder")}: ${enCount(treated.count, "cell", "cells")} treated as blank`),
+      note: L(
+        `${parts.join("、")}${treated.moreKeys ? "等" : ""}。不再参与统计，原表不变`,
+        `${parts.join(", ")}${treated.moreKeys ? " and more" : ""}; statistics leave ${one ? "it" : "them"} out; the file is unchanged`
+      )
+    });
+  }
+  return items;
+}
+
+// What an 已处理 撤销 undoes, for its aria-label (the exclusions reuse exclusionUndoLabel()).
+function formatCheckupTreatUndoLabel(count) {
+  return L(`撤销：让这 ${formatInteger(count)} 处不再按空值处理`, `Undo: stop treating the ${enCount(count, "cell", "cells")} as blank`);
+}
+
+// The aria-label of an exclusion's 撤销, on the quality page and in 已处理.
+function exclusionUndoLabel(kind) {
+  const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
+  return L(`撤销：让${label}重新计入分析`, `Undo: count the ${label} in the analysis again`);
 }
 
 // 数据预览 · 42 行 × 9 列, on the folded preview.

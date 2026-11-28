@@ -1567,6 +1567,114 @@ body.has-results .app-sidebar {
   transform: rotate(45deg);
 }
 
+/* v3.4.0 commit 6: the toast (G3), a dark bar above the panel as on board new-02. Folded away when
+   empty but kept in the page, so its role="status" text is there before anything is written. */
+.checkup-toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius-card);
+  background: #1d1d1f;
+  color: #fff;
+}
+
+.checkup-toast.is-empty {
+  overflow: hidden;
+  height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.checkup-toast[data-tone="success"]::before {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #34c759 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 6.2l2 2 4-4.4' fill='none' stroke='%23fff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat;
+  content: "";
+}
+
+/* A refusal (drafts wait): the warning colours of the page's other messages. */
+.checkup-toast[data-tone="warning"] {
+  border: 1px solid #f0d9a8;
+  background: #fff8e8;
+  color: var(--text);
+}
+
+.checkup-toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.checkup-toast-undo {
+  flex: none;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 已处理 (G4): rows like 查过的项目, each with its 撤销 at the end. */
+.checkup-handled {
+  margin-bottom: 22px;
+}
+
+.checkup-handled-list {
+  margin: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-card);
+  background: #fff;
+  list-style: none;
+}
+
+.checkup-handled-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 14px 10px 18px;
+  border-top: 1px solid rgba(28, 28, 30, 0.07);
+}
+
+.checkup-handled-item:first-child {
+  border-top: 0;
+}
+
+.checkup-handled-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.checkup-handled-text b {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.checkup-handled-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.checkup-handled-undo {
+  flex: none;
+}
+
 .checkup-findings-list .checkup-finding {
   display: flex;
   flex-wrap: wrap;

@@ -2541,7 +2541,8 @@ test("after confirming every order placeholder, no analysis output shows N/A or 
       dom.v2MetricField.value = "金额"; dom.v2GroupField.value = "备注"; dom.v2AggregateMethod.value = "sum"; dom.v2DateField.value = "下单日期";
       renderCharts(); renderV2Analysis();
     `);
-    const skipped = new Set(["previewTable", "placeholderDetails", "placeholderMessage"]);
+    // v3.4.0 commit 6: 已处理 (#checkupHandled) names the spellings treated as blank; asserted below.
+    const skipped = new Set(["previewTable", "placeholderDetails", "placeholderMessage", "checkupHandled"]);
     // The only dash the app writes itself here: the conversion column of types without conversion.
     const html = [...orders.elements].filter(([id]) => !skipped.has(id))
       .map(([id, element]) => `${id}:${element.innerHTML}${element.textContent}`).join("\n")
@@ -2554,6 +2555,10 @@ test("after confirming every order placeholder, no analysis output shows N/A or 
   const after = renderEverything();
   assert.equal(after.includes("N/A"), false, after.split("\n").filter((line) => line.includes("N/A")).join("\n").slice(0, 600));
   assert.equal(after.includes("—"), false, after.split("\n").filter((line) => line.includes("—")).join("\n").slice(0, 600));
+  // 已处理 lists each spelling once, whatever the fields holding it.
+  const handled = orders.elements.get("checkupHandled").innerHTML;
+  assert.equal(handled.split("「N/A」").length - 1, 1, handled);
+  assert.equal(handled.split("「—」").length - 1, 1, handled);
 });
 
 test("applying the configuration for another field keeps a manual type set before a confirmation", () => {
@@ -9665,9 +9670,11 @@ test("v3.2.0 tests read index.html only through indexHtmlSource(), which takes o
   // #checkupCards). That page was b1e0aa82…18ee; commit 5 made three insertions: 查看统计 and 去看图表
   // (#checkupOpenStats, #checkupOpenCharts) with 导出体检报告 in a <div class="checkup-actions">; the
   // sections #checkupChecked (查过的项目) and #checkupOthers (其他发现) after #checkupNeeds; and the
-  // quality page's #qualityCountNote before #qualityScopeNote. The value below is that page with these
-  // three insertions, compared byte for byte.
-  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "1644e1dbfe796a98fe3780533d2dec46fbea609ded25a5ae0744f585efb5c84c");
+  // quality page's #qualityCountNote before #qualityScopeNote. That page was 1644e1db…c84c; commit 6
+  // made two insertions: the toast (#checkupToast with #checkupToastText and #checkupToastUndo) before
+  // #checkupPanel, and the section #checkupHandledSection (已处理, with the list #checkupHandled) after
+  // #checkupNeeds. The value below is that page with these two insertions, compared byte for byte.
+  assert.equal(crypto.createHash("sha256").update(versionless).digest("hex"), "422dff49cea494207e318b34e9a050ce8b759ab7b8cd51cc63dbecd2abda39b7");
 });
 
 // v3.2.0 (R1): long original names. The file name before the date was cut at 80 characters as a
@@ -13626,7 +13633,10 @@ test("v3.4.0 first screen: 体检结果 in the navigation and the title, the ran
 test("v3.4.0 first screen: 导出体检报告 is the HTML report, with its gate", async () => {
   assert.match(indexHtmlSource(), /<button id="checkupExportReport" class="secondary-button checkup-export" type="button">导出体检报告<\/button>/);
   const script = repoFile("script.js");
-  assert.equal((script.match(/dom\.checkupExportReport\.addEventListener\("click", \(\) => exportHtmlReport\(\)\);/g) || []).length, 1);
+  // v3.4.0 commit 6: through exportCheckupReport(), which writes a refusal for drafts on the first
+  // screen and otherwise calls exportHtmlReport().
+  assert.equal((script.match(/dom\.checkupExportReport\.addEventListener\("click", exportCheckupReport\);/g) || []).length, 1);
+  assert.match(repoFile("app.js"), /\n  exportHtmlReport\(\);\r?\n\}/);
   // Before an analysis the export says so, as the export module's button does.
   const scope = createScriptContext();
   scope.evaluate("exportHtmlReport()");
@@ -14194,4 +14204,149 @@ test("v3.4.0 perf: on every fixture and example, before and after rows are left 
     checked += checkCardsAgainstReference(scope, `${name} (rows left out)`);
   }
   assert.ok(checked > 40, `checked ${checked}`);
+});
+
+// ---- v3.4.0 commit 6: card actions, the toast and 已处理 (G) ----
+const toastOf = (scope) => [textOf(scope, "checkupToastText"), scope.elements.get("checkupToast").dataset.tone, !isHidden(scope, "checkupToastUndo")];
+const handledOf = (scope) => htmlText(scope, "checkupHandled");
+const rowCountOf = (scope) => scope.evaluate("state.checkupSummary.rowCount");
+const cardClick = (scope, kind) => scope.evaluate(`handleCheckupClick({ target: { closest: (selector) => (selector === ".checkup-segment" ? null : { dataset: { checkupKind: ${JSON.stringify(kind)} } }) } })`);
+const handledClick = (scope, kind) => scope.evaluate(`handleCheckupHandledClick({ target: { closest: () => ({ dataset: { checkupUndo: ${JSON.stringify(kind)} } }) } })`);
+const switchLanguage = (scope, language) => scope.evaluate(`setInterfaceLanguage(${JSON.stringify(language)}); rerenderForLanguage()`);
+
+test("v3.4.0 handled: N 12 → 11 → 9 and back, 按空值处理 12 → 10 and back, with the toast in Chinese and in English", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  const cardsBefore = checkupCards(orders);
+  assert.equal(rowCountOf(orders), 12);
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), true);
+  // The total row, then the card's duplicate row: only the last operation is said, with 撤销.
+  orders.evaluate('setCheckupExclusion("suspectedTotal", true)');
+  assert.deepEqual(toastOf(orders), ["第 44 行（合计）不再计入分析。需要处理的行从 12 变成 11。", "success", true]);
+  cardClick(orders, "duplicateRows");
+  assert.equal(rowCountOf(orders), 9);
+  assert.deepEqual(toastOf(orders), ["第 21 行（重复的那一行）不再计入分析，第 20 行保留。需要处理的行从 11 变成 9。", "success", true]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), false);
+  assert.equal(handledOf(orders), "疑似合计 / 小计行：第 44 行不计入分析 求和、平均值和图表都不再算它，原表不变 撤销 整行重复：多出来的第 21 行不计入分析 第 20 行保留 撤销");
+  assert.match(checkupHtml(orders, "checkupHandled"), /<button type="button" class="secondary-button checkup-handled-undo" data-checkup-undo="suspectedTotal" aria-label="撤销：让疑似合计行重新计入分析">撤销<\/button>/);
+  // A language switch writes both again; back in Chinese they are as they were.
+  const zh = checkupHtml(orders, "checkupHandled") + textOf(orders, "checkupToastText");
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["Row 21 (the repeated one) is now left out of the analysis; row 20 stays. Rows that need attention went from 11 to 9.", "success", true]);
+  assert.equal(handledOf(orders), "Possible total or subtotal rows: row 44 is left out of the analysis sums, averages and charts no longer count it; the file is unchanged Undo Duplicate rows: the extra row 21 is left out of the analysis row 20 stays Undo");
+  switchLanguage(orders, "zh");
+  assert.equal(checkupHtml(orders, "checkupHandled") + textOf(orders, "checkupToastText"), zh);
+  // The toast's 撤销 takes back its operation; 已处理's 撤销 its own row.
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(toastOf(orders), ["第 21 行（重复的那一行）重新计入分析。需要处理的行从 9 变成 11。", "success", true]);
+  assert.equal(handledOf(orders), "疑似合计 / 小计行：第 44 行不计入分析 求和、平均值和图表都不再算它，原表不变 撤销");
+  handledClick(orders, "suspectedTotal");
+  assert.deepEqual(toastOf(orders), ["第 44 行（合计）重新计入分析。需要处理的行从 11 变成 12。", "success", true]);
+  assert.equal(isHidden(orders, "checkupHandledSection"), true);
+  assert.deepEqual(checkupCards(orders), cardsBefore);
+  // 按空值处理（2 处）, then the toast's 撤销.
+  cardClick(orders, "placeholder");
+  assert.equal(rowCountOf(orders), 10);
+  assert.deepEqual(toastOf(orders), ["已把 2 处按空值处理。需要处理的行从 12 变成 10。", "success", true]);
+  assert.equal(handledOf(orders), "像是空值的写法：2 处已按空值处理 第 16 行「—」、第 29 行「N/A」。不再参与统计，原表不变 撤销");
+  assert.match(checkupHtml(orders, "checkupHandled"), /aria-label="撤销：让这 2 处不再按空值处理"/);
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["2 cells are now treated as blank. Rows that need attention went from 12 to 10.", "success", true]);
+  assert.equal(handledOf(orders), "Values that may mean blank: 2 cells treated as blank “—” in row 16, “N/A” in row 29; statistics leave them out; the file is unchanged Undo");
+  switchLanguage(orders, "zh");
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(toastOf(orders), ["这 2 处不再按空值处理。需要处理的行从 10 变成 12。", "success", true]);
+  assert.equal(orders.evaluate("Object.keys(state.placeholderConfirmations).length"), 0);
+  assert.deepEqual(checkupCards(orders), cardsBefore);
+  // 已处理's 撤销 of the blanks: every confirmed spelling.
+  cardClick(orders, "placeholder");
+  handledClick(orders, "placeholder");
+  assert.deepEqual(toastOf(orders), ["这 2 处不再按空值处理。需要处理的行从 10 变成 12。", "success", true]);
+  // Several groups of duplicate rows (乱表): counted, not named.
+  const messy = await importCheckupFixture("messy.csv");
+  cardClick(messy, "duplicateRows");
+  assert.deepEqual(toastOf(messy), ["多出来的 12 行重复行不再计入分析，每组保留第一行。需要处理的行从 73 变成 50。", "success", true]);
+  assert.equal(handledOf(messy), "整行重复：多出来的 12 行不计入分析 每组保留第一行 撤销");
+  switchLanguage(messy, "en");
+  assert.deepEqual(toastOf(messy), ["The 12 extra duplicate rows are now left out of the analysis; the first row of each group stays. Rows that need attention went from 73 to 50.", "success", true]);
+  assert.equal(handledOf(messy), "Duplicate rows: the 12 extra rows are left out of the analysis the first row of each group stays Undo");
+});
+
+test("v3.4.0 toast: role=status, the focus stays, it goes with another module or file while 已处理 stays", async () => {
+  assert.match(indexHtmlSource(), /<div id="checkupToast" class="checkup-toast is-empty">\s*<p id="checkupToastText" class="checkup-toast-text" role="status"><\/p>\s*<button id="checkupToastUndo" class="checkup-toast-undo hidden" type="button">撤销<\/button>\s*<\/div>\s*<div id="checkupPanel"/);
+  assert.match(indexHtmlSource(), /<\/section>\s*<section id="checkupHandledSection" class="checkup-handled hidden" aria-labelledby="checkupHandledTitle">\s*<div class="checkup-caption">\s*<h3 id="checkupHandledTitle">已处理<\/h3>\s*<\/div>\s*<ul id="checkupHandled" class="checkup-handled-list"><\/ul>\s*<\/section>\s*<section id="checkupChecked"/);
+  const english = JSON.parse(createScriptContext().evaluate("JSON.stringify(I18N_EN)"));
+  assert.deepEqual([english["checkup.handled"], english["checkup.undo"]], ["Handled", "Undo"]);
+  const script = repoFile("script.js");
+  assert.match(script, /dom\.checkupToastUndo\.addEventListener\("click", undoCheckupToast\);/);
+  assert.match(script, /dom\.checkupHandled\.addEventListener\("click", handleCheckupHandledClick\);/);
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  // Nothing takes the focus: neither the quality page's messages (hidden module) nor the toast.
+  orders.evaluate("globalThis.__focused = []; for (const id of ['placeholderMessage', 'duplicateExclusionMessage', 'suspectedTotalMessage', 'checkupToastText', 'checkupToast']) { dom[id].focus = () => __focused.push(id); }");
+  cardClick(orders, "duplicateRows");
+  cardClick(orders, "placeholder");
+  orders.evaluate("undoCheckupToast()");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__focused)")), []);
+  // The quality page's messages are not written from the first screen.
+  assert.deepEqual([textOf(orders, "duplicateExclusionMessage"), textOf(orders, "placeholderMessage")], ["", ""]);
+  // Another module: the toast goes, 已处理 stays; coming back shows no toast.
+  assert.notEqual(textOf(orders, "checkupToastText"), "");
+  orders.evaluate('showModule("qualitySection")');
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(orders.elements.get("checkupToast").classList.contains("is-empty"), true);
+  assert.equal(orders.evaluate("state.checkupToast"), null);
+  assert.match(handledOf(orders), /^整行重复：多出来的第 21 行不计入分析/);
+  orders.evaluate('showModule("overviewSection")');
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  // A switch writes nothing into an empty toast.
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  switchLanguage(orders, "zh");
+  // The next operation replaces it; a new import or worksheet ends it.
+  orders.evaluate('setCheckupExclusion("suspectedTotal", true)');
+  assert.match(textOf(orders, "checkupToastText"), /^第 44 行（合计）不再计入分析。/);
+  orders.evaluate("resetAnalysisState()");
+  assert.deepEqual(toastOf(orders), ["", "", false]);
+  assert.equal(orders.evaluate("state.checkupHandled"), null);
+  assert.equal(orders.evaluate("state.checkupToast"), null);
+});
+
+test("v3.4.0 R9: with drafts waiting, the first screen's refusals are written on the first screen; the quality page's are as before", async () => {
+  const orders = await clickSampleButton(sampleOrdersFetchedText());
+  orders.evaluate('stageFieldTypeChange("产品", "ignore")');
+  assert.equal(orders.evaluate("hasFieldConfigDraftChanges()"), true);
+  cardClick(orders, "duplicateRows");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。", "warning", false]);
+  assert.equal(orders.elements.get("checkupToast").classList.contains("is-empty"), false);
+  cardClick(orders, "placeholder");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。", "warning", false]);
+  orders.evaluate("globalThis.__reports = 0; { const report = exportHtmlReport; globalThis.exportHtmlReport = (...a) => { __reports += 1; return report(...a); }; }");
+  orders.evaluate("exportCheckupReport()");
+  assert.deepEqual(toastOf(orders), ["字段配置有未应用的修改，请先应用配置后再导出。", "warning", false]);
+  assert.equal(orders.evaluate("__reports"), 0);
+  switchLanguage(orders, "en");
+  assert.deepEqual(toastOf(orders), ["Column settings have changes that are not applied; apply them before exporting.", "warning", false]);
+  switchLanguage(orders, "zh");
+  // Nothing changed and nothing was written on the quality page.
+  assert.equal(rowCountOf(orders), 12);
+  assert.deepEqual([textOf(orders, "duplicateExclusionMessage"), textOf(orders, "placeholderMessage"), textOf(orders, "reportExportStatus")], ["", "", ""]);
+  // The quality page's own calls write where they always did.
+  orders.evaluate('setRowExclusion("duplicateRows", true)');
+  assert.equal(textOf(orders, "duplicateExclusionMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再设置不计入分析。");
+  orders.evaluate("confirmAllCommonPlaceholders()");
+  assert.equal(textOf(orders, "placeholderMessage"), "字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。");
+  assert.equal(textOf(orders, "checkupToastText"), "字段配置有未应用的修改，请先应用配置后再导出。");
+  // 导出写法统一的表 with the gate closed: the export module, its gate's sentence, the focus on it.
+  orders.evaluate("globalThis.__focused = []; dom.standardizedExportGate.focus = () => __focused.push('gate');");
+  cardClick(orders, "dateStyle");
+  assert.equal(orders.context.document.body.dataset.module, "exportSection");
+  assert.notEqual(textOf(orders, "standardizedExportGate"), "");
+  assert.deepEqual(JSON.parse(orders.evaluate("JSON.stringify(__focused)")), ["gate"]);
+  // Without drafts the report is exported as before, and the check runs.
+  orders.evaluate("restoreAutomaticFieldTypes()");
+  orders.evaluate('showModule("overviewSection"); exportCheckupReport()');
+  assert.equal(orders.evaluate("__reports"), 1);
+  cardClick(orders, "dateStyle");
+  assert.notEqual(orders.evaluate("state.standardizedExport"), null);
+  assert.equal(textOf(orders, "standardizedExportGate"), "");
 });

@@ -39,6 +39,10 @@ const state = {
   // with the checkup counts; figures only.
   checkupOthers: null,
   checkupChecked: null,
+  // v3.4.0 commit 6: 已处理 (buildCheckupHandledData(), made with the checkup counts) and the
+  // toast's undo ({ undo } while a toast of a first-screen operation shows, otherwise null).
+  checkupHandled: null,
+  checkupToast: null,
   // buildIdDuplicateSummary() of the original rows; imports and field
   // configuration rebuild it, filters do not.
   idDuplicates: [],
@@ -191,6 +195,11 @@ const dom = {
   checkupOthers: document.getElementById("checkupOthers"),
   checkupOthersNote: document.getElementById("checkupOthersNote"),
   checkupOthersList: document.getElementById("checkupOthersList"),
+  checkupToast: document.getElementById("checkupToast"),
+  checkupToastText: document.getElementById("checkupToastText"),
+  checkupToastUndo: document.getElementById("checkupToastUndo"),
+  checkupHandledSection: document.getElementById("checkupHandledSection"),
+  checkupHandled: document.getElementById("checkupHandled"),
   previewSize: document.getElementById("previewSize"),
   categoryChartInsight: document.getElementById("categoryChartInsight"),
   dateChartInsight: document.getElementById("dateChartInsight"),
@@ -1029,6 +1038,7 @@ function renderCheckup() {
     dom.checkupLegend.innerHTML = "";
     renderCheckupCards(null);
     renderCheckupChecked(null);
+    renderCheckupHandled(null);
     renderCheckupOthers(null);
     return;
   }
@@ -1052,6 +1062,7 @@ function renderCheckup() {
   )).join("");
   renderCheckupCards(summary);
   renderCheckupChecked(summary);
+  renderCheckupHandled(summary);
   renderCheckupOthers(summary);
 }
 
@@ -1338,6 +1349,7 @@ function refreshCheckupSummary() {
   state.checkupCards = buildCheckupCardData(state.checkupSummary);
   state.checkupOthers = state.checkupSummary ? buildCheckupOtherData() : null;
   state.checkupChecked = buildCheckupCheckedData(state.checkupSummary);
+  state.checkupHandled = state.checkupSummary ? buildCheckupHandledData() : null;
 }
 
 // The cards in the current language, from state.checkupCards: words only, no row is read.
@@ -1588,9 +1600,167 @@ function handleCheckupFindingClick(event) {
   heading.focus({ preventScroll: true });
 }
 
+// ---- v3.4.0 commit 6: card actions, the toast and 已处理 (G) ----
+// Facts of rows left out of one kind, for the toast and 已处理: { count, lines, more } (the first
+// five file rows), and for duplicate rows the groups they come from and, with one group, its kept row.
+function checkupExclusionFacts(kind, indexes) {
+  const sorted = [...indexes].sort((a, b) => a - b);
+  const facts = { count: sorted.length, ...checkupLines(sorted, CHECKUP_FINDING_LINE_LIMIT), groups: 0, kept: null };
+  if (kind === "duplicateRows") {
+    const out = new Set(sorted);
+    const groups = (state.duplicateRowGroups || []).filter((group) => group.some((index) => out.has(index)));
+    facts.groups = groups.length;
+    if (groups.length === 1) facts.kept = checkupLineOf(groups[0][0]);
+  }
+  return facts;
+}
+
+// The rows of a kind left out now (as setRowExclusion() reads them).
+function getExcludedRowsOf(kind) {
+  return state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
+}
+
+// 已处理: the rows left out (per kind) and the cells treated as blank (every confirmed spelling: their
+// cells come from the kept placeholder scans, one field and key after another), or null when nothing
+// is. Made with the checkup counts, so a filter or a language switch reads no row.
+function buildCheckupHandledData() {
+  const data = { suspectedTotal: null, duplicateRows: null, placeholder: null };
+  ["suspectedTotal", "duplicateRows"].forEach((kind) => {
+    const indexes = getExcludedRowsOf(kind);
+    if (indexes.length) data[kind] = checkupExclusionFacts(kind, indexes);
+  });
+  const confirmed = state.placeholders.filter((entry) => entry.confirmed);
+  if (confirmed.length) {
+    // Each spelling once, by its first row (ties: the order of the quality page's list).
+    const firsts = new Map();
+    confirmed.forEach((entry) => {
+      const cells = checkupPlaceholderCells(entry.field, state.formatScans);
+      const indexes = cells.indexes.filter((index, position) => cells.keys[position] === entry.key);
+      const known = firsts.get(entry.key);
+      if (known) known.indexes.push(...indexes);
+      else firsts.set(entry.key, { key: entry.key, indexes });
+    });
+    const keys = [...firsts.values()].map((item) => ({ key: item.key, indexes: item.indexes.sort((a, b) => a - b) }))
+      .sort((a, b) => (a.indexes[0] ?? Infinity) - (b.indexes[0] ?? Infinity));
+    data.placeholder = {
+      count: confirmed.reduce((sum, entry) => sum + entry.count, 0),
+      keys: keys.slice(0, 3).map((item) => ({ key: item.key, ...checkupLines(item.indexes, 3) })),
+      moreKeys: keys.length > 3
+    };
+  }
+  return data.suspectedTotal || data.duplicateRows || data.placeholder ? data : null;
+}
+
+function renderCheckupHandled(summary) {
+  const items = summary && state.checkupHandled ? formatCheckupHandledItems(state.checkupHandled) : [];
+  dom.checkupHandledSection.classList.toggle("hidden", !items.length);
+  dom.checkupHandled.innerHTML = items.map((item) => {
+    const label = item.kind === "placeholder" ? formatCheckupTreatUndoLabel(state.checkupHandled.placeholder.count) : exclusionUndoLabel(item.kind);
+    return `<li class="checkup-handled-item"><span class="checkup-check" aria-hidden="true"></span><span class="checkup-handled-text"><b>${escapeHtml(item.title)}</b><span class="checkup-handled-note">${escapeHtml(item.note)}</span></span>`
+      + `<button type="button" class="secondary-button checkup-handled-undo" data-checkup-undo="${item.kind}" aria-label="${escapeHtml(label)}">${escapeHtml(L("撤销", "Undo"))}</button></li>`;
+  }).join("");
+}
+
+// The toast (G3): only the last first-screen operation, with 撤销 when it changed something (undo is
+// the operation that takes it back). role="status" on its text; the focus stays where it was (R16).
+// A language switch writes it again (a one-off message). Empty: it folds away.
+function writeCheckupToast(message, tone = "", undo = null) {
+  writeOneOffMessage(dom.checkupToastText, "checkup-toast-text", message, tone);
+  const shown = Boolean(dom.checkupToastText.textContent);
+  state.checkupToast = shown && undo ? { undo } : null;
+  dom.checkupToast.classList.toggle("is-empty", !shown);
+  dom.checkupToast.dataset.tone = shown ? tone : "";
+  dom.checkupToastUndo.classList.toggle("hidden", !state.checkupToast);
+}
+
+// A new import, another worksheet or another module: the toast goes; 已处理 stays (it is state).
+function clearCheckupToast() {
+  writeCheckupToast("");
+}
+
+function undoCheckupToast() {
+  const toast = state.checkupToast;
+  if (toast) toast.undo();
+}
+
+// 不计入分析 / 撤销 from the first screen: setRowExclusion() with the toast for its refusal.
+function setCheckupExclusion(kind, on) {
+  const before = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  const leftOutBefore = getExcludedRowsOf(kind);
+  const refuse = (message, tone) => writeCheckupToast(message, tone);
+  if (!setRowExclusion(kind, on, refuse)) return false;
+  const facts = checkupExclusionFacts(kind, on ? getExcludedRowsOf(kind) : leftOutBefore);
+  const after = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  writeCheckupToast(() => `${formatCheckupExclusionToast(kind, facts, on)}${L("", " ")}${formatCheckupRowsChange(before, after)}`, "success", () => setCheckupExclusion(kind, !on));
+  return true;
+}
+
+// Confirmed placeholder keys per field, copied.
+function copyPlaceholderConfirmations() {
+  return Object.fromEntries(Object.entries(state.placeholderConfirmations).map(([field, keys]) => [field, [...keys]]));
+}
+
+// The cells treated as blank now (every confirmed spelling).
+function countTreatedCells() {
+  return state.placeholders.filter((entry) => entry.confirmed).reduce((sum, entry) => sum + entry.count, 0);
+}
+
+// The confirmations become target (field -> keys) from the first screen: updatePlaceholderConfirmations()
+// with the toast, no focus moved. on: cells were treated as blank (count of them), or no longer.
+// The toast's 撤销 sets the confirmations back. The quality page's message stays as it was.
+function setCheckupConfirmations(target, count, on, confirm = null) {
+  const before = state.checkupSummary ? state.checkupSummary.rowCount : 0;
+  const previous = copyPlaceholderConfirmations();
+  const message = () => `${formatCheckupTreatToast(count, on)}${L("", " ")}${formatCheckupRowsChange(before, state.checkupSummary ? state.checkupSummary.rowCount : 0)}`;
+  const setMessage = (text, tone) => writeCheckupToast(text, tone, tone === "success" ? () => setCheckupConfirmations(previous, count, !on) : null);
+  if (confirm) return confirm({ message, setMessage, focus: false });
+  const keysByField = Object.create(null);
+  new Set([...Object.keys(previous), ...Object.keys(target)]).forEach((field) => {
+    keysByField[field] = target[field] ? [...target[field]] : [];
+  });
+  return updatePlaceholderConfirmations(keysByField, message, { setMessage, focus: false });
+}
+
+// 按空值处理（N 处） on the card: the quality page's confirm-all, with the toast.
+function treatFromCheckup() {
+  const count = getPendingCommonPlaceholders().reduce((sum, entry) => sum + entry.count, 0);
+  return setCheckupConfirmations(null, count, true, (options) => confirmAllCommonPlaceholders(options));
+}
+
+// 导出体检报告: refused while drafts wait, with the refusal on the first screen (report.js stays as
+// it is, so the check is made here before calling it).
+function exportCheckupReport() {
+  if (state.rows.length && hasFieldConfigDraftChanges()) {
+    writeCheckupToast(() => Lpick(CHECKUP_REPORT_DRAFT_REFUSAL), "warning");
+    return;
+  }
+  exportHtmlReport();
+}
+
+// 已处理's 撤销 (bound in script.js).
+function handleCheckupHandledClick(event) {
+  const button = event.target.closest("button[data-checkup-undo]");
+  if (!button) return;
+  const kind = button.dataset.checkupUndo;
+  if (kind === "placeholder") setCheckupConfirmations({}, countTreatedCells(), false);
+  else setCheckupExclusion(kind, false);
+}
+
+// 导出写法统一的表 (G6): the export module, then its check; when the gate refuses, the gate's own
+// sentence (#standardizedExportGate, written by updateExportButtons()) takes the focus, as the check
+// button is disabled then.
+function openStandardizedExportFromCheckup() {
+  showModule("exportSection");
+  checkStandardizedExport();
+  if (!canCheckStandardizedExport()) {
+    dom.standardizedExportGate.setAttribute("tabindex", "-1");
+    dom.standardizedExportGate.focus();
+  }
+}
+
 // Clicks on the checkup (script.js binds the bar and the cards): a coloured segment scrolls to its
 // card (the dark one to the first card with rows of several kinds); a card's action calls what the
-// quality page and the export module call. The toast, 已处理 and the refusals here are commit 6's.
+// quality page and the export module call, with the toast and the refusals on the first screen.
 function handleCheckupClick(event) {
   const segment = event.target.closest(".checkup-segment");
   if (segment) {
@@ -1615,14 +1785,13 @@ function handleCheckupClick(event) {
       dom.problemRowsTitle.focus({ preventScroll: true });
       break;
     case "exclude":
-      setRowExclusion("duplicateRows", true);
+      setCheckupExclusion("duplicateRows", true);
       break;
     case "treat":
-      confirmAllCommonPlaceholders();
+      treatFromCheckup();
       break;
     case "standardize":
-      showModule("exportSection");
-      checkStandardizedExport();
+      openStandardizedExportFromCheckup();
       break;
     default:
       break;
@@ -2144,7 +2313,9 @@ function undoPlaceholderConfirmation(field, key) {
   }));
 }
 
-function confirmAllCommonPlaceholders() {
+// options (v3.4.0, the first screen): message replaces the quality page's, and setMessage and focus
+// go to updatePlaceholderConfirmations().
+function confirmAllCommonPlaceholders(options = {}) {
   const entries = getPendingCommonPlaceholders();
   const keysByField = Object.create(null);
   entries.forEach((entry) => {
@@ -2152,6 +2323,7 @@ function confirmAllCommonPlaceholders() {
     keysByField[entry.field].push(entry.key);
   });
   const typesBefore = Object.fromEntries(entries.map((entry) => [entry.field, getFieldProfile(entry.field).typeKey]));
+  if (options.message) return updatePlaceholderConfirmations(keysByField, options.message, options);
   return updatePlaceholderConfirmations(keysByField, () => {
     // Fields whose type changed first, as the confirm-all note names them first.
     const changed = (entry) => getFieldProfile(entry.field).typeKey !== typesBefore[entry.field];
@@ -2165,10 +2337,13 @@ function confirmAllCommonPlaceholders() {
 // The fourth refresh path. keysByField replaces the confirmed keys of each listed
 // field; refused while the field configuration has unapplied drafts. message is a text, or
 // a function that writes it once the analysis is rebuilt (v3.1.0: it compares the counts).
-function updatePlaceholderConfirmations(keysByField, message) {
+// v3.4.0 R9: setMessage writes the refusal and the outcome (#placeholderMessage by default, the
+// first screen's toast when the checkup calls), and focus says whether #placeholderMessage takes the
+// focus (not from the first screen: it is in a hidden module).
+function updatePlaceholderConfirmations(keysByField, message, { setMessage = setPlaceholderMessage, focus = true } = {}) {
   if (!state.rows.length) return false;
   if (!ensureFieldConfigurationApplied(DRAFT_ACTION_PLACEHOLDERS)) {
-    setPlaceholderMessage(() => L(
+    setMessage(() => L(
       "字段配置有未应用的修改。请先点击“应用字段配置”，再处理像是空值的写法。",
       "Column settings have changes that are not applied. Click “Apply column settings” first, then handle values that may mean blank."
     ), "warning");
@@ -2184,8 +2359,8 @@ function updatePlaceholderConfirmations(keysByField, message) {
   state.placeholderConfirmations = confirmations;
   fields.forEach(rebuildConfirmedFieldProfile);
   state.totalMissing = state.profiles.reduce((sum, profile) => sum + profile.missingCount, 0);
-  rebuildAnalysisFromProfiles(message, setPlaceholderMessage);
-  dom.placeholderMessage.focus();
+  rebuildAnalysisFromProfiles(message, setMessage);
+  if (focus) dom.placeholderMessage.focus();
   return true;
 }
 
@@ -2734,11 +2909,13 @@ function listExclusionCandidates(kind) {
 
 // The fifth trigger ("不计入分析" / "撤销"): the filter path, never the rebuild. Records the rows
 // marked now; the filters and the custom analysis stay. Refused while drafts wait. Returns
-// whether anything changed; state.lastExclusion says what for the messages.
-function setRowExclusion(kind, on) {
+// whether anything changed; state.lastExclusion says what for the messages. v3.4.0 R9: setMessage
+// (message, tone) writes the refusal; the quality page's section by default, the first screen's
+// toast when the checkup calls (as rebuildAnalysisFromProfiles() takes its setMessage).
+function setRowExclusion(kind, on, setMessage = (message, tone) => setExclusionMessage(kind, message, tone)) {
   if (!state.rows.length || !Object.prototype.hasOwnProperty.call(state.excludedRows, kind)) return false;
   if (hasFieldConfigDraftChanges()) {
-    setExclusionMessage(kind, () => Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
+    setMessage(() => Lpick(EXCLUSION_DRAFT_REFUSAL), "warning");
     return false;
   }
   const current = state.exclusionSourceRows === state.rows ? state.excludedRows[kind] : [];
@@ -3022,7 +3199,7 @@ function renderSuspectedTotalDetails() {
 function exclusionToggleButton(kind, excluded) {
   const label = Lpick(EXCLUSION_KIND_LABELS[kind]);
   const ariaLabel = excluded
-    ? L(`撤销：让${label}重新计入分析`, `Undo: count the ${label} in the analysis again`)
+    ? exclusionUndoLabel(kind)
     : L(`把${label}设为不计入分析`, `Exclude the ${label} from analysis`);
   return `<button type="button" class="secondary-button row-exclusion-button" data-exclusion-kind="${kind}" data-exclusion-on="${excluded ? "false" : "true"}" aria-label="${escapeHtml(ariaLabel)}">${excluded ? L("撤销", "Undo") : L("不计入分析", "Exclude from analysis")}</button>`;
 }
@@ -3861,6 +4038,9 @@ function resetAnalysisState() {
   state.checkupCards = null;
   state.checkupOthers = null;
   state.checkupChecked = null;
+  state.checkupHandled = null;
+  // A new import or another worksheet: the toast goes (it also clears state.checkupToast).
+  clearCheckupToast();
   state.idDuplicates = [];
   state.idDuplicateRowIndexes = new Map();
   state.placeholderConfirmations = Object.create(null);
